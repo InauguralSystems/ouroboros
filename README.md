@@ -69,8 +69,10 @@ fibonacci, and firing observer predicates over full windows).
       its front-end, its codegen, and a test program byte-for-byte
       (`test/bootstrap.eigs`). Took `try`/`catch` (codegen) and `local`
       (front-end). The language reproduces its entire toolchain.
-- [ ] (optional) interrogatives/temporal — a front-end *grammar* mismatch with C,
-      not a self-host gap
+- [x] interrogatives + temporal (slice 6): `<kw> is x [at <line>]`, `prev of x` —
+      C-matching grammar + `INTERROGATE`/`INTERROGATE_NAMED`/`_AT` codegen,
+      `OP_LINE` emission, and the `record_history` primitive for runtime history.
+      All forms byte-for-byte with the C evaluator.
 
 ## Layout
 

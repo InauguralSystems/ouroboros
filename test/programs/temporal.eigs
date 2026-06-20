@@ -1,0 +1,9 @@
+score is 10
+score is 25
+score is 40
+print of ("prev=" + (str of (prev of score)))
+print of ("now=" + (str of score))
+n is 1
+n is 2
+n is 3
+print of ("prev n=" + (str of (prev of n)))

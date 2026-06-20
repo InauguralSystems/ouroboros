@@ -1,0 +1,6 @@
+x is 11
+x is 22
+x is 33
+print of ("at1=" + (str of (what is x at 1)))
+print of ("at2=" + (str of (what is x at 2)))
+print of ("now=" + (str of x))
