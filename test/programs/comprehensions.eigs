@@ -1,0 +1,9 @@
+print of [x * x for x in [1, 2, 3, 4, 5]]
+print of [v for v in [1, 2, 3, 4, 5, 6, 7, 8] if (v % 2) == 0]
+ys is [10, 20, 30]
+print of [y + 1 for y in ys]
+print of [n * n for n in [1, 2, 3, 4, 5, 6] if n > 3]
+total is 0
+for sq in [k * k for k in [1, 2, 3, 4]]:
+    total is total + sq
+print of total
