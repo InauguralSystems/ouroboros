@@ -1,0 +1,7 @@
+print of ((1 == 1) and (2 == 2))
+print of ((1 == 2) and (2 == 2))
+print of ((1 == 2) or (3 == 3))
+print of ((5 > 3) and (2 < 1))
+a is 7
+if (a > 5) and (a < 10):
+    print of "in range"

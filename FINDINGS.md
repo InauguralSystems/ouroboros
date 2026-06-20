@@ -52,5 +52,37 @@ divergence there is a sharp finding (meta gap, or a C bug).
 
 ---
 
-*(Further findings — control-flow offsets, local-slot allocation, closure
-cycles, and observer-opcode parity — to be added as the roadmap lands.)*
+## F-OURO-4 — reserved keywords can't be codegen identifiers — CONSTRAINT
+
+Writing the compiler in EigenScript means its own variable names collide with the
+language's reserved words. A jump-patch helper using `at` as a local
+(`local at is len of c.code`) failed to parse — `at` is a temporal interrogative
+keyword (`what is x at <line>`). Renamed to `hole`. A self-referential gotcha
+unique to self-hosting: the metalanguage and object language are the same, so the
+reserved set (temporal `at`/`prev`, predicates, interrogatives, `unobserved`,
+etc.) is off-limits for compiler internals. No defect — recorded so later slices
+avoid it. (Caught instantly because load_file now raises parse errors, PR #245.)
+
+## F-OURO-5 — break/continue are compile-time jumps, not opcodes — BY-DESIGN
+
+`OP_BREAK`/`OP_CONTINUE` exist in the enum, but `compile_ast` does *not* emit them
+for ordinary loops: `continue` lowers to a `JUMP_BACK` to the loop header and
+`break` to a forward `JUMP` to the loop exit, resolved at compile time. ouroboros
+matches this with a loop-context stack (header offset + a list of break holes
+back-patched at the exit). Emitting the opcodes instead left the loop running
+(they rely on a loop mechanism the simple-loop path doesn't establish) — the
+jump lowering is the correct model. A `for`-loop `continue` jumps straight to the
+header, skipping `LOOP_ENV_END`; the VM tolerates this (the C compiler does the
+same), so per-iteration env balancing is not required on the continue path.
+
+---
+
+## Slice 2 (control flow) — DONE
+
+if/elif/else, `loop while`, `for`-in, `break`/`continue`, and short-circuit
+`and`/`or`, via forward jumps (back-patched) and backward jumps, plus the #247
+`LOOP_CAP_CHECK` safety cap. 12/12 programs at byte-identical stdout parity,
+including nested loops. No new upstream primitive needed.
+
+*(Further findings — local-slot allocation for functions, closure cycles, and
+observer-opcode parity — to be added as the roadmap lands.)*

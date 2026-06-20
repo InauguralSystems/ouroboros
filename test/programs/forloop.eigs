@@ -1,0 +1,8 @@
+for x in [10, 20, 30]:
+    print of x
+s is 0
+for v in [1, 2, 3, 4, 5]:
+    s is s + v
+print of s
+for ch in ["a", "b", "c"]:
+    print of ("got " + ch)

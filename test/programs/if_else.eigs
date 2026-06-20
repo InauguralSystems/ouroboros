@@ -1,0 +1,12 @@
+x is 5
+if x > 10:
+    print of "big"
+elif x > 3:
+    print of "medium"
+else:
+    print of "small"
+if x == 5:
+    print of "five"
+y is 0
+if y > 0:
+    print of "pos"

@@ -1,20 +1,19 @@
 # ouroboros — a bytecode back-end for EigenScript, written in EigenScript.
 #
-# The front-end (tokenizer + parser, vendored from the stdlib meta-circular
-# interpreter lib/eigen.eigs) turns source into an AST. This file is the NEW
-# half: it walks that AST and emits the C VM's bytecode — the same opcodes and
-# little-endian operand layout compile_ast produces — as plain EigenScript data
-# (a list of byte ints + a constant pool). vm_run_bytecode then hands it to the
-# real VM. The loop closes: EigenScript compiling EigenScript, running on the
-# same bytecode engine (and JIT) as the C compiler's output.
+# The front-end (src/frontend.eigs, vendored from lib/eigen.eigs) turns source
+# into an AST; this file walks it and emits the C VM's bytecode as data (a list
+# of byte ints + a constant pool), run via vm_run_bytecode. Because the chunk
+# runs on the real VM, codegen only needs to be semantically correct, not
+# byte-identical to compile_ast (FINDINGS F-OURO-2); the oracle is stdout parity.
 #
-# Oracle: run a program through this back-end and through the C eigenscript
-# directly; the stdout must match (behavioral parity on the real VM).
+# Value model: every node leaves exactly ONE value on the stack (cg_node). A
+# block leaves its last statement's value (cg_block_value) or nothing
+# (cg_block_discard, for loop bodies). `if` is an expression yielding the taken
+# branch's value; `loop`/`for` yield null.
 #
-# Slice 1 grammar: number/string/null literals, identifiers, `name is expr`
-# assignment, arithmetic (+ - * / %), comparisons (== != < > <= >=), unary
-# (- / not), calls (`f of arg`), and list literals. Control flow, functions,
-# and the observer/temporal opcodes come in later slices.
+# Slice 2 adds control flow: if/elif/else, loop while, for-in, break/continue,
+# and short-circuit and/or — all via forward jumps (back-patched) and backward
+# jumps. Functions/locals, dicts, and the observer opcodes are still to come.
 
 # --- opcodes (src/vm.h enum order) ---------------------------------------
 OP_CONST is 0
@@ -34,31 +33,77 @@ OP_LE is 21
 OP_GE is 22
 OP_GET_NAME is 25
 OP_SET_NAME is 26
+OP_SET_NAME_LOCAL is 27
+OP_JUMP is 29
+OP_JUMP_BACK is 30
+OP_JUMP_IF_FALSE is 31
+OP_JUMP_IF_FALSE_PEEK is 33
+OP_JUMP_IF_TRUE_PEEK is 34
 OP_POP is 35
 OP_CALL is 39
-OP_RETURN_NULL is 41
+OP_RETURN is 40
 OP_LIST is 42
+OP_ITER_SETUP is 48
+OP_ITER_NEXT is 49
+OP_LOOP_ENV_FRESH is 50
+OP_LOOP_ENV_END is 51
+OP_BREAK is 52
+OP_CONTINUE is 53
+OP_LOOP_CAP_CHECK is 63
 
 # --- emitter state -------------------------------------------------------
+# `loops` is a stack of {header, breaks}: header = the offset continue jumps
+# back to; breaks = forward-jump holes to patch to the loop exit.
 define cg_new as:
-    return {"code": [], "consts": []}
+    return {"code": [], "consts": [], "loops": []}
+
+define cg_loop_top(c) as:
+    return c.loops[(len of c.loops) - 1]
 
 define cg_emit(c, byte) as:
     append of [c.code, byte]
 
-# 16-bit operand, little-endian (matches the VM's READ_SHORT)
 define cg_emit_u16(c, val) as:
     append of [c.code, val % 256]
     append of [c.code, floor of (val / 256)]
 
-# Intern a constant; dedup numbers/strings exactly as chunk_add_constant does,
-# so indices line up the way the C compiler's pool would.
+# Intern a constant; dedup numbers/strings like chunk_add_constant.
 define cg_const(c, val) as:
     for i in range of (len of c.consts):
         if c.consts[i] == val:
             return i
     append of [c.consts, val]
     return (len of c.consts) - 1
+
+# --- jump helpers (offsets are relative to the byte after the operand) -----
+# Emit a forward jump with a placeholder operand; return the operand's index.
+define cg_emit_jump(c, op) as:
+    cg_emit of [c, op]
+    local hole is len of c.code
+    cg_emit of [c, 0]
+    cg_emit of [c, 0]
+    return hole
+
+# Back-patch a forward jump's operand to land at the current end of code.
+define cg_patch_jump(c, hole) as:
+    local off is (len of c.code) - (hole + 2)
+    c.code[hole] is off % 256
+    c.code[hole + 1] is floor of (off / 256)
+
+# Patch every pending `break` jump in the innermost loop to land at the current
+# end of code, then pop that loop's context off the stack.
+define cg_patch_breaks(c) as:
+    local top is cg_loop_top of c
+    for i in range of (len of top.breaks):
+        cg_patch_jump of [c, top.breaks[i]]
+    list_truncate of [c.loops, (len of c.loops) - 1]
+
+# Emit a backward jump to an earlier `target` offset.
+define cg_emit_jump_back(c, target) as:
+    cg_emit of [c, OP_JUMP_BACK]
+    local off is ((len of c.code) + 2) - target
+    cg_emit of [c, off % 256]
+    cg_emit of [c, floor of (off / 256)]
 
 define cg_binop_code(op) as:
     if op == "+":
@@ -85,11 +130,11 @@ define cg_binop_code(op) as:
         return OP_GE
     throw of ("ouroboros: unsupported binary op '" + op + "'")
 
-# --- expression codegen (each leaves exactly one value on the stack) ------
-define cg_expr(c, node) as:
+# --- node codegen: leaves exactly one value on the stack ------------------
+define cg_node(c, node) as:
     local t is node[0]
     if t == "_line":
-        cg_expr of [c, node[2]]
+        cg_node of [c, node[2]]
         return null
     if t == "num":
         cg_emit of [c, OP_CONST]
@@ -107,56 +152,134 @@ define cg_expr(c, node) as:
         cg_emit_u16 of [c, cg_const of [c, node[1]]]
         return null
     if t == "assign":
-        cg_expr of [c, node[2]]                 # value (left on stack by SET_NAME)
+        cg_node of [c, node[2]]
         cg_emit of [c, OP_SET_NAME]
         cg_emit_u16 of [c, cg_const of [c, node[1]]]
         return null
     if t == "binop":
-        cg_expr of [c, node[2]]
-        cg_expr of [c, node[3]]
-        cg_emit of [c, cg_binop_code of node[1]]
+        local op is node[1]
+        # short-circuit and/or: leave left (if it decides) else right
+        if op == "and":
+            cg_node of [c, node[2]]
+            local ja is cg_emit_jump of [c, OP_JUMP_IF_FALSE_PEEK]
+            cg_emit of [c, OP_POP]
+            cg_node of [c, node[3]]
+            cg_patch_jump of [c, ja]
+            return null
+        if op == "or":
+            cg_node of [c, node[2]]
+            local jo is cg_emit_jump of [c, OP_JUMP_IF_TRUE_PEEK]
+            cg_emit of [c, OP_POP]
+            cg_node of [c, node[3]]
+            cg_patch_jump of [c, jo]
+            return null
+        cg_node of [c, node[2]]
+        cg_node of [c, node[3]]
+        cg_emit of [c, cg_binop_code of op]
         return null
     if t == "unary":
-        cg_expr of [c, node[2]]
+        cg_node of [c, node[2]]
         if node[1] == "-":
             cg_emit of [c, OP_NEG]
         else:
             cg_emit of [c, OP_NOT]
         return null
     if t == "call":
-        cg_expr of [c, node[1]]                 # callee
-        cg_expr of [c, node[2]]                 # argument (single, per `of`)
+        cg_node of [c, node[1]]
+        cg_node of [c, node[2]]
         cg_emit of [c, OP_CALL]
         cg_emit_u16 of [c, 1]
         return null
     if t == "list":
         local elems is node[1]
         for i in range of (len of elems):
-            cg_expr of [c, elems[i]]
+            cg_node of [c, elems[i]]
         cg_emit of [c, OP_LIST]
         cg_emit_u16 of [c, len of elems]
         return null
-    throw of ("ouroboros: cannot compile node type '" + t + "' (slice 1)")
 
-# --- statement / module --------------------------------------------------
-define cg_stmt(c, node) as:
-    if node[0] == "_line":
-        node is node[2]
-    cg_expr of [c, node]
-    cg_emit of [c, OP_POP]                       # discard the statement value
+    # ---- control flow ----
+    if t == "if":
+        cg_node of [c, node[1]]                      # condition (popped by JIF)
+        local jf is cg_emit_jump of [c, OP_JUMP_IF_FALSE]
+        cg_block_value of [c, node[2]]               # then -> 1 value
+        local je is cg_emit_jump of [c, OP_JUMP]
+        cg_patch_jump of [c, jf]
+        cg_block_value of [c, node[3]]               # else -> 1 value (null if empty)
+        cg_patch_jump of [c, je]
+        return null
+    if t == "loop":
+        local header is len of c.code
+        append of [c.loops, {"header": header, "breaks": []}]
+        cg_node of [c, node[1]]                       # condition
+        local jf is cg_emit_jump of [c, OP_JUMP_IF_FALSE]
+        cg_block_discard of [c, node[2]]              # body, values discarded
+        local jcap is cg_emit_jump of [c, OP_LOOP_CAP_CHECK]   # iteration-cap exit
+        cg_emit_jump_back of [c, header]
+        cg_patch_jump of [c, jf]
+        cg_patch_jump of [c, jcap]
+        cg_patch_breaks of c                          # break -> here (before NULL)
+        cg_emit of [c, OP_NULL]                       # loop yields null
+        return null
+    if t == "for":
+        cg_node of [c, node[2]]                       # iterable
+        cg_emit of [c, OP_ITER_SETUP]
+        local header is len of c.code
+        append of [c.loops, {"header": header, "breaks": []}]
+        local jn is cg_emit_jump of [c, OP_ITER_NEXT] # exit when exhausted
+        cg_emit of [c, OP_LOOP_ENV_FRESH]
+        cg_emit of [c, OP_SET_NAME_LOCAL]
+        cg_emit_u16 of [c, cg_const of [c, node[1]]]  # bind loop var
+        cg_emit of [c, OP_POP]
+        cg_block_discard of [c, node[3]]
+        cg_emit of [c, OP_LOOP_ENV_END]
+        cg_emit_jump_back of [c, header]
+        cg_patch_jump of [c, jn]
+        cg_patch_breaks of c                          # break -> here (iter still on stack)
+        cg_emit of [c, OP_POP]                        # discard iterator state
+        cg_emit of [c, OP_NULL]                       # for yields null
+        return null
+    if t == "break":
+        local hole is cg_emit_jump of [c, OP_JUMP]    # forward to loop exit
+        append of [(cg_loop_top of c).breaks, hole]
+        return null
+    if t == "continue":
+        cg_emit_jump_back of [c, (cg_loop_top of c).header]
+        return null
+
+    throw of ("ouroboros: cannot compile node type '" + t + "'")
+
+# A statement list as a block leaving its LAST value (null if empty).
+define cg_block_value(c, stmts) as:
+    if (len of stmts) == 0:
+        cg_emit of [c, OP_NULL]
+        return null
+    for i in range of (len of stmts):
+        local s is stmts[i]
+        if s[0] == "_line":
+            s is s[2]
+        cg_node of [c, s]
+        if i < ((len of stmts) - 1):
+            cg_emit of [c, OP_POP]
+
+# A statement list leaving NOTHING (every value popped) — for loop bodies.
+define cg_block_discard(c, stmts) as:
+    for i in range of (len of stmts):
+        local s is stmts[i]
+        if s[0] == "_line":
+            s is s[2]
+        cg_node of [c, s]
+        cg_emit of [c, OP_POP]
 
 # Compile source to [code, constants].
 define ouro_compile(source) as:
     local tokens is eigen_tokenize of source
-    local ast is eigen_parse of tokens          # ["block", stmts]
+    local ast is eigen_parse of tokens               # ["block", stmts]
     local c is cg_new of null
-    local stmts is ast[1]
-    for i in range of (len of stmts):
-        cg_stmt of [c, stmts[i]]
-    cg_emit of [c, OP_RETURN_NULL]
+    cg_block_value of [c, ast[1]]                     # module leaves last value
+    cg_emit of [c, OP_RETURN]
     return [c.code, c.consts]
 
-# Compile and run on the C VM.
 define ouro_run(source) as:
     local compiled is ouro_compile of source
     return vm_run_bytecode of [compiled[0], compiled[1]]
