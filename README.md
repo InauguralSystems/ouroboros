@@ -64,7 +64,12 @@ fibonacci, and firing observer predicates over full windows).
       `is`, `PREDICATE` (all six kinds), and the `LOOP_STALL_CHECK` vs
       `LOOP_CAP_CHECK` classifier (#247). Interrogatives/temporal out of scope
       (front-end grammar mismatch with C).
-- [ ] the bootstrap fixed point: ouroboros compiles its own source
+- [x] the bootstrap fixed point (codegen): ouroboros compiles its own
+      `codegen.eigs`, and the self-hosted compiler emits byte-identical bytecode
+      to the C-hosted one (`test/bootstrap.eigs`). Added `try`/`catch` (codegen)
+      and `local` (front-end) to get there.
+- [ ] full self-host: also self-compile the front-end (open issue in self-hosted
+      `eigen_parse`); interrogatives/temporal (front-end grammar work)
 
 ## Layout
 

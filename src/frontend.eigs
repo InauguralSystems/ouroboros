@@ -42,7 +42,7 @@ define _is_space(c) as:
     return 0
 
 # Full keyword list matching C lexer
-_keywords is ["is", "of", "define", "as", "if", "else", "elif", "loop", "while", "return", "and", "or", "not", "for", "in", "null", "try", "catch", "break", "continue", "import", "match", "case", "unobserved", "what", "who", "when", "where", "why", "how", "converged", "stable", "improving", "oscillating", "diverging", "equilibrium", "true", "false"]
+_keywords is ["is", "of", "define", "as", "if", "else", "elif", "loop", "while", "return", "and", "or", "not", "for", "in", "null", "try", "catch", "break", "continue", "import", "match", "case", "unobserved", "local", "what", "who", "when", "where", "why", "how", "converged", "stable", "improving", "oscillating", "diverging", "equilibrium", "true", "false"]
 
 # Interrogative keywords
 _interrogatives is ["what", "who", "when", "where", "why", "how"]
@@ -533,6 +533,19 @@ define _p_parse_statement(p) as:
 
     # define
     if tt == "kw":
+        # local NAME is expr — declare a function-local binding. (Vendored
+        # front-end extension for self-hosting: codegen.eigs uses `local`. We
+        # emit a plain assign; ouroboros already allocates a function-local slot
+        # for any name not bound at module scope, which is what `local` needs
+        # here. A name that shadows a module binding is not exercised.)
+        if (_p_peek_val of p) == "local":
+            _p_advance of p
+            local_tok is _p_expect of [p, "ident"]
+            if (_p_peek_type of p) == "kw":
+                if (_p_peek_val of p) == "is":
+                    _p_advance of p
+            local_expr is _p_parse_expr of p
+            return ["_line", _stmt_line, ["assign", local_tok[1], local_expr]]
         if (_p_peek_val of p) == "define":
             _p_advance of p
             name_tok is _p_expect of [p, "ident"]
