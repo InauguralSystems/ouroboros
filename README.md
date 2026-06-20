@@ -40,16 +40,20 @@ byte-identical. Behavioral parity on the real VM.
 
 A working compiler for: literals, identifiers, `name is expr` assignment,
 arithmetic (`+ - * / %`), comparisons (`== != < > <= >=`), unary (`-` / `not`),
-calls (`f of arg`), list literals, and **control flow** — `if`/`elif`/`else`,
-`loop while`, `for`-in, `break`/`continue`, and short-circuit `and`/`or`. 12/12
-programs at byte-identical parity with the C evaluator (including nested loops).
+calls, list literals, **control flow** (`if`/`elif`/`else`, `loop while`,
+`for`-in, `break`/`continue`, short-circuit `and`/`or`), and **functions** —
+`define`, parameters, `return`, slot-allocated locals, recursion, and the
+`f of [a,b]` arg-spread calling convention. 17/17 programs at byte-identical
+parity with the C evaluator (incl. nested loops, factorial, fibonacci).
 
 ### Roadmap
 
 - [x] expressions, assignment, calls, lists (slice 1)
 - [x] control flow: `if`/`elif`/`else`, `loop while`, `for`, `break`/`continue`,
       short-circuit `and`/`or` (slice 2 — forward/backward jumps, back-patching)
-- [ ] functions: `define`, locals (`GET_LOCAL`/`SET_LOCAL` slot allocation), `OP_CLOSURE`
+- [x] functions: `define`, params, `return`, slot-allocated locals, `OP_CLOSURE`,
+      `f of [..]` arg-spread, recursion, module-var read/mutate (slice 3 — nested
+      chunk descriptors; scope-aware `SET_LOCAL` vs outward `SET_NAME`)
 - [ ] dicts, indexing, dot access, comprehensions
 - [ ] the signature opcodes: `OBSERVE_ASSIGN`, `INTERROGATE`, `PREDICATE`, and
       the `LOOP_STALL_CHECK` vs `LOOP_CAP_CHECK` classifier (#247)

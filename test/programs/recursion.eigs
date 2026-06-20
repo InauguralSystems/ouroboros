@@ -1,0 +1,10 @@
+define fact(n) as:
+    if n <= 1:
+        return 1
+    return n * (fact of (n - 1))
+define fib(n) as:
+    if n < 2:
+        return n
+    return (fib of (n - 1)) + (fib of (n - 2))
+print of (fact of 6)
+print of (fib of 10)

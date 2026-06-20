@@ -1,19 +1,21 @@
 # ouroboros — a bytecode back-end for EigenScript, written in EigenScript.
 #
-# The front-end (src/frontend.eigs, vendored from lib/eigen.eigs) turns source
-# into an AST; this file walks it and emits the C VM's bytecode as data (a list
-# of byte ints + a constant pool), run via vm_run_bytecode. Because the chunk
-# runs on the real VM, codegen only needs to be semantically correct, not
-# byte-identical to compile_ast (FINDINGS F-OURO-2); the oracle is stdout parity.
+# Front-end (src/frontend.eigs, vendored from lib/eigen.eigs) → AST; this file
+# walks it and emits the C VM's bytecode as data, run via vm_run_bytecode. The
+# chunk runs on the real VM, so codegen needs only semantic correctness, not
+# byte-identity with compile_ast (F-OURO-2); the oracle is stdout parity.
 #
-# Value model: every node leaves exactly ONE value on the stack (cg_node). A
-# block leaves its last statement's value (cg_block_value) or nothing
-# (cg_block_discard, for loop bodies). `if` is an expression yielding the taken
-# branch's value; `loop`/`for` yield null.
+# Compilation context `c` (one per module / function):
+#   code, consts, functions  — this chunk's bytecode, pool, nested fn descriptors
+#   loops                    — stack of {header, breaks} for break/continue
+#   is_function              — 0 at module scope, 1 inside a function
+#   locals, local_names, next_slot — local-slot allocation (params + body locals)
 #
-# Slice 2 adds control flow: if/elif/else, loop while, for-in, break/continue,
-# and short-circuit and/or — all via forward jumps (back-patched) and backward
-# jumps. Functions/locals, dicts, and the observer opcodes are still to come.
+# Slice 3 adds functions and locals: define, parameters, `return`, local
+# variables (slot-allocated), calls with EigenScript's `f of [a,b]` arg-spread
+# convention, and recursion. The `local` keyword and the observer opcodes are
+# still out of scope (the vendored front-end doesn't parse `local`; observers
+# are a later slice).
 
 # --- opcodes (src/vm.h enum order) ---------------------------------------
 OP_CONST is 0
@@ -31,6 +33,8 @@ OP_LT is 19
 OP_GT is 20
 OP_LE is 21
 OP_GE is 22
+OP_GET_LOCAL is 23
+OP_SET_LOCAL is 24
 OP_GET_NAME is 25
 OP_SET_NAME is 26
 OP_SET_NAME_LOCAL is 27
@@ -40,26 +44,38 @@ OP_JUMP_IF_FALSE is 31
 OP_JUMP_IF_FALSE_PEEK is 33
 OP_JUMP_IF_TRUE_PEEK is 34
 OP_POP is 35
+OP_CLOSURE is 38
 OP_CALL is 39
 OP_RETURN is 40
+OP_RETURN_NULL is 41
 OP_LIST is 42
 OP_ITER_SETUP is 48
 OP_ITER_NEXT is 49
 OP_LOOP_ENV_FRESH is 50
 OP_LOOP_ENV_END is 51
-OP_BREAK is 52
-OP_CONTINUE is 53
 OP_LOOP_CAP_CHECK is 63
 
-# --- emitter state -------------------------------------------------------
-# `loops` is a stack of {header, breaks}: header = the offset continue jumps
-# back to; breaks = forward-jump holes to patch to the loop exit.
-define cg_new as:
-    return {"code": [], "consts": [], "loops": []}
+# Names bound at module scope (assigns + defines). Inside a function, an `is`
+# assignment to such a name modifies the module binding (SET_NAME) rather than
+# shadowing it with a fresh local — matching compile_ast's resolution.
+MODULE_NAMES is {}
+
+# --- context -------------------------------------------------------------
+define cg_new(is_function) as:
+    return {"code": [], "consts": [], "functions": [], "loops": [], "is_function": is_function, "locals": {}, "local_names": [], "next_slot": 0}
 
 define cg_loop_top(c) as:
     return c.loops[(len of c.loops) - 1]
 
+# Allocate a new local slot for `name`; return its index.
+define cg_add_local(c, name) as:
+    local slot is c.next_slot
+    c.locals[name] is slot
+    append of [c.local_names, name]
+    c.next_slot is c.next_slot + 1
+    return slot
+
+# --- emit primitives -----------------------------------------------------
 define cg_emit(c, byte) as:
     append of [c.code, byte]
 
@@ -67,7 +83,6 @@ define cg_emit_u16(c, val) as:
     append of [c.code, val % 256]
     append of [c.code, floor of (val / 256)]
 
-# Intern a constant; dedup numbers/strings like chunk_add_constant.
 define cg_const(c, val) as:
     for i in range of (len of c.consts):
         if c.consts[i] == val:
@@ -75,8 +90,7 @@ define cg_const(c, val) as:
     append of [c.consts, val]
     return (len of c.consts) - 1
 
-# --- jump helpers (offsets are relative to the byte after the operand) -----
-# Emit a forward jump with a placeholder operand; return the operand's index.
+# --- jumps (offsets relative to the byte after the operand) ---------------
 define cg_emit_jump(c, op) as:
     cg_emit of [c, op]
     local hole is len of c.code
@@ -84,21 +98,17 @@ define cg_emit_jump(c, op) as:
     cg_emit of [c, 0]
     return hole
 
-# Back-patch a forward jump's operand to land at the current end of code.
 define cg_patch_jump(c, hole) as:
     local off is (len of c.code) - (hole + 2)
     c.code[hole] is off % 256
     c.code[hole + 1] is floor of (off / 256)
 
-# Patch every pending `break` jump in the innermost loop to land at the current
-# end of code, then pop that loop's context off the stack.
 define cg_patch_breaks(c) as:
     local top is cg_loop_top of c
     for i in range of (len of top.breaks):
         cg_patch_jump of [c, top.breaks[i]]
     list_truncate of [c.loops, (len of c.loops) - 1]
 
-# Emit a backward jump to an earlier `target` offset.
 define cg_emit_jump_back(c, target) as:
     cg_emit of [c, OP_JUMP_BACK]
     local off is ((len of c.code) + 2) - target
@@ -130,6 +140,31 @@ define cg_binop_code(op) as:
         return OP_GE
     throw of ("ouroboros: unsupported binary op '" + op + "'")
 
+# --- variable resolution -------------------------------------------------
+define cg_load_name(c, name) as:
+    if (c.is_function == 1) and (has_key of [c.locals, name]):
+        cg_emit of [c, OP_GET_LOCAL]
+        cg_emit_u16 of [c, c.locals[name]]
+    else:
+        cg_emit of [c, OP_GET_NAME]
+        cg_emit_u16 of [c, cg_const of [c, name]]
+
+# Store TOS into `name` (value stays on the stack — all SET_* keep TOS).
+define cg_store_name(c, name) as:
+    if c.is_function == 1:
+        if has_key of [c.locals, name]:
+            cg_emit of [c, OP_SET_LOCAL]
+            cg_emit_u16 of [c, c.locals[name]]
+        elif has_key of [MODULE_NAMES, name]:
+            cg_emit of [c, OP_SET_NAME]
+            cg_emit_u16 of [c, cg_const of [c, name]]
+        else:
+            cg_emit of [c, OP_SET_LOCAL]
+            cg_emit_u16 of [c, cg_add_local of [c, name]]
+    else:
+        cg_emit of [c, OP_SET_NAME]
+        cg_emit_u16 of [c, cg_const of [c, name]]
+
 # --- node codegen: leaves exactly one value on the stack ------------------
 define cg_node(c, node) as:
     local t is node[0]
@@ -148,17 +183,14 @@ define cg_node(c, node) as:
         cg_emit of [c, OP_NULL]
         return null
     if t == "ident":
-        cg_emit of [c, OP_GET_NAME]
-        cg_emit_u16 of [c, cg_const of [c, node[1]]]
+        cg_load_name of [c, node[1]]
         return null
     if t == "assign":
         cg_node of [c, node[2]]
-        cg_emit of [c, OP_SET_NAME]
-        cg_emit_u16 of [c, cg_const of [c, node[1]]]
+        cg_store_name of [c, node[1]]
         return null
     if t == "binop":
         local op is node[1]
-        # short-circuit and/or: leave left (if it decides) else right
         if op == "and":
             cg_node of [c, node[2]]
             local ja is cg_emit_jump of [c, OP_JUMP_IF_FALSE_PEEK]
@@ -185,10 +217,21 @@ define cg_node(c, node) as:
             cg_emit of [c, OP_NOT]
         return null
     if t == "call":
-        cg_node of [c, node[1]]
-        cg_node of [c, node[2]]
-        cg_emit of [c, OP_CALL]
-        cg_emit_u16 of [c, 1]
+        cg_node of [c, node[1]]                       # callee
+        local arg is node[2]
+        if arg[0] == "_line":
+            arg is arg[2]
+        if arg[0] == "list":
+            # `f of [a, b, ...]` spreads into positional args
+            local elems is arg[1]
+            for i in range of (len of elems):
+                cg_node of [c, elems[i]]
+            cg_emit of [c, OP_CALL]
+            cg_emit_u16 of [c, len of elems]
+        else:
+            cg_node of [c, arg]
+            cg_emit of [c, OP_CALL]
+            cg_emit_u16 of [c, 1]
         return null
     if t == "list":
         local elems is node[1]
@@ -197,50 +240,57 @@ define cg_node(c, node) as:
         cg_emit of [c, OP_LIST]
         cg_emit_u16 of [c, len of elems]
         return null
+    if t == "return":
+        cg_node of [c, node[1]]
+        cg_emit of [c, OP_RETURN]
+        return null
+    if t == "func":
+        cg_func of [c, node]
+        return null
 
     # ---- control flow ----
     if t == "if":
-        cg_node of [c, node[1]]                      # condition (popped by JIF)
+        cg_node of [c, node[1]]
         local jf is cg_emit_jump of [c, OP_JUMP_IF_FALSE]
-        cg_block_value of [c, node[2]]               # then -> 1 value
+        cg_block_value of [c, node[2]]
         local je is cg_emit_jump of [c, OP_JUMP]
         cg_patch_jump of [c, jf]
-        cg_block_value of [c, node[3]]               # else -> 1 value (null if empty)
+        cg_block_value of [c, node[3]]
         cg_patch_jump of [c, je]
         return null
     if t == "loop":
         local header is len of c.code
         append of [c.loops, {"header": header, "breaks": []}]
-        cg_node of [c, node[1]]                       # condition
+        cg_node of [c, node[1]]
         local jf is cg_emit_jump of [c, OP_JUMP_IF_FALSE]
-        cg_block_discard of [c, node[2]]              # body, values discarded
-        local jcap is cg_emit_jump of [c, OP_LOOP_CAP_CHECK]   # iteration-cap exit
+        cg_block_discard of [c, node[2]]
+        local jcap is cg_emit_jump of [c, OP_LOOP_CAP_CHECK]
         cg_emit_jump_back of [c, header]
         cg_patch_jump of [c, jf]
         cg_patch_jump of [c, jcap]
-        cg_patch_breaks of c                          # break -> here (before NULL)
-        cg_emit of [c, OP_NULL]                       # loop yields null
+        cg_patch_breaks of c
+        cg_emit of [c, OP_NULL]
         return null
     if t == "for":
-        cg_node of [c, node[2]]                       # iterable
+        cg_node of [c, node[2]]
         cg_emit of [c, OP_ITER_SETUP]
         local header is len of c.code
         append of [c.loops, {"header": header, "breaks": []}]
-        local jn is cg_emit_jump of [c, OP_ITER_NEXT] # exit when exhausted
+        local jn is cg_emit_jump of [c, OP_ITER_NEXT]
         cg_emit of [c, OP_LOOP_ENV_FRESH]
         cg_emit of [c, OP_SET_NAME_LOCAL]
-        cg_emit_u16 of [c, cg_const of [c, node[1]]]  # bind loop var
+        cg_emit_u16 of [c, cg_const of [c, node[1]]]
         cg_emit of [c, OP_POP]
         cg_block_discard of [c, node[3]]
         cg_emit of [c, OP_LOOP_ENV_END]
         cg_emit_jump_back of [c, header]
         cg_patch_jump of [c, jn]
-        cg_patch_breaks of c                          # break -> here (iter still on stack)
-        cg_emit of [c, OP_POP]                        # discard iterator state
-        cg_emit of [c, OP_NULL]                       # for yields null
+        cg_patch_breaks of c
+        cg_emit of [c, OP_POP]
+        cg_emit of [c, OP_NULL]
         return null
     if t == "break":
-        local hole is cg_emit_jump of [c, OP_JUMP]    # forward to loop exit
+        local hole is cg_emit_jump of [c, OP_JUMP]
         append of [(cg_loop_top of c).breaks, hole]
         return null
     if t == "continue":
@@ -249,7 +299,27 @@ define cg_node(c, node) as:
 
     throw of ("ouroboros: cannot compile node type '" + t + "'")
 
-# A statement list as a block leaving its LAST value (null if empty).
+# Compile a function definition: ["func", name, params, body]. Builds a nested
+# chunk descriptor, registers it in the parent's functions[], emits OP_CLOSURE,
+# and binds the function name.
+define cg_func(c, node) as:
+    local fname is node[1]
+    local params is node[2]
+    local body is node[3]
+    local fc is cg_new of 1
+    for i in range of (len of params):
+        cg_add_local of [fc, params[i]]               # params -> slots 0..P-1
+    cg_block_discard of [fc, body]                    # body statements discarded
+    cg_emit of [fc, OP_RETURN_NULL]                   # fall-through return
+    local desc is [fc.code, fc.consts, fc.functions, len of params, fname, fc.local_names]
+    local fn_idx is len of c.functions
+    append of [c.functions, desc]
+    cg_emit of [c, OP_CLOSURE]
+    cg_emit_u16 of [c, fn_idx]
+    cg_emit of [c, OP_SET_NAME_LOCAL]                 # bind the name in this scope
+    cg_emit_u16 of [c, cg_const of [c, fname]]
+
+# A statement list leaving its LAST value (null if empty).
 define cg_block_value(c, stmts) as:
     if (len of stmts) == 0:
         cg_emit of [c, OP_NULL]
@@ -262,7 +332,7 @@ define cg_block_value(c, stmts) as:
         if i < ((len of stmts) - 1):
             cg_emit of [c, OP_POP]
 
-# A statement list leaving NOTHING (every value popped) — for loop bodies.
+# A statement list leaving NOTHING (every value popped).
 define cg_block_discard(c, stmts) as:
     for i in range of (len of stmts):
         local s is stmts[i]
@@ -271,15 +341,27 @@ define cg_block_discard(c, stmts) as:
         cg_node of [c, s]
         cg_emit of [c, OP_POP]
 
-# Compile source to [code, constants].
+# Collect names bound at module scope (top-level assigns + defines).
+define cg_scan_module_names(stmts) as:
+    for i in range of (len of stmts):
+        local s is stmts[i]
+        if s[0] == "_line":
+            s is s[2]
+        if s[0] == "assign":
+            MODULE_NAMES[s[1]] is 1
+        if s[0] == "func":
+            MODULE_NAMES[s[1]] is 1
+
+# Compile source to a chunk descriptor: [code, constants, functions, 0, name, []].
 define ouro_compile(source) as:
     local tokens is eigen_tokenize of source
-    local ast is eigen_parse of tokens               # ["block", stmts]
-    local c is cg_new of null
-    cg_block_value of [c, ast[1]]                     # module leaves last value
+    local ast is eigen_parse of tokens
+    MODULE_NAMES is {}
+    cg_scan_module_names of ast[1]
+    local c is cg_new of 0
+    cg_block_value of [c, ast[1]]
     cg_emit of [c, OP_RETURN]
-    return [c.code, c.consts]
+    return [c.code, c.consts, c.functions, 0, "<module>", []]
 
 define ouro_run(source) as:
-    local compiled is ouro_compile of source
-    return vm_run_bytecode of [compiled[0], compiled[1]]
+    return vm_run_bytecode of (ouro_compile of source)

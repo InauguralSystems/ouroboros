@@ -84,5 +84,49 @@ if/elif/else, `loop while`, `for`-in, `break`/`continue`, and short-circuit
 `LOOP_CAP_CHECK` safety cap. 12/12 programs at byte-identical stdout parity,
 including nested loops. No new upstream primitive needed.
 
-*(Further findings — local-slot allocation for functions, closure cycles, and
-observer-opcode parity — to be added as the roadmap lands.)*
+## F-OURO-6 — the bridge needs nested chunks + slot/name metadata — GAP → FIXED upstream (PR #251 follow-up)
+
+Functions compile to *nested* chunks: `OP_CLOSURE [fn_idx]` references the parent
+chunk's `functions[]` array, params/locals live in numbered slots
+(`GET_LOCAL`/`SET_LOCAL`), the call frame is sized to `local_count`, and
+`OP_CLOSURE` reads param names from the chunk's `local_names`. The flat
+`[code, constants]` bridge couldn't express any of that. Extended
+`vm_run_bytecode` to a recursive chunk descriptor:
+
+    [ code, constants, functions?, param_count?, name?, local_names? ]
+
+`functions` is a list of descriptors (recursive), `local_names` (slot order)
+sizes the frame and supplies `OP_CLOSURE`'s param names. The 2-element form still
+works. Same suite (2072/2072), ASan-clean.
+
+## F-OURO-7 — EigenScript's calling convention spreads list-literal args — BY-DESIGN
+
+`f of [a, b]` is a *multi-argument* call: compile_ast pushes `a`, `b` and emits
+`CALL 2`, binding them to the callee's two param slots — `f of x` is `CALL 1`.
+ouroboros matches: a call whose argument is a list literal spreads its elements
+into positional args; any other argument is a single `CALL 1`.
+
+## F-OURO-8 — function scope: `is` is local-or-outward by name resolution — BY-DESIGN
+
+Inside a function, `name is expr` resolves like compile_ast's
+`emit_assign_for_tos`: an existing local slot → `SET_LOCAL`; a name bound at
+module scope → `SET_NAME` (mutate the outer binding); otherwise → a fresh local
+slot. Reads are `GET_LOCAL` for known locals, else `GET_NAME`. ouroboros
+pre-scans the module for top-level assigns/defines to seed the module-name set,
+which is what makes `counter is counter + 1` inside a function mutate the module
+`counter` while a function's own temporaries stay local. (The `local` keyword is
+not yet covered — the vendored front-end doesn't tokenize it; for-loop variables
+bind via `SET_NAME_LOCAL`/`GET_NAME`, correct unless a loop var name collides
+with a local slot in the same function.)
+
+---
+
+## Slice 3 (functions and locals) — DONE
+
+define, parameters, `return`, slot-allocated local variables, the `f of [..]`
+arg-spread calling convention, module-variable read/mutate from inside functions,
+and recursion. 17/17 programs at byte-identical stdout parity (incl. fact, fib,
+loops-in-functions). Extended the bridge to nested chunks (F-OURO-6).
+
+*(Further findings — closures over enclosing-function locals, the `local`
+keyword, and observer-opcode parity — to be added as the roadmap lands.)*
