@@ -60,6 +60,10 @@ OP_ITER_SETUP is 48
 OP_ITER_NEXT is 49
 OP_LOOP_ENV_FRESH is 50
 OP_LOOP_ENV_END is 51
+OP_OBSERVE_ASSIGN is 56
+OP_OBSERVE_ASSIGN_LOCAL is 57
+OP_PREDICATE is 59
+OP_LOOP_STALL_CHECK is 62
 OP_LOOP_CAP_CHECK is 63
 
 # Names bound at module scope (assigns + defines). Inside a function, an `is`
@@ -147,6 +151,23 @@ define cg_binop_code(op) as:
         return OP_GE
     throw of ("ouroboros: unsupported binary op '" + op + "'")
 
+# Is a loop condition observer-based? (mirrors compile_ast's cond_is_observer_based:
+# recurse only through unary/binop structure; a predicate makes it observer-based,
+# everything else — names, calls, literals — is opaque and biases toward "plain".)
+define cg_cond_observer(node) as:
+    local t is node[0]
+    if t == "_line":
+        return cg_cond_observer of node[2]
+    if t == "predicate":
+        return 1
+    if t == "unary":
+        return cg_cond_observer of node[2]
+    if t == "binop":
+        if (cg_cond_observer of node[2]) == 1:
+            return 1
+        return cg_cond_observer of node[3]
+    return 0
+
 # --- variable resolution -------------------------------------------------
 define cg_load_name(c, name) as:
     if (c.is_function == 1) and (has_key of [c.locals, name]):
@@ -156,21 +177,37 @@ define cg_load_name(c, name) as:
         cg_emit of [c, OP_GET_NAME]
         cg_emit_u16 of [c, cg_const of [c, name]]
 
-# Store TOS into `name` (value stays on the stack — all SET_* keep TOS).
+# Store TOS into `name` (value stays on the stack — all SET_* keep TOS). Each
+# `is` assignment is preceded by the matching OBSERVE op, which updates the
+# observer state (entropy / dH window) on the assigned value and sets it as the
+# last observer — the foundation the predicates read. (Slot-based locals use the
+# _LOCAL variants; name-based stores use OBSERVE_ASSIGN with the name index.)
 define cg_store_name(c, name) as:
     if c.is_function == 1:
         if has_key of [c.locals, name]:
+            local slot is c.locals[name]
+            cg_emit of [c, OP_OBSERVE_ASSIGN_LOCAL]
+            cg_emit_u16 of [c, slot]
             cg_emit of [c, OP_SET_LOCAL]
-            cg_emit_u16 of [c, c.locals[name]]
+            cg_emit_u16 of [c, slot]
         elif has_key of [MODULE_NAMES, name]:
+            local idx is cg_const of [c, name]
+            cg_emit of [c, OP_OBSERVE_ASSIGN]
+            cg_emit_u16 of [c, idx]
             cg_emit of [c, OP_SET_NAME]
-            cg_emit_u16 of [c, cg_const of [c, name]]
+            cg_emit_u16 of [c, idx]
         else:
+            local nslot is cg_add_local of [c, name]
+            cg_emit of [c, OP_OBSERVE_ASSIGN_LOCAL]
+            cg_emit_u16 of [c, nslot]
             cg_emit of [c, OP_SET_LOCAL]
-            cg_emit_u16 of [c, cg_add_local of [c, name]]
+            cg_emit_u16 of [c, nslot]
     else:
+        local midx is cg_const of [c, name]
+        cg_emit of [c, OP_OBSERVE_ASSIGN]
+        cg_emit_u16 of [c, midx]
         cg_emit of [c, OP_SET_NAME]
-        cg_emit_u16 of [c, cg_const of [c, name]]
+        cg_emit_u16 of [c, midx]
 
 # --- node codegen: leaves exactly one value on the stack ------------------
 define cg_node(c, node) as:
@@ -302,6 +339,12 @@ define cg_node(c, node) as:
         cg_patch_jump of [c, jn]                       # exit
         cg_emit of [c, OP_POP]                         # drop iterator; accumulator remains
         return null
+    if t == "predicate":
+        # bare observer predicate (converged/stable/improving/...) — reads the
+        # last-observed variable's entropy/dH window. kind matches compile_ast.
+        cg_emit of [c, OP_PREDICATE]
+        cg_emit_u16 of [c, node[1]]
+        return null
     if t == "return":
         cg_node of [c, node[1]]
         cg_emit of [c, OP_RETURN]
@@ -326,7 +369,14 @@ define cg_node(c, node) as:
         cg_node of [c, node[1]]
         local jf is cg_emit_jump of [c, OP_JUMP_IF_FALSE]
         cg_block_discard of [c, node[2]]
-        local jcap is cg_emit_jump of [c, OP_LOOP_CAP_CHECK]
+        # Loop-stall classifier (#247, correctness-critical): an observer-based
+        # condition (references a predicate) gets OP_LOOP_STALL_CHECK (opt-in
+        # auto-halt on convergence); a plain condition gets OP_LOOP_CAP_CHECK
+        # (iteration cap only). Encoded in the opcode at compile time.
+        local cap_op is OP_LOOP_CAP_CHECK
+        if (cg_cond_observer of node[1]) == 1:
+            cap_op is OP_LOOP_STALL_CHECK
+        local jcap is cg_emit_jump of [c, cap_op]
         cg_emit_jump_back of [c, header]
         cg_patch_jump of [c, jf]
         cg_patch_jump of [c, jcap]

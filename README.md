@@ -43,8 +43,11 @@ arithmetic (`+ - * / %`), comparisons (`== != < > <= >=`), unary (`-` / `not`),
 calls, list literals, **control flow** (`if`/`elif`/`else`, `loop while`,
 `for`-in, `break`/`continue`, short-circuit `and`/`or`), and **functions** —
 `define`, parameters, `return`, slot-allocated locals, recursion, and the
-`f of [a,b]` arg-spread calling convention. 17/17 programs at byte-identical
-parity with the C evaluator (incl. nested loops, factorial, fibonacci).
+`f of [a,b]` arg-spread calling convention; **dicts, indexing, dot access,
+comprehensions**; and the **observer opcodes** — `OBSERVE_ASSIGN` on every `is`,
+the six `PREDICATE`s, and the `LOOP_STALL_CHECK`/`LOOP_CAP_CHECK` classifier.
+25/25 programs at byte-identical parity with the C evaluator (incl. factorial,
+fibonacci, and firing observer predicates over full windows).
 
 ### Roadmap
 
@@ -57,8 +60,10 @@ parity with the C evaluator (incl. nested loops, factorial, fibonacci).
 - [x] dicts, indexing (get/set), dot access (get/set), list comprehensions with
       filters (slice 4 — the oracle caught a calling-convention bug in ouroboros's
       own codegen, F-OURO-9: single-element list args must not spread)
-- [ ] the signature opcodes: `OBSERVE_ASSIGN`, `INTERROGATE`, `PREDICATE`, and
-      the `LOOP_STALL_CHECK` vs `LOOP_CAP_CHECK` classifier (#247)
+- [x] observer opcodes (slice 5): `OBSERVE_ASSIGN`/`OBSERVE_ASSIGN_LOCAL` on every
+      `is`, `PREDICATE` (all six kinds), and the `LOOP_STALL_CHECK` vs
+      `LOOP_CAP_CHECK` classifier (#247). Interrogatives/temporal out of scope
+      (front-end grammar mismatch with C).
 - [ ] the bootstrap fixed point: ouroboros compiles its own source
 
 ## Layout
