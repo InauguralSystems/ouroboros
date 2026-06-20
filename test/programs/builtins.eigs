@@ -1,0 +1,4 @@
+print of (max of [3, 9, 2])
+print of (floor of 7.8)
+print of (abs of (0 - 12))
+print of (str of (10 + 5))

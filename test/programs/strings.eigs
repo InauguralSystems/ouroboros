@@ -1,0 +1,5 @@
+s is "foo" + "bar"
+print of s
+print of (len of s)
+print of (str_upper of s)
+print of ("n=" + (str of 42))

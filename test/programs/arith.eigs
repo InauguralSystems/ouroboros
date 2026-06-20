@@ -1,0 +1,5 @@
+print of (2 + 3 * 4)
+print of ((2 + 3) * 4)
+print of (17 % 5)
+print of (100 / 8)
+print of (0 - 7 + 2)

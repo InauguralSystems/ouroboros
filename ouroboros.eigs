@@ -1,0 +1,17 @@
+# ouroboros CLI: compile an EigenScript source file with the self-hosted
+# compiler and run it on the C VM.
+#
+#   eigenscript ouroboros.eigs <source.eigs>
+#
+# Output is the program's own output — identical to running it through the C
+# eigenscript directly (that is the behavioral parity oracle in test/run.sh).
+
+load_file of "src/frontend.eigs"
+load_file of "src/codegen.eigs"
+
+argv is args of null
+if (len of argv) < 1:
+    print of "usage: eigenscript ouroboros.eigs <source.eigs>"
+else:
+    source is read_text of argv[0]
+    ouro_run of source

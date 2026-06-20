@@ -1,0 +1,6 @@
+print of (3 < 5)
+print of (3 > 5)
+print of (4 == 4)
+print of (4 != 4)
+print of (5 >= 5)
+print of (not (1 == 1))
