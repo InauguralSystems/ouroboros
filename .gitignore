@@ -1,0 +1,3 @@
+eigs
+*.out
+/tmp_out/

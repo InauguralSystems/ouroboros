@@ -1,0 +1,8 @@
+a is 5
+b is a + 10
+c is b * 2
+print of a
+print of b
+print of c
+a is a + 100
+print of a

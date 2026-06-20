@@ -1,0 +1,162 @@
+# ouroboros — a bytecode back-end for EigenScript, written in EigenScript.
+#
+# The front-end (tokenizer + parser, vendored from the stdlib meta-circular
+# interpreter lib/eigen.eigs) turns source into an AST. This file is the NEW
+# half: it walks that AST and emits the C VM's bytecode — the same opcodes and
+# little-endian operand layout compile_ast produces — as plain EigenScript data
+# (a list of byte ints + a constant pool). vm_run_bytecode then hands it to the
+# real VM. The loop closes: EigenScript compiling EigenScript, running on the
+# same bytecode engine (and JIT) as the C compiler's output.
+#
+# Oracle: run a program through this back-end and through the C eigenscript
+# directly; the stdout must match (behavioral parity on the real VM).
+#
+# Slice 1 grammar: number/string/null literals, identifiers, `name is expr`
+# assignment, arithmetic (+ - * / %), comparisons (== != < > <= >=), unary
+# (- / not), calls (`f of arg`), and list literals. Control flow, functions,
+# and the observer/temporal opcodes come in later slices.
+
+# --- opcodes (src/vm.h enum order) ---------------------------------------
+OP_CONST is 0
+OP_NULL is 1
+OP_ADD is 4
+OP_SUB is 5
+OP_MUL is 6
+OP_DIV is 7
+OP_MOD is 8
+OP_NEG is 14
+OP_NOT is 15
+OP_EQ is 17
+OP_NE is 18
+OP_LT is 19
+OP_GT is 20
+OP_LE is 21
+OP_GE is 22
+OP_GET_NAME is 25
+OP_SET_NAME is 26
+OP_POP is 35
+OP_CALL is 39
+OP_RETURN_NULL is 41
+OP_LIST is 42
+
+# --- emitter state -------------------------------------------------------
+define cg_new as:
+    return {"code": [], "consts": []}
+
+define cg_emit(c, byte) as:
+    append of [c.code, byte]
+
+# 16-bit operand, little-endian (matches the VM's READ_SHORT)
+define cg_emit_u16(c, val) as:
+    append of [c.code, val % 256]
+    append of [c.code, floor of (val / 256)]
+
+# Intern a constant; dedup numbers/strings exactly as chunk_add_constant does,
+# so indices line up the way the C compiler's pool would.
+define cg_const(c, val) as:
+    for i in range of (len of c.consts):
+        if c.consts[i] == val:
+            return i
+    append of [c.consts, val]
+    return (len of c.consts) - 1
+
+define cg_binop_code(op) as:
+    if op == "+":
+        return OP_ADD
+    if op == "-":
+        return OP_SUB
+    if op == "*":
+        return OP_MUL
+    if op == "/":
+        return OP_DIV
+    if op == "%":
+        return OP_MOD
+    if op == "==":
+        return OP_EQ
+    if op == "!=":
+        return OP_NE
+    if op == "<":
+        return OP_LT
+    if op == ">":
+        return OP_GT
+    if op == "<=":
+        return OP_LE
+    if op == ">=":
+        return OP_GE
+    throw of ("ouroboros: unsupported binary op '" + op + "'")
+
+# --- expression codegen (each leaves exactly one value on the stack) ------
+define cg_expr(c, node) as:
+    local t is node[0]
+    if t == "_line":
+        cg_expr of [c, node[2]]
+        return null
+    if t == "num":
+        cg_emit of [c, OP_CONST]
+        cg_emit_u16 of [c, cg_const of [c, node[1]]]
+        return null
+    if t == "str":
+        cg_emit of [c, OP_CONST]
+        cg_emit_u16 of [c, cg_const of [c, node[1]]]
+        return null
+    if t == "null":
+        cg_emit of [c, OP_NULL]
+        return null
+    if t == "ident":
+        cg_emit of [c, OP_GET_NAME]
+        cg_emit_u16 of [c, cg_const of [c, node[1]]]
+        return null
+    if t == "assign":
+        cg_expr of [c, node[2]]                 # value (left on stack by SET_NAME)
+        cg_emit of [c, OP_SET_NAME]
+        cg_emit_u16 of [c, cg_const of [c, node[1]]]
+        return null
+    if t == "binop":
+        cg_expr of [c, node[2]]
+        cg_expr of [c, node[3]]
+        cg_emit of [c, cg_binop_code of node[1]]
+        return null
+    if t == "unary":
+        cg_expr of [c, node[2]]
+        if node[1] == "-":
+            cg_emit of [c, OP_NEG]
+        else:
+            cg_emit of [c, OP_NOT]
+        return null
+    if t == "call":
+        cg_expr of [c, node[1]]                 # callee
+        cg_expr of [c, node[2]]                 # argument (single, per `of`)
+        cg_emit of [c, OP_CALL]
+        cg_emit_u16 of [c, 1]
+        return null
+    if t == "list":
+        local elems is node[1]
+        for i in range of (len of elems):
+            cg_expr of [c, elems[i]]
+        cg_emit of [c, OP_LIST]
+        cg_emit_u16 of [c, len of elems]
+        return null
+    throw of ("ouroboros: cannot compile node type '" + t + "' (slice 1)")
+
+# --- statement / module --------------------------------------------------
+define cg_stmt(c, node) as:
+    if node[0] == "_line":
+        node is node[2]
+    cg_expr of [c, node]
+    cg_emit of [c, OP_POP]                       # discard the statement value
+
+# Compile source to [code, constants].
+define ouro_compile(source) as:
+    local tokens is eigen_tokenize of source
+    local ast is eigen_parse of tokens          # ["block", stmts]
+    local c is cg_new of null
+    local stmts is ast[1]
+    for i in range of (len of stmts):
+        cg_stmt of [c, stmts[i]]
+    cg_emit of [c, OP_RETURN_NULL]
+    return [c.code, c.consts]
+
+# Compile and run on the C VM.
+define ouro_run(source) as:
+    local compiled is ouro_compile of source
+    return vm_run_bytecode of [compiled[0], compiled[1]]

@@ -1,0 +1,5 @@
+xs is [1, 2, 3]
+print of xs
+print of (len of xs)
+print of [10, 20, 30, len of xs]
+print of (sum of [1, 2, 3, 4])
