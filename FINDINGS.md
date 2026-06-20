@@ -232,8 +232,24 @@ for a broad test program (fib, comprehensions-with-filter, dict build in a loop,
 try/catch, `local`). Locked by `test/bootstrap.eigs` as a fixed-point oracle
 (`ouro_compile(P)` before vs after self-compilation must be `==`).
 
-The front-end half is still vendored (borrowed from `lib/eigen.eigs`), not
-ouroboros's own work; self-hosting it fully reveals a further issue in
-self-compiled `eigen_parse` (tokenizing self-hosts fine) — a separate chase, and
-not required for the codegen fixed point. The interrogatives/temporal forms
-remain out of scope (front-end grammar mismatch with C, F-OURO observer slice).
+## F-OURO-13 — full self-host achieved; the "front-end self-host bug" was a test artifact — MILESTONE / METHOD
+
+The first attempt at self-hosting the *front-end* too appeared to fail
+(`undefined variable 'a'`). Chasing it the same way as F-OURO-9 — isolate, don't
+assume — every reproduction passed: the self-hosted front-end tokenized,
+*parsed* (identical AST), and *compiled* both source files byte-identically. The
+"bug" was an **unescaped quote in the throwaway test harness**: the test program
+string contained `["a", "b"]` instead of `[\"a\", \"b\"]`, so the EigenScript
+string literal terminated early and `a` became a stray identifier at the test
+file's module scope. The compiler was never wrong. (Second time this slice a
+divergence pointed away from the real cause — F-OURO-9 blamed C, this blamed the
+self-hosted parser; both were elsewhere. The discipline that pays off: reproduce
+minimally before believing the diagnosis.)
+
+With a correctly-escaped harness, **the full both-halves bootstrap is a byte-exact
+fixed point**: ouroboros self-compiles its front-end *and* codegen, and the fully
+self-hosted compiler reproduces the bytecode of its front-end, its codegen, and a
+test program byte-for-byte — verified by `test/bootstrap.eigs`. The language
+reproduces its entire toolchain. The interrogatives/temporal forms remain out of
+scope (a front-end *grammar* mismatch with C — the eigen front-end accepts forms
+C rejects — not a self-host gap).
