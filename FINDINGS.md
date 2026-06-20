@@ -250,6 +250,33 @@ With a correctly-escaped harness, **the full both-halves bootstrap is a byte-exa
 fixed point**: ouroboros self-compiles its front-end *and* codegen, and the fully
 self-hosted compiler reproduces the bytecode of its front-end, its codegen, and a
 test program byte-for-byte — verified by `test/bootstrap.eigs`. The language
-reproduces its entire toolchain. The interrogatives/temporal forms remain out of
-scope (a front-end *grammar* mismatch with C — the eigen front-end accepts forms
-C rejects — not a self-host gap).
+reproduces its entire toolchain.
+
+## Slice 6 (interrogatives + temporal) — DONE
+
+Closed the front-end grammar mismatch with C. The vendored front-end's old
+`<kw> of x` interrogative syntax (which C rejects) is replaced with C's real
+grammar, and codegen + a small upstream primitive complete the loop:
+
+- **Front-end:** parse `<kw> is x [at <line>]` (what/who/when/where/why/how) and
+  `prev of x`; reserve `prev` and `at`. Node `["interrogate", kind, expr,
+  at_expr]`, kinds 0–6 (6 = prev).
+- **Codegen:** three-way opcode selection mirroring `compile_ast` —
+  `INTERROGATE_NAMED_AT` for the `at` form on an ident, `INTERROGATE_NAMED` for
+  who/when/prev on an ident, `INTERROGATE` (value-based) otherwise.
+- **OP_LINE:** ouroboros now emits `OP_LINE` per statement (from `_line`
+  wrappers) — needed because `... at <line>` reads per-line history; also fixes
+  error-message line numbers. Behavior-neutral for stdout, so the bootstrap fixed
+  point and all parity tests still hold.
+
+### F-OURO-14 — temporal queries need runtime history; the bytecode bridge didn't carry the signal — GAP → FIXED upstream
+
+`prev of x` and the `at` forms read per-assignment history, which the C compiler
+enables as a compile-time side effect (`g_trace_hist`, plus `g_trace_obs_hist`
+for the observer-state forms `where/why/how is x at <line>`). The bytecode alone
+doesn't carry that signal, so a self-hosted program's temporal queries returned
+`null`. Added the upstream builtin **`record_history of flag`** (sets both
+history flags); ouroboros's codegen tracks `USES_HISTORY` and `ouro_run` calls
+`record_history of 1` before running such a program — mirroring how the C
+compiler auto-enables it. All interrogative and temporal forms now match the C
+evaluator byte-for-byte.

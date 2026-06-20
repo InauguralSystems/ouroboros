@@ -64,7 +64,11 @@ OP_LOOP_ENV_FRESH is 50
 OP_LOOP_ENV_END is 51
 OP_OBSERVE_ASSIGN is 56
 OP_OBSERVE_ASSIGN_LOCAL is 57
+OP_INTERROGATE is 58
 OP_PREDICATE is 59
+OP_INTERROGATE_NAMED is 76
+OP_INTERROGATE_NAMED_AT is 77
+OP_LINE is 68
 OP_LOOP_STALL_CHECK is 62
 OP_LOOP_CAP_CHECK is 63
 
@@ -72,6 +76,11 @@ OP_LOOP_CAP_CHECK is 63
 # assignment to such a name modifies the module binding (SET_NAME) rather than
 # shadowing it with a fresh local — matching compile_ast's resolution.
 MODULE_NAMES is {}
+
+# Set to 1 when the program uses `prev` or `... at <line>`, which need runtime
+# per-assignment history recording (the C compiler enables it automatically; the
+# self-hosted runner enables it via record_history in ouro_run).
+USES_HISTORY is [0]
 
 # --- context -------------------------------------------------------------
 define cg_new(is_function) as:
@@ -347,6 +356,33 @@ define cg_node(c, node) as:
         cg_emit of [c, OP_PREDICATE]
         cg_emit_u16 of [c, node[1]]
         return null
+    if t == "interrogate":
+        # ["interrogate", kind, expr, at_expr]. kinds: 0 what,1 who,2 when,
+        # 3 where,4 why,5 how,6 prev. Opcode selection mirrors compile_ast:
+        #   at-form on an ident       -> INTERROGATE_NAMED_AT [kind][name]
+        #   who/when/prev on an ident -> INTERROGATE_NAMED     [kind][name]
+        #   otherwise (value-based)   -> INTERROGATE           [kind]
+        local kind is node[1]
+        local iexpr is node[2]
+        local at_expr is node[3]
+        local is_ident is (iexpr[0] == "ident")
+        if (kind == 6) or (at_expr != null):
+            USES_HISTORY[0] is 1                        # prev / at need history
+        if (at_expr != null) and is_ident:
+            cg_node of [c, at_expr]                     # push the line number
+            cg_emit of [c, OP_INTERROGATE_NAMED_AT]
+            cg_emit_u16 of [c, kind]
+            cg_emit_u16 of [c, cg_const of [c, iexpr[1]]]
+        else:
+            cg_node of [c, iexpr]                       # push the target value
+            if is_ident and ((kind == 1) or ((kind == 2) or (kind == 6))):
+                cg_emit of [c, OP_INTERROGATE_NAMED]
+                cg_emit_u16 of [c, kind]
+                cg_emit_u16 of [c, cg_const of [c, iexpr[1]]]
+            else:
+                cg_emit of [c, OP_INTERROGATE]
+                cg_emit_u16 of [c, kind]
+        return null
     if t == "return":
         cg_node of [c, node[1]]
         cg_emit of [c, OP_RETURN]
@@ -448,6 +484,13 @@ define cg_func(c, node) as:
     cg_emit of [c, OP_SET_NAME_LOCAL]                 # bind the name in this scope
     cg_emit_u16 of [c, cg_const of [c, fname]]
 
+# Emit OP_LINE for a statement's source line (drives error messages and the
+# `<kw> is x at <line>` temporal query). `s` may be an _line-wrapped statement.
+define cg_stmt_line(c, s) as:
+    if s[0] == "_line":
+        cg_emit of [c, OP_LINE]
+        cg_emit_u16 of [c, s[1]]
+
 # A statement list leaving its LAST value (null if empty).
 define cg_block_value(c, stmts) as:
     if (len of stmts) == 0:
@@ -455,6 +498,7 @@ define cg_block_value(c, stmts) as:
         return null
     for i in range of (len of stmts):
         local s is stmts[i]
+        cg_stmt_line of [c, s]
         if s[0] == "_line":
             s is s[2]
         cg_node of [c, s]
@@ -465,6 +509,7 @@ define cg_block_value(c, stmts) as:
 define cg_block_discard(c, stmts) as:
     for i in range of (len of stmts):
         local s is stmts[i]
+        cg_stmt_line of [c, s]
         if s[0] == "_line":
             s is s[2]
         cg_node of [c, s]
@@ -486,6 +531,7 @@ define ouro_compile(source) as:
     local tokens is eigen_tokenize of source
     local ast is eigen_parse of tokens
     MODULE_NAMES is {}
+    USES_HISTORY[0] is 0
     cg_scan_module_names of ast[1]
     local c is cg_new of 0
     cg_block_value of [c, ast[1]]
@@ -493,4 +539,7 @@ define ouro_compile(source) as:
     return [c.code, c.consts, c.functions, 0, "<module>", []]
 
 define ouro_run(source) as:
-    return vm_run_bytecode of (ouro_compile of source)
+    local compiled is ouro_compile of source
+    if USES_HISTORY[0] == 1:
+        record_history of 1                            # prev / at need history
+    return vm_run_bytecode of compiled
