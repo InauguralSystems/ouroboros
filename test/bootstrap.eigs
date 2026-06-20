@@ -1,0 +1,25 @@
+# Bootstrap fixed-point test: ouroboros compiles its own codegen, and the
+# resulting SELF-HOSTED compiler must produce byte-identical bytecode to the
+# original C-hosted one for the same source. (The front-end here is the vendored
+# eigen.eigs; the codegen — ouroboros's own contribution — is self-hosted.)
+
+load_file of "src/frontend.eigs"
+load_file of "src/codegen.eigs"
+
+# A program exercising a broad slice of the language.
+P is "x is 7\nprint of (x * 6 - 1)\nz is [i * i for i in [1, 2, 3, 4, 5] if i > 1]\nprint of z\ndefine fib(n) as:\n    if n < 2:\n        return n\n    return (fib of (n - 1)) + (fib of (n - 2))\nprint of (fib of 10)\nd is {}\nfor k in [\"a\", \"b\", \"a\", \"c\", \"a\"]:\n    local key is k\n    if has_key of [d, key]:\n        d[key] is d[key] + 1\n    else:\n        d[key] is 1\nprint of (d[\"a\"])\ntry:\n    throw of \"x\"\ncatch e:\n    print of (\"caught \" + e)"
+
+# Compile with the C-hosted ouroboros.
+desc0 is ouro_compile of P
+
+# Self-compile the codegen and run it (redefines cg_*/ouro_compile self-hosted).
+vm_run_bytecode of (ouro_compile of (read_text of "src/codegen.eigs"))
+
+# Compile the same program with the now self-hosted compiler.
+desc1 is ouro_compile of P
+
+if desc0 == desc1:
+    print of "bootstrap: self-hosted codegen reproduces C-hosted bytecode byte-for-byte (PASS)"
+else:
+    print of "bootstrap: FAIL"
+    exit of 1

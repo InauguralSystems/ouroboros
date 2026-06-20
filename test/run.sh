@@ -27,6 +27,13 @@ for prog in test/programs/*.eigs; do
   fi
 done
 
+echo "--- bootstrap (self-hosted codegen reproduces C-hosted bytecode) ---"
+if "$EIGS" test/bootstrap.eigs 2>/dev/null | grep -q "PASS"; then
+  echo "PASS: bootstrap fixed point"
+else
+  echo "FAIL: bootstrap"; fail=1
+fi
+
 echo "---"
-if [ "$fail" -eq 0 ]; then echo "ALL PASSED ($n programs)"; else echo "SOME FAILED"; fi
+if [ "$fail" -eq 0 ]; then echo "ALL PASSED ($n programs + bootstrap)"; else echo "SOME FAILED"; fi
 exit "$fail"

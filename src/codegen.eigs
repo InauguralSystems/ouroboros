@@ -58,6 +58,8 @@ OP_LISTCOMP_BEGIN is 66
 OP_LISTCOMP_APPEND is 67
 OP_ITER_SETUP is 48
 OP_ITER_NEXT is 49
+OP_TRY_BEGIN is 54
+OP_TRY_END is 55
 OP_LOOP_ENV_FRESH is 50
 OP_LOOP_ENV_END is 51
 OP_OBSERVE_ASSIGN is 56
@@ -400,6 +402,21 @@ define cg_node(c, node) as:
         cg_patch_breaks of c
         cg_emit of [c, OP_POP]
         cg_emit of [c, OP_NULL]
+        return null
+    if t == "try":
+        # ["try", try_body, err_name, catch_body]. TRY_BEGIN installs a handler
+        # whose offset points at the catch; on throw the VM unwinds the try
+        # body's stack and pushes the thrown value. Both paths leave one value.
+        local tb is cg_emit_jump of [c, OP_TRY_BEGIN]
+        cg_block_value of [c, node[1]]                 # try body -> 1 value
+        cg_emit of [c, OP_TRY_END]
+        local je is cg_emit_jump of [c, OP_JUMP]       # no-throw: skip the catch
+        cg_patch_jump of [c, tb]                        # catch handler starts here
+        cg_emit of [c, OP_SET_NAME_LOCAL]               # bind the thrown value
+        cg_emit_u16 of [c, cg_const of [c, node[2]]]
+        cg_emit of [c, OP_POP]
+        cg_block_value of [c, node[3]]                  # catch body -> 1 value
+        cg_patch_jump of [c, je]
         return null
     if t == "break":
         local hole is cg_emit_jump of [c, OP_JUMP]

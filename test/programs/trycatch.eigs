@@ -1,0 +1,14 @@
+define safe_div(a, b) as:
+    try:
+        if b == 0:
+            throw of "div by zero"
+        return a / b
+    catch e:
+        return 0 - 1
+print of (safe_div of [10, 2])
+print of (safe_div of [10, 0])
+try:
+    throw of "x"
+catch err:
+    print of ("caught: " + err)
+print of "done"

@@ -206,5 +206,34 @@ tokenize. So these diverge at the *parser*, not codegen — a front-end limitati
 not a back-end gap. (cf. F-TEMPORAL-1 in tidelog: the temporal system is its own
 axis.) A future slice could extend the vendored front-end to match.
 
-*(Further findings — closures over enclosing-function locals and the `local`
-keyword — to be added as the roadmap lands.)*
+## F-OURO-11 — node-type coverage is necessary but not sufficient — METHOD
+
+The pre-bootstrap audit asked "can ouroboros compile its own source?" and got a
+false-positive from a node-type scan: both `codegen.eigs` and (after adding
+`try`) `frontend.eigs` "compiled OK". But *compiling* a chunk only proves every
+AST node type is handled — not that the bytecode is correct. The bootstrap smoke
+test (actually *running* the self-compiled compiler) immediately exposed what the
+scan missed: a `local` keyword the vendored front-end didn't tokenize, which it
+silently misparsed into a stray `local` identifier reference (`undefined variable
+'local'` at runtime). Lesson: coverage audits for a compiler must *run* the
+output, not just compile it.
+
+## F-OURO-12 — bootstrap fixed point (codegen) achieved — MILESTONE
+
+Two real gaps closed for self-hosting:
+- **`try`/`catch`** added to the codegen (`TRY_BEGIN`/`TRY_END` + catch handler).
+- **`local`** added to the vendored front-end (tokenize + parse `local NAME is
+  expr`); ouroboros already allocates a function-local slot for non-module names,
+  so a plain assign node suffices.
+
+With those, **ouroboros compiles its own `codegen.eigs`, and the resulting
+self-hosted compiler produces byte-identical bytecode to the C-hosted original**
+for a broad test program (fib, comprehensions-with-filter, dict build in a loop,
+try/catch, `local`). Locked by `test/bootstrap.eigs` as a fixed-point oracle
+(`ouro_compile(P)` before vs after self-compilation must be `==`).
+
+The front-end half is still vendored (borrowed from `lib/eigen.eigs`), not
+ouroboros's own work; self-hosting it fully reveals a further issue in
+self-compiled `eigen_parse` (tokenizing self-hosts fine) — a separate chase, and
+not required for the codegen fixed point. The interrogatives/temporal forms
+remain out of scope (front-end grammar mismatch with C, F-OURO observer slice).
