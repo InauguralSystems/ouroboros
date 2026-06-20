@@ -1,0 +1,13 @@
+i is 0
+loop while i < 10:
+    i is i + 1
+    if i == 3:
+        continue
+    if i == 6:
+        break
+    print of i
+print of "after"
+for x in [1, 2, 3, 4, 5]:
+    if x > 3:
+        break
+    print of x

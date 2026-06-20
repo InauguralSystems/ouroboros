@@ -1,0 +1,13 @@
+for i in [1, 2, 3]:
+    for j in [1, 2, 3]:
+        if (i * j) > 4:
+            print of (i * j)
+total is 0
+n is 1
+loop while n <= 4:
+    k is 1
+    loop while k <= n:
+        total is total + 1
+        k is k + 1
+    n is n + 1
+print of total

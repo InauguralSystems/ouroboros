@@ -38,15 +38,17 @@ byte-identical. Behavioral parity on the real VM.
 
 ## Status
 
-Slice 1 — a working compiler for: number/string/null literals, identifiers,
-`name is expr` assignment, arithmetic (`+ - * / %`), comparisons
-(`== != < > <= >=`), unary (`-` / `not`), calls (`f of arg`), and list literals.
-6/6 programs at byte-identical parity with the C evaluator.
+A working compiler for: literals, identifiers, `name is expr` assignment,
+arithmetic (`+ - * / %`), comparisons (`== != < > <= >=`), unary (`-` / `not`),
+calls (`f of arg`), list literals, and **control flow** — `if`/`elif`/`else`,
+`loop while`, `for`-in, `break`/`continue`, and short-circuit `and`/`or`. 12/12
+programs at byte-identical parity with the C evaluator (including nested loops).
 
 ### Roadmap
 
 - [x] expressions, assignment, calls, lists (slice 1)
-- [ ] control flow: `if` / `loop` / `for` (forward + backward jumps, offsets)
+- [x] control flow: `if`/`elif`/`else`, `loop while`, `for`, `break`/`continue`,
+      short-circuit `and`/`or` (slice 2 — forward/backward jumps, back-patching)
 - [ ] functions: `define`, locals (`GET_LOCAL`/`SET_LOCAL` slot allocation), `OP_CLOSURE`
 - [ ] dicts, indexing, dot access, comprehensions
 - [ ] the signature opcodes: `OBSERVE_ASSIGN`, `INTERROGATE`, `PREDICATE`, and

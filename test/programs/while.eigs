@@ -1,0 +1,11 @@
+i is 0
+total is 0
+loop while i < 5:
+    total is total + i
+    i is i + 1
+print of total
+print of i
+n is 10
+loop while n > 0:
+    n is n - 1
+print of n
