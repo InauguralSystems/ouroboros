@@ -1,0 +1,11 @@
+base is 100
+define shift(x) as:
+    return x + base
+print of (shift of 5)
+counter is 0
+define bump as:
+    counter is counter + 1
+    return counter
+print of (bump of null)
+print of (bump of null)
+print of counter

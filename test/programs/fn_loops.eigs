@@ -1,0 +1,15 @@
+define sumto(n) as:
+    total is 0
+    i is 1
+    loop while i <= n:
+        total is total + i
+        i is i + 1
+    return total
+print of (sumto of 100)
+define count_evens(xs) as:
+    n is 0
+    for v in xs:
+        if (v % 2) == 0:
+            n is n + 1
+    return n
+print of (count_evens of [1, 2, 3, 4, 5, 6])

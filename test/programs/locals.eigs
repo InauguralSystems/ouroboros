@@ -1,0 +1,10 @@
+define f(n) as:
+    x is n + 1
+    y is x * 2
+    return y + n
+print of (f of 5)
+define poly(a, b, c) as:
+    t is a * a
+    u is b + c
+    return t + u
+print of (poly of [2, 3, 4])

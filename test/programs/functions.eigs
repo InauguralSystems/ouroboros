@@ -1,0 +1,7 @@
+define add(a, b) as:
+    return a + b
+define square(x) as:
+    return x * x
+print of (add of [3, 4])
+print of (square of 5)
+print of (add of [square of 2, square of 3])
