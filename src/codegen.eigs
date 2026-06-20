@@ -228,8 +228,11 @@ define cg_node(c, node) as:
         local arg is node[2]
         if arg[0] == "_line":
             arg is arg[2]
-        if arg[0] == "list":
-            # `f of [a, b, ...]` spreads into positional args
+        # Calling convention (matches compile_ast): a list literal with 0 or >1
+        # elements spreads into positional args (`f of [a, b]` -> f(a, b),
+        # `f of []` -> zero-arg); a 1-element list does NOT spread — `f of [x]`
+        # passes the one-element list [x] itself. Any non-list arg is one arg.
+        if (arg[0] == "list") and ((len of arg[1]) != 1):
             local elems is arg[1]
             for i in range of (len of elems):
                 cg_node of [c, elems[i]]

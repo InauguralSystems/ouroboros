@@ -128,9 +128,10 @@ arg-spread calling convention, module-variable read/mutate from inside functions
 and recursion. 17/17 programs at byte-identical stdout parity (incl. fact, fib,
 loops-in-functions). Extended the bridge to nested chunks (F-OURO-6).
 
-## F-OURO-9 — C bug: dict index-assign keyed by a for-loop var over a PARAM list — BUG (upstream, found by self-hosting)
+## F-OURO-9 — ouroboros over-spread single-element list args — BUG (in ouroboros; the differential oracle caught it)
 
-The self-hosting compiler surfaced a real defect in the C runtime. Minimal repro:
+A parity divergence first looked like a C runtime bug — a program that errored
+in the C evaluator (`cannot index dict for assignment`) but ran in ouroboros:
 
     define f(xs) as:
         d is {}
@@ -138,23 +139,26 @@ The self-hosting compiler surfaced a real defect in the C runtime. Minimal repro
             d[w] is 1
         return d
     print of ((f of [["x", "y"]])["x"])
-    # Error line 4: cannot index dict for assignment  (at f)
 
-The same shape works when the iterated list is a **local** or **module**
-variable, or when the body index-assigns a **list** rather than a dict. It fails
-only when iterating a **parameter** list and using the loop variable as a
-dict-index-assignment key. The runtime reaches the `idx is not VAL_STR` branch of
-INDEX_SET even though the key is a string element — a slot/representation issue
-specific to the `GET_LOCAL` loop-var → dict `INDEX_SET` path for param-sourced
-lists (root cause unconfirmed).
+Root-causing it (not the VM — the **calling convention**) flipped the verdict:
+the defect was in *ouroboros*, not C. `compile_ast`'s rule is that a list-literal
+argument spreads into positional args only when it has **>1** elements
+(`f of [a, b]` → `f(a, b)`); a **1-element** literal does *not* spread —
+`f of [x]` passes the one-element list `[x]` itself (and `f of []` is a zero-arg
+call). ouroboros was spreading *every* list literal, so `f of [["x","y"]]`
+unwrapped the inner list instead of passing `[["x","y"]]`. The C "error" was the
+correct, intended behavior; ouroboros was wrong.
 
-ouroboros compiles the identical program **correctly** (it returns the right
-dict), because its for-loop variable resolves via `GET_NAME` (env) rather than
-`GET_LOCAL` (slot) — so the self-hosted back-end happens to dodge the bug. That
-divergence is exactly what flagged it: behavioral parity broke with ouroboros
-*more* correct than the C evaluator. The parity suite's dict-in-function test was
-written to iterate a local list (which both handle) so the slice stays green;
-this finding is the real deliverable. Candidate upstream fix.
+Confirmed decisively: making the C compiler spread 1-element literals too broke
+**81** of the 2072 suite tests — the non-spread of `count==1` is load-bearing
+across the stdlib. So C was reverted untouched and ouroboros's call codegen fixed
+to match (`count != 1` list literals spread; `count == 1` and non-list args pass
+a single value). A `call_convention` parity test now locks it.
+
+The lesson is the oracle working *as designed*: a behavioral divergence is a
+neutral signal, not proof of which side is right. Here it caught a self-hosting
+codegen bug — which is exactly as valuable as catching an upstream one, and a
+reminder not to assume the reference is the buggy party. No upstream change.
 
 ---
 
@@ -162,9 +166,10 @@ this finding is the real deliverable. Candidate upstream fix.
 
 dict literals, index get/set (`d[k]`, `xs[i] is v`), dot get/set (`d.f`,
 `d.f is v`), nested indexing, and list comprehensions with optional filters
-(`LISTCOMP_BEGIN`/`LISTCOMP_APPEND` + iterator + filter `JUMP_IF_FALSE`). 21/21
+(`LISTCOMP_BEGIN`/`LISTCOMP_APPEND` + iterator + filter `JUMP_IF_FALSE`). 22/22
 programs at byte-identical stdout parity with the C evaluator. No new upstream
-primitive needed. Surfaced C bug F-OURO-9.
+primitive needed. The differential oracle caught a calling-convention bug in
+ouroboros's own codegen (F-OURO-9), now fixed and locked by a parity test.
 
 *(Further findings — closures over enclosing-function locals, the `local`
 keyword, and observer-opcode parity — to be added as the roadmap lands.)*
