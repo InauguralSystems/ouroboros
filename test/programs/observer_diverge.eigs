@@ -1,0 +1,28 @@
+y is 2.0
+y is 3.0
+y is 5.0
+y is 8.0
+y is 13.0
+y is 21.0
+y is 34.0
+y is 55.0
+y is 89.0
+y is 144.0
+y is 233.0
+y is 377.0
+print of ("dive=" + (str of diverging))
+print of ("impr=" + (str of improving))
+z is 50.0
+z is 50.0
+z is 50.0
+z is 50.0
+z is 50.0
+z is 50.0
+z is 50.0
+z is 50.0
+z is 50.0
+z is 50.0
+z is 50.0
+z is 50.0
+print of ("conv=" + (str of converged))
+print of ("equi=" + (str of equilibrium))

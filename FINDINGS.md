@@ -171,5 +171,40 @@ programs at byte-identical stdout parity with the C evaluator. No new upstream
 primitive needed. The differential oracle caught a calling-convention bug in
 ouroboros's own codegen (F-OURO-9), now fixed and locked by a parity test.
 
-*(Further findings — closures over enclosing-function locals, the `local`
-keyword, and observer-opcode parity — to be added as the roadmap lands.)*
+## Slice 5 (observer opcodes) — DONE
+
+The distinctive EigenScript surface — where the self-hosted compiler stops being
+conventional:
+
+- **OBSERVE_ASSIGN / OBSERVE_ASSIGN_LOCAL** now precede every `is` store (the
+  matching observe op with the same slot/name arg), so the observer state
+  (entropy + dH window) is tracked on each assigned value and the last-observed
+  variable is set. Resolves F-OURO-3 (slice 1 had omitted it).
+- **PREDICATE <kind>** for the bare predicates `converged`/`stable`/`improving`/
+  `oscillating`/`diverging`/`equilibrium` (kinds 0–5; the vendored front-end's
+  `_predicates` order matches the VM's exactly). Verified firing: a converging,
+  a Fibonacci-growth, and a constant sequence produce real `1`s
+  (`diverging`/`improving`/`equilibrium`) — byte-identical to the C evaluator.
+- **Loop-stall classifier (#247, correctness-critical):** a `loop while`
+  condition that references a predicate compiles to `OP_LOOP_STALL_CHECK`
+  (opt-in convergence auto-halt); a plain condition to `OP_LOOP_CAP_CHECK`. The
+  classifier mirrors `cond_is_observer_based` (recurse unary/binop, predicate ⇒
+  observer-based, everything else opaque). Both opcodes confirmed emitted for the
+  right loops; halting behavior matches C.
+
+25/25 programs at byte-identical stdout parity, including six firing predicates
+over full 10-sample observer windows. No new upstream primitive needed.
+
+### Out of scope (front-end / C grammar mismatch)
+
+The **interrogatives** (`what`/`who`/`when`/`where`/`why`/`how`) and **temporal**
+forms (`prev of x`, `what is x at <line>`) can't be parity-tested: the vendored
+`eigen.eigs` front-end accepts `what of x` / treats `prev`,`at` as identifiers,
+but the C grammar rejects `what of x` as an expression (`undefined variable
+'what'`) and has its own `prev of` / `... at <line>` syntax the front-end doesn't
+tokenize. So these diverge at the *parser*, not codegen — a front-end limitation,
+not a back-end gap. (cf. F-TEMPORAL-1 in tidelog: the temporal system is its own
+axis.) A future slice could extend the vendored front-end to match.
+
+*(Further findings — closures over enclosing-function locals and the `local`
+keyword — to be added as the roadmap lands.)*
