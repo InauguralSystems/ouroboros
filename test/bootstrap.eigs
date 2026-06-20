@@ -1,25 +1,34 @@
-# Bootstrap fixed-point test: ouroboros compiles its own codegen, and the
-# resulting SELF-HOSTED compiler must produce byte-identical bytecode to the
-# original C-hosted one for the same source. (The front-end here is the vendored
-# eigen.eigs; the codegen — ouroboros's own contribution — is self-hosted.)
+# Bootstrap fixed-point test — the FULL self-host (front-end + codegen).
+#
+# ouroboros compiles its own front-end and codegen, runs them so BOTH halves are
+# self-hosted, then re-compiles its own two source files and a test program. The
+# self-hosted compiler must produce byte-identical bytecode to the C-hosted
+# original for all three — the strongest fixed-point oracle there is: the serpent
+# eats its tail and the bytes don't move.
 
 load_file of "src/frontend.eigs"
 load_file of "src/codegen.eigs"
 
-# A program exercising a broad slice of the language.
+FE is read_text of "src/frontend.eigs"
+CG is read_text of "src/codegen.eigs"
 P is "x is 7\nprint of (x * 6 - 1)\nz is [i * i for i in [1, 2, 3, 4, 5] if i > 1]\nprint of z\ndefine fib(n) as:\n    if n < 2:\n        return n\n    return (fib of (n - 1)) + (fib of (n - 2))\nprint of (fib of 10)\nd is {}\nfor k in [\"a\", \"b\", \"a\", \"c\", \"a\"]:\n    local key is k\n    if has_key of [d, key]:\n        d[key] is d[key] + 1\n    else:\n        d[key] is 1\nprint of (d[\"a\"])\ntry:\n    throw of \"x\"\ncatch e:\n    print of (\"caught \" + e)"
 
-# Compile with the C-hosted ouroboros.
-desc0 is ouro_compile of P
+# Compile all three with the C-hosted ouroboros.
+fe_c is ouro_compile of FE
+cg_c is ouro_compile of CG
+p_c is ouro_compile of P
 
-# Self-compile the codegen and run it (redefines cg_*/ouro_compile self-hosted).
-vm_run_bytecode of (ouro_compile of (read_text of "src/codegen.eigs"))
+# Self-host BOTH halves (run the self-compiled front-end, then codegen).
+vm_run_bytecode of fe_c
+vm_run_bytecode of cg_c
 
-# Compile the same program with the now self-hosted compiler.
-desc1 is ouro_compile of P
+# Re-compile all three with the now fully self-hosted compiler.
+fe_s is ouro_compile of FE
+cg_s is ouro_compile of CG
+p_s is ouro_compile of P
 
-if desc0 == desc1:
-    print of "bootstrap: self-hosted codegen reproduces C-hosted bytecode byte-for-byte (PASS)"
+if (fe_c == fe_s) and ((cg_c == cg_s) and (p_c == p_s)):
+    print of "bootstrap: full self-host (front-end + codegen) is a byte-exact fixed point (PASS)"
 else:
-    print of "bootstrap: FAIL"
+    print of ("bootstrap: FAIL — fe:" + (str of (fe_c == fe_s)) + " cg:" + (str of (cg_c == cg_s)) + " p:" + (str of (p_c == p_s)))
     exit of 1

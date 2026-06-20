@@ -27,7 +27,7 @@ for prog in test/programs/*.eigs; do
   fi
 done
 
-echo "--- bootstrap (self-hosted codegen reproduces C-hosted bytecode) ---"
+echo "--- bootstrap (full self-host: front-end + codegen, byte-exact fixed point) ---"
 if "$EIGS" test/bootstrap.eigs 2>/dev/null | grep -q "PASS"; then
   echo "PASS: bootstrap fixed point"
 else
