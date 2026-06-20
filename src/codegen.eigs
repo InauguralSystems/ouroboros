@@ -45,10 +45,17 @@ OP_JUMP_IF_FALSE_PEEK is 33
 OP_JUMP_IF_TRUE_PEEK is 34
 OP_POP is 35
 OP_CLOSURE is 38
+OP_DICT is 43
+OP_INDEX_GET is 44
+OP_INDEX_SET is 45
+OP_DOT_GET is 46
+OP_DOT_SET is 47
 OP_CALL is 39
 OP_RETURN is 40
 OP_RETURN_NULL is 41
 OP_LIST is 42
+OP_LISTCOMP_BEGIN is 66
+OP_LISTCOMP_APPEND is 67
 OP_ITER_SETUP is 48
 OP_ITER_NEXT is 49
 OP_LOOP_ENV_FRESH is 50
@@ -239,6 +246,58 @@ define cg_node(c, node) as:
             cg_node of [c, elems[i]]
         cg_emit of [c, OP_LIST]
         cg_emit_u16 of [c, len of elems]
+        return null
+    if t == "dict":
+        local pairs is node[1]
+        for i in range of (len of pairs):
+            cg_node of [c, pairs[i][0]]                # key
+            cg_node of [c, pairs[i][1]]                # value
+        cg_emit of [c, OP_DICT]
+        cg_emit_u16 of [c, len of pairs]
+        return null
+    if t == "index":
+        cg_node of [c, node[1]]                        # target
+        cg_node of [c, node[2]]                        # index
+        cg_emit of [c, OP_INDEX_GET]
+        return null
+    if t == "dot":
+        cg_node of [c, node[1]]                        # target
+        cg_emit of [c, OP_DOT_GET]
+        cg_emit_u16 of [c, cg_const of [c, node[2]]]   # field name
+        return null
+    if t == "index_assign":
+        cg_node of [c, node[1]]                        # target
+        cg_node of [c, node[2]]                        # index
+        cg_node of [c, node[3]]                        # value (kept on stack)
+        cg_emit of [c, OP_INDEX_SET]
+        return null
+    if t == "dot_assign":
+        cg_node of [c, node[1]]                        # target
+        cg_node of [c, node[3]]                        # value (kept on stack)
+        cg_emit of [c, OP_DOT_SET]
+        cg_emit_u16 of [c, cg_const of [c, node[2]]]   # field name
+        return null
+    if t == "listcomp":
+        # ["listcomp", expr, var, iter_expr, filter_or_null]
+        cg_emit of [c, OP_LISTCOMP_BEGIN]              # accumulator
+        cg_node of [c, node[3]]                        # iterable
+        cg_emit of [c, OP_ITER_SETUP]
+        local header is len of c.code
+        local jn is cg_emit_jump of [c, OP_ITER_NEXT]  # exit when exhausted
+        cg_emit of [c, OP_SET_NAME_LOCAL]
+        cg_emit_u16 of [c, cg_const of [c, node[2]]]   # bind comprehension var
+        cg_emit of [c, OP_POP]
+        local jfilt is 0 - 1
+        if node[4] != null:
+            cg_node of [c, node[4]]                    # filter condition
+            jfilt is cg_emit_jump of [c, OP_JUMP_IF_FALSE]
+        cg_node of [c, node[1]]                        # element expression
+        cg_emit of [c, OP_LISTCOMP_APPEND]
+        if jfilt >= 0:
+            cg_patch_jump of [c, jfilt]                # filter-false -> re-iterate
+        cg_emit_jump_back of [c, header]
+        cg_patch_jump of [c, jn]                       # exit
+        cg_emit of [c, OP_POP]                         # drop iterator; accumulator remains
         return null
     if t == "return":
         cg_node of [c, node[1]]

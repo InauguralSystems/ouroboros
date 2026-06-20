@@ -1,0 +1,9 @@
+xs is [10, 20, 30, 40]
+print of (xs[0])
+print of (xs[3])
+xs[1] is 99
+print of xs
+m is [[1, 2], [3, 4]]
+print of (m[1][0])
+m[0][1] is 7
+print of m

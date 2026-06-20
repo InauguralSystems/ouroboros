@@ -1,0 +1,16 @@
+define lookup(d, k) as:
+    return d[k]
+define wordcount as:
+    counts is {}
+    items is ["x", "y", "x", "z", "x", "y"]
+    for w in items:
+        if has_key of [counts, w]:
+            counts[w] is counts[w] + 1
+        else:
+            counts[w] is 1
+    return counts
+print of (lookup of [{"a": 1, "b": 2}, "b"])
+r is wordcount of null
+print of (r["x"])
+print of (r["y"])
+print of (r["z"])

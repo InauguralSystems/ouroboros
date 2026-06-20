@@ -128,5 +128,43 @@ arg-spread calling convention, module-variable read/mutate from inside functions
 and recursion. 17/17 programs at byte-identical stdout parity (incl. fact, fib,
 loops-in-functions). Extended the bridge to nested chunks (F-OURO-6).
 
+## F-OURO-9 — C bug: dict index-assign keyed by a for-loop var over a PARAM list — BUG (upstream, found by self-hosting)
+
+The self-hosting compiler surfaced a real defect in the C runtime. Minimal repro:
+
+    define f(xs) as:
+        d is {}
+        for w in xs:
+            d[w] is 1
+        return d
+    print of ((f of [["x", "y"]])["x"])
+    # Error line 4: cannot index dict for assignment  (at f)
+
+The same shape works when the iterated list is a **local** or **module**
+variable, or when the body index-assigns a **list** rather than a dict. It fails
+only when iterating a **parameter** list and using the loop variable as a
+dict-index-assignment key. The runtime reaches the `idx is not VAL_STR` branch of
+INDEX_SET even though the key is a string element — a slot/representation issue
+specific to the `GET_LOCAL` loop-var → dict `INDEX_SET` path for param-sourced
+lists (root cause unconfirmed).
+
+ouroboros compiles the identical program **correctly** (it returns the right
+dict), because its for-loop variable resolves via `GET_NAME` (env) rather than
+`GET_LOCAL` (slot) — so the self-hosted back-end happens to dodge the bug. That
+divergence is exactly what flagged it: behavioral parity broke with ouroboros
+*more* correct than the C evaluator. The parity suite's dict-in-function test was
+written to iterate a local list (which both handle) so the slice stays green;
+this finding is the real deliverable. Candidate upstream fix.
+
+---
+
+## Slice 4 (dicts, indexing, comprehensions) — DONE
+
+dict literals, index get/set (`d[k]`, `xs[i] is v`), dot get/set (`d.f`,
+`d.f is v`), nested indexing, and list comprehensions with optional filters
+(`LISTCOMP_BEGIN`/`LISTCOMP_APPEND` + iterator + filter `JUMP_IF_FALSE`). 21/21
+programs at byte-identical stdout parity with the C evaluator. No new upstream
+primitive needed. Surfaced C bug F-OURO-9.
+
 *(Further findings — closures over enclosing-function locals, the `local`
 keyword, and observer-opcode parity — to be added as the roadmap lands.)*

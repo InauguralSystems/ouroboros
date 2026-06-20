@@ -1,0 +1,12 @@
+d is {"a": 1, "b": 2, "c": 3}
+print of (d["a"])
+print of (d.b)
+print of d
+d["d"] is 4
+d.a is 100
+print of (d["d"])
+print of (d.a)
+print of (keys of d)
+nested is {"x": [1, 2], "y": {"z": 9}}
+print of (nested.x)
+print of (nested["y"]["z"])

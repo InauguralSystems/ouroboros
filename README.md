@@ -54,7 +54,8 @@ parity with the C evaluator (incl. nested loops, factorial, fibonacci).
 - [x] functions: `define`, params, `return`, slot-allocated locals, `OP_CLOSURE`,
       `f of [..]` arg-spread, recursion, module-var read/mutate (slice 3 — nested
       chunk descriptors; scope-aware `SET_LOCAL` vs outward `SET_NAME`)
-- [ ] dicts, indexing, dot access, comprehensions
+- [x] dicts, indexing (get/set), dot access (get/set), list comprehensions with
+      filters (slice 4 — surfaced C bug F-OURO-9 via parity divergence)
 - [ ] the signature opcodes: `OBSERVE_ASSIGN`, `INTERROGATE`, `PREDICATE`, and
       the `LOOP_STALL_CHECK` vs `LOOP_CAP_CHECK` classifier (#247)
 - [ ] the bootstrap fixed point: ouroboros compiles its own source
