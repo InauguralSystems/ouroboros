@@ -95,6 +95,23 @@ static Value *aot_ne(Value *a, Value *b) {
     return make_num(e ? 0.0 : 1.0);
 }
 
+/* ---- numeric buffers (VAL_BUFFER = double[] + count) ---- */
+/* Index resolution mirrors vm_index_is_int + vm_index_resolve: integer-only,
+   negative indexes count from the end, bounds-checked. (Those runtime fns are
+   static to vm.c, so replicated here.) */
+static long aot_idx(double d, int count) {
+    long i = (long)d;
+    if ((double)i != d) { fprintf(stderr, "index must be an integer, got %g\n", d); exit(1); }
+    if (i < 0) i += count;
+    if (i < 0 || i >= count) { fprintf(stderr, "buffer index %ld out of range (length %d)\n", (long)d, count); exit(1); }
+    return i;
+}
+static double aot_buf_get(Value *b, double idx) { return b->data.buffer.data[aot_idx(idx, b->data.buffer.count)]; }
+static void   aot_buf_set(Value *b, double idx, double v) { b->data.buffer.data[aot_idx(idx, b->data.buffer.count)] = v; }
+static double aot_buf_len(Value *b) { return (double)b->data.buffer.count; }
+/* Raw element pointer for the proven-safe (in-bounds, non-negative) loop path. */
+static double *aot_buf_data(Value *b) { return b->data.buffer.data; }
+
 /* ---- call a global/builtin by name, single arg (consumes arg) ---- */
 static Value *aot_call_name(Env *g, const char *name, Value *arg) {
     Value *fn = env_get(g, name);
