@@ -1,0 +1,5 @@
+i is 0
+loop while i < 5:
+    print of i
+    i is i + 1
+print of "done"

@@ -1,0 +1,4 @@
+print of (2 + 3)
+print of (10 - 4 * 2)
+x is 7
+print of x
