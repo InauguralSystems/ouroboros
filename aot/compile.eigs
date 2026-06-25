@@ -1,14 +1,10 @@
 # EigenScript AOT compiler.
 # Slice 1 (boxed) + numeric-scalar specialization + bounded-induction num_guard
-# elision: a variable proven to stay in a safe integer range inside a literal-
-# bounded loop gets its +/- updates emitted RAW (no num_guard), turning the hot
-# loop into pure native C. Everything unproven keeps num_guard (the fallback);
-# the VM is the differential oracle.
+# elision + numeric buffers (typed arrays). A var built by `buffer of N` /
+# `zeros of N` becomes a C Value* holding a VAL_BUFFER; element reads/writes go
+# through checked helpers (aot_buf_get/set). The VM is the differential oracle.
 load_file of "src/frontend.eigs"
 
-# Magnitude cap for guard-free arithmetic. A literal-bounded loop `i < B` with
-# B <= GF_MAX keeps an accumulator (delta = counter or small const) under
-# ~2*B^2 < 2^52, so +/- can't overflow or NaN -> num_guard is identity there.
 GF_MAX is 10000000
 
 define c_escape(s) as:
@@ -32,7 +28,6 @@ define binfn(op) as:
         throw of ("AOT: unsupported binop " + op)
     return r
 
-# ---- numeric-scalar type inference (greatest fixpoint: assume numeric, demote) ----
 ARITH_OPS is {"+": 1, "-": 1, "*": 1, "/": 1, "%": 1, "==": 1, "!=": 1, "<": 1, ">": 1, "<=": 1, ">=": 1}
 
 define unwrap(node) as:
@@ -40,10 +35,40 @@ define unwrap(node) as:
         node is node[2]
     return node
 
-define is_num_expr(node, nm) as:
+# ---- buffer-type inference: a var is a numeric buffer if every assignment is
+# `buffer of N` / `zeros of N`. ----
+define is_buf_create(rhs) as:
+    local n is unwrap of rhs
+    if n[0] != "call":
+        return 0
+    local callee is unwrap of n[1]
+    if callee[0] != "ident":
+        return 0
+    if (callee[1] == "buffer") or (callee[1] == "zeros"):
+        return 1
+    return 0
+
+define infer_buffers(stmts) as:
+    local assigns is collect_assigns of [stmts, {}]
+    local names is keys of assigns
+    local bt is {}
+    for i in range of (len of names):
+        local v is names[i]
+        local rhss is assigns[v]
+        if (len of rhss) > 0:
+            local allbuf is 1
+            for j in range of (len of rhss):
+                if (is_buf_create of rhss[j]) == 0:
+                    allbuf is 0
+            if allbuf == 1:
+                bt[v] is 1
+    return bt
+
+# ---- numeric-scalar inference (now buffer-aware: buf[i] and len-of-buf are numeric) ----
+define is_num_expr(node, nm, bt) as:
     local t is node[0]
     if t == "_line":
-        return is_num_expr of [node[2], nm]
+        return is_num_expr of [node[2], nm, bt]
     if t == "num":
         return 1
     if t == "ident":
@@ -53,11 +78,28 @@ define is_num_expr(node, nm) as:
     if t == "binop":
         if ARITH_OPS[node[1]] == null:
             return 0
-        if (is_num_expr of [node[2], nm]) == 0:
+        if (is_num_expr of [node[2], nm, bt]) == 0:
             return 0
-        if (is_num_expr of [node[3], nm]) == 0:
+        if (is_num_expr of [node[3], nm, bt]) == 0:
             return 0
         return 1
+    if t == "unary":
+        return is_num_expr of [node[2], nm, bt]
+    if t == "index":
+        local tgt is unwrap of node[1]
+        if tgt[0] == "ident":
+            if bt[tgt[1]] == 1:
+                return is_num_expr of [node[2], nm, bt]
+        return 0
+    if t == "call":
+        local callee is unwrap of node[1]
+        if callee[0] == "ident":
+            if callee[1] == "len":
+                local a is unwrap of node[2]
+                if a[0] == "ident":
+                    if bt[a[1]] == 1:
+                        return 1
+        return 0
     return 0
 
 define collect_assigns_stmt(node, acc) as:
@@ -85,7 +127,7 @@ define collect_assigns(stmts, acc) as:
         collect_assigns_stmt of [stmts[i], acc]
     return acc
 
-define infer_numeric(stmts) as:
+define infer_numeric(stmts, bt) as:
     local assigns is collect_assigns of [stmts, {}]
     local names is keys of assigns
     local nm is {}
@@ -100,14 +142,14 @@ define infer_numeric(stmts) as:
                 local rhss is assigns[v]
                 local allnum is 1
                 for j in range of (len of rhss):
-                    if (is_num_expr of [rhss[j], nm]) == 0:
+                    if (is_num_expr of [rhss[j], nm, bt]) == 0:
                         allnum is 0
                 if allnum == 0:
                     nm[v] is 0
                     changed is 1
     return nm
 
-# ---- bounded-induction analysis (which vars are guard-free inside a loop) ----
+# ---- bounded-induction analysis (guard-free vars in a loop) ----
 define module_inits(stmts) as:
     local mi is {}
     for i in range of (len of stmts):
@@ -130,8 +172,6 @@ define small_lit(a, B) as:
         return 1
     return 0
 
-# A "delta" (per-iteration increment) must be the counter or a small literal —
-# never another variable, so accumulation can't compound (s+s, s+t excluded).
 define delta_ok(node, I, B) as:
     local n is unwrap of node
     local t is n[0]
@@ -143,8 +183,6 @@ define delta_ok(node, I, B) as:
         return 0
     return 0
 
-# Is `node` a valid RHS for guard-free var v? (literal<=B | counter | v +/- delta
-# | delta +/- delta). v appears at most as the carried term; delta never carries v.
 define gf_rhs_ok(node, I, B, v) as:
     local n is unwrap of node
     local t is n[0]
@@ -169,8 +207,6 @@ define gf_rhs_ok(node, I, B, v) as:
         return 0
     return 0
 
-# Counter I must be updated only as `I is I + K` with K a literal >= 1, so the
-# trip count is bounded by B (no fractional steps that blow the trip count up).
 define counter_step_ok(rhss, I) as:
     for j in range of (len of rhss):
         local r is unwrap of rhss[j]
@@ -206,8 +242,14 @@ define has_nested_loop(stmts) as:
             return 1
     return 0
 
-# Guard-free var set for one loop body (empty unless it matches the bounded
-# pattern: `loop while I < B` / `<=`, B a literal in (0, GF_MAX], no nested loop).
+define init_ok(v, minits, B) as:
+    local iv is minits[v]
+    if iv == null:
+        return 0
+    if iv <= B:
+        return 1
+    return 0
+
 define loop_gf(loopnode, minits) as:
     local cond is unwrap of loopnode[1]
     if cond[0] != "binop":
@@ -254,27 +296,31 @@ define loop_gf(loopnode, minits) as:
                 gf[v] is 1
     return gf
 
-define init_ok(v, minits, B) as:
-    local iv is minits[v]
-    if iv == null:
-        return 0
-    if iv <= B:
-        return 1
-    return 0
-
 # ---- emission ----
-define emit_num(node, nm, raw) as:
+define emit_num(node, nm, bt, raw) as:
     local t is node[0]
     if t == "_line":
-        return emit_num of [node[2], nm, raw]
+        return emit_num of [node[2], nm, bt, raw]
     if t == "num":
         return str of node[1]
     if t == "ident":
         return node[1]
+    if t == "unary":
+        local uop is node[1]
+        local uv is emit_num of [node[2], nm, bt, raw]
+        if uop == "-":
+            return "(-(" + uv + "))"
+        return "((" + uv + " == 0.0) ? 1.0 : 0.0)"
+    if t == "index":
+        local tgt is unwrap of node[1]
+        return "aot_buf_get(" + tgt[1] + ", " + (emit_num of [node[2], nm, bt, 0]) + ")"
+    if t == "call":
+        local a is unwrap of node[2]
+        return "aot_buf_len(" + a[1] + ")"
     if t == "binop":
         local op is node[1]
-        local l is emit_num of [node[2], nm, raw]
-        local r is emit_num of [node[3], nm, raw]
+        local l is emit_num of [node[2], nm, bt, raw]
+        local r is emit_num of [node[3], nm, bt, raw]
         if op == "+":
             if raw == 1:
                 return "(" + l + " + " + r + ")"
@@ -292,12 +338,12 @@ define emit_num(node, nm, raw) as:
         return "((" + l + " " + op + " " + r + ") ? 1.0 : 0.0)"
     throw of ("AOT: emit_num on non-numeric node " + t)
 
-define emit_val(node, nm) as:
-    if (is_num_expr of [node, nm]) == 1:
-        return "make_num(" + (emit_num of [node, nm, 0]) + ")"
+define emit_val(node, nm, bt) as:
+    if (is_num_expr of [node, nm, bt]) == 1:
+        return "make_num(" + (emit_num of [node, nm, bt, 0]) + ")"
     local t is node[0]
     if t == "_line":
-        return emit_val of [node[2], nm]
+        return emit_val of [node[2], nm, bt]
     if t == "str":
         return "aot_str(\"" + (c_escape of node[1]) + "\")"
     if t == "null":
@@ -305,50 +351,58 @@ define emit_val(node, nm) as:
     if t == "ident":
         return "aot_get(g, \"" + node[1] + "\")"
     if t == "binop":
-        return (binfn of node[1]) + "(" + (emit_val of [node[2], nm]) + ", " + (emit_val of [node[3], nm]) + ")"
+        return (binfn of node[1]) + "(" + (emit_val of [node[2], nm, bt]) + ", " + (emit_val of [node[3], nm, bt]) + ")"
     if t == "call":
         local callee is node[1]
         if callee[0] != "ident":
-            throw of "AOT slice1: only named calls supported"
-        return "aot_call_name(g, \"" + callee[1] + "\", " + (emit_val of [node[2], nm]) + ")"
+            throw of "AOT: only named calls supported"
+        return "aot_call_name(g, \"" + callee[1] + "\", " + (emit_val of [node[2], nm, bt]) + ")"
     throw of ("AOT: cannot emit value node '" + t + "'")
 
-define emit_cond(node, nm) as:
-    if (is_num_expr of [node, nm]) == 1:
-        return "(" + (emit_num of [node, nm, 0]) + " != 0.0)"
-    return "aot_truthy(" + (emit_val of [node, nm]) + ")"
+define emit_cond(node, nm, bt) as:
+    if (is_num_expr of [node, nm, bt]) == 1:
+        return "(" + (emit_num of [node, nm, bt, 0]) + " != 0.0)"
+    return "aot_truthy(" + (emit_val of [node, nm, bt]) + ")"
 
-define emit_stmts(stmts, ind, nm, minits, gf) as:
+define emit_stmts(stmts, ind, nm, bt, minits, gf) as:
     local out is ""
     for i in range of (len of stmts):
-        out is out + (emit_stmt of [stmts[i], ind, nm, minits, gf])
+        out is out + (emit_stmt of [stmts[i], ind, nm, bt, minits, gf])
     return out
 
-define emit_stmt(node, ind, nm, minits, gf) as:
+define emit_stmt(node, ind, nm, bt, minits, gf) as:
     local t is node[0]
     if t == "_line":
-        return emit_stmt of [node[2], ind, nm, minits, gf]
+        return emit_stmt of [node[2], ind, nm, bt, minits, gf]
     if t == "assign":
         local name is node[1]
+        if bt[name] == 1:
+            return ind + name + " = " + (emit_val of [node[2], nm, bt]) + ";\n"
         if nm[name] == 1:
             local raw is 0
             if gf[name] == 1:
                 raw is 1
-            return ind + name + " = " + (emit_num of [node[2], nm, raw]) + ";\n"
-        return ind + "aot_set(g, \"" + name + "\", " + (emit_val of [node[2], nm]) + ");\n"
+            return ind + name + " = " + (emit_num of [node[2], nm, bt, raw]) + ";\n"
+        return ind + "aot_set(g, \"" + name + "\", " + (emit_val of [node[2], nm, bt]) + ");\n"
+    if t == "index_assign":
+        local tgt is unwrap of node[1]
+        if tgt[0] == "ident":
+            if bt[tgt[1]] == 1:
+                return ind + "aot_buf_set(" + tgt[1] + ", " + (emit_num of [node[2], nm, bt, 0]) + ", " + (emit_num of [node[3], nm, bt, 0]) + ");\n"
+        throw of "AOT: index_assign only on numeric buffers (this slice)"
     if t == "call":
-        return ind + "{ Value* _r = " + (emit_val of [node, nm]) + "; if (_r) val_decref(_r); }\n"
+        return ind + "{ Value* _r = " + (emit_val of [node, nm, bt]) + "; if (_r) val_decref(_r); }\n"
     if t == "if":
-        local s is ind + "if (" + (emit_cond of [node[1], nm]) + ") {\n"
-        s is s + (emit_stmts of [node[2], ind + "    ", nm, minits, gf])
+        local s is ind + "if (" + (emit_cond of [node[1], nm, bt]) + ") {\n"
+        s is s + (emit_stmts of [node[2], ind + "    ", nm, bt, minits, gf])
         s is s + ind + "}"
         if (len of node[3]) > 0:
-            s is s + " else {\n" + (emit_stmts of [node[3], ind + "    ", nm, minits, gf]) + ind + "}"
+            s is s + " else {\n" + (emit_stmts of [node[3], ind + "    ", nm, bt, minits, gf]) + ind + "}"
         return s + "\n"
     if t == "loop":
         local lg is loop_gf of [node, minits]
-        local s is ind + "while (" + (emit_cond of [node[1], nm]) + ") {\n"
-        s is s + (emit_stmts of [node[2], ind + "    ", nm, minits, lg])
+        local s is ind + "while (" + (emit_cond of [node[1], nm, bt]) + ") {\n"
+        s is s + (emit_stmts of [node[2], ind + "    ", nm, bt, minits, lg])
         return s + ind + "}\n"
     throw of ("AOT: cannot emit statement node '" + t + "'")
 
@@ -356,14 +410,19 @@ define emit_program(ast) as:
     local stmts is ast
     if ast[0] == "block":
         stmts is ast[1]
-    local nm is infer_numeric of stmts
+    local bt is infer_buffers of stmts
+    local nm is infer_numeric of [stmts, bt]
     local minits is module_inits of stmts
     local decls is ""
     local names is keys of nm
     for i in range of (len of names):
         if nm[names[i]] == 1:
             decls is decls + "    double " + names[i] + " = 0;\n"
-    local body is emit_stmts of [stmts, "    ", nm, minits, {}]
+    local bnames is keys of bt
+    for i in range of (len of bnames):
+        if bt[bnames[i]] == 1:
+            decls is decls + "    Value* " + bnames[i] + " = NULL;\n"
+    local body is emit_stmts of [stmts, "    ", nm, bt, minits, {}]
     local hdr is "#include \"aot_rt.h\"\n\nint main(void) {\n    Env* g = aot_boot(); (void)g;\n"
     local ftr is "    aot_shutdown(g);\n    return 0;\n}\n"
     return hdr + decls + body + ftr
