@@ -1,0 +1,16 @@
+{
+  "name": "ouroboros",
+  "build": { "dockerfile": "Dockerfile" },
+  "workspaceFolder": "/workspaces/ouroboros",
+  "remoteUser": "root",
+
+  // Point the repo's ./eigs symlink at the installed runtime (the committed
+  // symlink is a dev-box absolute path) and prove it resolves.
+  "postCreateCommand": "ln -sf \"$(command -v eigenscript)\" eigs && ./eigs --version",
+
+  "customizations": {
+    "vscode": {
+      "settings": { "files.associations": { "*.eigs": "python" } }
+    }
+  }
+}
