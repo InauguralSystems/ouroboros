@@ -68,6 +68,12 @@ OP_INTERROGATE is 58
 OP_PREDICATE is 59
 OP_INTERROGATE_NAMED is 76
 OP_INTERROGATE_NAMED_AT is 77
+# #262 Phase-3 slot model: re-observe a name binding AFTER its SET (the binding
+# now exists), so the per-binding Env slot — not the Value object — carries the
+# trajectory the predicates/report/interrogatives read. The C compiler emits
+# this after every name `is` assignment; on the slot-default runtime it is
+# load-bearing — without it a name is never observed (nums are now immediates).
+OP_OBSERVE_NAME_POST is 82
 OP_LINE is 68
 OP_LOOP_STALL_CHECK is 62
 OP_LOOP_CAP_CHECK is 63
@@ -207,6 +213,8 @@ define cg_store_name(c, name) as:
             cg_emit_u16 of [c, idx]
             cg_emit of [c, OP_SET_NAME]
             cg_emit_u16 of [c, idx]
+            cg_emit of [c, OP_OBSERVE_NAME_POST]
+            cg_emit_u16 of [c, idx]
         else:
             local nslot is cg_add_local of [c, name]
             cg_emit of [c, OP_OBSERVE_ASSIGN_LOCAL]
@@ -218,6 +226,8 @@ define cg_store_name(c, name) as:
         cg_emit of [c, OP_OBSERVE_ASSIGN]
         cg_emit_u16 of [c, midx]
         cg_emit of [c, OP_SET_NAME]
+        cg_emit_u16 of [c, midx]
+        cg_emit of [c, OP_OBSERVE_NAME_POST]
         cg_emit_u16 of [c, midx]
 
 # --- node codegen: leaves exactly one value on the stack ------------------
@@ -375,7 +385,12 @@ define cg_node(c, node) as:
             cg_emit_u16 of [c, cg_const of [c, iexpr[1]]]
         else:
             cg_node of [c, iexpr]                       # push the target value
-            if is_ident and ((kind == 1) or ((kind == 2) or (kind == 6))):
+            # who/when/prev AND where/why/how on a known binding read its slot
+            # (INTERROGATE_NAMED); only `what` (kind 0) stays value-based. The C
+            # compiler routes where/why/how (3/4/5) to NAMED under the slot flag,
+            # which is the default — and on the slot runtime the bare form would
+            # read the now-empty Value, so NAMED is required for correctness.
+            if is_ident and (kind != 0):
                 cg_emit of [c, OP_INTERROGATE_NAMED]
                 cg_emit_u16 of [c, kind]
                 cg_emit_u16 of [c, cg_const of [c, iexpr[1]]]
