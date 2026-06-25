@@ -70,8 +70,43 @@ while (i < 3000000) { s = num_guard(s + i); i = num_guard(i + 1); }
 print(make_num(s));   /* box only at the boundary */
 ```
 
-Remaining per-iteration cost is `num_guard`'s NaN/inf check; eliding it on
-provably integer-range induction vars would close most of the rest — a later
-optimization. The boxed path (slice 1) stays as the fallback for anything not
-provably numeric, and the differential harness lets specialization stay
-aggressive without risking correctness.
+The boxed path (slice 1) stays as the fallback for anything not provably
+numeric, and the differential harness lets specialization stay aggressive
+without risking correctness.
+
+## `num_guard` elision (bounded-induction analysis)
+
+EigenScript has no NaN/Inf, so every arithmetic result routes through
+`num_guard`. A sound interval analysis proves which variables stay in a safe
+integer range and emits their `+`/`-` updates **raw** (no guard): a loop counter
+bounded by a literal condition (`i < B`, `B ≤ 1e7`), and accumulators whose
+per-iteration delta is just the counter or a small constant (never compounding
+like `s+s`, never a fractional step that inflates the trip count). The bench
+loop becomes pure native C:
+
+```c
+while (i < 3000000) { s = (s + i); i = (i + 1); }
+```
+
+Soundness is verified by the harness (`test/t5_compounding`, `t6_fracstep`):
+anything the analysis can't prove falls back to `num_guard` and matches the VM.
+
+**The scalar gain is marginal (~3% on the sum bench)** — gcc had already turned
+the NaN check into a well-predicted branch that hides behind the loop's carried
+dependency. The elision's real value is as **groundwork for vectorization**.
+Measured (hand-written C with the real `num_guard`), guard → guard-free on an
+element-wise loop `out[i] = f(in[i])` (no carried dependency):
+
+| loop shape | speedup | why |
+|---|---|---|
+| scalar sequential (`s+=i`) | ~1.03× | branch hides behind dependency chain |
+| element-wise, memory-bound | ~2× | branch removal; SIMD capped by RAM bandwidth |
+| element-wise, compute-bound | **~4.2×** | full packed-SIMD (`mulpd`/`vfmadd231pd`) |
+
+`num_guard`'s branches **block auto-vectorization**; the guard-free loop
+vectorizes. That ~2–4× lands on element-wise numeric array loops — exactly the
+portfolio's hot code (transformer matmuls, physics solvers, neural nets). Two
+things capture it, in a later slice: **typed numeric arrays/buffers** (so there
+are vectorizable loops to emit) and compiling the *generated* C at
+**`-O3 -march=native`** (the current `-O2` doesn't auto-vectorize). Until then
+there's nothing vectorizable to compile, so the build stays `-O2`.

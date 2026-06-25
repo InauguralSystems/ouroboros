@@ -1,0 +1,7 @@
+x is 0
+i is 0
+loop while i < 10:
+    x is x + 1
+    i is i + 0.5
+print of x
+print of i
