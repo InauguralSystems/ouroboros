@@ -1,0 +1,7 @@
+x is 5
+if x > 3:
+    print of "big"
+else:
+    print of "small"
+if x < 3:
+    print of "unreached"

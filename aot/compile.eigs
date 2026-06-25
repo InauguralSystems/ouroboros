@@ -1,0 +1,92 @@
+# EigenScript AOT compiler — slice 1.
+# Reuses the ouroboros front-end (tokenize/parse) and emits C source that calls
+# the existing runtime via aot_rt.h. Subset: number/string/null literals,
+# arithmetic + comparison binops, module-level `x is expr`, single-arg named
+# calls (print of ...), if/else, loop while. The C is compiled + linked against
+# the runtime (minus main.c) into a native binary; the VM is the oracle.
+load_file of "src/frontend.eigs"
+
+define c_escape(s) as:
+    local out is ""
+    for i in range of (len of s):
+        local ch is s[i]
+        if ch == "\"":
+            out is out + "\\\""
+        elif ch == "\\":
+            out is out + "\\\\"
+        elif ch == "\n":
+            out is out + "\\n"
+        else:
+            out is out + ch
+    return out
+
+define binfn(op) as:
+    local m is {"+": "aot_add", "-": "aot_sub", "*": "aot_mul", "/": "aot_div", "%": "aot_mod", "==": "aot_eq", "!=": "aot_ne", "<": "aot_lt", ">": "aot_gt", "<=": "aot_le", ">=": "aot_ge"}
+    local r is m[op]
+    if r == null:
+        throw of ("AOT: unsupported binop " + op)
+    return r
+
+define emit_expr(node) as:
+    local t is node[0]
+    if t == "_line":
+        return emit_expr of node[2]
+    if t == "num":
+        return "make_num(" + (str of node[1]) + ")"
+    if t == "str":
+        return "aot_str(\"" + (c_escape of node[1]) + "\")"
+    if t == "null":
+        return "make_null()"
+    if t == "ident":
+        return "aot_get(g, \"" + node[1] + "\")"
+    if t == "binop":
+        return (binfn of node[1]) + "(" + (emit_expr of node[2]) + ", " + (emit_expr of node[3]) + ")"
+    if t == "call":
+        local callee is node[1]
+        if callee[0] != "ident":
+            throw of "AOT slice1: only named calls supported"
+        return "aot_call_name(g, \"" + callee[1] + "\", " + (emit_expr of node[2]) + ")"
+    throw of ("AOT: cannot emit expression node '" + t + "'")
+
+define emit_stmts(stmts, ind) as:
+    local out is ""
+    for i in range of (len of stmts):
+        out is out + (emit_stmt of [stmts[i], ind])
+    return out
+
+define emit_stmt(node, ind) as:
+    local t is node[0]
+    if t == "_line":
+        return emit_stmt of [node[2], ind]
+    if t == "assign":
+        return ind + "aot_set(g, \"" + node[1] + "\", " + (emit_expr of node[2]) + ");\n"
+    if t == "call":
+        return ind + "{ Value* _r = " + (emit_expr of node) + "; if (_r) val_decref(_r); }\n"
+    if t == "if":
+        local s is ind + "if (aot_truthy(" + (emit_expr of node[1]) + ")) {\n"
+        s is s + (emit_stmts of [node[2], ind + "    "])
+        s is s + ind + "}"
+        if (len of node[3]) > 0:
+            s is s + " else {\n" + (emit_stmts of [node[3], ind + "    "]) + ind + "}"
+        return s + "\n"
+    if t == "loop":
+        local s is ind + "while (aot_truthy(" + (emit_expr of node[1]) + ")) {\n"
+        s is s + (emit_stmts of [node[2], ind + "    "])
+        return s + ind + "}\n"
+    throw of ("AOT: cannot emit statement node '" + t + "'")
+
+define emit_program(ast) as:
+    local stmts is ast
+    if ast[0] == "block":
+        stmts is ast[1]
+    local body is emit_stmts of [stmts, "    "]
+    local hdr is "#include \"aot_rt.h\"\n\nint main(void) {\n    Env* g = aot_boot();\n"
+    local ftr is "    aot_shutdown(g);\n    return 0;\n}\n"
+    return hdr + body + ftr
+
+# ---- driver ----
+argv is args of null
+src is read_text of argv[0]
+toks is eigen_tokenize of src
+ast is eigen_parse of toks
+print of (emit_program of ast)
