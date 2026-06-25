@@ -1,0 +1,25 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: suite (in devcontainer)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Build the devcontainer (EigenScript pinned by .devcontainer/Dockerfile's
+      # EIGS_REF) and run the full suite inside it — the same image a Codespace
+      # opens. EIGS=eigenscript uses the on-PATH runtime, not the dev-box symlink.
+      - name: Build devcontainer and run suite
+        uses: devcontainers/ci@v0.3
+        with:
+          runCmd: EIGS=eigenscript bash test/run.sh
