@@ -1,9 +1,8 @@
-# EigenScript AOT compiler — slice 1.
-# Reuses the ouroboros front-end (tokenize/parse) and emits C source that calls
-# the existing runtime via aot_rt.h. Subset: number/string/null literals,
-# arithmetic + comparison binops, module-level `x is expr`, single-arg named
-# calls (print of ...), if/else, loop while. The C is compiled + linked against
-# the runtime (minus main.c) into a native binary; the VM is the oracle.
+# EigenScript AOT compiler.
+# Slice 1 (boxed) + numeric-scalar specialization (slice-5 spike): variables
+# proven to always hold a number are emitted as native C doubles (no Value, no
+# env, no refcount); everything else uses the boxed runtime path. Numbers are
+# boxed only at boundaries (calls, non-numeric contexts). The VM is the oracle.
 load_file of "src/frontend.eigs"
 
 define c_escape(s) as:
@@ -27,12 +26,108 @@ define binfn(op) as:
         throw of ("AOT: unsupported binop " + op)
     return r
 
-define emit_expr(node) as:
+# ---- numeric-scalar type inference (greatest fixpoint: assume numeric, demote) ----
+ARITH_OPS is {"+": 1, "-": 1, "*": 1, "/": 1, "%": 1, "==": 1, "!=": 1, "<": 1, ">": 1, "<=": 1, ">=": 1}
+
+define is_num_expr(node, nm) as:
     local t is node[0]
     if t == "_line":
-        return emit_expr of node[2]
+        return is_num_expr of [node[2], nm]
     if t == "num":
-        return "make_num(" + (str of node[1]) + ")"
+        return 1
+    if t == "ident":
+        if nm[node[1]] == 1:
+            return 1
+        return 0
+    if t == "binop":
+        if ARITH_OPS[node[1]] == null:
+            return 0
+        if (is_num_expr of [node[2], nm]) == 0:
+            return 0
+        if (is_num_expr of [node[3], nm]) == 0:
+            return 0
+        return 1
+    return 0
+
+define collect_assigns_stmt(node, acc) as:
+    local t is node[0]
+    if t == "_line":
+        collect_assigns_stmt of [node[2], acc]
+        return null
+    if t == "assign":
+        local name is node[1]
+        if acc[name] == null:
+            acc[name] is []
+        acc[name] is (append of [acc[name], node[2]])
+        return null
+    if t == "if":
+        collect_assigns of [node[2], acc]
+        collect_assigns of [node[3], acc]
+        return null
+    if t == "loop":
+        collect_assigns of [node[2], acc]
+        return null
+    return null
+
+define collect_assigns(stmts, acc) as:
+    for i in range of (len of stmts):
+        collect_assigns_stmt of [stmts[i], acc]
+    return acc
+
+define infer_numeric(stmts) as:
+    local assigns is collect_assigns of [stmts, {}]
+    local names is keys of assigns
+    local nm is {}
+    for i in range of (len of names):
+        nm[names[i]] is 1
+    local changed is 1
+    loop while changed == 1:
+        changed is 0
+        for i in range of (len of names):
+            local v is names[i]
+            if nm[v] == 1:
+                local rhss is assigns[v]
+                local allnum is 1
+                for j in range of (len of rhss):
+                    if (is_num_expr of [rhss[j], nm]) == 0:
+                        allnum is 0
+                if allnum == 0:
+                    nm[v] is 0
+                    changed is 1
+    return nm
+
+# ---- emission ----
+define emit_num(node, nm) as:
+    local t is node[0]
+    if t == "_line":
+        return emit_num of [node[2], nm]
+    if t == "num":
+        return str of node[1]
+    if t == "ident":
+        return node[1]
+    if t == "binop":
+        local op is node[1]
+        local l is emit_num of [node[2], nm]
+        local r is emit_num of [node[3], nm]
+        if op == "+":
+            return "num_guard(" + l + " + " + r + ")"
+        if op == "-":
+            return "num_guard(" + l + " - " + r + ")"
+        if op == "*":
+            return "num_guard(" + l + " * " + r + ")"
+        if op == "/":
+            return "aot_ddiv(" + l + ", " + r + ")"
+        if op == "%":
+            return "aot_dmod(" + l + ", " + r + ")"
+        return "((" + l + " " + op + " " + r + ") ? 1.0 : 0.0)"
+    throw of ("AOT: emit_num on non-numeric node " + t)
+
+define emit_val(node, nm) as:
+    if (is_num_expr of [node, nm]) == 1:
+        return "make_num(" + (emit_num of [node, nm]) + ")"
+    local t is node[0]
+    if t == "_line":
+        return emit_val of [node[2], nm]
     if t == "str":
         return "aot_str(\"" + (c_escape of node[1]) + "\")"
     if t == "null":
@@ -40,38 +135,46 @@ define emit_expr(node) as:
     if t == "ident":
         return "aot_get(g, \"" + node[1] + "\")"
     if t == "binop":
-        return (binfn of node[1]) + "(" + (emit_expr of node[2]) + ", " + (emit_expr of node[3]) + ")"
+        return (binfn of node[1]) + "(" + (emit_val of [node[2], nm]) + ", " + (emit_val of [node[3], nm]) + ")"
     if t == "call":
         local callee is node[1]
         if callee[0] != "ident":
             throw of "AOT slice1: only named calls supported"
-        return "aot_call_name(g, \"" + callee[1] + "\", " + (emit_expr of node[2]) + ")"
-    throw of ("AOT: cannot emit expression node '" + t + "'")
+        return "aot_call_name(g, \"" + callee[1] + "\", " + (emit_val of [node[2], nm]) + ")"
+    throw of ("AOT: cannot emit value node '" + t + "'")
 
-define emit_stmts(stmts, ind) as:
+define emit_cond(node, nm) as:
+    if (is_num_expr of [node, nm]) == 1:
+        return "(" + (emit_num of [node, nm]) + " != 0.0)"
+    return "aot_truthy(" + (emit_val of [node, nm]) + ")"
+
+define emit_stmts(stmts, ind, nm) as:
     local out is ""
     for i in range of (len of stmts):
-        out is out + (emit_stmt of [stmts[i], ind])
+        out is out + (emit_stmt of [stmts[i], ind, nm])
     return out
 
-define emit_stmt(node, ind) as:
+define emit_stmt(node, ind, nm) as:
     local t is node[0]
     if t == "_line":
-        return emit_stmt of [node[2], ind]
+        return emit_stmt of [node[2], ind, nm]
     if t == "assign":
-        return ind + "aot_set(g, \"" + node[1] + "\", " + (emit_expr of node[2]) + ");\n"
+        local name is node[1]
+        if nm[name] == 1:
+            return ind + name + " = " + (emit_num of [node[2], nm]) + ";\n"
+        return ind + "aot_set(g, \"" + name + "\", " + (emit_val of [node[2], nm]) + ");\n"
     if t == "call":
-        return ind + "{ Value* _r = " + (emit_expr of node) + "; if (_r) val_decref(_r); }\n"
+        return ind + "{ Value* _r = " + (emit_val of [node, nm]) + "; if (_r) val_decref(_r); }\n"
     if t == "if":
-        local s is ind + "if (aot_truthy(" + (emit_expr of node[1]) + ")) {\n"
-        s is s + (emit_stmts of [node[2], ind + "    "])
+        local s is ind + "if (" + (emit_cond of [node[1], nm]) + ") {\n"
+        s is s + (emit_stmts of [node[2], ind + "    ", nm])
         s is s + ind + "}"
         if (len of node[3]) > 0:
-            s is s + " else {\n" + (emit_stmts of [node[3], ind + "    "]) + ind + "}"
+            s is s + " else {\n" + (emit_stmts of [node[3], ind + "    ", nm]) + ind + "}"
         return s + "\n"
     if t == "loop":
-        local s is ind + "while (aot_truthy(" + (emit_expr of node[1]) + ")) {\n"
-        s is s + (emit_stmts of [node[2], ind + "    "])
+        local s is ind + "while (" + (emit_cond of [node[1], nm]) + ") {\n"
+        s is s + (emit_stmts of [node[2], ind + "    ", nm])
         return s + ind + "}\n"
     throw of ("AOT: cannot emit statement node '" + t + "'")
 
@@ -79,10 +182,16 @@ define emit_program(ast) as:
     local stmts is ast
     if ast[0] == "block":
         stmts is ast[1]
-    local body is emit_stmts of [stmts, "    "]
-    local hdr is "#include \"aot_rt.h\"\n\nint main(void) {\n    Env* g = aot_boot();\n"
+    local nm is infer_numeric of stmts
+    local decls is ""
+    local names is keys of nm
+    for i in range of (len of names):
+        if nm[names[i]] == 1:
+            decls is decls + "    double " + names[i] + " = 0;\n"
+    local body is emit_stmts of [stmts, "    ", nm]
+    local hdr is "#include \"aot_rt.h\"\n\nint main(void) {\n    Env* g = aot_boot(); (void)g;\n"
     local ftr is "    aot_shutdown(g);\n    return 0;\n}\n"
-    return hdr + body + ftr
+    return hdr + decls + body + ftr
 
 # ---- driver ----
 argv is args of null
