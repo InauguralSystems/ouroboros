@@ -69,6 +69,11 @@ AOT_NUMOP(aot_mul, x * y)
 AOT_NUMOP(aot_div, (y == 0.0 ? 0.0 : x / y))
 AOT_NUMOP(aot_mod, (y == 0.0 ? 0.0 : fmod(x, y)))
 
+/* Specialized (unboxed double) div/mod, matching the VM (b==0 -> 0). Single-eval
+   helpers so the emitter doesn't have to duplicate the operand expressions. */
+static inline double aot_ddiv(double a, double b) { return b == 0.0 ? 0.0 : num_guard(a / b); }
+static inline double aot_dmod(double a, double b) { return b == 0.0 ? 0.0 : num_guard(fmod(a, b)); }
+
 #define AOT_CMP(NAME, EXPR) \
     static Value *NAME(Value *a, Value *b) { \
         int res = 0; \

@@ -1,0 +1,11 @@
+n is 0
+label is "count"
+loop while n < 3:
+    n is n + 1
+print of label
+print of n
+flag is n == 3
+if flag:
+    print of "done"
+else:
+    print of "no"
