@@ -1,0 +1,15 @@
+n is 8
+xs is zeros of n
+ys is zeros of n
+i is 0
+loop while i < n:
+    xs[i] is i + 1
+    i is i + 1
+i is 0
+loop while i < n:
+    ys[i] is xs[i] * 2
+    i is i + 1
+print of (len of ys)
+print of ys[0]
+print of ys[7]
+print of ys[-1]

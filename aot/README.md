@@ -33,10 +33,38 @@ Override the runtime checkout with `EIGS_DIR=` (default `../../EigenScript`).
    single-arg named calls (`print of ...`), `if/else`, `loop while`.
    Parity-verified vs the VM (`test/run.sh`).
 2. functions / calls / recursion (locals as C-scoped, the call convention)
-3. lists / dicts / `for` / closures
+3. **typed numeric buffers DONE** (checked path) — `buffer of N` / `zeros of N`
+   become C `Value*`; element read/write via `aot_buf_get`/`aot_buf_set` (integer
+   check + negative-index resolve + bounds), `len of buf` via `aot_buf_len`.
+   Parity-verified (`test/t7_buffer`). The *vectorized* path is blocked on a
+   semantic decision — see "Vectorization vs no-NaN/Inf" below. Lists/dicts/for
+   next.
 4. observer ops (`observer_slot_update*` are callable — the differentiator comes along)
-5. **type specialization** — numeric-scalar spike **DONE** (see Speed below, ~64×);
-   broaden to typed lists/buffers and elide `num_guard` on integer-range vars next
+5. **type specialization** — numeric-scalar spike **DONE** (see Speed below, ~64×).
+
+## Vectorization vs no-NaN/Inf (a forge-the-language finding)
+
+The big remaining multiple is SIMD vectorization of element-wise numeric array
+loops (`out[i] = f(in[i])`) — the shape of transformer matmuls, physics solvers,
+neural nets. But `num_guard` (which enforces EigenScript's no-NaN/Inf guarantee
+on every numeric op) **blocks auto-vectorization**, and this holds across every
+*sound* formulation tested (gcc `-O3 -march=native`, compute-bound element-wise
+map, real semantics):
+
+| guard | vs raw | vectorized? |
+|---|---|---|
+| branchy `if(x!=x)…` | ~3.4× slower | no |
+| branchless ternary | ~3.7× slower | no (gcc re-introduces branches) |
+| clamp-only `fmin/fmax` | ~8.8× slower | no (IEEE NaN semantics block `minsd`) |
+| **raw (no guard)** | **1.0× (baseline)** | **yes — packed SIMD** |
+
+Only fully-raw vectorizes — and raw is **unsound** (admits NaN/Inf, diverging
+from the VM). `-ffast-math` would let the clamp vectorize, but it *is* dropping
+the no-NaN/Inf guarantee. So the ~3–9× vectorization win is fundamentally in
+tension with the language's no-NaN/Inf semantic. Capturing it is a **language
+decision** (e.g. an opt-in "native-float" mode for marked hot numeric arrays),
+not something AOT can do soundly on its own. AOT made the tradeoff concrete and
+measurable.
 
 ## Speed: the specialization spike landed (~64×)
 
