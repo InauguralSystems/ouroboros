@@ -35,22 +35,43 @@ Override the runtime checkout with `EIGS_DIR=` (default `../../EigenScript`).
 2. functions / calls / recursion (locals as C-scoped, the call convention)
 3. lists / dicts / `for` / closures
 4. observer ops (`observer_slot_update*` are callable — the differentiator comes along)
-5. **type specialization** — where the speed is
+5. **type specialization** — numeric-scalar spike **DONE** (see Speed below, ~64×);
+   broaden to typed lists/buffers and elide `num_guard` on integer-range vars next
 
-## Speed: correctness first, specialization second
+## Speed: the specialization spike landed (~64×)
 
-Slice 1 is deliberately correctness-first and is **not yet faster** than the VM.
-Measured on a 3M-iteration counting loop (this dev box, JIT-on VM):
+Numeric-scalar specialization is implemented (greatest-fixpoint inference:
+assume numeric, demote on evidence). A variable proven to always hold a number
+becomes a native C `double` — no `Value`, no env, no refcount; numbers are boxed
+only at boundaries (calls, non-numeric contexts).
 
-| | wall |
-|---|---|
-| VM (JIT) | ~1.00s |
-| AOT slice 1 | ~1.30s |
+Measured on a 3M-iteration counting loop (`s += i`), this dev box, JIT-on VM:
 
-It's slower because slice 1 still **boxes every number** (`make_num` + refcount
-per op) and **resolves every variable by name** (`env_get`/`env_set` hash lookup)
-— so it trades cheap, JIT'd bytecode dispatch for `aot_*` call overhead. The
-native win is gated on **type specialization** (slice 5): infer numeric locals
-and emit unboxed C `double`s with slot/C-local binding, turning the loop into a
-raw C `for` with zero allocation. The measurement above pinpoints the two costs
-to eliminate — it's where the ~68× headroom actually lives.
+| | wall (3M) | iterations/sec |
+|---|---|---|
+| VM (JIT) | ~1.00s | ~3.1M |
+| AOT boxed (slice 1) | ~1.30s | ~2.3M |
+| **AOT specialized** | **~0.022s** | **~213M** |
+
+**~64× per-iteration** over the JIT'd VM (~45× on total wall incl. startup) —
+right on the ~68× native gap. Output is byte-identical to the VM (the oracle
+held). The win is **real native iteration**, verified two ways:
+
+- It **scales linearly** with N (3M→30M: loop time 0.015s→0.141s, 9.4× for 10×
+  iterations) — a closed-formed loop would stay flat.
+- The **disassembly is a real loop**: `addsd` (native double add) + `ucomisd/jp`
+  (`num_guard`'s inlined NaN check) per op.
+
+The specialized loop:
+
+```c
+double i = 0, s = 0;
+while (i < 3000000) { s = num_guard(s + i); i = num_guard(i + 1); }
+print(make_num(s));   /* box only at the boundary */
+```
+
+Remaining per-iteration cost is `num_guard`'s NaN/inf check; eliding it on
+provably integer-range induction vars would close most of the rest — a later
+optimization. The boxed path (slice 1) stays as the fallback for anything not
+provably numeric, and the differential harness lets specialization stay
+aggressive without risking correctness.
