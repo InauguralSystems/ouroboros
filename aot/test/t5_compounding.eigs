@@ -1,0 +1,6 @@
+s is 1
+i is 0
+loop while i < 4000:
+    s is s + s
+    i is i + 1
+print of s

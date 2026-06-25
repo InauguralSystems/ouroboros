@@ -1,9 +1,15 @@
 # EigenScript AOT compiler.
-# Slice 1 (boxed) + numeric-scalar specialization (slice-5 spike): variables
-# proven to always hold a number are emitted as native C doubles (no Value, no
-# env, no refcount); everything else uses the boxed runtime path. Numbers are
-# boxed only at boundaries (calls, non-numeric contexts). The VM is the oracle.
+# Slice 1 (boxed) + numeric-scalar specialization + bounded-induction num_guard
+# elision: a variable proven to stay in a safe integer range inside a literal-
+# bounded loop gets its +/- updates emitted RAW (no num_guard), turning the hot
+# loop into pure native C. Everything unproven keeps num_guard (the fallback);
+# the VM is the differential oracle.
 load_file of "src/frontend.eigs"
+
+# Magnitude cap for guard-free arithmetic. A literal-bounded loop `i < B` with
+# B <= GF_MAX keeps an accumulator (delta = counter or small const) under
+# ~2*B^2 < 2^52, so +/- can't overflow or NaN -> num_guard is identity there.
+GF_MAX is 10000000
 
 define c_escape(s) as:
     local out is ""
@@ -28,6 +34,11 @@ define binfn(op) as:
 
 # ---- numeric-scalar type inference (greatest fixpoint: assume numeric, demote) ----
 ARITH_OPS is {"+": 1, "-": 1, "*": 1, "/": 1, "%": 1, "==": 1, "!=": 1, "<": 1, ">": 1, "<=": 1, ">=": 1}
+
+define unwrap(node) as:
+    loop while node[0] == "_line":
+        node is node[2]
+    return node
 
 define is_num_expr(node, nm) as:
     local t is node[0]
@@ -96,22 +107,181 @@ define infer_numeric(stmts) as:
                     changed is 1
     return nm
 
-# ---- emission ----
-define emit_num(node, nm) as:
+# ---- bounded-induction analysis (which vars are guard-free inside a loop) ----
+define module_inits(stmts) as:
+    local mi is {}
+    for i in range of (len of stmts):
+        local node is unwrap of stmts[i]
+        if node[0] == "assign":
+            local v is node[1]
+            local rhs is unwrap of node[2]
+            if rhs[0] == "num":
+                if mi[v] == null:
+                    local a is rhs[1]
+                    if a < 0:
+                        a is 0 - a
+                    mi[v] is a
+    return mi
+
+define small_lit(a, B) as:
+    if a < 0:
+        a is 0 - a
+    if a <= B:
+        return 1
+    return 0
+
+# A "delta" (per-iteration increment) must be the counter or a small literal —
+# never another variable, so accumulation can't compound (s+s, s+t excluded).
+define delta_ok(node, I, B) as:
+    local n is unwrap of node
+    local t is n[0]
+    if t == "num":
+        return small_lit of [n[1], B]
+    if t == "ident":
+        if n[1] == I:
+            return 1
+        return 0
+    return 0
+
+# Is `node` a valid RHS for guard-free var v? (literal<=B | counter | v +/- delta
+# | delta +/- delta). v appears at most as the carried term; delta never carries v.
+define gf_rhs_ok(node, I, B, v) as:
+    local n is unwrap of node
+    local t is n[0]
+    if t == "num":
+        return small_lit of [n[1], B]
+    if t == "ident":
+        if n[1] == I:
+            return 1
+        return 0
+    if t == "binop":
+        local op is n[1]
+        if (op != "+") and (op != "-"):
+            return 0
+        local a is unwrap of n[2]
+        local b is unwrap of n[3]
+        if (a[0] == "ident") and (a[1] == v):
+            return delta_ok of [b, I, B]
+        if (op == "+") and (b[0] == "ident") and (b[1] == v):
+            return delta_ok of [a, I, B]
+        if (delta_ok of [a, I, B]) == 1:
+            return delta_ok of [b, I, B]
+        return 0
+    return 0
+
+# Counter I must be updated only as `I is I + K` with K a literal >= 1, so the
+# trip count is bounded by B (no fractional steps that blow the trip count up).
+define counter_step_ok(rhss, I) as:
+    for j in range of (len of rhss):
+        local r is unwrap of rhss[j]
+        if r[0] != "binop":
+            return 0
+        if r[1] != "+":
+            return 0
+        local a is unwrap of r[2]
+        local b is unwrap of r[3]
+        if (a[0] != "ident") or (a[1] != I):
+            return 0
+        if b[0] != "num":
+            return 0
+        if b[1] < 1:
+            return 0
+    return 1
+
+define has_nested_loop_node(node) as:
     local t is node[0]
     if t == "_line":
-        return emit_num of [node[2], nm]
+        return has_nested_loop_node of node[2]
+    if t == "loop":
+        return 1
+    if t == "if":
+        if (has_nested_loop of node[2]) == 1:
+            return 1
+        return has_nested_loop of node[3]
+    return 0
+
+define has_nested_loop(stmts) as:
+    for i in range of (len of stmts):
+        if (has_nested_loop_node of stmts[i]) == 1:
+            return 1
+    return 0
+
+# Guard-free var set for one loop body (empty unless it matches the bounded
+# pattern: `loop while I < B` / `<=`, B a literal in (0, GF_MAX], no nested loop).
+define loop_gf(loopnode, minits) as:
+    local cond is unwrap of loopnode[1]
+    if cond[0] != "binop":
+        return {}
+    local cmp is cond[1]
+    if (cmp != "<") and (cmp != "<="):
+        return {}
+    local lhs is unwrap of cond[2]
+    local rhs is unwrap of cond[3]
+    if lhs[0] != "ident":
+        return {}
+    if rhs[0] != "num":
+        return {}
+    local I is lhs[1]
+    local B is rhs[1]
+    if B <= 0:
+        return {}
+    if B > GF_MAX:
+        return {}
+    local body is loopnode[2]
+    if (has_nested_loop of body) == 1:
+        return {}
+    local ba is collect_assigns of [body, {}]
+    if ba[I] == null:
+        return {}
+    if (counter_step_ok of [ba[I], I]) == 0:
+        return {}
+    local names is keys of ba
+    local gf is {}
+    for k in range of (len of names):
+        local v is names[k]
+        local elig is 0
+        if v == I:
+            elig is 1
+        else:
+            elig is init_ok of [v, minits, B]
+        if elig == 1:
+            local ok is 1
+            local rhss is ba[v]
+            for j in range of (len of rhss):
+                if (gf_rhs_ok of [rhss[j], I, B, v]) == 0:
+                    ok is 0
+            if ok == 1:
+                gf[v] is 1
+    return gf
+
+define init_ok(v, minits, B) as:
+    local iv is minits[v]
+    if iv == null:
+        return 0
+    if iv <= B:
+        return 1
+    return 0
+
+# ---- emission ----
+define emit_num(node, nm, raw) as:
+    local t is node[0]
+    if t == "_line":
+        return emit_num of [node[2], nm, raw]
     if t == "num":
         return str of node[1]
     if t == "ident":
         return node[1]
     if t == "binop":
         local op is node[1]
-        local l is emit_num of [node[2], nm]
-        local r is emit_num of [node[3], nm]
+        local l is emit_num of [node[2], nm, raw]
+        local r is emit_num of [node[3], nm, raw]
         if op == "+":
+            if raw == 1:
+                return "(" + l + " + " + r + ")"
             return "num_guard(" + l + " + " + r + ")"
         if op == "-":
+            if raw == 1:
+                return "(" + l + " - " + r + ")"
             return "num_guard(" + l + " - " + r + ")"
         if op == "*":
             return "num_guard(" + l + " * " + r + ")"
@@ -124,7 +294,7 @@ define emit_num(node, nm) as:
 
 define emit_val(node, nm) as:
     if (is_num_expr of [node, nm]) == 1:
-        return "make_num(" + (emit_num of [node, nm]) + ")"
+        return "make_num(" + (emit_num of [node, nm, 0]) + ")"
     local t is node[0]
     if t == "_line":
         return emit_val of [node[2], nm]
@@ -145,36 +315,40 @@ define emit_val(node, nm) as:
 
 define emit_cond(node, nm) as:
     if (is_num_expr of [node, nm]) == 1:
-        return "(" + (emit_num of [node, nm]) + " != 0.0)"
+        return "(" + (emit_num of [node, nm, 0]) + " != 0.0)"
     return "aot_truthy(" + (emit_val of [node, nm]) + ")"
 
-define emit_stmts(stmts, ind, nm) as:
+define emit_stmts(stmts, ind, nm, minits, gf) as:
     local out is ""
     for i in range of (len of stmts):
-        out is out + (emit_stmt of [stmts[i], ind, nm])
+        out is out + (emit_stmt of [stmts[i], ind, nm, minits, gf])
     return out
 
-define emit_stmt(node, ind, nm) as:
+define emit_stmt(node, ind, nm, minits, gf) as:
     local t is node[0]
     if t == "_line":
-        return emit_stmt of [node[2], ind, nm]
+        return emit_stmt of [node[2], ind, nm, minits, gf]
     if t == "assign":
         local name is node[1]
         if nm[name] == 1:
-            return ind + name + " = " + (emit_num of [node[2], nm]) + ";\n"
+            local raw is 0
+            if gf[name] == 1:
+                raw is 1
+            return ind + name + " = " + (emit_num of [node[2], nm, raw]) + ";\n"
         return ind + "aot_set(g, \"" + name + "\", " + (emit_val of [node[2], nm]) + ");\n"
     if t == "call":
         return ind + "{ Value* _r = " + (emit_val of [node, nm]) + "; if (_r) val_decref(_r); }\n"
     if t == "if":
         local s is ind + "if (" + (emit_cond of [node[1], nm]) + ") {\n"
-        s is s + (emit_stmts of [node[2], ind + "    ", nm])
+        s is s + (emit_stmts of [node[2], ind + "    ", nm, minits, gf])
         s is s + ind + "}"
         if (len of node[3]) > 0:
-            s is s + " else {\n" + (emit_stmts of [node[3], ind + "    ", nm]) + ind + "}"
+            s is s + " else {\n" + (emit_stmts of [node[3], ind + "    ", nm, minits, gf]) + ind + "}"
         return s + "\n"
     if t == "loop":
+        local lg is loop_gf of [node, minits]
         local s is ind + "while (" + (emit_cond of [node[1], nm]) + ") {\n"
-        s is s + (emit_stmts of [node[2], ind + "    ", nm])
+        s is s + (emit_stmts of [node[2], ind + "    ", nm, minits, lg])
         return s + ind + "}\n"
     throw of ("AOT: cannot emit statement node '" + t + "'")
 
@@ -183,12 +357,13 @@ define emit_program(ast) as:
     if ast[0] == "block":
         stmts is ast[1]
     local nm is infer_numeric of stmts
+    local minits is module_inits of stmts
     local decls is ""
     local names is keys of nm
     for i in range of (len of names):
         if nm[names[i]] == 1:
             decls is decls + "    double " + names[i] + " = 0;\n"
-    local body is emit_stmts of [stmts, "    ", nm]
+    local body is emit_stmts of [stmts, "    ", nm, minits, {}]
     local hdr is "#include \"aot_rt.h\"\n\nint main(void) {\n    Env* g = aot_boot(); (void)g;\n"
     local ftr is "    aot_shutdown(g);\n    return 0;\n}\n"
     return hdr + decls + body + ftr
