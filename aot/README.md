@@ -143,9 +143,15 @@ inferred `Value*` when the body returns a buffer. So `define make_range(m) as:
 out is zeros of m; loop … out[i] is i*i …; return out` compiles to
 `static Value* make_range(double)` whose fill **vectorizes**, and the caller
 recognizes `sq is make_range of n` as a buffer. `test/t16_bufret`. (Note: call
-with `f of x`, not `f(x)` — EigenScript has no paren-call syntax.) Limits: no
-module-global reads inside functions; mixed numeric/buffer returns in one
-function aren't type-checked.
+with `f of x`, not `f(x)` — EigenScript has no paren-call syntax.)
+
+**Module-global reads.** Module-level numeric scalars and buffers are emitted as
+**file-scope** `static` vars (not `main` locals), so functions can read them — a
+global constant `DT`, a global buffer `G`. A function's params/locals shadow
+same-named globals; an assignment to a global name updates the file-global.
+`test/t17_globals`. Limits: mixed numeric/buffer returns in one function aren't
+type-checked; the `local` keyword forcing a function-local that shadows a global
+isn't modeled.
 
 ## Neighbor indexing / stencils
 
@@ -165,8 +171,7 @@ vectorizes fully in-bounds. `test/t14_binop_bound`. (Bounds get scalar
 guard-elision only when literal; binop bounds stay guarded — sound.) Also fixed a
 latent bug: `zeros of N` is arena-allocated and the AOT's flat arena clobbered
 it, so buffers are now created via the heap-zeroed `buffer` builtin (same length-N
-zero buffer; surfaced by the oracle on an unwritten-element read). Next:
-module-global reads inside functions; mutating-in-place vs return conventions.
+zero buffer; surfaced by the oracle on an unwritten-element read).
 
 ## Speed: the specialization spike landed (~64×)
 

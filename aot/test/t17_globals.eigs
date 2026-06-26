@@ -1,0 +1,21 @@
+DT is 2
+G is zeros of 4
+G[0] is 10
+G[1] is 20
+
+define step(x) as:
+    return x * DT + 1
+
+define readg(idx) as:
+    return G[idx]
+
+n is 6
+xs is zeros of n
+i is 0
+loop while i < n:
+    xs[i] is step of i
+    i is i + 1
+print of xs[0]
+print of xs[3]
+print of (readg of 0)
+print of (readg of 1)
