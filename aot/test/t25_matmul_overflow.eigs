@@ -1,0 +1,33 @@
+define matmul(out, X, W, S, Din, Dout) as:
+    i is 0
+    loop while i < S:
+        o is 0
+        loop while o < Dout:
+            s is 0
+            d is 0
+            loop while d < Din:
+                s is s + X[i * Din + d] * W[d * Dout + o]
+                d is d + 1
+            out[i * Dout + o] is s
+            o is o + 1
+        i is i + 1
+S is 2
+Din is 4
+Dout is 3
+big is 100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000.0
+X is buffer of (S * Din)
+W is buffer of (Din * Dout)
+O is buffer of (S * Dout)
+i is 0
+loop while i < (S * Din):
+    X[i] is big
+    i is i + 1
+i is 0
+loop while i < (Din * Dout):
+    W[i] is big
+    i is i + 1
+matmul of [O, X, W, S, Din, Dout]
+i is 0
+loop while i < (S * Dout):
+    print of O[i]
+    i is i + 1

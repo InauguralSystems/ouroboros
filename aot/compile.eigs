@@ -141,6 +141,19 @@ define is_num_expr(node, nm, bt) as:
     return 0
 
 # ---- integer-typing analysis (the matmul lever) ----
+# An integer LITERAL is long-safe only if it's whole AND fits where long and
+# double agree exactly — |v| < 2^53 (9007199254740992). Above that a `long`
+# either loses nothing while the double rounds, or (e.g. 1e161) overflows long
+# to garbage. Counters/indices/dimensions are always far below this.
+define int_lit_ok(v) as:
+    if (v % 1) != 0:
+        return 0
+    if v >= 9007199254740992:
+        return 0
+    if v <= 0 - 9007199254740992:
+        return 0
+    return 1
+
 # is_int_expr: does this expression evaluate to an exact integer, computable in
 # native `long`? Reads g_int (the current scope's integer names). Conservative:
 # integer literals, integer names, +/-/*/% of integers, `len of`, unary minus.
@@ -149,9 +162,7 @@ define is_int_expr(node) as:
     local n is unwrap of node
     local t is n[0]
     if t == "num":
-        if (n[1] % 1) == 0:
-            return 1
-        return 0
+        return int_lit_ok of n[1]
     if t == "ident":
         if g_int[n[1]] == 1:
             return 1
@@ -243,7 +254,7 @@ define is_counter(v, rhss) as:
     for j in range of (len of rhss):
         local n is unwrap of rhss[j]
         if n[0] == "num":
-            if (n[1] % 1) != 0:
+            if (int_lit_ok of n[1]) == 0:
                 return 0
         elif n[0] == "binop":
             if (n[1] != "+") and (n[1] != "-"):
@@ -251,9 +262,9 @@ define is_counter(v, rhss) as:
             local a is unwrap of n[2]
             local b is unwrap of n[3]
             local ok is 0
-            if (a[0] == "ident") and (a[1] == v) and (b[0] == "num") and ((b[1] % 1) == 0):
+            if (a[0] == "ident") and (a[1] == v) and (b[0] == "num") and ((int_lit_ok of b[1]) == 1):
                 ok is 1
-            if (n[1] == "+") and (b[0] == "ident") and (b[1] == v) and (a[0] == "num") and ((a[1] % 1) == 0):
+            if (n[1] == "+") and (b[0] == "ident") and (b[1] == v) and (a[0] == "num") and ((int_lit_ok of a[1]) == 1):
                 ok is 1
             if ok == 0:
                 return 0
@@ -652,9 +663,12 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
         local vinfo is vec_loop of [node, nm, bt]
         if vinfo != null:
             return emit_vectorized of [node, vinfo, ind, nm, bt, minits]
+        local mm is matmul_loop of [node, nm, bt]
+        if mm != null:
+            return emit_matmul of [mm, ind, nm, bt, minits]
         local ov is outvec_loop of [node, nm, bt]
         if ov != null:
-            return emit_outvec of [ov, ind, nm, bt]
+            return emit_outvec of [ov, ind, nm, bt, 1]
         local lg is loop_gf of [node, minits]
         local s is ind + "while (" + (emit_cond of [node[1], nm, bt]) + ") {\n"
         s is s + (emit_stmts of [node[2], ind + "    ", nm, bt, minits, lg])
@@ -1183,7 +1197,9 @@ define collect_ov_bufs(node, O, acc) as:
     return null
 
 # Emit TERM as a packed vector over O (lanes = consecutive output columns).
-define emit_term_ov(node, O, nm, bt) as:
+# guard=0 drops the packed num_guard — sound only when the caller proved the
+# reduction can't overflow (emit_matmul's runtime precheck).
+define emit_term_ov(node, O, nm, bt, guard) as:
     local n is unwrap of node
     local t is n[0]
     if t == "num":
@@ -1199,13 +1215,18 @@ define emit_term_ov(node, O, nm, bt) as:
             return "aot_vset(aot_buf_get_i(" + tg[1] + ", " + (emit_int of n[2]) + "))"
         return "aot_vset(aot_buf_get(" + tg[1] + ", " + (emit_num of [n[2], nm, bt, 0]) + "))"
     local op is n[1]
-    local a is emit_term_ov of [n[2], O, nm, bt]
-    local b is emit_term_ov of [n[3], O, nm, bt]
+    local a is emit_term_ov of [n[2], O, nm, bt, guard]
+    local b is emit_term_ov of [n[3], O, nm, bt, guard]
+    local inner is ""
     if op == "*":
-        return "aot_vguard(aot_vmul(" + a + ", " + b + "))"
-    if op == "+":
-        return "aot_vguard(aot_vadd(" + a + ", " + b + "))"
-    return "aot_vguard(aot_vsub(" + a + ", " + b + "))"
+        inner is "aot_vmul(" + a + ", " + b + ")"
+    elif op == "+":
+        inner is "aot_vadd(" + a + ", " + b + ")"
+    else:
+        inner is "aot_vsub(" + a + ", " + b + ")"
+    if guard == 1:
+        return "aot_vguard(" + inner + ")"
+    return inner
 
 define outvec_loop(node, nm, bt) as:
     local cond is unwrap of node[1]
@@ -1308,7 +1329,7 @@ define outvec_loop(node, nm, bt) as:
     collect_ov_bufs of [TERM, O, ovb]
     return {"O": O, "OBOUND": OBOUND, "ACC": ACC, "D": D, "IBOUND": IBOUND, "RES": RES, "SIDX": SIDX, "SBASE": SBASE, "TERM": TERM, "ovbufs": (keys of ovb)}
 
-define emit_outvec(d, ind, nm, bt) as:
+define emit_outvec(d, ind, nm, bt, guard) as:
     local O is d["O"]
     local OB is emit_num of [d["OBOUND"], nm, bt, 0]
     local IB is emit_num of [d["IBOUND"], nm, bt, 0]
@@ -1325,12 +1346,16 @@ define emit_outvec(d, ind, nm, bt) as:
     s is s + i2 + "double* _pv_" + RES + " = aot_buf_data(" + RES + ");\n"
     for k in range of (len of ovbufs):
         s is s + i2 + "double* _pv_" + ovbufs[k] + " = aot_buf_data(" + ovbufs[k] + ");\n"
-    # vector loop over O (each lane = one output column), byte-exact d-order sum
+    # vector loop over O (each lane = one output column), byte-exact d-order sum.
+    # guard=0 -> raw accumulate (caller proved no overflow); guard=1 -> packed guard.
+    local accline is "_acc = aot_vadd(_acc, " + (emit_term_ov of [TERM, O, nm, bt, guard]) + ");\n"
+    if guard == 1:
+        accline is "_acc = aot_vguard(aot_vadd(_acc, " + (emit_term_ov of [TERM, O, nm, bt, 1]) + "));\n"
     s is s + i2 + "for (; " + O + " + AOT_VW <= " + OB + "; " + O + " += AOT_VW) {\n"
     s is s + i3 + "aot_vec _acc = aot_vset(0.0);\n"
     s is s + i3 + D + " = 0;\n"
     s is s + i3 + "while (" + D + " < " + IB + ") {\n"
-    s is s + i4 + "_acc = aot_vguard(aot_vadd(_acc, " + (emit_term_ov of [TERM, O, nm, bt]) + "));\n"
+    s is s + i4 + accline
     s is s + i4 + D + " = " + D + " + 1;\n"
     s is s + i3 + "}\n"
     s is s + i3 + "aot_vstore(_pv_" + RES + " + " + SBASE + " + " + O + ", _acc);\n"
@@ -1345,6 +1370,91 @@ define emit_outvec(d, ind, nm, bt) as:
     s is s + i3 + "}\n"
     s is s + i3 + "aot_buf_set_i(" + RES + ", " + (emit_int of d["SIDX"]) + ", " + ACC + ");\n"
     s is s + i3 + O + " = " + O + " + 1;\n"
+    s is s + i2 + "}\n"
+    return s + ind + "}\n"
+
+# ---- matmul: output-axis SIMD + accumulator num_guard elision ----
+# Recognize the i-loop wrapping an outvec o-loop whose term is a two-read product
+# A[.]*B[.] (matmul / context / projection — the dominant transformer kernel).
+# Then a once-per-matmul precheck (Din*max|A|*max|B| <= 1e308) decides whether to
+# run the UNGUARDED accumulation (byte-identical when no overflow) or the guarded
+# one — eliding the per-op num_guard from the hot reduction when it's provably
+# identity. Shape:  loop while I < OUTER: O is 0; <outvec o-loop>; I is I+1
+define matmul_loop(node, nm, bt) as:
+    local cond is unwrap of node[1]
+    if cond[0] != "binop":
+        return null
+    if cond[1] != "<":
+        return null
+    local clhs is unwrap of cond[2]
+    if clhs[0] != "ident":
+        return null
+    local I is clhs[1]
+    local raw is node[2]
+    local stmts is []
+    for k in range of (len of raw):
+        stmts is (append of [stmts, unwrap of raw[k]])
+    if (len of stmts) != 3:
+        return null
+    # stmt0: O is 0
+    local s0 is stmts[0]
+    if s0[0] != "assign":
+        return null
+    local s0r is unwrap of s0[2]
+    if s0r[0] != "num":
+        return null
+    if s0r[1] != 0:
+        return null
+    local O is s0[1]
+    # stmt1: the outvec o-loop
+    local s1 is stmts[1]
+    if s1[0] != "loop":
+        return null
+    local ov is outvec_loop of [s1, nm, bt]
+    if ov == null:
+        return null
+    if (ov["O"]) != O:
+        return null
+    # stmt2: I is I + 1
+    local s2 is stmts[2]
+    if s2[0] != "assign":
+        return null
+    if s2[1] != I:
+        return null
+    # term must be a two-read product A[.]*B[.] so the overflow bound is
+    # Din*max|A|*max|B| (covers every product and partial sum).
+    local term is unwrap of (ov["TERM"])
+    if term[0] != "binop":
+        return null
+    if term[1] != "*":
+        return null
+    local ta is unwrap of term[2]
+    local tb is unwrap of term[3]
+    if ta[0] != "index":
+        return null
+    if tb[0] != "index":
+        return null
+    return {"icond": node[1], "oinit": raw[0], "iincr": raw[2], "ov": ov, "bufA": (unwrap of ta[1])[1], "bufB": (unwrap of tb[1])[1]}
+
+define emit_matmul(d, ind, nm, bt, minits) as:
+    local ov is d["ov"]
+    local IB is emit_num of [(ov["IBOUND"]), nm, bt, 0]
+    local i2 is ind + "    "
+    local i3 is i2 + "    "
+    local s is ind + "{\n"
+    s is s + i2 + "double _mxA = aot_buf_maxabs(" + d["bufA"] + ");\n"
+    s is s + i2 + "double _mxB = aot_buf_maxabs(" + d["bufB"] + ");\n"
+    # Din*max|A|*max|B| <= 1e308  =>  no product/partial-sum exceeds 1e308  =>
+    # num_guard is identity  =>  the unguarded reduction is byte-exact vs the VM.
+    s is s + i2 + "int _noof = ((double)(" + IB + ") * _mxA * _mxB <= 1e308);\n"
+    s is s + i2 + "while (" + (emit_cond of [d["icond"], nm, bt]) + ") {\n"
+    s is s + (emit_stmt of [d["oinit"], i3, nm, bt, minits, {}])
+    s is s + i3 + "if (_noof) {\n"
+    s is s + (emit_outvec of [ov, i3 + "    ", nm, bt, 0])
+    s is s + i3 + "} else {\n"
+    s is s + (emit_outvec of [ov, i3 + "    ", nm, bt, 1])
+    s is s + i3 + "}\n"
+    s is s + (emit_stmt of [d["iincr"], i3, nm, bt, minits, {}])
     s is s + i2 + "}\n"
     return s + ind + "}\n"
 
