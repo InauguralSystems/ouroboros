@@ -114,10 +114,39 @@ guarded `exp`); softmax is the only place it appears. Like the matvec, the win
 is native+unboxed, not SIMD: every heavy kernel (the four projection matmuls,
 the score matmul, the context matmul) is a strided reduction → native-scalar.
 The one contiguous-reduction opportunity is `scores[i][j] = dot(Q_row_i,
-K_row_j)`, but it's ~5% of the matmul work and the ouroboros frontend can't
-slice a flat buffer into rows (no `Q[i*D : i*D+D]`), so it stays a scalar inner
-loop. Surfaced a frontend gap: the lexer doesn't parse scientific notation
+K_row_j)`. Surfaced a frontend gap: the lexer doesn't parse scientific notation
 (`1e30` → `1` + a stray `e30` ident), so the mask sentinel uses a plain integer.
+
+### Ranged reductions over slices
+
+Once the frontend learned to slice flat buffers into rows, the AOT lowers
+`dot of [A[sa:ea], B[sb:eb]]`, `sum of A[s:e]`, and `norm of A[s:e]` to
+**zero-copy ranged reductions** (`aot_dot_range` / `aot_sum_range` /
+`aot_norm_range`): raw-pointer SIMD over the resolved range, no materialized
+slice. Bound resolution mirrors the VM's `OP_SLICE_GET` (integer-only,
+negatives from `len`, `0≤s≤e≤len`). A param used *only* in a slice is now
+inferred a buffer (`find_buffer_use` recognizes `slice` targets).
+
+Measured vs the equivalent explicit indexed scalar reduction (AOT, dev box,
+40 reps over 1M dot-elements, `bench/dot_range.eigs`):
+
+| D | scalar | ranged | speedup |
+|---|---|---|---|
+| 16 | 0.92s | 0.37s | 2.49× |
+| 32 | 0.89s | 0.32s | 2.78× |
+| 128 | 0.88s | 0.30s | 2.93× |
+| 512 | 0.88s | 0.30s | 2.93× |
+| 2048 | 0.86s | 0.29s | 2.97× |
+
+**~2.5–3× at *every* D — there is no high-N crossover.** The earlier "SIMD dot
+only pays at N≥256" was SIMD vs *optimal C scalar*; the relevant AOT baseline is
+the idiomatic indexed loop, which pays a per-element `aot_buf_get` bounds-check
++ a per-op `num_guard`. The ranged form elides both (raw pointer, one batched
+guard per vector) *and* vectorizes, so it wins flat across D. (Parity within
+tolerance — reassociated.) Caveat: full attention at d_model=512 is
+matmul-*dominated*, and those matmuls still read every element through
+bounds-checked `aot_buf_get`, so a raw-pointer (or slice-expressed) matmul is
+the next lever — the ranged score-dot is only ~0.3% of the work there.
 
 ## Slices
 
