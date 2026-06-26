@@ -314,6 +314,13 @@ static void aot_observe_num(Env *e, const char *name, double val) {
         observer_slot_update_num(oe, oidx, val);
         g_last_obs_slot_env = oe;
         g_last_obs_slot_idx = oidx;
+        /* `where/why/how is x at L`: stamp the slot's entropy/dH onto the most
+         * recent trace history entry (created by aot_trace_assign just before
+         * this call), exactly like OBSERVE_NAME_POST under g_trace_obs_hist. */
+        if (g_trace_obs_hist) {
+            const ObserverSlot *os = &oe->obs[oidx];
+            trace_record_obs(name, os->entropy, os->dH, os->last_entropy);
+        }
     }
 }
 static int aot_predicate(int kind) {
