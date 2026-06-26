@@ -6,7 +6,10 @@
 # VM clamps). The output column `o` is also OUTPUT-AXIS SIMD vectorized (each
 # lane = one output, summed in the VM's d-order -> byte-exact). Measured
 # d_model=512, 100 passes (dev box): all-double 34.6s -> int-index 16.9s ->
-# +output-axis SIMD 8.4s = ~4.1x total, byte-identical (SSE2 2-wide; AVX2 ~2x more).
+# +output-axis SIMD 8.4s -> +num_guard elision 3.2s = ~10.8x total, byte-identical
+# (SSE2 2-wide; AVX2 ~2x more on the SIMD step). The guard elision is gated on a
+# once-per-call overflow precheck (Din*max|X|*max|W| <= 1e308); above that it
+# falls back to the guarded path (clamps exactly like the VM).
 define matmul(out, X, W, S, Din, Dout) as:
     i is 0
     loop while i < S:

@@ -218,17 +218,33 @@ so it inherits the scalar path's bounds safety. Recognized by `outvec_loop` (the
 
 Measured (`bench/matmul.eigs`, d_model=512, 100 passes, dev box):
 
+### Accumulator num_guard elision
+
+The reduction's per-op `num_guard` (NaN→0, clamp ±1e308) is the last cost. It
+can't be dropped blind — a transient overflow that comes back down to a *finite*
+value would diverge undetectably, so a "check the output for Inf" is unsound.
+Instead, a **once-per-matmul runtime precheck**: `aot_buf_maxabs` scans the two
+input buffers, and if `Din·max|X|·max|W| ≤ 1e308`, *no* product or partial sum
+can exceed 1e308 → `num_guard` is provably identity → run the **unguarded**
+accumulation (byte-identical to the VM); else fall back to the guarded path
+(which clamps exactly like the VM). Recognized by `matmul_loop` (the i-loop
+wrapping an outvec o-loop whose term is a two-read product `A[.]*B[.]`).
+
 | matmul codegen | time |
 |---|---|
 | all-double (original) | 34.6s |
 | integer-typed index | 16.9s |
-| **+ output-axis SIMD** | **8.4s** |
-| **total** | **~4.1×**, byte-identical |
+| + output-axis SIMD | 8.4s |
+| **+ num_guard elision** | **3.2s** |
+| **total** | **~10.8×**, byte-identical |
 
-That's ~2× from int indexing × ~2× from SSE2 2-wide SIMD. End-to-end the full
-transformer block went 0.975s → 0.612s (**~85×** over the VM's 52.0s).
-`t22_int_index` pins the int win + the 2⁷⁰-accumulator boundary; `t24_outvec`
-pins the SIMD path + scalar tail (both byte-exact).
+End-to-end the full transformer block went 0.975s → 0.612s → 0.424s
+(**~123×** over the VM's 52.0s). `t22_int_index` pins the int win + the
+2⁷⁰-accumulator boundary; `t24_outvec` pins the SIMD path + scalar tail;
+`t25_matmul_overflow` pins the guarded fallback (huge inputs → `1e308`, matching
+the VM). The same overflow analysis also caught a latent bug: a huge integer
+*literal* (`1e161`) was being typed `long` and overflowing — integer literals
+are now `long` only below 2⁵³.
 
 **AVX2 validated** (`.github/workflows/aot-avx2-bench.yml`, AMD EPYC 9V74): the
 dev box is SSE2 (2-wide), so width-4 was confirmed in CI. `AOT_VW=4` is selected
