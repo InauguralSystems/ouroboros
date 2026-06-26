@@ -116,6 +116,10 @@ define has_obs_interrogate(node) as:
 # Set of user-defined numeric functions (name -> 1). A call to one is numeric;
 # emitted as a native C `double name(double, ...)` call. Set in emit_program.
 g_funcs is {}
+# Just the NAMES of all user functions (-> 1), seeded before ptype inference so
+# is_tensor_call can tell a user-defined matmul/add/relu (which shadows the
+# tensor builtin) from the builtin, regardless of definition order.
+g_func_names is {}
 
 # ---- tensor (nested-list) value layer ----
 # Names holding a TENSOR in the current scope -> emitted as C `AotTensor` (a flat
@@ -135,6 +139,10 @@ define is_tensor_call(node) as:
     if callee[0] != "ident":
         return 0
     local nm is callee[1]
+    # a USER-defined function of the same name shadows the tensor builtin
+    # (e.g. t20_attention defines its own buffer `matmul`).
+    if g_func_names[nm] == 1:
+        return 0
     if (nm == "matmul") or (nm == "add") or (nm == "relu"):
         return 1
     return 0
@@ -2166,6 +2174,13 @@ define emit_program(ast) as:
             funcs is (append of [funcs, u])
         else:
             rest is (append of [rest, stmts[k]])
+    # Seed all user function NAMES first so is_tensor_call can tell a user-defined
+    # matmul/add/relu (which shadows the tensor builtin) from the builtin —
+    # regardless of definition order. (Names only: seeding full g_funcs entries
+    # with empty ptypes would break find_buf_param_use on recursive calls.)
+    g_func_names is {}
+    for k in range of (len of funcs):
+        g_func_names[(funcs[k])[1]] is 1
     for k in range of (len of funcs):
         local fn is funcs[k]
         local pt is func_ptypes of fn
