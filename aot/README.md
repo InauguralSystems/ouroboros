@@ -288,16 +288,22 @@ observer program is about the observer, not raw arithmetic speed.
 the VM byte-for-byte. This is **slice 1** — the six bare predicates over observed
 numeric assignments.
 
-`break` / `continue` are now emitted (they map straight to C — the recognizers
-bail on their loop shapes, so they land in the scalar `while`). That unblocks
-`observer_halt` (`loop while improving: … break`), which now runs byte-exact
-(`t30_observer_halt`). But note the boundary: an observer-based loop condition
-emits *just the predicate* (`while (aot_predicate(improving))`) — the VM's
-**stall-check** (which can halt the loop while the predicate still holds) and the
-absolute iteration cap are **not** emitted. `observer_halt` matches because its
-predicate is false at the first check (the body never runs); an observer-loop
-that relies on the stall-check to terminate would diverge — the oracle would
-catch it, and the stall-check is the next observer slice. Also not yet: `report`,
+`break` / `continue` are emitted (they map straight to C — the recognizers bail
+on their loop shapes, so they land in the scalar `while`).
+
+**Observer-loop halting** is now byte-exact too. EigenScript halts a `loop while`
+on more than its condition: an observer-based condition (one containing a
+predicate) also gets the per-iteration **stall-check** — it exits after 100
+consecutive *converged* iterations even while the predicate still holds — plus an
+absolute iteration cap; a plain condition gets the cap only. In an observed
+program the AOT emits, between condition and body, `if (eigs_loop_stall_step(g))
+break;` (observer-based) or `if (eigs_loop_cap_step(g)) break;` (plain). Those are
+the *same* runtime cores the interpreter and JIT use (factored out and exported
+in EigenScript #274 — the AOT has no VM frame, so it needs the env-explicit
+form), so a stall-terminated loop halts at the exact same iteration. `loop while
+not diverging` over a constant — whose condition never goes false — halts at
+`steps=100` in both the VM and the AOT (`t31_observer_stall`); `observer_halt`'s
+`loop while improving … break` stays byte-exact (`t30`). Still not yet: `report`,
 interrogatives (`what/why/how is x`), temporal queries (`prev of x`, `x at L`).
 
 ## Slices
