@@ -1,0 +1,24 @@
+# Lists in value context: a list-typed local, list-literal returns, a boxed
+# list mutated with `append`, and string-literal returns. Exercises non-numeric
+# local/return typing + the direct-borrow ref fix (append returns its target).
+define make_pair(x) as:
+    h is [x, x + 1]
+    return h
+define triple(n) as:
+    return [n, n * 2, n + 100]
+define grow(n) as:
+    hist is [n]
+    i is 0
+    loop while i < 3:
+        append of [hist, i * i]
+        i is i + 1
+    return [len of hist, n]
+define label(k) as:
+    if k == 0:
+        return "zero"
+    return "nonzero"
+print of (make_pair of 5)
+print of (triple of 3)
+print of (grow of 7)
+print of (label of 0)
+print of (label of 9)
