@@ -1,0 +1,18 @@
+# Association-unspecified `dot` reduction: the opt-in that lets the AOT
+# reassociate the sum across SIMD lanes. Pays at N>=256 (below that, and for
+# the transformer's strided/short matvec, native-scalar wins — see the AOT memo).
+# 4096-wide dot, 200000 times.
+n is 4096
+a is buffer of n
+b is buffer of n
+i is 0
+loop while i < n:
+    a[i] is i * 0.001 - 2.0
+    b[i] is i * 0.0007 + 0.5
+    i is i + 1
+acc is 0
+r is 0
+loop while r < 200000:
+    acc is acc + (dot of [a, b])
+    r is r + 1
+print of acc

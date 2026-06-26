@@ -63,8 +63,32 @@ goes native *scalar* — native code + unboxed doubles + raw pointers, but no SI
 bias_add vectorizes; leaky_relu is a native conditional. Pointing the AOT at real
 transformer code surfaced (and drove the fix for) **cross-function buffer-param
 inference** — a param passed *to* another function at a buffer position is now
-typed `Value*`, not only when indexed directly. Next forge-step for full
-transformer speed: vectorized dot-products (horizontal-sum reductions).
+typed `Value*`, not only when indexed directly.
+
+### Reductions: `dot` and the determinism ⟂ SIMD wall
+
+Vectorizing the reduction *transparently* is unsound here: reassociating the
+sum across SIMD lanes reorders the FP add chain, and FP addition isn't
+associative, so the result diverges from the VM's strict left-to-right sum
+(measured: **42–91% of dot products differ in the low bits**) — which breaks
+the byte-exact oracle. And at the transformer's reduction length (16/32) it's a
+*loss* anyway (the loop is latency-bound; SIMD only pays at N≥256).
+
+The resolution is an explicit opt-in: the upstream **`dot` builtin** (EigenScript
+#272) is specified with **unspecified summation association**, which *licenses*
+the AOT to emit a reassociated SIMD reduction (`aot_dot`: AOT_VW partial-sum
+lanes + horizontal sum + scalar tail, per-lane `vguard` keeping no-NaN/Inf). The
+differential harness compares `dot` programs (`*_tol.eigs`) with **tolerance, not
+bytes**. `dot of [a,b]` over a 4096-wide buffer, 200k times:
+
+| 4096-wide dot × 200k | time |
+|---|---|
+| VM (builtin call) | 3.98s |
+| **AOT** (`aot_dot` SIMD) | **2.45s** |
+| **speedup** | **~1.62×** (dev box SSE2 2-wide; AVX2 cloud wider) |
+
+The matvec itself stays native-scalar (byte-exact ~19×) — its `W[i*nout+j]`
+column access is strided, not a contiguous `dot`.
 
 ## Slices
 
