@@ -1,0 +1,114 @@
+# Single-head self-attention forward, mirroring iLambdaAi's native
+# ne_fused_attention_forward (EigenScript src/model_infer.c): Q/K/V projections
+# -> scaled dot-product scores -> causal mask -> softmax -> context -> out-proj.
+# d_model D=32, seq_len S=8.
+
+define matmul(out, X, W, S, Din, Dout) as:
+    i is 0
+    loop while i < S:
+        o is 0
+        loop while o < Dout:
+            s is 0
+            d is 0
+            loop while d < Din:
+                s is s + X[i * Din + d] * W[d * Dout + o]
+                d is d + 1
+            out[i * Dout + o] is s
+            o is o + 1
+        i is i + 1
+
+define attn_scores(scores, Q, K, S, D, scale, neg) as:
+    i is 0
+    loop while i < S:
+        j is 0
+        loop while j < S:
+            s is 0
+            d is 0
+            loop while d < D:
+                s is s + Q[i * D + d] * K[j * D + d]
+                d is d + 1
+            sc is s * scale
+            if j > i:
+                sc is neg
+            scores[i * S + j] is sc
+            j is j + 1
+        i is i + 1
+
+define softmax_rows(scores, S) as:
+    i is 0
+    loop while i < S:
+        m is scores[i * S]
+        j is 1
+        loop while j < S:
+            if scores[i * S + j] > m:
+                m is scores[i * S + j]
+            j is j + 1
+        z is 0
+        j is 0
+        loop while j < S:
+            e is exp of (scores[i * S + j] - m)
+            scores[i * S + j] is e
+            z is z + e
+            j is j + 1
+        j is 0
+        loop while j < S:
+            scores[i * S + j] is scores[i * S + j] / z
+            j is j + 1
+        i is i + 1
+
+define context_mm(ctx, scores, V, S, D) as:
+    i is 0
+    loop while i < S:
+        d is 0
+        loop while d < D:
+            s is 0
+            j is 0
+            loop while j < S:
+                s is s + scores[i * S + j] * V[j * D + d]
+                j is j + 1
+            ctx[i * D + d] is s
+            d is d + 1
+        i is i + 1
+
+define attention(out, X, Wq, Wk, Wv, Wo, Q, K, V, scores, ctx, S, D, scale, neg) as:
+    matmul of [Q, X, Wq, S, D, D]
+    matmul of [K, X, Wk, S, D, D]
+    matmul of [V, X, Wv, S, D, D]
+    attn_scores of [scores, Q, K, S, D, scale, neg]
+    softmax_rows of [scores, S]
+    context_mm of [ctx, scores, V, S, D]
+    matmul of [out, ctx, Wo, S, D, D]
+
+S is 8
+D is 32
+scale is 0.17677669529663687
+neg is 0 - 1000000
+X is buffer of (S * D)
+Wq is buffer of (D * D)
+Wk is buffer of (D * D)
+Wv is buffer of (D * D)
+Wo is buffer of (D * D)
+Q is buffer of (S * D)
+K is buffer of (S * D)
+V is buffer of (S * D)
+scores is buffer of (S * S)
+ctx is buffer of (S * D)
+out is buffer of (S * D)
+i is 0
+loop while i < (S * D):
+    X[i] is ((i % 13) - 6) * 0.05
+    i is i + 1
+i is 0
+loop while i < (D * D):
+    Wq[i] is ((i % 7) - 3) * 0.03
+    Wk[i] is ((i % 11) - 5) * 0.02
+    Wv[i] is ((i % 5) - 2) * 0.04
+    Wo[i] is ((i % 9) - 4) * 0.025
+    i is i + 1
+r is 0
+loop while r < 2:
+    attention of [out, X, Wq, Wk, Wv, Wo, Q, K, V, scores, ctx, S, D, scale, neg]
+    r is r + 1
+print of out[0]
+print of out[100]
+print of out[255]

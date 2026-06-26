@@ -120,6 +120,8 @@ define is_num_expr(node, nm, bt) as:
                 if na[0] == "ident":
                     if bt[na[1]] == 1:
                         return 1
+            if callee[1] == "exp":
+                return 1
             if g_funcs[callee[1]] != null:
                 if (g_funcs[callee[1]])["ret"] == "double":
                     return 1
@@ -358,6 +360,9 @@ define emit_num(node, nm, bt, raw) as:
             if callee[1] == "norm":
                 local na is unwrap of node[2]
                 return "aot_norm(" + na[1] + ")"
+            if callee[1] == "exp":
+                # VM exp guards the result (exp of 1000 -> 1e308), so match.
+                return "num_guard(exp(" + (emit_num of [node[2], nm, bt, 0]) + "))"
             if g_funcs[callee[1]] != null:
                 return emit_call_num of [node, nm, bt]
         throw of "AOT: emit_num unexpected call"
