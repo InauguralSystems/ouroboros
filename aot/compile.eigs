@@ -1009,6 +1009,13 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
         return ind + "break;\n"
     if t == "continue":
         return ind + "continue;\n"
+    if t == "unobserved":
+        # `unobserved:` block — assignments inside store their value but do NOT
+        # update the observer slot. Bracket the body with the runtime depth
+        # counter (mirrors OP_UNOBSERVED_BEGIN/END); aot_observe_num already
+        # returns early when g_unobserved_depth != 0, so the slot trajectory is
+        # untouched, byte-exact with the VM.
+        return ind + "g_unobserved_depth += 1;\n" + (emit_stmts of [node[1], ind, nm, bt, minits, gf]) + ind + "g_unobserved_depth -= 1;\n"
     throw of ("AOT: cannot emit statement node '" + t + "'")
 
 # ---- buffer value-bound inference (for guard elision in vectorized maps) ----
