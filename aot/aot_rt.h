@@ -396,62 +396,98 @@ static double aot_num(Value *v) {
  *   - add:    elementwise num_guard(a+b)            (matches op_add elementwise)
  *   - relu:   clamp negatives to 0                  (matches builtin_tensor_relu)
  * A per-call frame POOL owns every produced tensor; aot_tframe_leave frees them
- * once the return Value is built — no per-op free threading in generated C. */
-typedef struct { double *data; long rows; long cols; } AotTensor;
+ * once the return Value is built — no per-op free threading in generated C.
+ * rows/cols are the EFFECTIVE dims (rows>=1); is1d marks a vector (serialized
+ * 1-D). kind: 0=list-backed, 1=buffer-backed (the result Value type mirrors the
+ * input, so a buffer program returns a buffer byte-for-byte like the VM). owns:
+ * 1 => data is heap-allocated and pool-freed; 0 => a ZERO-COPY VIEW borrowed
+ * from a shaped VAL_BUFFER (no flatten, no copy — the Phase-2 win). */
+typedef struct { double *data; long rows; long cols; int is1d; int kind; int owns; } AotTensor;
 
 static double **g_tpool = NULL;
 static long g_tpool_n = 0, g_tpool_cap = 0;
 
-static AotTensor aot_tensor_null(void) { AotTensor t; t.data = NULL; t.rows = 0; t.cols = 0; return t; }
+static AotTensor aot_tensor_null(void) { AotTensor t; t.data=NULL; t.rows=0; t.cols=0; t.is1d=0; t.kind=0; t.owns=0; return t; }
 static long aot_tframe_enter(void) { return g_tpool_n; }
-static AotTensor aot_treg(AotTensor t) {       /* pool-own t.data (freed on leave) */
-    if (g_tpool_n == g_tpool_cap) {
-        g_tpool_cap = g_tpool_cap ? g_tpool_cap * 2 : 64;
-        g_tpool = (double**)realloc(g_tpool, (size_t)g_tpool_cap * sizeof(double*));
+static AotTensor aot_treg(AotTensor t) {       /* pool-own t.data IFF owned (views are borrowed) */
+    if (t.owns && t.data) {
+        if (g_tpool_n == g_tpool_cap) {
+            g_tpool_cap = g_tpool_cap ? g_tpool_cap * 2 : 64;
+            g_tpool = (double**)realloc(g_tpool, (size_t)g_tpool_cap * sizeof(double*));
+        }
+        g_tpool[g_tpool_n++] = t.data;
     }
-    g_tpool[g_tpool_n++] = t.data;
     return t;
 }
 static void aot_tframe_leave(long mark) { while (g_tpool_n > mark) free(g_tpool[--g_tpool_n]); }
 
-/* flatten a tensor Value (1D list-of-nums | 2D list-of-lists) — byte-exact vs
- * tensor_to_flat/tensor_dims (rows=1 for 1D; missing/non-num cells -> 0.0). */
+/* A tensor Value -> AotTensor. A shaped VAL_BUFFER becomes a ZERO-COPY VIEW
+ * (data borrowed; rows==0 buffer => 1-D row vector). A nested list is flattened
+ * into an owned copy (byte-exact vs tensor_to_flat; transitional path). */
 static AotTensor aot_tensor_from_value(Value *v) {
     AotTensor t = aot_tensor_null();
-    if (!v || v->type != VAL_LIST || v->data.list.count == 0) return t;
-    Value *first = v->data.list.items[0];
-    if (first->type == VAL_NUM) {
-        t.rows = 1; t.cols = v->data.list.count;
-        t.data = (double*)calloc((size_t)t.cols, sizeof(double));
-        for (long i = 0; i < t.cols; i++) {
-            Value *e = v->data.list.items[i];
-            t.data[i] = (e->type == VAL_NUM) ? e->data.num : 0.0;
-        }
-    } else if (first->type == VAL_LIST) {
-        t.rows = v->data.list.count; t.cols = first->data.list.count;
-        t.data = (double*)calloc((size_t)(t.rows * t.cols), sizeof(double));
-        for (long r = 0; r < t.rows; r++) {
-            Value *row = v->data.list.items[r];
-            long rc = (row->type == VAL_LIST) ? row->data.list.count : 0;
-            for (long c = 0; c < t.cols && c < rc; c++) {
-                Value *e = row->data.list.items[c];
-                t.data[r * t.cols + c] = (e->type == VAL_NUM) ? e->data.num : 0.0;
+    if (!v) return t;
+    if (v->type == VAL_BUFFER) {
+        t.data = v->data.buffer.data;   /* borrowed: no copy */
+        t.kind = 1; t.owns = 0;
+        if (v->data.buffer.rows > 0) { t.rows = v->data.buffer.rows; t.cols = v->data.buffer.cols; t.is1d = 0; }
+        else { t.rows = 1; t.cols = v->data.buffer.count; t.is1d = 1; }
+        return t;
+    }
+    if (v->type == VAL_LIST && v->data.list.count > 0) {
+        Value *first = v->data.list.items[0];
+        t.kind = 0; t.owns = 1;
+        if (first->type == VAL_NUM) {
+            t.rows = 1; t.cols = v->data.list.count; t.is1d = 1;
+            t.data = (double*)calloc((size_t)t.cols, sizeof(double));
+            for (long i = 0; i < t.cols; i++) {
+                Value *e = v->data.list.items[i];
+                t.data[i] = (e->type == VAL_NUM) ? e->data.num : 0.0;
+            }
+        } else if (first->type == VAL_LIST) {
+            t.rows = v->data.list.count; t.cols = first->data.list.count; t.is1d = 0;
+            t.data = (double*)calloc((size_t)(t.rows * t.cols), sizeof(double));
+            for (long r = 0; r < t.rows; r++) {
+                Value *row = v->data.list.items[r];
+                long rc = (row->type == VAL_LIST) ? row->data.list.count : 0;
+                for (long c = 0; c < t.cols && c < rc; c++) {
+                    Value *e = row->data.list.items[c];
+                    t.data[r * t.cols + c] = (e->type == VAL_NUM) ? e->data.num : 0.0;
+                }
             }
         }
     }
     return t;
 }
 
-/* a tensor field of a dict (policy.w1), flattened. */
+/* a tensor field of a dict (policy.w1) -> view (buffer) or copy (list). */
 static AotTensor aot_tensor_field(Value *dict, const char *key) {
     Value *f = dict ? dict_get(dict, key) : NULL;
     return aot_tensor_from_value(f);
 }
 
-/* rebuild a nested-list Value — byte-exact vs matmul/relu serialization
- * (rows==1 -> 1D list, else 2D). */
+/* build an owned shaped VAL_BUFFER (copies src), matching the VM's make_buffer. */
+static Value *aot_make_buffer(int count, int rows, int cols, const double *src) {
+    Value *v = (Value*)calloc(1, sizeof(Value));
+    v->type = VAL_BUFFER;
+    v->data.buffer.count = count;
+    v->data.buffer.rows = rows;
+    v->data.buffer.cols = cols;
+    v->data.buffer.data = (double*)calloc(count > 0 ? (size_t)count : 1, sizeof(double));
+    if (src && count > 0) memcpy(v->data.buffer.data, src, (size_t)count * sizeof(double));
+    v->refcount = 1;
+    return v;
+}
+
+/* AotTensor -> Value, mirroring the input representation byte-for-byte:
+ *   buffer-backed -> shaped VAL_BUFFER (is1d => rows=0 1-D, else 2-D)
+ *   list-backed   -> nested list       (is1d => 1-D list, else 2-D) */
 static Value *aot_tensor_to_value(AotTensor t) {
-    if (t.rows == 1) {
+    if (t.kind == 1) {
+        if (t.is1d) return aot_make_buffer((int)t.cols, 0, 0, t.data);
+        return aot_make_buffer((int)(t.rows * t.cols), (int)t.rows, (int)t.cols, t.data);
+    }
+    if (t.is1d) {
         Value *out = make_list(t.cols);
         for (long i = 0; i < t.cols; i++) list_append_owned(out, make_num(t.data[i]));
         return out;
@@ -467,8 +503,10 @@ static Value *aot_tensor_to_value(AotTensor t) {
 
 static AotTensor aot_tensor_matmul(AotTensor a, AotTensor b) {
     AotTensor o = aot_tensor_null();
-    if (a.cols != b.rows) return o;            /* builtin returns null on shape mismatch */
+    if (a.cols != b.rows) return o;            /* shape mismatch -> null tensor */
     o.rows = a.rows; o.cols = b.cols;
+    o.is1d = a.is1d;                           /* 1-D result iff the left operand is a vector */
+    o.kind = a.kind; o.owns = 1;
     o.data = (double*)calloc((size_t)(o.rows * o.cols), sizeof(double));
     for (long i = 0; i < a.rows; i++)          /* raw i-k-j, no guard: matches ne_matmul_buf */
         for (long k = 0; k < a.cols; k++)
@@ -478,8 +516,8 @@ static AotTensor aot_tensor_matmul(AotTensor a, AotTensor b) {
 }
 
 static AotTensor aot_tensor_add(AotTensor a, AotTensor b) {
-    AotTensor o = aot_tensor_null();
-    o.rows = a.rows; o.cols = a.cols;
+    AotTensor o = a;                           /* inherit rows/cols/is1d/kind */
+    o.owns = 1;
     long n = a.rows * a.cols;
     o.data = (double*)calloc((size_t)n, sizeof(double));
     for (long i = 0; i < n; i++) o.data[i] = num_guard(a.data[i] + b.data[i]);
@@ -487,8 +525,8 @@ static AotTensor aot_tensor_add(AotTensor a, AotTensor b) {
 }
 
 static AotTensor aot_tensor_relu(AotTensor a) {
-    AotTensor o = aot_tensor_null();
-    o.rows = a.rows; o.cols = a.cols;
+    AotTensor o = a;
+    o.owns = 1;
     long n = a.rows * a.cols;
     o.data = (double*)calloc((size_t)n, sizeof(double));
     for (long i = 0; i < n; i++) { double x = a.data[i]; o.data[i] = (x < 0.0) ? 0.0 : x; }
