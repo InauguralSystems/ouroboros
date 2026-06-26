@@ -116,6 +116,104 @@ define has_obs_interrogate(node) as:
 # Set of user-defined numeric functions (name -> 1). A call to one is numeric;
 # emitted as a native C `double name(double, ...)` call. Set in emit_program.
 g_funcs is {}
+# Just the NAMES of all user functions (-> 1), seeded before ptype inference so
+# is_tensor_call can tell a user-defined matmul/add/relu (which shadows the
+# tensor builtin) from the builtin, regardless of definition order.
+g_func_names is {}
+
+# ---- tensor (nested-list) value layer ----
+# Names holding a TENSOR in the current scope -> emitted as C `AotTensor` (a flat
+# row-major double buffer). Producers: the matmul/add/relu builtins + dict-field
+# access (`policy.w1`). Kernels run on the flat form, byte-exact vs the runtime's
+# tensor builtins (which themselves flatten/compute/rebuild). Set per scope.
+g_tensor is {}
+# Names of DICT params (Value*), used as dot targets (`policy.w1`).
+g_dict is {}
+
+# A call to a tensor builtin (matmul/add/relu)?
+define is_tensor_call(node) as:
+    local n is unwrap of node
+    if n[0] != "call":
+        return 0
+    local callee is unwrap of n[1]
+    if callee[0] != "ident":
+        return 0
+    local nm is callee[1]
+    # a USER-defined function of the same name shadows the tensor builtin
+    # (e.g. t20_attention defines its own buffer `matmul`).
+    if g_func_names[nm] == 1:
+        return 0
+    if (nm == "matmul") or (nm == "add") or (nm == "relu"):
+        return 1
+    return 0
+
+# A tensor-producing RHS: a tensor builtin call, a dict-field access, or a
+# tensor ident.
+define is_tensor_rhs(node) as:
+    local n is unwrap of node
+    if (is_tensor_call of n) == 1:
+        return 1
+    if n[0] == "dot":
+        return 1
+    if n[0] == "ident":
+        if g_tensor[n[1]] == 1:
+            return 1
+    return 0
+
+# Tensor LOCALS: a name whose every assignment is a tensor RHS (producers are
+# syntactic — matmul/add/relu/dot — so one pass suffices).
+define infer_tensors(stmts) as:
+    local assigns is collect_assigns of [stmts, {}]
+    local names is keys of assigns
+    local tt is {}
+    for i in range of (len of names):
+        local v is names[i]
+        local rhss is assigns[v]
+        if (len of rhss) > 0:
+            local allt is 1
+            for j in range of (len of rhss):
+                if (is_tensor_rhs of rhss[j]) == 0:
+                    allt is 0
+            if allt == 1:
+                tt[v] is 1
+    return tt
+
+# Does `name` appear as a dot target (`name.field`)? -> a dict param.
+define uses_as_dot(node, name) as:
+    if (type of node) != "list":
+        return 0
+    if (len of node) == 0:
+        return 0
+    if node[0] == "dot":
+        local tgt is unwrap of node[1]
+        if (tgt[0] == "ident") and (tgt[1] == name):
+            return 1
+    for k in range of (len of node):
+        if (uses_as_dot of [node[k], name]) == 1:
+            return 1
+    return 0
+
+# Does `name` appear as a direct element of a tensor builtin's arg list?
+define uses_as_tensor_arg(node, name) as:
+    if (type of node) != "list":
+        return 0
+    if (len of node) == 0:
+        return 0
+    if (is_tensor_call of node) == 1:
+        local arg is unwrap of node[2]
+        local elems is []
+        if arg[0] == "list":
+            elems is arg[1]
+        else:
+            elems is [arg]
+        for k in range of (len of elems):
+            local e is unwrap of elems[k]
+            if (e[0] == "ident") and (e[1] == name):
+                return 1
+    for k in range of (len of node):
+        if (uses_as_tensor_arg of [node[k], name]) == 1:
+            return 1
+    return 0
 
 define unwrap(node) as:
     loop while node[0] == "_line":
@@ -689,10 +787,30 @@ define emit_val(node, nm, bt) as:
         return "aot_query_at_val(" + (str of ik) + ", \"" + ie[1] + "\", (int)(" + (emit_num of [iat, nm, bt, 0]) + "))"
     if t == "ident":
         return "aot_get(g, \"" + node[1] + "\")"
+    if t == "list":
+        # nested-list literal -> owned Value built inline (GCC statement-expr).
+        local le is node[1]
+        local ls is "({ Value* _l = make_list(" + (str of (len of le)) + ");"
+        for k in range of (len of le):
+            ls is ls + " list_append_owned(_l, " + (emit_val of [le[k], nm, bt]) + ");"
+        return ls + " _l; })"
+    if t == "dict":
+        # dict literal {"k": v, ...} -> owned Value (GCC statement-expr).
+        local pairs is node[1]
+        local ds is "({ Value* _d = make_dict(" + (str of (len of pairs)) + ");"
+        for k in range of (len of pairs):
+            local pr is pairs[k]
+            # the key may be a bare string or a ["str", ...] node
+            local kn is pr[0]
+            local ks is kn
+            if (type of kn) == "list":
+                ks is kn[1]
+            ds is ds + " dict_set_owned(_d, \"" + (c_escape of ks) + "\", " + (emit_val of [pr[1], nm, bt]) + ");"
+        return ds + " _d; })"
     if t == "binop":
         return (binfn of node[1]) + "(" + (emit_val of [node[2], nm, bt]) + ", " + (emit_val of [node[3], nm, bt]) + ")"
     if t == "call":
-        local callee is node[1]
+        local callee is unwrap of node[1]
         if callee[0] != "ident":
             throw of "AOT: only named calls supported"
         # `report of x` -> the most-specific predicate of x's observed slot.
@@ -700,8 +818,46 @@ define emit_val(node, nm, bt) as:
             local ra is unwrap of node[2]
             if ra[0] == "ident":
                 return "aot_report(g, \"" + ra[1] + "\")"
+        # user function returning a Value* (e.g. a tensor-returning forward pass)
+        # -> direct native C call.
+        if g_funcs[callee[1]] != null:
+            if (g_funcs[callee[1]])["ret"] == "Value*":
+                return (callee[1]) + "(" + (emit_args of [node, callee[1], nm, bt]) + ")"
         return "aot_call_name(g, \"" + callee[1] + "\", " + (emit_val of [node[2], nm, bt]) + ")"
     throw of ("AOT: cannot emit value node '" + t + "'")
+
+# Render a tensor-valued expression as a C `AotTensor` expr. Producers (matmul/
+# add/relu/field) are wrapped in aot_treg so the per-call frame pool frees them;
+# a tensor ident is just its C name.
+define emit_tensor(node, nm, bt) as:
+    local n is unwrap of node
+    local t is n[0]
+    if t == "ident":
+        return n[1]
+    if t == "dot":
+        local tgt is unwrap of n[1]
+        local dval is ""
+        if (tgt[0] == "ident") and (g_dict[tgt[1]] == 1):
+            dval is tgt[1]
+        else:
+            dval is emit_val of [n[1], nm, bt]
+        return "aot_treg(aot_tensor_field(" + dval + ", \"" + (c_escape of n[2]) + "\"))"
+    if t == "call":
+        local callee is unwrap of n[1]
+        local fnname is callee[1]
+        local arg is unwrap of n[2]
+        local elems is []
+        if arg[0] == "list":
+            elems is arg[1]
+        else:
+            elems is [arg]
+        if fnname == "matmul":
+            return "aot_treg(aot_tensor_matmul(" + (emit_tensor of [elems[0], nm, bt]) + ", " + (emit_tensor of [elems[1], nm, bt]) + "))"
+        if fnname == "add":
+            return "aot_treg(aot_tensor_add(" + (emit_tensor of [elems[0], nm, bt]) + ", " + (emit_tensor of [elems[1], nm, bt]) + "))"
+        if fnname == "relu":
+            return "aot_treg(aot_tensor_relu(" + (emit_tensor of [elems[0], nm, bt]) + "))"
+    throw of ("AOT: cannot emit tensor node '" + t + "'")
 
 define emit_cond(node, nm, bt) as:
     if (is_num_expr of [node, nm, bt]) == 1:
@@ -724,6 +880,8 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
         return emit_stmt of [node[2], ind, nm, bt, minits, gf]
     if t == "assign":
         local name is node[1]
+        if g_tensor[name] == 1:
+            return ind + name + " = " + (emit_tensor of [node[2], nm, bt]) + ";\n"
         if bt[name] == 1:
             local cc is unwrap of node[2]
             if (is_buf_create of node[2]) == 1:
@@ -812,6 +970,9 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
         if rexpr[0] == "ident":
             if bt[rexpr[1]] == 1:
                 return ind + "return " + rexpr[1] + ";\n"
+            # tensor return: serialize to a Value, then free the frame pool.
+            if g_tensor[rexpr[1]] == 1:
+                return ind + "{ Value* _r = aot_tensor_to_value(" + rexpr[1] + "); aot_tframe_leave(_tmark); return _r; }\n"
         return ind + "return " + (emit_num of [node[1], nm, bt, 0]) + ";\n"
     if t == "break":
         return ind + "break;\n"
@@ -1741,9 +1902,26 @@ define func_ret_type(fn, fbt) as:
     if re[0] == "ident":
         if fbt[re[1]] == 1:
             return "Value*"
+        # a tensor-returning function serializes its tensor to a Value.
+        local ftt is infer_tensors of fn[3]
+        if ftt[re[1]] == 1:
+            return "Value*"
     if (is_buf_create of r) == 1:
         return "Value*"
     return "double"
+
+# Does this function return a TENSOR (its return ident is a tensor local)? Such a
+# call yields a boxed nested-list Value at the caller, not a buffer global.
+define func_ret_tensor(fn) as:
+    local r is find_return_node of fn[3]
+    if r == null:
+        return 0
+    local re is unwrap of r
+    if re[0] == "ident":
+        local ftt is infer_tensors of fn[3]
+        if ftt[re[1]] == 1:
+            return 1
+    return 0
 
 # a var is buffer-producing if assigned `buffer/zeros of N` or a Value*-returning call
 define is_buf_producing(rhs) as:
@@ -1754,6 +1932,10 @@ define is_buf_producing(rhs) as:
         local callee is unwrap of n[1]
         if callee[0] == "ident":
             if g_funcs[callee[1]] != null:
+                # a tensor-returning function yields a boxed nested-list Value;
+                # it's an ordinary boxed value (env), not a buffer global.
+                if (g_funcs[callee[1]])["rettensor"] == 1:
+                    return 0
                 if (g_funcs[callee[1]])["ret"] == "Value*":
                     return 1
     return 0
@@ -1791,15 +1973,16 @@ define func_ptypes(fn) as:
     local body is fn[3]
     local pt is []
     for p in range of (len of params):
-        local isbuf is 0
-        if (find_buffer_use of [body, params[p]]) == 1:
-            isbuf is 1
-        if (find_buf_param_use of [body, params[p]]) == 1:
-            isbuf is 1
-        if isbuf == 1:
-            pt is (append of [pt, "buf"])
-        else:
-            pt is (append of [pt, "num"])
+        local cls is "num"
+        if (uses_as_dot of [body, params[p]]) == 1:
+            cls is "dict"
+        elif (uses_as_tensor_arg of [body, params[p]]) == 1:
+            cls is "tensor"
+        elif (find_buffer_use of [body, params[p]]) == 1:
+            cls is "buf"
+        elif (find_buf_param_use of [body, params[p]]) == 1:
+            cls is "buf"
+        pt is (append of [pt, cls])
     return pt
 
 # args for a call, each emitted per its param type (buffer var name | numeric)
@@ -1821,6 +2004,15 @@ define emit_args(node, fname, nm, bt) as:
             s is s + ", "
         if (ptypes[k]) == "buf":
             s is s + (unwrap of elems[k])[1]
+        elif ((ptypes[k]) == "tensor") or ((ptypes[k]) == "dict"):
+            # pass the tensor/dict Value BORROWED (callee doesn't consume it): an
+            # ident reads the env without an incref (no per-call leak in the hot
+            # path); a non-ident arg falls back to an owned emit_val.
+            local te is unwrap of elems[k]
+            if te[0] == "ident":
+                s is s + "env_get(g, \"" + te[1] + "\")"
+            else:
+                s is s + (emit_val of [elems[k], nm, bt])
         else:
             s is s + (emit_num of [elems[k], nm, bt, 0])
     return s
@@ -1840,6 +2032,8 @@ define emit_func_proto(fn, finfo) as:
         if k > 0:
             sig is sig + ", "
         if (ptypes[k]) == "buf":
+            sig is sig + "Value*"
+        elif ((ptypes[k]) == "tensor") or ((ptypes[k]) == "dict"):
             sig is sig + "Value*"
         elif ip[params[k]] == 1:
             sig is sig + "long"
@@ -1864,9 +2058,21 @@ define emit_function(fn, finfo, gnm, gbt) as:
     for k in range of (len of gb):
         if gbt[gb[k]] == 1:
             fbt[gb[k]] is 1
+    # tensor (nested-list) layer for this scope: tensor locals (assigned from a
+    # tensor RHS) + tensor/dict params.
+    g_dict is {}
+    g_tensor is infer_tensors of body
     for k in range of (len of params):
         if (ptypes[k]) == "buf":
             fbt[params[k]] is 1
+            fnm[params[k]] is 0
+        elif (ptypes[k]) == "dict":
+            g_dict[params[k]] is 1
+            fbt[params[k]] is 0
+            fnm[params[k]] is 0
+        elif (ptypes[k]) == "tensor":
+            g_tensor[params[k]] is 1
+            fbt[params[k]] is 0
             fnm[params[k]] is 0
         else:
             fnm[params[k]] is 1
@@ -1880,7 +2086,7 @@ define emit_function(fn, finfo, gnm, gbt) as:
     local ba is collect_assigns of [body, {}]
     local banames is keys of ba
     for k in range of (len of banames):
-        if fbt[banames[k]] != 1:
+        if (fbt[banames[k]] != 1) and (g_tensor[banames[k]] != 1):
             fnm[banames[k]] is 1
     # integer names for this scope (params forced + int-by-assignment locals);
     # sets g_int, which is_int_expr/emit_num/emit_stmt read while emitting.
@@ -1893,14 +2099,28 @@ define emit_function(fn, finfo, gnm, gbt) as:
             sig is sig + ", "
         if (ptypes[k]) == "buf":
             sig is sig + "Value* " + params[k]
+        elif (ptypes[k]) == "dict":
+            sig is sig + "Value* " + params[k]
+        elif (ptypes[k]) == "tensor":
+            # received boxed; flattened to an AotTensor local at entry (below).
+            sig is sig + "Value* " + params[k] + "_v"
         elif g_int[params[k]] == 1:
             sig is sig + "long " + params[k]
         else:
             sig is sig + "double " + params[k]
     sig is sig + ")"
-    # locals: buffers -> Value*, integers -> long, other numerics -> double
-    # (params + globals excluded; an assignment to a global updates the global).
+    # tensor scope -> a per-call frame pool; flatten tensor params at entry.
+    local tkeys is keys of g_tensor
+    local hasT is (len of tkeys) > 0
     local decls is ""
+    if hasT == 1:
+        decls is decls + "    long _tmark = aot_tframe_enter();\n"
+        for k in range of (len of params):
+            if (ptypes[k]) == "tensor":
+                decls is decls + "    AotTensor " + params[k] + " = aot_treg(aot_tensor_from_value(" + params[k] + "_v));\n"
+    # locals: tensors -> AotTensor, buffers -> Value*, integers -> long, other
+    # numerics -> double (params + globals excluded; an assign to a global
+    # updates the global).
     for k in range of (len of banames):
         local v is banames[k]
         local isparam is 0
@@ -1911,7 +2131,9 @@ define emit_function(fn, finfo, gnm, gbt) as:
         if (gnm[v] == 1) or (gbt[v] == 1):
             isglobal is 1
         if (isparam == 0) and (isglobal == 0):
-            if fbt[v] == 1:
+            if g_tensor[v] == 1:
+                decls is decls + "    AotTensor " + v + " = aot_tensor_null();\n"
+            elif fbt[v] == 1:
                 decls is decls + "    Value* " + v + " = NULL;\n"
             elif g_int[v] == 1:
                 decls is decls + "    long " + v + " = 0;\n"
@@ -1923,7 +2145,10 @@ define emit_function(fn, finfo, gnm, gbt) as:
     if (finfo["ret"]) == "double":
         tailret is "    return 0;\n"
     elif (finfo["ret"]) == "Value*":
-        tailret is "    return NULL;\n"
+        if hasT == 1:
+            tailret is "    aot_tframe_leave(_tmark);\n    return NULL;\n"
+        else:
+            tailret is "    return NULL;\n"
     return sig + " {\n" + decls + bodyc + tailret + "}\n"
 
 define emit_program(ast) as:
@@ -1949,6 +2174,13 @@ define emit_program(ast) as:
             funcs is (append of [funcs, u])
         else:
             rest is (append of [rest, stmts[k]])
+    # Seed all user function NAMES first so is_tensor_call can tell a user-defined
+    # matmul/add/relu (which shadows the tensor builtin) from the builtin —
+    # regardless of definition order. (Names only: seeding full g_funcs entries
+    # with empty ptypes would break find_buf_param_use on recursive calls.)
+    g_func_names is {}
+    for k in range of (len of funcs):
+        g_func_names[(funcs[k])[1]] is 1
     for k in range of (len of funcs):
         local fn is funcs[k]
         local pt is func_ptypes of fn
@@ -1966,7 +2198,7 @@ define emit_program(ast) as:
             if (pt[p]) != "buf":
                 if (uses_int_forcing of [fn[3], (fn[2])[p]]) == 1:
                     ip[(fn[2])[p]] is 1
-        g_funcs[fn[1]] is {"ptypes": pt, "ret": (func_ret_type of [fn, ffbt]), "iparams": ip}
+        g_funcs[fn[1]] is {"ptypes": pt, "ret": (func_ret_type of [fn, ffbt]), "iparams": ip, "rettensor": (func_ret_tensor of fn)}
     # Module globals are computed first so functions can READ them (they become
     # file-scope vars in C; a function's params/locals shadow same-named globals).
     local bt is infer_buffers of rest
@@ -1990,6 +2222,9 @@ define emit_program(ast) as:
     g_int is {}
     if g_observed == 0:
         g_int is infer_int of [rest, [], nm, bt]
+    # tensor layer for the module body (functions set their own scope above).
+    g_dict is {}
+    g_tensor is infer_tensors of rest
     local gdecls is ""
     local names is keys of nm
     for i in range of (len of names):
