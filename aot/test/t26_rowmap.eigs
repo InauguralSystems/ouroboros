@@ -1,0 +1,33 @@
+# Row-wise element-wise map out[i*D+d] = f(gain[d], x[i*D+d], mu, inv, bias[d]):
+# byte-exact vectorization (write base i*D, reads at d and i*D+d, broadcast
+# scalars). D=5 is not a SIMD-width multiple, exercising the scalar tail.
+define affine_rows(out, x, gain, bias, S, D, mu, inv) as:
+    i is 0
+    loop while i < S:
+        d is 0
+        loop while d < D:
+            out[i * D + d] is gain[d] * (x[i * D + d] - mu) * inv + bias[d]
+            d is d + 1
+        i is i + 1
+S is 4
+D is 5
+mu is 0.37
+inv is 1.25
+x is buffer of (S * D)
+gain is buffer of D
+bias is buffer of D
+out is buffer of (S * D)
+i is 0
+loop while i < (S * D):
+    x[i] is (i % 7) * 0.3 - 1.0
+    i is i + 1
+i is 0
+loop while i < D:
+    gain[i] is 1.0 + i * 0.1
+    bias[i] is i * 0.05 - 0.1
+    i is i + 1
+affine_rows of [out, x, gain, bias, S, D, mu, inv]
+i is 0
+loop while i < (S * D):
+    print of out[i]
+    i is i + 1

@@ -666,6 +666,9 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
         local mm is matmul_loop of [node, nm, bt]
         if mm != null:
             return emit_matmul of [mm, ind, nm, bt, minits]
+        local rm is rowmap_loop of [node, nm, bt]
+        if rm != null:
+            return emit_rowmap of [rm, ind, nm, bt]
         local ov is outvec_loop of [node, nm, bt]
         if ov != null:
             return emit_outvec of [ov, ind, nm, bt, 1]
@@ -1455,6 +1458,84 @@ define emit_matmul(d, ind, nm, bt, minits) as:
     s is s + (emit_outvec of [ov, i3 + "    ", nm, bt, 1])
     s is s + i3 + "}\n"
     s is s + (emit_stmt of [d["iincr"], i3, nm, bt, minits, {}])
+    s is s + i2 + "}\n"
+    return s + ind + "}\n"
+
+# ---- row-wise element-wise map: RES[BASE+D] = vec_expr(D) ----
+# Like the whole-buffer vec map, but the write index carries a loop-invariant
+# base (`out[i*D + d]`) and reads may be at the bare counter (`gamma[d]`) or
+# `base2 + d` (`x[i*D + d]`). Element-wise -> BYTE-EXACT (reuses emit_term_ov's
+# broadcast/contiguous-load packing; the vstore touches a subset of the scalar
+# loop's indices, so it inherits its bounds). Vectorizes layernorm's normalize.
+define rowmap_loop(node, nm, bt) as:
+    local cond is unwrap of node[1]
+    if cond[0] != "binop":
+        return null
+    if cond[1] != "<":
+        return null
+    local lhs is unwrap of cond[2]
+    if lhs[0] != "ident":
+        return null
+    local D is lhs[1]
+    local BOUND is cond[3]
+    local raw is node[2]
+    local stmts is []
+    for k in range of (len of raw):
+        stmts is (append of [stmts, unwrap of raw[k]])
+    if (len of stmts) != 2:
+        return null
+    # stmt0: RES[SIDX] is VEXPR
+    local s0 is stmts[0]
+    if s0[0] != "index_assign":
+        return null
+    local rtg is unwrap of s0[1]
+    if rtg[0] != "ident":
+        return null
+    local RES is rtg[1]
+    if bt[RES] != 1:
+        return null
+    local SIDX is s0[2]
+    local VEXPR is s0[3]
+    # stmt1: D is D + 1
+    local s1 is stmts[1]
+    if s1[0] != "assign":
+        return null
+    if s1[1] != D:
+        return null
+    local SBASE is extract_o_base of [SIDX, D]
+    if SBASE == null:
+        return null
+    if (name_in_expr of [VEXPR, D]) == 0:
+        return null
+    if (term_ov_ok of [VEXPR, D]) == 0:
+        return null
+    local vb is {}
+    collect_ov_bufs of [VEXPR, D, vb]
+    local vbufs is []
+    local vbk is keys of vb
+    for k in range of (len of vbk):
+        if vbk[k] != RES:
+            vbufs is (append of [vbufs, vbk[k]])
+    return {"D": D, "BOUND": BOUND, "RES": RES, "SBASE": SBASE, "SIDX": SIDX, "VEXPR": VEXPR, "vbufs": vbufs}
+
+define emit_rowmap(d, ind, nm, bt) as:
+    local D is d["D"]
+    local OB is emit_num of [d["BOUND"], nm, bt, 0]
+    local RES is d["RES"]
+    local SBASE is emit_int of d["SBASE"]
+    local i2 is ind + "    "
+    local i3 is i2 + "    "
+    local s is ind + "{\n"
+    s is s + i2 + "double* _pv_" + RES + " = aot_buf_data(" + RES + ");\n"
+    local vbufs is d["vbufs"]
+    for k in range of (len of vbufs):
+        s is s + i2 + "double* _pv_" + vbufs[k] + " = aot_buf_data(" + vbufs[k] + ");\n"
+    s is s + i2 + "for (; " + D + " + AOT_VW <= " + OB + "; " + D + " += AOT_VW) {\n"
+    s is s + i3 + "aot_vstore(_pv_" + RES + " + " + SBASE + " + " + D + ", " + (emit_term_ov of [d["VEXPR"], D, nm, bt, 1]) + ");\n"
+    s is s + i2 + "}\n"
+    s is s + i2 + "while (" + D + " < " + OB + ") {\n"
+    s is s + i3 + "aot_buf_set_i(" + RES + ", " + (emit_int of d["SIDX"]) + ", " + (emit_num of [d["VEXPR"], nm, bt, 0]) + ");\n"
+    s is s + i3 + D + " = " + D + " + 1;\n"
     s is s + i2 + "}\n"
     return s + ind + "}\n"
 
