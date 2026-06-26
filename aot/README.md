@@ -104,7 +104,15 @@ elides the guard and emits raw vector arithmetic (`test/t9_broadcast`).
 `out[i] = in[i] + i`) emits an index vector `aot_viota(_vi)` = `{_vi, _vi+1, …}`
 (correct because the SIMD path only runs when `ctr==0`, so lane `k` holds index
 `_vi+k`). The counter isn't a literal-bounded scalar, so these maps stay guarded
-(sound). `test/t10_iota`. Next: `/`.
+(sound). `test/t10_iota`.
+
+**Division.** `/` vectorizes via `aot_vdiv` (packed `div`, then mask the `b==0`
+lanes to `0`, then guard) — matching the VM's value semantics (`b==0 → 0`,
+overflow clamped). It's never elided (no lower bound on the divisor), so div maps
+stay guarded. `test/t11_div`. *Known gap:* the VM prints a `division by zero`
+warning to **stderr**; the AOT doesn't reproduce it (no source-line tracking in
+generated C — pre-existing in the scalar path), so div-by-zero programs match on
+stdout/value but not on the stderr warning. Next: slice 2 (functions/recursion).
 
 ## Speed: the specialization spike landed (~64×)
 
