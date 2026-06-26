@@ -144,9 +144,39 @@ the idiomatic indexed loop, which pays a per-element `aot_buf_get` bounds-check
 + a per-op `num_guard`. The ranged form elides both (raw pointer, one batched
 guard per vector) *and* vectorizes, so it wins flat across D. (Parity within
 tolerance — reassociated.) Caveat: full attention at d_model=512 is
-matmul-*dominated*, and those matmuls still read every element through
-bounds-checked `aot_buf_get`, so a raw-pointer (or slice-expressed) matmul is
-the next lever — the ranged score-dot is only ~0.3% of the work there.
+matmul-*dominated* — see integer-typed indexing below.
+
+### Integer-typed index arithmetic (the matmul lever)
+
+Pointing the AOT at a d_model=512 matmul, a microbench A/B (faithfully mirroring
+the emitted C) showed the bottleneck is *not* the bounds-check or the value
+`num_guard` (eliding those moves <5%) but **double-typed loop counters and index
+arithmetic**: computing `i*Din+d` in floating point and converting double→long
+on every access. Replacing only that — integer counters *and* dimensions — was
+2.1×; raw pointers added nothing.
+
+So the AOT now infers an **integer subtype**: a name is `long` (not `double`)
+when it's a **loop counter** (constant-step induction: `i is 0` / `i is i + 1`)
+or an **index-dimension param** (a param that appears inside an `index`/`slice`
+position — a valid program's index must be an exact integer, so a dimension
+multiplied into one is integer too). Index expressions over integer names emit
+as native `long` math (no `num_guard`, no per-access conversion) and read/write
+through `aot_buf_get_i`/`aot_buf_set_i` (skip the float integer-check). The
+**bound is load-bearing**: "integer-valued" is *not* sufficient — an accumulator
+`s is s + s` is integer-valued but grows past 2⁶³, where a C `long` wraps and the
+VM's `num_guard(double)` clamps at 1e308. Only counters (small, loop-bounded) and
+index dimensions (bounded by buffer length) stay where `long == num_guard(double)`
+exactly, so only those are typed `long`; accumulators stay `double`.
+
+Measured (`bench/matmul.eigs`, d_model=512, 100 passes, dev box):
+
+| matmul codegen | time |
+|---|---|
+| all-double (prior) | 34.6s |
+| **integer-typed index** | **16.9s** |
+| **speedup** | **~2.05×**, byte-identical |
+
+(`t22_int_index` parity test pins both the win and the 2⁷⁰-accumulator boundary.)
 
 ## Slices
 

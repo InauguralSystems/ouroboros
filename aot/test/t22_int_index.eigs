@@ -1,0 +1,30 @@
+# Integer-typed index arithmetic (long): 2D transpose + matmul-style indexing.
+# Also guards the soundness boundary: `acc` is integer-VALUED but accumulates,
+# so it must stay double (long would wrap where num_guard clamps).
+define transpose(dst, src, R, C) as:
+    i is 0
+    loop while i < R:
+        j is 0
+        loop while j < C:
+            dst[j * R + i] is src[i * C + j]
+            j is j + 1
+        i is i + 1
+R is 3
+C is 4
+A is buffer of (R * C)
+B is buffer of (C * R)
+i is 0
+loop while i < (R * C):
+    A[i] is i * 1.5 - 2.0
+    i is i + 1
+transpose of [B, A, R, C]
+print of B[0]
+print of B[5]
+print of B[11]
+# accumulator that is integer-valued but grows — must remain double
+acc is 1
+i is 0
+loop while i < 70:
+    acc is acc + acc
+    i is i + 1
+print of acc
