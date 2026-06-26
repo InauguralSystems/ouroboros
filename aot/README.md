@@ -95,6 +95,30 @@ column access is strided, not a contiguous `dot`.
 squares each lane before the reduce, then `sqrt`s the total). Both compare with
 tolerance (`*_tol.eigs`), not bytes.
 
+### Self-attention forward (iLambdaAi)
+
+iLambdaAi's attention is the native fused kernel `ne_fused_attention_forward`
+(EigenScript `src/model_infer.c`). Mirrored faithfully in EigenScript
+(`bench/attention.eigs`) — Q/K/V projections → scaled dot-product scores →
+causal mask → softmax → context → out-proj, `d_model=32`, `seq_len=8` — and
+AOT-compiled, 4000 passes:
+
+| 4000 attention passes | time |
+|---|---|
+| VM | 54.0s |
+| **AOT** | **3.6s** |
+| **speedup** | **~15×**, byte-identical |
+
+Required adding `exp` to the emitter (`num_guard(exp(x))`, matching the VM's
+guarded `exp`); softmax is the only place it appears. Like the matvec, the win
+is native+unboxed, not SIMD: every heavy kernel (the four projection matmuls,
+the score matmul, the context matmul) is a strided reduction → native-scalar.
+The one contiguous-reduction opportunity is `scores[i][j] = dot(Q_row_i,
+K_row_j)`, but it's ~5% of the matmul work and the ouroboros frontend can't
+slice a flat buffer into rows (no `Q[i*D : i*D+D]`), so it stays a scalar inner
+loop. Surfaced a frontend gap: the lexer doesn't parse scientific notation
+(`1e30` → `1` + a stray `e30` ident), so the mask sentinel uses a plain integer.
+
 ## Slices
 
 1. **DONE** — literals, arithmetic + comparison, module-level `x is expr`,
