@@ -731,6 +731,23 @@ define _p_parse_statement(p) as:
     expr is _p_parse_expr of p
     return ["_line", _stmt_line, expr]
 
+# ---- Bracket parser: index `t[i]` or half-open slice `t[start:end]` ----
+# The opening `[` is already consumed. `start`/`end` may be omitted (`t[:e]`,
+# `t[s:]`, `t[:]`) -> null, matching the C parser's AST_SLICE (NULL ends).
+define _p_parse_bracket(p, target) as:
+    start is null
+    if (_p_peek_type of p) != "colon":
+        start is _p_parse_expr of p
+    if (_p_peek_type of p) == "colon":
+        _p_advance of p
+        last is null
+        if (_p_peek_type of p) != "rbracket":
+            last is _p_parse_expr of p
+        _p_expect of [p, "rbracket"]
+        return ["slice", target, start, last]
+    _p_expect of [p, "rbracket"]
+    return ["index", target, start]
+
 # ---- Postfix parser for dot/index chains (used by assignment detection) ----
 
 define _p_parse_postfix(p) as:
@@ -744,9 +761,7 @@ define _p_parse_postfix(p) as:
             node is ["dot", node, key_tok[1]]
         else:
             _p_advance of p
-            idx is _p_parse_expr of p
-            _p_expect of [p, "rbracket"]
-            node is ["index", node, idx]
+            node is _p_parse_bracket of [p, node]
     return node
 
 # ---- Expression parser (precedence climbing) ----
@@ -869,9 +884,7 @@ define _p_parse_call(p) as:
                 parsing is 0
         elif (_p_peek_type of p) == "lbracket":
             _p_advance of p
-            idx is _p_parse_expr of p
-            _p_expect of [p, "rbracket"]
-            left is ["index", left, idx]
+            left is _p_parse_bracket of [p, left]
         elif (_p_peek_type of p) == "dot":
             _p_advance of p
             key_tok is _p_expect of [p, "ident"]
