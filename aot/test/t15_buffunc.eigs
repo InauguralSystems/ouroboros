@@ -1,0 +1,25 @@
+define scale(out, src, k) as:
+    i is 0
+    loop while i < (len of out):
+        out[i] is src[i] * k
+        i is i + 1
+
+define dot_sum(a, m) as:
+    s is 0
+    i is 0
+    loop while i < m:
+        s is s + a[i]
+        i is i + 1
+    return s
+
+n is 8
+xs is zeros of n
+ys is zeros of n
+i is 0
+loop while i < n:
+    xs[i] is i + 1
+    i is i + 1
+scale of [ys, xs, 3]
+print of ys[0]
+print of ys[7]
+print of (dot_sum of [ys, n])
