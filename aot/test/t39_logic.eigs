@@ -1,0 +1,35 @@
+# Value-context logical ops: `not x`, and `and`/`or` that short-circuit and
+# return the OPERAND (not a boolean), matching the VM. Closes the dynamics
+# `not (a and b)` gap.
+a is 5
+b is 0
+print of (a and 7)
+print of (b and 7)
+print of (a or 9)
+print of (b or 9)
+print of (not b)
+print of (not a)
+# the dynamics shape
+dr is 2
+dc is 0
+print of (not (dr == 0 and dc == 0))
+print of (not (dr == 2 and dc == 0))
+print of ((a > 3) or (b > 3))
+print of ((a > 3) and (b > 3))
+# short-circuit: the side-effecting operand runs only when its branch is taken
+define noisy(n) as:
+    print of n
+    return 1
+p is 5 or (noisy of 111)
+print of p
+q is 0 and (noisy of 222)
+print of q
+r is 0 or (noisy of 333)
+print of r
+# as a condition
+cnt is 0
+if not (dr == 0 and dc == 0):
+    cnt is cnt + 1
+if (a > 0) and (b == 0):
+    cnt is cnt + 10
+print of cnt
