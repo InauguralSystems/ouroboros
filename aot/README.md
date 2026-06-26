@@ -32,7 +32,10 @@ Override the runtime checkout with `EIGS_DIR=` (default `../../EigenScript`).
 1. **DONE** — literals, arithmetic + comparison, module-level `x is expr`,
    single-arg named calls (`print of ...`), `if/else`, `loop while`.
    Parity-verified vs the VM (`test/run.sh`).
-2. functions / calls / recursion (locals as C-scoped, the call convention)
+2. **numeric functions DONE** — `define f(p…) as: … return e` compiles to native
+   `double f(double…)` with forward prototypes (recursion/mutual recursion),
+   params + locals as C doubles, calls `f(args)` in numeric context. `fib(32)`:
+   ~37× over the VM. (Boxed/buffer params are a later extension.)
 3. **typed numeric buffers DONE** (checked path) — `buffer of N` / `zeros of N`
    become C `Value*`; element read/write via `aot_buf_get`/`aot_buf_set` (integer
    check + negative-index resolve + bounds), `len of buf` via `aot_buf_len`.
@@ -112,7 +115,19 @@ overflow clamped). It's never elided (no lower bound on the divisor), so div map
 stay guarded. `test/t11_div`. *Known gap:* the VM prints a `division by zero`
 warning to **stderr**; the AOT doesn't reproduce it (no source-line tracking in
 generated C — pre-existing in the scalar path), so div-by-zero programs match on
-stdout/value but not on the stderr warning. Next: slice 2 (functions/recursion).
+stdout/value but not on the stderr warning.
+
+## Numeric functions (slice 2)
+
+`define f(p1, …) as: … return e` compiles to a native `static double f(double …)`.
+All params + body-assigned locals are C doubles; the body reuses the scalar
+specialization (arithmetic, `if`/`else`, `loop while`, `return`). Forward
+prototypes are emitted for all functions first, so recursion and mutual recursion
+work. A call `f of (x)` / `f of [a, b]` in numeric context emits `f(x)` / `f(a, b)`
+(use `f of (x)`, not `f of [x]`, for one arg — the 1-element list doesn't spread).
+`test/t12_func`; `fib(32)` runs **~37× over the VM** (native recursion). Functions
+are self-contained numeric (no module-global reads, no buffer/string params yet).
+Next: neighbor indexing (`buf[i±1]`) for stencils; boxed/buffer function params.
 
 ## Speed: the specialization spike landed (~64×)
 
