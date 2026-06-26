@@ -590,6 +590,19 @@ static Value *aot_index_get(Value *target, Value *idx) {
     return result ? result : make_null();
 }
 
+/* ---- for-loop iteration over a list/buffer (range materializes to a list) --- */
+static long aot_iter_len(Value *v) {
+    if (!v) return 0;
+    if (v->type == VAL_LIST)   return v->data.list.count;
+    if (v->type == VAL_BUFFER) return v->data.buffer.count;
+    return 0;
+}
+static Value *aot_iter_get(Value *v, long k) {   /* owned element k */
+    if (v->type == VAL_LIST)   { Value *e = v->data.list.items[k]; val_incref(e); return e; }
+    if (v->type == VAL_BUFFER) return make_num(v->data.buffer.data[k]);
+    return make_null();
+}
+
 static Value *aot_call_name(Env *g, const char *name, Value *arg) {
     Value *fn = env_get(g, name);
     if (!fn) { fprintf(stderr, "aot: undefined function '%s'\n", name); exit(1); }

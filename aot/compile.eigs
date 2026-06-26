@@ -480,6 +480,12 @@ define collect_assigns_stmt(node, acc) as:
     if t == "loop":
         collect_assigns of [node[2], acc]
         return null
+    if t == "for":
+        collect_assigns of [node[3], acc]
+        return null
+    if t == "unobserved":
+        collect_assigns of [node[1], acc]
+        return null
     return null
 
 define collect_assigns(stmts, acc) as:
@@ -1009,6 +1015,37 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
         return ind + "break;\n"
     if t == "continue":
         return ind + "continue;\n"
+    if t == "for":
+        # `for var in iter` — materialize the iterable (a list/buffer; `range of`
+        # produces a list) and walk it by index, binding `var` boxed each step.
+        # The loop var lives in the env (aot_set/aot_get), so numeric uses in the
+        # body go through the boxed path; byte-exact, break/continue map to C.
+        local fvar is node[1]
+        local fiter is node[2]
+        local fbody is node[3]
+        local itv is "_it_" + fvar
+        local nv is "_n_" + fvar
+        local kv is "_k_" + fvar
+        # a buffer ident iterable is a C Value* (global/local), borrowed by name;
+        # everything else (list/dict literal, range call, ...) is an owned Value.
+        local fiu is unwrap of fiter
+        local itexpr is ""
+        local fowned is 1
+        if (fiu[0] == "ident") and (bt[fiu[1]] == 1):
+            itexpr is fiu[1]
+            fowned is 0
+        else:
+            itexpr is emit_val of [fiter, nm, bt]
+        local fo is ind + "{ Value* " + itv + " = " + itexpr + ";\n"
+        fo is fo + ind + "  long " + nv + " = aot_iter_len(" + itv + ");\n"
+        fo is fo + ind + "  for (long " + kv + " = 0; " + kv + " < " + nv + "; " + kv + "++) {\n"
+        fo is fo + ind + "    aot_set(g, \"" + fvar + "\", aot_iter_get(" + itv + ", " + kv + "));\n"
+        fo is fo + (emit_stmts of [fbody, ind + "    ", nm, bt, minits, gf])
+        fo is fo + ind + "  }\n"
+        if fowned == 1:
+            fo is fo + ind + "  val_decref(" + itv + ");\n"
+        fo is fo + ind + "}\n"
+        return fo
     if t == "unobserved":
         # `unobserved:` block — assignments inside store their value but do NOT
         # update the observer slot. Bracket the body with the runtime depth
