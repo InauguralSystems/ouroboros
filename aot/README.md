@@ -203,15 +203,33 @@ VM's `num_guard(double)` clamps at 1e308. Only counters (small, loop-bounded) an
 index dimensions (bounded by buffer length) stay where `long == num_guard(double)`
 exactly, so only those are typed `long`; accumulators stay `double`.
 
+### Output-axis SIMD matmul
+
+The matmul's *output column* `o` then vectorizes byte-exactly. Instead of
+vectorizing the reduction (which reorders the FP sum — needs the tolerance
+oracle), vectorize the **output**: hold a vector of `AOT_VW` output accumulators,
+broadcast `X[i,d]`, and vector-load the contiguous `W[d, o..o+VW]` row-slice.
+Each lane is an *independent* output `out[.., o0+k]` summed in the VM's exact
+`d`-order — so it's **byte-identical**, no tolerance. The vector loop touches a
+*subset* of the scalar loop's indices (same `o` range, grouped + scalar tail),
+so it inherits the scalar path's bounds safety. Recognized by `outvec_loop` (the
+`for o { s=0; for d { s += TERM } out[base+o]=s }` shape, `TERM`'s reads each
+`o`-independent → broadcast or `base+o` → vector load).
+
 Measured (`bench/matmul.eigs`, d_model=512, 100 passes, dev box):
 
 | matmul codegen | time |
 |---|---|
-| all-double (prior) | 34.6s |
-| **integer-typed index** | **16.9s** |
-| **speedup** | **~2.05×**, byte-identical |
+| all-double (original) | 34.6s |
+| integer-typed index | 16.9s |
+| **+ output-axis SIMD** | **8.4s** |
+| **total** | **~4.1×**, byte-identical |
 
-(`t22_int_index` parity test pins both the win and the 2⁷⁰-accumulator boundary.)
+That's ~2× from int indexing × ~2× from SSE2 2-wide SIMD; AVX2 (4-wide, cloud)
+roughly doubles the SIMD factor again. End-to-end the full transformer block
+went 0.975s → 0.612s (**~85×** over the VM's 52.0s). `t22_int_index` pins the int
+win + the 2⁷⁰-accumulator boundary; `t24_outvec` pins the SIMD path + scalar tail
+(both byte-exact).
 
 ## Slices
 

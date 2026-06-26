@@ -3,8 +3,10 @@
 # `long`, so the index `i*Din+d` runs in integer math (no float index, no
 # double->long conversion per access, no num_guard on the index). Accumulator
 # `s` stays `double` (it sums buffer values; as a long it would wrap where the
-# VM clamps). Measured d_model=512, 100 passes (dev box): 34.6s -> 16.9s = ~2.05x
-# over the prior all-double codegen, byte-identical.
+# VM clamps). The output column `o` is also OUTPUT-AXIS SIMD vectorized (each
+# lane = one output, summed in the VM's d-order -> byte-exact). Measured
+# d_model=512, 100 passes (dev box): all-double 34.6s -> int-index 16.9s ->
+# +output-axis SIMD 8.4s = ~4.1x total, byte-identical (SSE2 2-wide; AVX2 ~2x more).
 define matmul(out, X, W, S, Din, Dout) as:
     i is 0
     loop while i < S:
