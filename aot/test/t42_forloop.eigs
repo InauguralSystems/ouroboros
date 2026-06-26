@@ -1,0 +1,31 @@
+s is 0
+for i in range of 5:
+    s is s + i
+print of s
+cases is [[1, 10], [2, 20], [3, 30]]
+tot is 0
+for c in cases:
+    tot is tot + c[0] + c[1]
+print of tot
+b is buffer of 4
+b[0] is 5.0
+b[1] is 6.0
+b[2] is 7.0
+b[3] is 8.0
+bs is 0
+for v in b:
+    bs is bs + v
+print of bs
+acc is 0
+for k in range of 10:
+    if k == 3:
+        continue
+    if k == 6:
+        break
+    acc is acc + k
+print of acc
+m is 0
+for a in range of 3:
+    for bb in range of 3:
+        m is m + (a * 3 + bb)
+print of m
