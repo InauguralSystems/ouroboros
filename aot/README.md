@@ -246,6 +246,21 @@ the VM). The same overflow analysis also caught a latent bug: a huge integer
 *literal* (`1e161`) was being typed `long` and overflowing — integer literals
 are now `long` only below 2⁵³.
 
+### Row-wise element-wise maps (layernorm)
+
+Re-profiling the block after the matmul work, the matmul fell from ~90% to ~59%;
+layernorm and GELU rose to ~12%/~15%. Layernorm's **normalize** loop —
+`out[i*D+d] = gamma[d]*(x[i*D+d]-mu)*inv + beta[d]` — is an element-wise *row*
+map: a loop-invariant base (`i*D`) on the write, reads at the bare counter
+(`gamma[d]`) or `base+d` (`x[i*D+d]`), and broadcast scalars (`mu`, `inv`). The
+`rowmap_loop` recognizer vectorizes it byte-exactly, reusing the output-axis
+`emit_term_ov` packing (broadcast vs contiguous load). ~34% off layernorm
+(0.047→0.031s). Layernorm's **variance** loop is a reduction, left scalar —
+auto-reassociating a user-written sequential reduction would break the byte-exact
+contract (the opt-in for that is the `dot`/`sum` family). `t26_rowmap` pins it.
+This is squarely in diminishing-returns territory: byte-exact and a real general
+capability, but only ~4% at the block level (matmul already dominates).
+
 **AVX2 validated** (`.github/workflows/aot-avx2-bench.yml`, AMD EPYC 9V74): the
 dev box is SSE2 (2-wide), so width-4 was confirmed in CI. `AOT_VW=4` is selected
 under `-march=native`, the full differential harness stays correct at width 4
