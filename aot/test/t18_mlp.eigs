@@ -1,0 +1,66 @@
+# iLambdaAi transformer forward-pass kernel structure (token_train.eigs):
+#   input[16] @ hidden_W[16,32] + hidden_b -> leaky_relu -> @ output_W[32,54] -> logits[54]
+define matvec(out, inp, W, nin, nout) as:
+    j is 0
+    loop while j < nout:
+        s is 0
+        i is 0
+        loop while i < nin:
+            s is s + inp[i] * W[i * nout + j]
+            i is i + 1
+        out[j] is s
+        j is j + 1
+
+define bias_add(out, h, b, n) as:
+    i is 0
+    loop while i < n:
+        out[i] is h[i] + b[i]
+        i is i + 1
+
+define leaky_relu(out, h, n) as:
+    i is 0
+    loop while i < n:
+        if h[i] > 0:
+            out[i] is h[i]
+        else:
+            out[i] is h[i] * 0.01
+        i is i + 1
+
+define forward(logits, inp, hW, hb, oW, hbuf) as:
+    matvec of [hbuf, inp, hW, 16, 32]
+    bias_add of [hbuf, hbuf, hb, 32]
+    leaky_relu of [hbuf, hbuf, 32]
+    matvec of [logits, hbuf, oW, 32, 54]
+
+nin is 16
+nhid is 32
+nvoc is 54
+inp is zeros of nin
+hW is zeros of (nin * nhid)
+hb is zeros of nhid
+oW is zeros of (nhid * nvoc)
+hbuf is zeros of nhid
+logits is zeros of nvoc
+i is 0
+loop while i < nin:
+    inp[i] is i * 0.05
+    i is i + 1
+i is 0
+loop while i < (nin * nhid):
+    hW[i] is ((i % 7) - 3) * 0.02
+    i is i + 1
+i is 0
+loop while i < nhid:
+    hb[i] is (i % 5) * 0.01 - 0.02
+    i is i + 1
+i is 0
+loop while i < (nhid * nvoc):
+    oW[i] is ((i % 11) - 5) * 0.01
+    i is i + 1
+r is 0
+loop while r < 1000:
+    forward of [logits, inp, hW, hb, oW, hbuf]
+    r is r + 1
+print of logits[0]
+print of logits[27]
+print of logits[53]
