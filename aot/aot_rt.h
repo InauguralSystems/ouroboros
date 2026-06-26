@@ -185,6 +185,16 @@ static long aot_idx_i(long i, int count) {
 }
 static double aot_buf_get_i(Value *b, long idx) { return b->data.buffer.data[aot_idx_i(idx, b->data.buffer.count)]; }
 static void   aot_buf_set_i(Value *b, long idx, double v) { b->data.buffer.data[aot_idx_i(idx, b->data.buffer.count)] = v; }
+/* max |element|, for the matmul's once-per-call overflow precheck: if
+   reduction_len * maxabs(A) * maxabs(B) <= 1e308, no product or partial sum can
+   exceed 1e308, so num_guard is identity over the whole reduction and the
+   unguarded (faster) accumulation is byte-identical to the VM's guarded one. */
+static double aot_buf_maxabs(Value *b) {
+    double *d = b->data.buffer.data; long n = b->data.buffer.count, i;
+    double m = 0.0;
+    for (i = 0; i < n; i++) { double a = d[i] < 0 ? -d[i] : d[i]; if (a > m) m = a; }
+    return m;
+}
 static double aot_buf_len(Value *b) { return (double)b->data.buffer.count; }
 /* Raw element pointer for the proven-safe (in-bounds, non-negative) loop path. */
 static double *aot_buf_data(Value *b) { return b->data.buffer.data; }
