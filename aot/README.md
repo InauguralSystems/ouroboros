@@ -327,9 +327,12 @@ observed (env-boxed, slot-tracked) *and* `g_trace_obs_hist` on. So a where/why/h
 program forces `g_observed`, and `aot_observe_num` (after `aot_trace_assign`
 creates the line's history entry — order matters) stamps the slot's entropy/dH
 onto it via `trace_record_obs`, exactly like `OBSERVE_NAME_POST`. `when is x at L`
-(assignment count) also works; `who` (a name string) is the one remaining kind.
-`t34_temporal_obs` (where/why/how/when, hits + misses) matches the VM
-byte-for-byte.
+(assignment count) also works. `who is x at L` (the binding *name*, a string)
+completes the set: the interrogate result routes through `slot_to_value` (like
+the VM's `INTERROGATE_NAMED_AT`) rather than assuming a double, so it's
+polymorphic — number, string (`who`), or `null` on a miss. `t34_temporal_obs`
+(where/why/how/when) and `t35_who` (who + what) match the VM byte-for-byte. The
+only remaining temporal gap is the frontend not parsing `prev of x at L`.
 
 ## Slices
 
