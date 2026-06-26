@@ -330,6 +330,16 @@ static int aot_predicate(int kind) {
     }
     return 0;
 }
+/* `report of x` — the most-specific predicate of x's observed slot, as a string
+ * (mirrors CASE(REPORT_NAME)): resolve the binding's slot, classify it, else
+ * "equilibrium" for an unobserved binding. */
+static Value *aot_report(Env *e, const char *name) {
+    int oidx = -1, odepth = 0;
+    Env *oe = env_resolve_chain(e, name, env_hash_name(name), &oidx, &odepth);
+    if (oe && oidx >= 0 && oidx < oe->obs_cap && oe->obs[oidx].used)
+        return make_str(observer_slot_report(&oe->obs[oidx]));
+    return make_str("equilibrium");
+}
 /* read an observed numeric var back out of the env (consumes the fetched ref) */
 static double aot_num(Value *v) {
     double d = (v && v->type == VAL_NUM) ? v->data.num : 0.0;
