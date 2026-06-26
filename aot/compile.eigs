@@ -394,7 +394,11 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
     if t == "assign":
         local name is node[1]
         if bt[name] == 1:
-            return ind + name + " = " + (emit_val of [node[2], nm, bt]) + ";\n"
+            # Always create via the heap-zeroed `buffer` builtin: `zeros` is
+            # arena-allocated and the AOT's flat arena clobbers it (same
+            # observable result — a length-N zero buffer).
+            local cc is unwrap of node[2]
+            return ind + name + " = aot_call_name(g, \"buffer\", make_num(" + (emit_num of [cc[2], nm, bt, 0]) + "));\n"
         if nm[name] == 1:
             local raw is 0
             if gf[name] == 1:
@@ -635,6 +639,23 @@ define collect_offsets(node, ctr, acc) as:
         return collect_offsets of [n[3], ctr, (collect_offsets of [n[2], ctr, acc])]
     return acc
 
+define refs_ctr(node, ctr) as:
+    local n is unwrap of node
+    local t is n[0]
+    if t == "ident":
+        if n[1] == ctr:
+            return 1
+        return 0
+    if t == "binop":
+        if (refs_ctr of [n[2], ctr]) == 1:
+            return 1
+        return refs_ctr of [n[3], ctr]
+    if t == "index":
+        return refs_ctr of [n[2], ctr]
+    if t == "unary":
+        return refs_ctr of [n[2], ctr]
+    return 0
+
 define collect_read_bufs(node, bufs) as:
     local n is unwrap of node
     local t is n[0]
@@ -660,7 +681,11 @@ define vec_loop(loopnode, nm, bt) as:
         return null
     local ctr is lhs[1]
     local bound is unwrap of cond[3]
-    if (bound[0] != "ident") and (bound[0] != "num"):
+    # bound may be any loop-invariant numeric expression (e.g. n - 1), but must
+    # not reference the counter (that's a degenerate loop the scalar path handles).
+    if (is_num_expr of [bound, nm, bt]) != 1:
+        return null
+    if (refs_ctr of [bound, ctr]) == 1:
         return null
     local body is loopnode[2]
     local assigns is []

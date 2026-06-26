@@ -136,10 +136,18 @@ in[i] - in[i-1]` or a blur. Reads off the ends would wrap (negative) or error
 `[-min_off, n - max_off)` vectorizes raw with offset pointers (`_p_in + _vi - 1`),
 while the head/tail boundaries use the **checked** path (`aot_buf_get`, which
 resolves negatives and bounds-errors exactly like the VM). `test/t13_stencil`.
-*Limits:* the write index must be `i` (offset 0); a full-range loop with a `+c`
-read errors at the tail like the VM, and a safe `i < n-1` bound isn't recognized
-yet (the bound must be an ident/num) — so positive-offset stencils need padded
-buffers for now. Next: binop loop bounds; boxed/buffer function params.
+The write index must be `i` (offset 0).
+
+**Binop loop bounds.** The loop bound may be any loop-invariant numeric
+expression (e.g. `loop while i < n - 1`), not just an ident/num — it must not
+reference the counter (a degenerate loop the scalar path handles). This unlocks
+safe-range positive-offset stencils: `out[i] = in[i] + in[i+1]` over `i < n-1`
+vectorizes fully in-bounds. `test/t14_binop_bound`. (Bounds get scalar
+guard-elision only when literal; binop bounds stay guarded — sound.) Also fixed a
+latent bug: `zeros of N` is arena-allocated and the AOT's flat arena clobbered
+it, so buffers are now created via the heap-zeroed `buffer` builtin (same length-N
+zero buffer; surfaced by the oracle on an unwritten-element read). Next:
+boxed/buffer function params.
 
 ## Speed: the specialization spike landed (~64×)
 
