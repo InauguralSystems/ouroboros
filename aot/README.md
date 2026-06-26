@@ -125,8 +125,18 @@ specialization (arithmetic, `if`/`else`, `loop while`, `return`). Forward
 prototypes are emitted for all functions first, so recursion and mutual recursion
 work. A call `f of (x)` / `f of [a, b]` in numeric context emits `f(x)` / `f(a, b)`
 (use `f of (x)`, not `f of [x]`, for one arg — the 1-element list doesn't spread).
-`test/t12_func`; `fib(32)` runs **~37× over the VM** (native recursion). Functions
-are self-contained numeric (no module-global reads, no buffer/string params yet).
+`test/t12_func`; `fib(32)` runs **~37× over the VM** (native recursion).
+
+**Buffer params.** A param is a **buffer** (`Value*`) if used as one in the body
+(indexed or `len of`), else a numeric `double`; the return is `double` if the body
+returns, else `void` (a mutating kernel). So you can write reusable vectorized
+kernels — `define scale(out, src, k) as: loop while i < len of out: out[i] is
+src[i] * k; …` compiles to `static void scale(Value*, Value*, double)` whose loop
+**vectorizes** (the map machinery works over buffer params), and `define
+dot_sum(a, m) as: … return s` is a `double` reduction. Calls pass buffer args by
+`Value*` and numeric args as doubles (`scale(ys, xs, 3); dot_sum(ys, n)`).
+`test/t15_buffunc`. Limits: no local buffer creation inside functions (would need
+the global env), no buffer-returning functions yet, no module-global reads.
 
 ## Neighbor indexing / stencils
 
@@ -147,7 +157,7 @@ guard-elision only when literal; binop bounds stay guarded — sound.) Also fixe
 latent bug: `zeros of N` is arena-allocated and the AOT's flat arena clobbered
 it, so buffers are now created via the heap-zeroed `buffer` builtin (same length-N
 zero buffer; surfaced by the oracle on an unwritten-element read). Next:
-boxed/buffer function params.
+buffer-returning functions; local buffer creation in functions.
 
 ## Speed: the specialization spike landed (~64×)
 
