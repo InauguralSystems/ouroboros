@@ -11,15 +11,18 @@ permissions:
 
 jobs:
   test:
-    name: suite (in devcontainer)
+    name: suite + AOT (in devcontainer)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
       # Build the devcontainer (EigenScript pinned by .devcontainer/Dockerfile's
-      # EIGS_REF) and run the full suite inside it — the same image a Codespace
-      # opens. EIGS=eigenscript uses the on-PATH runtime, not the dev-box symlink.
-      - name: Build devcontainer and run suite
+      # EIGS_REF) and run both suites inside it — the same image a Codespace
+      # opens. EIGS=eigenscript uses the on-PATH runtime; the AOT harness also
+      # compiles the runtime from source via EIGS_DIR (set in the image) and runs
+      # on the runner's native SIMD width (AVX2 -> AOT_VW=4), so AOT correctness
+      # is now gated in CI at 4-wide, not just on the SSE2 dev box.
+      - name: Build devcontainer and run suites (self-host parity + AOT)
         uses: devcontainers/ci@v0.3
         with:
-          runCmd: EIGS=eigenscript bash test/run.sh
+          runCmd: EIGS=eigenscript bash test/run.sh && EIGS=eigenscript bash aot/test/run.sh
