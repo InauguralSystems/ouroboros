@@ -44,6 +44,11 @@ static inline aot_vec aot_vdiv(aot_vec a, aot_vec b){   /* b==0 -> 0, else clamp
     aot_vec nz = _mm256_cmp_pd(b, _mm256_setzero_pd(), _CMP_NEQ_OQ);
     return aot_vguard(_mm256_and_pd(_mm256_div_pd(a, b), nz));
 }
+static inline double aot_vhsum(aot_vec x){
+    __m128d lo = _mm256_castpd256_pd128(x), hi = _mm256_extractf128_pd(x, 1);
+    __m128d s = _mm_add_pd(lo, hi);
+    return _mm_cvtsd_f64(_mm_add_pd(s, _mm_unpackhi_pd(s, s)));
+}
 #elif defined(__SSE2__)
 typedef __m128d aot_vec;
 #define AOT_VW 2
@@ -63,6 +68,7 @@ static inline aot_vec aot_vdiv(aot_vec a, aot_vec b){   /* b==0 -> 0, else clamp
     aot_vec nz = _mm_cmpneq_pd(b, _mm_setzero_pd());
     return aot_vguard(_mm_and_pd(_mm_div_pd(a, b), nz));
 }
+static inline double aot_vhsum(aot_vec x){ return _mm_cvtsd_f64(_mm_add_pd(x, _mm_unpackhi_pd(x, x))); }
 #else
 typedef double aot_vec;
 #define AOT_VW 1
@@ -75,6 +81,7 @@ typedef double aot_vec;
 static inline aot_vec aot_vguard(aot_vec x){ return num_guard(x); }
 static inline aot_vec aot_viota(long base){ return (double)base; }
 static inline aot_vec aot_vdiv(aot_vec a, aot_vec b){ return b == 0.0 ? 0.0 : num_guard(a / b); }
+static inline double aot_vhsum(aot_vec x){ return x; }
 #endif
 
 /* ---- lifecycle ---- */
@@ -171,6 +178,24 @@ static void   aot_buf_set(Value *b, double idx, double v) { b->data.buffer.data[
 static double aot_buf_len(Value *b) { return (double)b->data.buffer.count; }
 /* Raw element pointer for the proven-safe (in-bounds, non-negative) loop path. */
 static double *aot_buf_data(Value *b) { return b->data.buffer.data; }
+
+/* dot of [a,b] = sum_i a[i]*b[i]. The `dot` builtin's spec leaves the summation
+ * ASSOCIATION unspecified, which licenses this REASSOCIATED SIMD reduction:
+ * AOT_VW parallel partial-sum lanes + horizontal sum + scalar tail. (A strict
+ * left-to-right loop cannot vectorize — FP add is non-associative.) Per-lane
+ * vguard + final num_guard keep the no-NaN/Inf invariant. Result agrees with
+ * the VM within tolerance, not byte-for-byte — see aot/test/run.sh. */
+static inline double aot_dot(Value *a, Value *b) {
+    double *ad = a->data.buffer.data, *bd = b->data.buffer.data;
+    long an = a->data.buffer.count, bn = b->data.buffer.count;
+    long n = an < bn ? an : bn, i = 0;
+    aot_vec acc = aot_vset(0.0);
+    for (; i + AOT_VW <= n; i += AOT_VW)
+        acc = aot_vguard(aot_vadd(acc, aot_vguard(aot_vmul(aot_vload(ad + i), aot_vload(bd + i)))));
+    double s = aot_vhsum(acc);
+    for (; i < n; i++) s = num_guard(s + num_guard(ad[i] * bd[i]));
+    return num_guard(s);
+}
 
 /* ---- call a global/builtin by name, single arg (consumes arg) ---- */
 static Value *aot_call_name(Env *g, const char *name, Value *arg) {
