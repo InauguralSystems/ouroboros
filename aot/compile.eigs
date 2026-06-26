@@ -400,11 +400,189 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
             s is s + " else {\n" + (emit_stmts of [node[3], ind + "    ", nm, bt, minits, gf]) + ind + "}"
         return s + "\n"
     if t == "loop":
+        local vinfo is vec_loop of [node, bt]
+        if vinfo != null:
+            return emit_vectorized of [node, vinfo, ind, nm, bt, minits]
         local lg is loop_gf of [node, minits]
         local s is ind + "while (" + (emit_cond of [node[1], nm, bt]) + ") {\n"
         s is s + (emit_stmts of [node[2], ind + "    ", nm, bt, minits, lg])
         return s + ind + "}\n"
     throw of ("AOT: cannot emit statement node '" + t + "'")
+
+# ---- vectorized element-wise buffer-map recognition ----
+# Pattern: `loop while ctr < bound:  <buf>[ctr] is <vecexpr> ...;  ctr is ctr+1`
+# where every index is exactly the counter and vecexpr is buffer[ctr] reads,
+# numeric literals, and +/-/*. Emitted as a SIMD loop + scalar tail behind a
+# runtime guard (ctr==0 && bound<=len), with the scalar loop as the fallback —
+# so it is always correct regardless of the static analysis.
+define is_vec_expr(node, ctr, bt) as:
+    local n is unwrap of node
+    local t is n[0]
+    if t == "num":
+        return 1
+    if t == "index":
+        local tgt is unwrap of n[1]
+        local idx is unwrap of n[2]
+        if tgt[0] != "ident":
+            return 0
+        if bt[tgt[1]] != 1:
+            return 0
+        if idx[0] != "ident":
+            return 0
+        if idx[1] != ctr:
+            return 0
+        return 1
+    if t == "binop":
+        local op is n[1]
+        if (op != "+") and (op != "-") and (op != "*"):
+            return 0
+        if (is_vec_expr of [n[2], ctr, bt]) == 0:
+            return 0
+        return is_vec_expr of [n[3], ctr, bt]
+    return 0
+
+define collect_read_bufs(node, bufs) as:
+    local n is unwrap of node
+    local t is n[0]
+    if t == "index":
+        local tgt is unwrap of n[1]
+        if tgt[0] == "ident":
+            bufs[tgt[1]] is 1
+        return null
+    if t == "binop":
+        collect_read_bufs of [n[2], bufs]
+        collect_read_bufs of [n[3], bufs]
+        return null
+    return null
+
+define vec_loop(loopnode, bt) as:
+    local cond is unwrap of loopnode[1]
+    if cond[0] != "binop":
+        return null
+    if cond[1] != "<":
+        return null
+    local lhs is unwrap of cond[2]
+    if lhs[0] != "ident":
+        return null
+    local ctr is lhs[1]
+    local bound is unwrap of cond[3]
+    if (bound[0] != "ident") and (bound[0] != "num"):
+        return null
+    local body is loopnode[2]
+    local assigns is []
+    local bufs is {}
+    local sawinc is 0
+    for k in range of (len of body):
+        local st is unwrap of body[k]
+        if st[0] == "assign":
+            if st[1] != ctr:
+                return null
+            local r is unwrap of st[2]
+            if r[0] != "binop":
+                return null
+            if r[1] != "+":
+                return null
+            local ra is unwrap of r[2]
+            local rb is unwrap of r[3]
+            if ra[0] != "ident":
+                return null
+            if ra[1] != ctr:
+                return null
+            if rb[0] != "num":
+                return null
+            if rb[1] != 1:
+                return null
+            sawinc is 1
+        elif st[0] == "index_assign":
+            local tgt is unwrap of st[1]
+            local idx is unwrap of st[2]
+            if tgt[0] != "ident":
+                return null
+            if bt[tgt[1]] != 1:
+                return null
+            if idx[0] != "ident":
+                return null
+            if idx[1] != ctr:
+                return null
+            if (is_vec_expr of [st[3], ctr, bt]) != 1:
+                return null
+            bufs[tgt[1]] is 1
+            collect_read_bufs of [st[3], bufs]
+            assigns is (append of [assigns, {"buf": tgt[1], "val": st[3]}])
+        else:
+            return null
+    if sawinc != 1:
+        return null
+    if (len of assigns) == 0:
+        return null
+    return {"ctr": ctr, "bound": bound, "assigns": assigns, "bufs": keys of bufs}
+
+define emit_vec(node, ctr) as:
+    local n is unwrap of node
+    local t is n[0]
+    if t == "num":
+        return "aot_vset(" + (str of n[1]) + ")"
+    if t == "index":
+        local tgt is unwrap of n[1]
+        return "aot_vload(_p_" + tgt[1] + " + _vi)"
+    local op is n[1]
+    local a is emit_vec of [n[2], ctr]
+    local b is emit_vec of [n[3], ctr]
+    if op == "+":
+        return "aot_vguard(aot_vadd(" + a + ", " + b + "))"
+    if op == "-":
+        return "aot_vguard(aot_vsub(" + a + ", " + b + "))"
+    return "aot_vguard(aot_vmul(" + a + ", " + b + "))"
+
+define emit_vscalar(node, ctr) as:
+    local n is unwrap of node
+    local t is n[0]
+    if t == "num":
+        return str of n[1]
+    if t == "index":
+        local tgt is unwrap of n[1]
+        return "_p_" + tgt[1] + "[_vi]"
+    local op is n[1]
+    local a is emit_vscalar of [n[2], ctr]
+    local b is emit_vscalar of [n[3], ctr]
+    if op == "+":
+        return "num_guard(" + a + " + " + b + ")"
+    if op == "-":
+        return "num_guard(" + a + " - " + b + ")"
+    return "num_guard(" + a + " * " + b + ")"
+
+define emit_vectorized(node, vinfo, ind, nm, bt, minits) as:
+    local ctr is vinfo["ctr"]
+    local bufs is vinfo["bufs"]
+    local assigns is vinfo["assigns"]
+    local boundc is emit_num of [vinfo["bound"], nm, bt, 0]
+    local i2 is ind + "    "
+    local i3 is i2 + "    "
+    local s is ind + "{\n"
+    s is s + i2 + "long _n = (long)(" + boundc + ");\n"
+    for k in range of (len of bufs):
+        s is s + i2 + "double* _p_" + bufs[k] + " = aot_buf_data(" + bufs[k] + ");\n"
+    local guard is "(long)" + ctr + " == 0"
+    for k in range of (len of bufs):
+        guard is guard + " && _n <= (long)aot_buf_len(" + bufs[k] + ")"
+    s is s + i2 + "if (" + guard + ") {\n"
+    s is s + i3 + "long _vi = 0;\n"
+    s is s + i3 + "for (; _vi + AOT_VW <= _n; _vi += AOT_VW) {\n"
+    for a in range of (len of assigns):
+        s is s + i3 + "    aot_vstore(_p_" + (assigns[a])["buf"] + " + _vi, " + (emit_vec of [(assigns[a])["val"], ctr]) + ");\n"
+    s is s + i3 + "}\n"
+    s is s + i3 + "for (; _vi < _n; _vi++) {\n"
+    for a in range of (len of assigns):
+        s is s + i3 + "    _p_" + (assigns[a])["buf"] + "[_vi] = " + (emit_vscalar of [(assigns[a])["val"], ctr]) + ";\n"
+    s is s + i3 + "}\n"
+    s is s + i3 + ctr + " = (double)_n;\n"
+    s is s + i2 + "} else {\n"
+    local lg is loop_gf of [node, minits]
+    s is s + i3 + "while (" + (emit_cond of [node[1], nm, bt]) + ") {\n"
+    s is s + (emit_stmts of [node[2], i3 + "    ", nm, bt, minits, lg])
+    s is s + i3 + "}\n"
+    s is s + i2 + "}\n"
+    return s + ind + "}\n"
 
 define emit_program(ast) as:
     local stmts is ast

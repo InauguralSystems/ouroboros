@@ -15,7 +15,7 @@ SRC="$EIGS_DIR/src"
 PROG="$1"
 OUT="${2:-./a.out}"
 DEFS="-DEIGENSCRIPT_EXT_HTTP=0 -DEIGENSCRIPT_EXT_MODEL=0 -DEIGENSCRIPT_EXT_DB=0 -DEIGENSCRIPT_VERSION=\"aot\""
-CFLAGS="-O2"
+CFLAGS="-O3 -march=native"   # -march=native so the packed guard hits the host's widest SIMD
 LIB="build/libeigsrt.a"
 CORE="eigenscript lexer parser builtins builtins_tensor hash arena state strbuf \
       ext_store fmt lint chunk compiler vm jit trace eigs_embed"
