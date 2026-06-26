@@ -787,6 +787,10 @@ define emit_val(node, nm, bt) as:
         return "aot_query_at_val(" + (str of ik) + ", \"" + ie[1] + "\", (int)(" + (emit_num of [iat, nm, bt, 0]) + "))"
     if t == "ident":
         return "aot_get(g, \"" + node[1] + "\")"
+    if t == "index":
+        # target[idx] on a boxed value (list/dict/string/buffer). A buffer index
+        # is numeric and handled by emit_num; this is the boxed-value path.
+        return "aot_index_get(" + (emit_val of [node[1], nm, bt]) + ", " + (emit_val of [node[2], nm, bt]) + ")"
     if t == "list":
         # nested-list literal -> owned Value built inline (GCC statement-expr).
         local le is node[1]
