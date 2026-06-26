@@ -280,3 +280,38 @@ history flags); ouroboros's codegen tracks `USES_HISTORY` and `ouro_run` calls
 `record_history of 1` before running such a program — mirroring how the C
 compiler auto-enables it. All interrogative and temporal forms now match the C
 evaluator byte-for-byte.
+
+## AOT tensor-value layer + the flatten-bound finding
+
+The AOT now compiles **verbatim** tensor-builtin neural code — Tidepool's exact
+`policy_forward(policy, obs)` (a 3-layer MLP built from the `matmul`/`add`/`relu`
+builtins over a dict-stored `policy`) compiles and is **byte-identical** to the
+VM at full dims (433→64→32→6). This needed an `AotTensor` handle (flat
+row-major `double*`) bridging the runtime's nested-list tensor Values, kernels
+byte-exact vs `builtins_tensor.c` (raw i-k-j matmul, guarded elementwise add,
+clamp relu), dict-field access, tensor params/returns, and list/dict literals.
+
+### F-OURO-15 — the AOT's speedup lives where the VM INTERPRETS, not where it already calls native builtins
+
+Measuring the verbatim policy forward: **VM 2.91s → AOT 2.65s over 4000 forwards
+= ~1.1×**, NOT the ~90× a buffer-loop *rewrite* of the same math shows. Two
+reasons, both load-bearing for "where is the AOT useful":
+
+1. **The VM's `matmul`/`add`/`relu` are already native C** (`ne_matmul_buf` &c).
+   The 90× only appears when the same math runs as *interpreted element loops*.
+   Where the VM dispatches to a native builtin, it is already near-native and the
+   AOT has almost nothing to take.
+2. **The workload is flatten-bound.** Each call flattens the 27,712-element
+   nested-list `w1` (≈110M boxed reads / 4000 calls) — a cost **both** the VM and
+   the AOT pay. The matmul flops are cheap by comparison. Isolated single-matmul:
+   VM 2.69s vs AOT 2.46s = 1.09×. The AOT's only edge is skipping intermediate
+   *rebuilds* (small here).
+
+The weights are loop-invariant, so caching the flatten would win — but that's
+unsound in general (training mutates weights in place; a pointer-cache goes
+stale). **So the dramatic AOT speedups belong to FLAT-BUFFER storage + explicit
+loops, not to nested-list tensors + builtins.** The tensor layer is a real
+capability gain (consumer code compiles byte-exact; mixed code still gets the big
+multiple on its interpreted-scalar parts), but the honest rule is: the AOT
+accelerates code the VM *interprets*. The verbatim bench corrected the proxy
+bench — the measurement-is-the-moat trap, caught in the act.

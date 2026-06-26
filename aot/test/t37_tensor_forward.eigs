@@ -1,0 +1,9 @@
+# verbatim tensor-builtin forward (matmul/add/relu) over a dict-stored policy
+policy is {"w1": [[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]], "b1": [10.0, 20.0], "w2": [[1.0], [1.0]], "b2": [100.0]}
+obs is [1.0, 1.0, 1.0]
+define forward(policy, obs) as:
+    h1 is relu of (add of [(matmul of [obs, policy.w1]), policy.b1])
+    out is add of [(matmul of [h1, policy.w2]), policy.b2]
+    return out
+r is forward of [policy, obs]
+print of r
