@@ -18,3 +18,9 @@ loop while i < 53:
     d[i] is i - 10.0
     i is i + 1
 print of (dot of [c, d])
+
+# sum and norm reassociate the same way (association-unspecified) — tolerance.
+print of (sum of a)
+print of (norm of a)
+print of (sum of c)
+print of (norm of d)
