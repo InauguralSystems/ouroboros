@@ -45,6 +45,27 @@ packed SIMD — all preserving no-NaN/Inf (the guard is *in* the vectorized loop
 Dev box, SSE2 2-wide; cloud AVX2 is wider. (Tighter scalar loops are ~64×; this
 kernel's heavier per-element VM overhead makes the gap larger.)
 
+### Transformer forward pass (iLambdaAi)
+
+iLambdaAi's actual model_forward — `input[16] @ hidden_W[16,32] + bias →
+leaky_relu → @ output_W[32,54] → logits[54]` — wired as buffer-functions
+(`bench/transformer_forward.eigs`), 1000 passes:
+
+| 1000 forward passes (~2240 MACs each) | time |
+|---|---|
+| VM (interpreter + JIT) | 0.94s |
+| **AOT** | **0.049s** |
+| **speedup** | **~19×**, byte-identical |
+
+Lower than the activation kernel's 303× *by design*: the dominant compute is the
+matvec, a **reduction with a carried dependency** (`s = s + inp[i]·W[…]`), so it
+goes native *scalar* — native code + unboxed doubles + raw pointers, but no SIMD.
+bias_add vectorizes; leaky_relu is a native conditional. Pointing the AOT at real
+transformer code surfaced (and drove the fix for) **cross-function buffer-param
+inference** — a param passed *to* another function at a buffer position is now
+typed `Value*`, not only when indexed directly. Next forge-step for full
+transformer speed: vectorized dot-products (horizontal-sum reductions).
+
 ## Slices
 
 1. **DONE** — literals, arithmetic + comparison, module-level `x is expr`,
