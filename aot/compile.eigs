@@ -30,6 +30,11 @@ define binfn(op) as:
 
 ARITH_OPS is {"+": 1, "-": 1, "*": 1, "/": 1, "%": 1, "==": 1, "!=": 1, "<": 1, ">": 1, "<=": 1, ">=": 1}
 
+# Buffer value-bound map (name -> max |value| upper bound, or null = unknown).
+# Set once per program in emit_program; read in the vectorized path to decide
+# whether the packed guard can be ELIDED (no overflow possible -> raw SIMD).
+g_bufbound is {}
+
 define unwrap(node) as:
     loop while node[0] == "_line":
         node is node[2]
@@ -409,6 +414,105 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
         return s + ind + "}\n"
     throw of ("AOT: cannot emit statement node '" + t + "'")
 
+# ---- buffer value-bound inference (for guard elision in vectorized maps) ----
+# A buffer starts at 0 (zeros/buffer init); each `buf[?] is expr` fill raises its
+# bound by expr's bound. expr_bound returns a finite upper bound only if NO
+# intermediate can overflow (all <= 1e300 << 1e308); else null (unknown/unsafe).
+# Then num_guard is provably identity on the map -> safe to emit raw SIMD.
+define expr_bound(node, bb) as:
+    local n is unwrap of node
+    local t is n[0]
+    if t == "num":
+        local a is n[1]
+        if a < 0:
+            a is 0 - a
+        return a
+    if t == "index":
+        local tgt is unwrap of n[1]
+        if tgt[0] != "ident":
+            return null
+        return bb[tgt[1]]
+    if t == "binop":
+        local op is n[1]
+        local ba is expr_bound of [n[2], bb]
+        if ba == null:
+            return null
+        local bc is expr_bound of [n[3], bb]
+        if bc == null:
+            return null
+        local r is 0
+        if op == "*":
+            r is ba * bc
+        elif op == "+":
+            r is ba + bc
+        elif op == "-":
+            r is ba + bc
+        else:
+            return null
+        if r > 1e300:
+            return null
+        return r
+    return null
+
+define collect_iassigns_stmt(node, acc) as:
+    local t is node[0]
+    if t == "_line":
+        collect_iassigns_stmt of [node[2], acc]
+        return null
+    if t == "index_assign":
+        local tgt is unwrap of node[1]
+        if tgt[0] == "ident":
+            local b is tgt[1]
+            if acc[b] == null:
+                acc[b] is []
+            acc[b] is (append of [acc[b], node[3]])
+        return null
+    if t == "if":
+        collect_iassigns of [node[2], acc]
+        collect_iassigns of [node[3], acc]
+        return null
+    if t == "loop":
+        collect_iassigns of [node[2], acc]
+        return null
+    return null
+
+define collect_iassigns(stmts, acc) as:
+    for k in range of (len of stmts):
+        collect_iassigns_stmt of [stmts[k], acc]
+    return acc
+
+define infer_buffer_bounds(stmts, bt) as:
+    local fills is collect_iassigns of [stmts, {}]
+    local bb is {}
+    local bnames is keys of bt
+    for k in range of (len of bnames):
+        if bt[bnames[k]] == 1:
+            bb[bnames[k]] is 0
+    local changed is 1
+    local iters is 0
+    loop while (changed == 1) and (iters < 20):
+        changed is 0
+        iters is iters + 1
+        local fnames is keys of fills
+        for k in range of (len of fnames):
+            local b is fnames[k]
+            local vals is fills[b]
+            for j in range of (len of vals):
+                if bb[b] != null:
+                    local eb is expr_bound of [vals[j], bb]
+                    if eb == null:
+                        bb[b] is null
+                        changed is 1
+                    elif eb > bb[b]:
+                        bb[b] is eb
+                        changed is 1
+    return bb
+
+define map_elidable(val) as:
+    if (expr_bound of [val, g_bufbound]) == null:
+        return 0
+    return 1
+
 # ---- vectorized element-wise buffer-map recognition ----
 # Pattern: `loop while ctr < bound:  <buf>[ctr] is <vecexpr> ...;  ctr is ctr+1`
 # where every index is exactly the counter and vecexpr is buffer[ctr] reads,
@@ -517,7 +621,7 @@ define vec_loop(loopnode, bt) as:
         return null
     return {"ctr": ctr, "bound": bound, "assigns": assigns, "bufs": keys of bufs}
 
-define emit_vec(node, ctr) as:
+define emit_vec(node, ctr, raw) as:
     local n is unwrap of node
     local t is n[0]
     if t == "num":
@@ -526,15 +630,20 @@ define emit_vec(node, ctr) as:
         local tgt is unwrap of n[1]
         return "aot_vload(_p_" + tgt[1] + " + _vi)"
     local op is n[1]
-    local a is emit_vec of [n[2], ctr]
-    local b is emit_vec of [n[3], ctr]
+    local a is emit_vec of [n[2], ctr, raw]
+    local b is emit_vec of [n[3], ctr, raw]
+    local inner is ""
     if op == "+":
-        return "aot_vguard(aot_vadd(" + a + ", " + b + "))"
-    if op == "-":
-        return "aot_vguard(aot_vsub(" + a + ", " + b + "))"
-    return "aot_vguard(aot_vmul(" + a + ", " + b + "))"
+        inner is "aot_vadd(" + a + ", " + b + ")"
+    elif op == "-":
+        inner is "aot_vsub(" + a + ", " + b + ")"
+    else:
+        inner is "aot_vmul(" + a + ", " + b + ")"
+    if raw == 1:
+        return inner
+    return "aot_vguard(" + inner + ")"
 
-define emit_vscalar(node, ctr) as:
+define emit_vscalar(node, ctr, raw) as:
     local n is unwrap of node
     local t is n[0]
     if t == "num":
@@ -543,13 +652,18 @@ define emit_vscalar(node, ctr) as:
         local tgt is unwrap of n[1]
         return "_p_" + tgt[1] + "[_vi]"
     local op is n[1]
-    local a is emit_vscalar of [n[2], ctr]
-    local b is emit_vscalar of [n[3], ctr]
+    local a is emit_vscalar of [n[2], ctr, raw]
+    local b is emit_vscalar of [n[3], ctr, raw]
+    local inner is ""
     if op == "+":
-        return "num_guard(" + a + " + " + b + ")"
-    if op == "-":
-        return "num_guard(" + a + " - " + b + ")"
-    return "num_guard(" + a + " * " + b + ")"
+        inner is a + " + " + b
+    elif op == "-":
+        inner is a + " - " + b
+    else:
+        inner is a + " * " + b
+    if raw == 1:
+        return "(" + inner + ")"
+    return "num_guard(" + inner + ")"
 
 define emit_vectorized(node, vinfo, ind, nm, bt, minits) as:
     local ctr is vinfo["ctr"]
@@ -569,11 +683,13 @@ define emit_vectorized(node, vinfo, ind, nm, bt, minits) as:
     s is s + i3 + "long _vi = 0;\n"
     s is s + i3 + "for (; _vi + AOT_VW <= _n; _vi += AOT_VW) {\n"
     for a in range of (len of assigns):
-        s is s + i3 + "    aot_vstore(_p_" + (assigns[a])["buf"] + " + _vi, " + (emit_vec of [(assigns[a])["val"], ctr]) + ");\n"
+        local rw is map_elidable of (assigns[a])["val"]
+        s is s + i3 + "    aot_vstore(_p_" + (assigns[a])["buf"] + " + _vi, " + (emit_vec of [(assigns[a])["val"], ctr, rw]) + ");\n"
     s is s + i3 + "}\n"
     s is s + i3 + "for (; _vi < _n; _vi++) {\n"
     for a in range of (len of assigns):
-        s is s + i3 + "    _p_" + (assigns[a])["buf"] + "[_vi] = " + (emit_vscalar of [(assigns[a])["val"], ctr]) + ";\n"
+        local rw2 is map_elidable of (assigns[a])["val"]
+        s is s + i3 + "    _p_" + (assigns[a])["buf"] + "[_vi] = " + (emit_vscalar of [(assigns[a])["val"], ctr, rw2]) + ";\n"
     s is s + i3 + "}\n"
     s is s + i3 + ctr + " = (double)_n;\n"
     s is s + i2 + "} else {\n"
@@ -589,6 +705,7 @@ define emit_program(ast) as:
     if ast[0] == "block":
         stmts is ast[1]
     local bt is infer_buffers of stmts
+    g_bufbound is infer_buffer_bounds of [stmts, bt]
     local nm is infer_numeric of [stmts, bt]
     local minits is module_inits of stmts
     local decls is ""

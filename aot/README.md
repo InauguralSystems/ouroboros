@@ -80,9 +80,19 @@ ctr is ctr+1`) and emits a SIMD loop + scalar tail behind a runtime guard
 it's always correct. The packed guard (`aot_vguard`) and a portable SIMD layer
 (`AOT_VW`/`aot_v*`, SSE2/AVX2/scalar per `-march`) live in `aot_rt.h`; builds use
 `-O3 -march=native`. Parity-verified (`test/t8_vecmap`); **3.66× over the VM** on
-a 2M-element compute-heavy map (this box, SSE2 2-wide; AVX2 is wider). Next:
-loop-invariant scalar broadcasts, `i`-as-value (iota), `/`, and range-elision to
-the raw ceiling.
+a 2M-element compute-heavy map (this box, SSE2 2-wide; AVX2 is wider).
+
+**Range-elision toward the raw ceiling.** Buffer *value*-bound inference
+(`infer_buffer_bounds`: a buffer starts at 0, each `buf[?] is expr` fill raises
+its bound by `expr`'s bound; null = unknown). If a map's expression provably
+can't overflow (every intermediate `< 1e300 ≪ 1e308` given the input buffers'
+bounds), `num_guard` is identity there, so the packed guard is **elided** and the
+map emits raw vector arithmetic. Sound (parity-verified) and only fires when
+proven. Measured: **5.18× over the per-op-guarded path** on a compute-bound map
+(this box, SSE2; AVX2 wider) — the move from the guarded floor toward the raw
+ceiling. `t8_vecmap` exercises the elided path (bounded fill); `t7_buffer`/`buf1`
+keep guards (unbounded fill). Next: loop-invariant scalar broadcasts, `i`-as-value
+(iota), `/`.
 
 ## Speed: the specialization spike landed (~64×)
 
