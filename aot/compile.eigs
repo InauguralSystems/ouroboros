@@ -35,6 +35,12 @@ ARITH_OPS is {"+": 1, "-": 1, "*": 1, "/": 1, "%": 1, "==": 1, "!=": 1, "<": 1, 
 # the packed guard can be ELIDED (no overflow possible -> raw SIMD).
 g_bufbound is {}
 g_scalbound is {}
+# Set of names (-> 1) proven to hold INTEGER values in the current scope, so
+# they're emitted as C `long` and their arithmetic runs in native integer math
+# (no float index computation, no double->long conversion per access — the
+# measured ~2x lever for matmul-style index-heavy loops). Set per function /
+# module body (like g_bufbound) by infer_int.
+g_int is {}
 # Set of user-defined numeric functions (name -> 1). A call to one is numeric;
 # emitted as a native C `double name(double, ...)` call. Set in emit_program.
 g_funcs is {}
@@ -131,6 +137,145 @@ define is_num_expr(node, nm, bt) as:
                     return 1
         return 0
     return 0
+
+# ---- integer-typing analysis (the matmul lever) ----
+# is_int_expr: does this expression evaluate to an exact integer, computable in
+# native `long`? Reads g_int (the current scope's integer names). Conservative:
+# integer literals, integer names, +/-/*/% of integers, `len of`, unary minus.
+# NOT division (fractional), NOT a buffer read (holds doubles), NOT a call.
+define is_int_expr(node) as:
+    local n is unwrap of node
+    local t is n[0]
+    if t == "num":
+        if (n[1] % 1) == 0:
+            return 1
+        return 0
+    if t == "ident":
+        if g_int[n[1]] == 1:
+            return 1
+        return 0
+    if t == "unary":
+        if n[1] == "-":
+            return is_int_expr of n[2]
+        return 0
+    if t == "binop":
+        local op is n[1]
+        if (op == "+") or (op == "-") or (op == "*") or (op == "%"):
+            if (is_int_expr of n[2]) == 0:
+                return 0
+            return is_int_expr of n[3]
+        return 0
+    if t == "call":
+        local callee is unwrap of n[1]
+        if callee[0] == "ident":
+            if callee[1] == "len":
+                return 1
+        return 0
+    return 0
+
+# emit_int: render a proven-integer expression as native C `long` arithmetic
+# (no num_guard — guard is identity on in-range integers; bytes match the VM).
+define emit_int(node) as:
+    local n is unwrap of node
+    local t is n[0]
+    if t == "num":
+        return str of n[1]
+    if t == "ident":
+        return n[1]
+    if t == "unary":
+        return "(-(" + (emit_int of n[2]) + "))"
+    if t == "call":
+        local a is unwrap of n[2]
+        return "((long)aot_buf_len(" + a[1] + "))"
+    local op is n[1]
+    return "(" + (emit_int of n[2]) + " " + op + " " + (emit_int of n[3]) + ")"
+
+# does `name` appear inside an INDEX/SLICE position? Such use forces integer-
+# ness: a valid program's buffer index must be an exact integer, so a dimension
+# multiplied into one is integer too. (Loop bounds do NOT force it — a bound may
+# be fractional; a long counter vs double bound still iterates identically.)
+define name_in_expr(node, name) as:
+    if (type of node) != "list":
+        return 0
+    if (len of node) == 0:
+        return 0
+    if node[0] == "ident":
+        if node[1] == name:
+            return 1
+        return 0
+    for k in range of (len of node):
+        if (name_in_expr of [node[k], name]) == 1:
+            return 1
+    return 0
+
+define uses_int_forcing(node, name) as:
+    if (type of node) != "list":
+        return 0
+    if (len of node) == 0:
+        return 0
+    local t is node[0]
+    if t == "index":
+        if (name_in_expr of [node[2], name]) == 1:
+            return 1
+    if t == "index_assign":
+        if (name_in_expr of [node[2], name]) == 1:
+            return 1
+    if t == "slice":
+        if (name_in_expr of [node[2], name]) == 1:
+            return 1
+        if (name_in_expr of [node[3], name]) == 1:
+            return 1
+    for k in range of (len of node):
+        if (uses_int_forcing of [node[k], name]) == 1:
+            return 1
+    return 0
+
+# A var is a safe integer only if it's a COUNTER: every assignment is an integer
+# literal or `var +/- <integer-literal>` (constant base, constant step). This is
+# the crucial bound — "integer-valued" is NOT enough: an accumulator like
+# `s is s + s` is integer-valued but grows past 2^63, where a C `long` wraps but
+# the VM's `num_guard(double)` clamps at 1e308 (they must agree). Counters stay
+# small (a loop bound), and index dimensions are bounded by buffer length, so
+# both stay in the range where long == num_guard(double) exactly.
+define is_counter(v, rhss) as:
+    for j in range of (len of rhss):
+        local n is unwrap of rhss[j]
+        if n[0] == "num":
+            if (n[1] % 1) != 0:
+                return 0
+        elif n[0] == "binop":
+            if (n[1] != "+") and (n[1] != "-"):
+                return 0
+            local a is unwrap of n[2]
+            local b is unwrap of n[3]
+            local ok is 0
+            if (a[0] == "ident") and (a[1] == v) and (b[0] == "num") and ((b[1] % 1) == 0):
+                ok is 1
+            if (n[1] == "+") and (b[0] == "ident") and (b[1] == v) and (a[0] == "num") and ((a[1] % 1) == 0):
+                ok is 1
+            if ok == 0:
+                return 0
+        else:
+            return 0
+    return 1
+
+# infer_int: integer names for one scope. Params: integer iff used in an
+# index/slice position (forced -> bounded by buffer length). Vars: integer iff a
+# counter (constant-step induction). Sets g_int and returns it.
+define infer_int(stmts, params, nm, bt) as:
+    local iv is {}
+    for p in range of (len of params):
+        if (uses_int_forcing of [stmts, params[p]]) == 1:
+            iv[params[p]] is 1
+    local assigns is collect_assigns of [stmts, {}]
+    local names is keys of assigns
+    for k in range of (len of names):
+        local v is names[k]
+        if (nm[v] == 1) and (bt[v] != 1):
+            if (is_counter of [v, assigns[v]]) == 1:
+                iv[v] is 1
+    g_int is iv
+    return iv
 
 define collect_assigns_stmt(node, acc) as:
     local t is node[0]
@@ -361,6 +506,8 @@ define emit_num(node, nm, bt, raw) as:
         return "((" + uv + " == 0.0) ? 1.0 : 0.0)"
     if t == "index":
         local tgt is unwrap of node[1]
+        if (is_int_expr of node[2]) == 1:
+            return "aot_buf_get_i(" + tgt[1] + ", " + (emit_int of node[2]) + ")"
         return "aot_buf_get(" + tgt[1] + ", " + (emit_num of [node[2], nm, bt, 0]) + ")"
     if t == "call":
         local callee is unwrap of node[1]
@@ -399,6 +546,9 @@ define emit_num(node, nm, bt, raw) as:
                 return emit_call_num of [node, nm, bt]
         throw of "AOT: emit_num unexpected call"
     if t == "binop":
+        # whole expression proven integer -> native long arithmetic, no guard
+        if (is_int_expr of node) == 1:
+            return emit_int of node
         local op is node[1]
         local l is emit_num of [node[2], nm, bt, raw]
         local r is emit_num of [node[3], nm, bt, raw]
@@ -475,6 +625,8 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
         local tgt is unwrap of node[1]
         if tgt[0] == "ident":
             if bt[tgt[1]] == 1:
+                if (is_int_expr of node[2]) == 1:
+                    return ind + "aot_buf_set_i(" + tgt[1] + ", " + (emit_int of node[2]) + ", " + (emit_num of [node[3], nm, bt, 0]) + ");\n"
                 return ind + "aot_buf_set(" + tgt[1] + ", " + (emit_num of [node[2], nm, bt, 0]) + ", " + (emit_num of [node[3], nm, bt, 0]) + ");\n"
         throw of "AOT: index_assign only on numeric buffers (this slice)"
     if t == "call":
@@ -1115,11 +1267,14 @@ define emit_func_proto(fn, finfo) as:
     local ptypes is finfo["ptypes"]
     if (len of params) == 0:
         sig is sig + "void"
+    local ip is finfo["iparams"]
     for k in range of (len of params):
         if k > 0:
             sig is sig + ", "
         if (ptypes[k]) == "buf":
             sig is sig + "Value*"
+        elif ip[params[k]] == 1:
+            sig is sig + "long"
         else:
             sig is sig + "double"
     return sig + ");\n"
@@ -1159,6 +1314,9 @@ define emit_function(fn, finfo, gnm, gbt) as:
     for k in range of (len of banames):
         if fbt[banames[k]] != 1:
             fnm[banames[k]] is 1
+    # integer names for this scope (params forced + int-by-assignment locals);
+    # sets g_int, which is_int_expr/emit_num/emit_stmt read while emitting.
+    g_int is infer_int of [body, params, fnm, fbt]
     local sig is "static " + finfo["ret"] + " " + name + "("
     if (len of params) == 0:
         sig is sig + "void"
@@ -1167,11 +1325,13 @@ define emit_function(fn, finfo, gnm, gbt) as:
             sig is sig + ", "
         if (ptypes[k]) == "buf":
             sig is sig + "Value* " + params[k]
+        elif g_int[params[k]] == 1:
+            sig is sig + "long " + params[k]
         else:
             sig is sig + "double " + params[k]
     sig is sig + ")"
-    # locals: buffers -> Value*, numerics -> double (params + globals excluded;
-    # an assignment to a global updates the file-global, not a new local).
+    # locals: buffers -> Value*, integers -> long, other numerics -> double
+    # (params + globals excluded; an assignment to a global updates the global).
     local decls is ""
     for k in range of (len of banames):
         local v is banames[k]
@@ -1185,6 +1345,8 @@ define emit_function(fn, finfo, gnm, gbt) as:
         if (isparam == 0) and (isglobal == 0):
             if fbt[v] == 1:
                 decls is decls + "    Value* " + v + " = NULL;\n"
+            elif g_int[v] == 1:
+                decls is decls + "    long " + v + " = 0;\n"
             else:
                 decls is decls + "    double " + v + " = 0;\n"
     local fminits is module_inits of body
@@ -1220,7 +1382,13 @@ define emit_program(ast) as:
         local flbn is keys of flb
         for j in range of (len of flbn):
             ffbt[flbn[j]] is 1
-        g_funcs[fn[1]] is {"ptypes": pt, "ret": (func_ret_type of [fn, ffbt])}
+        # integer params: forced by appearing in an index/slice position
+        local ip is {}
+        for p in range of (len of fn[2]):
+            if (pt[p]) != "buf":
+                if (uses_int_forcing of [fn[3], (fn[2])[p]]) == 1:
+                    ip[(fn[2])[p]] is 1
+        g_funcs[fn[1]] is {"ptypes": pt, "ret": (func_ret_type of [fn, ffbt]), "iparams": ip}
     # Module globals are computed first so functions can READ them (they become
     # file-scope vars in C; a function's params/locals shadow same-named globals).
     local bt is infer_buffers of rest
@@ -1239,11 +1407,16 @@ define emit_program(ast) as:
     local minits is module_inits of rest
     # module globals as FILE-SCOPE decls (so functions can read them); main's
     # body assigns them (no re-declaration in main).
+    # integer names for the module body (also makes integer globals `long`).
+    g_int is infer_int of [rest, [], nm, bt]
     local gdecls is ""
     local names is keys of nm
     for i in range of (len of names):
         if nm[names[i]] == 1:
-            gdecls is gdecls + "static double " + names[i] + " = 0;\n"
+            if g_int[names[i]] == 1:
+                gdecls is gdecls + "static long " + names[i] + " = 0;\n"
+            else:
+                gdecls is gdecls + "static double " + names[i] + " = 0;\n"
     local bnames is keys of bt
     for i in range of (len of bnames):
         if bt[bnames[i]] == 1:

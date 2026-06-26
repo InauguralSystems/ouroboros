@@ -175,6 +175,16 @@ static long aot_idx(double d, int count) {
 }
 static double aot_buf_get(Value *b, double idx) { return b->data.buffer.data[aot_idx(idx, b->data.buffer.count)]; }
 static void   aot_buf_set(Value *b, double idx, double v) { b->data.buffer.data[aot_idx(idx, b->data.buffer.count)] = v; }
+/* Integer-index fast path: the index was computed in native `long` arithmetic
+   (provably-integer induction vars + dimensions), so skip the float integer
+   check. Negative-resolve + bounds-check still mirror the VM. */
+static long aot_idx_i(long i, int count) {
+    if (i < 0) i += count;
+    if (i < 0 || i >= count) { fprintf(stderr, "buffer index %ld out of range (length %d)\n", i, count); exit(1); }
+    return i;
+}
+static double aot_buf_get_i(Value *b, long idx) { return b->data.buffer.data[aot_idx_i(idx, b->data.buffer.count)]; }
+static void   aot_buf_set_i(Value *b, long idx, double v) { b->data.buffer.data[aot_idx_i(idx, b->data.buffer.count)] = v; }
 static double aot_buf_len(Value *b) { return (double)b->data.buffer.count; }
 /* Raw element pointer for the proven-safe (in-bounds, non-negative) loop path. */
 static double *aot_buf_data(Value *b) { return b->data.buffer.data; }
