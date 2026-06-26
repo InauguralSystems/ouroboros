@@ -1,0 +1,30 @@
+name: AOT AVX2 bench
+
+# Validates the output-axis SIMD matmul + reassociated reductions on real AVX2
+# hardware (4-wide) — the dev box is SSE2 (2-wide), so width-4 correctness and
+# the wider speedup are only confirmable here. Manual (workflow_dispatch) plus a
+# run on push to the bench branch.
+on:
+  workflow_dispatch:
+  push:
+    branches: [aot-avx2-validate]
+
+permissions:
+  contents: read
+
+jobs:
+  avx2:
+    name: AOT on AVX2 (4-wide)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build EigenScript (pinned ref, source kept for the AOT toolchain)
+        run: |
+          git clone --filter=blob:none https://github.com/InauguralSystems/EigenScript.git /tmp/eigs
+          git -C /tmp/eigs checkout 1e634d1d58e8253c9f04a36136f7c0e855504700
+          make -C /tmp/eigs -j"$(nproc)"
+
+      - name: Validate SIMD width on AVX2
+        working-directory: aot
+        run: EIGS_DIR=/tmp/eigs EIGS=/tmp/eigs/src/eigenscript bash bench/avx2_validate.sh
