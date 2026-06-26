@@ -268,6 +268,28 @@ under `-march=native`, the full differential harness stays correct at width 4
 horizontal-sum + 4-lane reassociation hold), and the same matmul is **1.90×**
 faster at 4-wide than 2-wide on that machine — the width scales as expected.
 
+## Observer system (the founding feature)
+
+EigenScript observes every assignment — it tracks each variable's entropy/dH
+*trajectory* in a per-slot window, and bare predicates (`converged`, `stable`,
+`improving`, `oscillating`, `diverging`, `equilibrium`) read the last-observed
+variable's slot. This is fundamentally at odds with the AOT's unboxing: a `double`
+in a register has no slot, so it can't be observed. The resolution: when a
+program uses observer predicates, numeric variables are **kept in the env**
+(boxed) and their assignments run through the runtime observer — `aot_observe_num`
+mirrors the VM's `OBSERVE_NAME_POST` (store → resolve slot → `observer_slot_update`
+→ set the global last-observer), and `aot_predicate` mirrors `CASE(PREDICATE)`
+(read the last-observer's slot → `observer_slot_<kind>`). Both call the *same*
+runtime functions the VM uses, so the VM stays the byte-exact oracle. Unboxing and
+int-typing switch off for observed programs — observation needs the slot, and an
+observer program is about the observer, not raw arithmetic speed.
+
+`t27_observer` (a diverging trajectory) and `t28_observer_conv` (converging) match
+the VM byte-for-byte. This is **slice 1** — the six bare predicates over observed
+numeric assignments. Not yet: `report` (most-specific resolution), interrogatives
+(`what/why/how is x`), temporal queries (`prev of x`, `x at L`), and observer-based
+loop conditions (`loop while improving`, which needs `break` + the stall-check).
+
 ## Slices
 
 1. **DONE** — literals, arithmetic + comparison, module-level `x is expr`,
