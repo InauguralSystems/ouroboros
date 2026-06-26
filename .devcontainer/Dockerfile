@@ -18,6 +18,7 @@ RUN apt-get update \
         build-essential \
         ca-certificates \
         git \
+        python3 \
  && rm -rf /var/lib/apt/lists/*
 
 # Build + install EigenScript at the pinned ref onto /usr/local (binary on
@@ -27,10 +28,15 @@ RUN apt-get update \
 # builtins (EigenScript #272 + #273), needed by the AOT's reassociated SIMD
 # reductions.
 ARG EIGS_REF=1e634d1d58e8253c9f04a36136f7c0e855504700
-RUN mkdir -p /tmp/eigs && cd /tmp/eigs && git init -q \
+RUN mkdir -p /opt/eigenscript-src && cd /opt/eigenscript-src && git init -q \
  && git remote add origin https://github.com/InauguralSystems/EigenScript.git \
  && git fetch -q --depth 1 origin "${EIGS_REF}" && git checkout -q FETCH_HEAD \
- && make -C /tmp/eigs install PREFIX=/usr/local CC=gcc \
- && rm -rf /tmp/eigs
+ && make install PREFIX=/usr/local CC=gcc
+
+# Keep the runtime SOURCE (not just the installed binary): the AOT toolchain
+# (aot/build.sh) compiles a static lib from the runtime .c files and uses its
+# headers, so the AOT harness can run in CI and in a Codespace. EIGS_DIR points
+# build.sh at it; the on-PATH `eigenscript` binary (same ref) is the transpiler.
+ENV EIGS_DIR=/opt/eigenscript-src
 
 WORKDIR /workspaces/ouroboros
