@@ -320,8 +320,16 @@ the emitter sets per source line (mirroring `OP_LINE`). The query is polymorphic
 — a number on a hit, `null` on a miss (unknown name / no assignment at-or-before
 the line) — so `aot_prev_val` / `aot_query_at_val` return a `Value` through the
 boxed path (`t33_temporal`, incl. `null` misses, matches the VM byte-for-byte).
-Slice 2 — `where/why/how is x at L` (observer snapshots, need `trace_record_obs`)
-and `who/when` — fails loudly for now (`AOT: temporal … not yet supported`).
+
+**Slice 2** — `where/why/how is x at L` — joins the two subsystems: it needs the
+observer *snapshot* (entropy/dH) captured at each assignment, so the var must be
+observed (env-boxed, slot-tracked) *and* `g_trace_obs_hist` on. So a where/why/how
+program forces `g_observed`, and `aot_observe_num` (after `aot_trace_assign`
+creates the line's history entry — order matters) stamps the slot's entropy/dH
+onto it via `trace_record_obs`, exactly like `OBSERVE_NAME_POST`. `when is x at L`
+(assignment count) also works; `who` (a name string) is the one remaining kind.
+`t34_temporal_obs` (where/why/how/when, hits + misses) matches the VM
+byte-for-byte.
 
 ## Slices
 
