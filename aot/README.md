@@ -98,8 +98,13 @@ broadcast across lanes (`aot_vset(k)`) — the loop body only assigns the counte
 buffer elements, so any other scalar is invariant. Scalar *value*-bounds are
 tracked too (a scalar assigned only literals → bounded by `max |literal|`), so
 the realistic kernel `out[i] = in[i]*scale + bias` with constant coefficients
-elides the guard and emits raw vector arithmetic (`test/t9_broadcast`). Next:
-`i`-as-value (iota), `/`.
+elides the guard and emits raw vector arithmetic (`test/t9_broadcast`).
+
+**Iota (`i`-as-value).** The counter used as a value (e.g. `out[i] = i*dt`,
+`out[i] = in[i] + i`) emits an index vector `aot_viota(_vi)` = `{_vi, _vi+1, …}`
+(correct because the SIMD path only runs when `ctr==0`, so lane `k` holds index
+`_vi+k`). The counter isn't a literal-bounded scalar, so these maps stay guarded
+(sound). `test/t10_iota`. Next: `/`.
 
 ## Speed: the specialization spike landed (~64×)
 

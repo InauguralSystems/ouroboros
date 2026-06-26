@@ -39,6 +39,7 @@ static inline aot_vec aot_vguard(aot_vec x){
     x = _mm256_min_pd(x, _mm256_set1_pd(1e308));
     return _mm256_max_pd(x, _mm256_set1_pd(-1e308));
 }
+static inline aot_vec aot_viota(long base){ return _mm256_add_pd(_mm256_set1_pd((double)base), _mm256_set_pd(3.0,2.0,1.0,0.0)); }
 #elif defined(__SSE2__)
 typedef __m128d aot_vec;
 #define AOT_VW 2
@@ -53,6 +54,7 @@ static inline aot_vec aot_vguard(aot_vec x){
     x = _mm_min_pd(x, _mm_set1_pd(1e308));
     return _mm_max_pd(x, _mm_set1_pd(-1e308));
 }
+static inline aot_vec aot_viota(long base){ return _mm_add_pd(_mm_set1_pd((double)base), _mm_set_pd(1.0,0.0)); }
 #else
 typedef double aot_vec;
 #define AOT_VW 1
@@ -63,6 +65,7 @@ typedef double aot_vec;
 #define aot_vadd(a,b)   ((a)+(b))
 #define aot_vsub(a,b)   ((a)-(b))
 static inline aot_vec aot_vguard(aot_vec x){ return num_guard(x); }
+static inline aot_vec aot_viota(long base){ return (double)base; }
 #endif
 
 /* ---- lifecycle ---- */
