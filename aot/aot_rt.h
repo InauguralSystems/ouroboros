@@ -17,6 +17,54 @@
 #include <stdlib.h>
 #include <string.h>
 
+/* ---- portable SIMD layer for vectorized element-wise numeric loops ----
+ * The emitter writes vectorized loops in terms of AOT_VW / aot_v*; this maps
+ * them to the widest available ISA at compile time. The packed guard uses
+ * min/max INTRINSICS (vector-extension select-clamp is ~4x more ops and loses).
+ * aot_vguard is byte-exact vs num_guard (NaN->0 via cmp+and, +/-1e308 clamp). */
+#if defined(__x86_64__) || defined(__i386__)
+#include <immintrin.h>
+#endif
+#if defined(__AVX2__)
+typedef __m256d aot_vec;
+#define AOT_VW 4
+#define aot_vset   _mm256_set1_pd
+#define aot_vload  _mm256_loadu_pd
+#define aot_vstore _mm256_storeu_pd
+#define aot_vmul   _mm256_mul_pd
+#define aot_vadd   _mm256_add_pd
+#define aot_vsub   _mm256_sub_pd
+static inline aot_vec aot_vguard(aot_vec x){
+    x = _mm256_and_pd(x, _mm256_cmp_pd(x, x, _CMP_EQ_OQ));
+    x = _mm256_min_pd(x, _mm256_set1_pd(1e308));
+    return _mm256_max_pd(x, _mm256_set1_pd(-1e308));
+}
+#elif defined(__SSE2__)
+typedef __m128d aot_vec;
+#define AOT_VW 2
+#define aot_vset   _mm_set1_pd
+#define aot_vload  _mm_loadu_pd
+#define aot_vstore _mm_storeu_pd
+#define aot_vmul   _mm_mul_pd
+#define aot_vadd   _mm_add_pd
+#define aot_vsub   _mm_sub_pd
+static inline aot_vec aot_vguard(aot_vec x){
+    x = _mm_and_pd(x, _mm_cmpeq_pd(x, x));
+    x = _mm_min_pd(x, _mm_set1_pd(1e308));
+    return _mm_max_pd(x, _mm_set1_pd(-1e308));
+}
+#else
+typedef double aot_vec;
+#define AOT_VW 1
+#define aot_vset(s)     (s)
+#define aot_vload(p)    (*(p))
+#define aot_vstore(p,v) (*(p) = (v))
+#define aot_vmul(a,b)   ((a)*(b))
+#define aot_vadd(a,b)   ((a)+(b))
+#define aot_vsub(a,b)   ((a)-(b))
+static inline aot_vec aot_vguard(aot_vec x){ return num_guard(x); }
+#endif
+
 /* ---- lifecycle ---- */
 static Env *aot_boot(void) {
     EigsState *st = eigs_open();           /* new + attach + init runtime + builtins */
