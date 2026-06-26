@@ -1,0 +1,29 @@
+# Shaped-buffer tensors through the AOT (zero-copy views): matmul/add/relu on
+# buffer-backed weights, result is a buffer. Byte-exact vs the VM oracle.
+define forward(w1, b1, w2, b2, obs) as:
+    h1 is relu of (add of [(matmul of [obs, w1]), b1])
+    out is add of [(matmul of [h1, w2]), b2]
+    return out
+w1 is buffer of [3, 2]
+w1[0] is 0.5
+w1[1] is -0.25
+w1[2] is 1.0
+w1[3] is 0.75
+w1[4] is -0.5
+w1[5] is 0.2
+b1 is buffer of 2
+b1[0] is 0.1
+b1[1] is -0.2
+w2 is buffer of [2, 1]
+w2[0] is 1.5
+w2[1] is -0.5
+b2 is buffer of 1
+b2[0] is 0.05
+obs is buffer of 3
+obs[0] is 1.0
+obs[1] is 2.0
+obs[2] is -1.0
+out is forward of [w1, b1, w2, b2, obs]
+print of (buf_get of [out, 0])
+print of (sum of out)
+print of (shape of out)
