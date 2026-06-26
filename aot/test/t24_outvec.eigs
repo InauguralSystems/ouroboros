@@ -1,0 +1,35 @@
+# Output-axis SIMD matmul: byte-exact (each lane = one output column summed in
+# the VM's exact d-order). Dout=7 is not a multiple of any SIMD width, so this
+# exercises the scalar tail; also a non-square shape (Din=5).
+define matmul(out, X, W, S, Din, Dout) as:
+    i is 0
+    loop while i < S:
+        o is 0
+        loop while o < Dout:
+            s is 0
+            d is 0
+            loop while d < Din:
+                s is s + X[i * Din + d] * W[d * Dout + o]
+                d is d + 1
+            out[i * Dout + o] is s
+            o is o + 1
+        i is i + 1
+S is 3
+Din is 5
+Dout is 7
+X is buffer of (S * Din)
+W is buffer of (Din * Dout)
+O is buffer of (S * Dout)
+i is 0
+loop while i < (S * Din):
+    X[i] is (i % 9) * 0.3 - 1.1
+    i is i + 1
+i is 0
+loop while i < (Din * Dout):
+    W[i] is ((i % 11) - 5) * 0.07
+    i is i + 1
+matmul of [O, X, W, S, Din, Dout]
+i is 0
+loop while i < (S * Dout):
+    print of O[i]
+    i is i + 1
