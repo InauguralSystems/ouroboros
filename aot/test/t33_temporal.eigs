@@ -1,0 +1,16 @@
+# Temporal interrogatives via the trace tape: `prev of x` (previous value) and
+# `what is x at L` (value bound at source line L). Vars stay unboxed; each
+# numeric assignment is recorded with its line.
+score is 10
+score is 25
+score is 40
+print of ("prev=" + (str of (prev of score)))
+print of ("now=" + (str of score))
+x is 11
+x is 22
+x is 33
+x is 44
+print of ("at1=" + (str of (what is x at 1)))
+print of ("at7=" + (str of (what is x at 7)))
+print of ("at9=" + (str of (what is x at 9)))
+print of ("prevx=" + (str of (prev of x)))

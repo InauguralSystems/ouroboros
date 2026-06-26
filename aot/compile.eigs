@@ -81,6 +81,22 @@ define uses_observer(ast) as:
         return 1
     return has_report of ast
 
+# Does this AST contain a temporal interrogative (`prev of x`, `what is x at L`)?
+# When set, every numeric assignment is recorded on the trace tape (independent
+# of the env, so temporal vars stay unboxed) and each source line is stamped.
+g_traced is 0
+define has_interrogate(node) as:
+    if (type of node) != "list":
+        return 0
+    if (len of node) == 0:
+        return 0
+    if node[0] == "interrogate":
+        return 1
+    for k in range of (len of node):
+        if (has_interrogate of node[k]) == 1:
+            return 1
+    return 0
+
 # Set of user-defined numeric functions (name -> 1). A call to one is numeric;
 # emitted as a native C `double name(double, ...)` call. Set in emit_program.
 g_funcs is {}
@@ -642,6 +658,19 @@ define emit_val(node, nm, bt) as:
         return "aot_str(\"" + (c_escape of node[1]) + "\")"
     if t == "null":
         return "make_null()"
+    if t == "interrogate":
+        # ["interrogate", kind, expr, at]. Result is a number (hit) or null
+        # (miss), so a Value. kinds: 0 what, 6 prev. where/why/how = slice 2.
+        local ik is node[1]
+        local ie is unwrap of node[2]
+        local iat is node[3]
+        if iat == null:
+            if ik == 6:
+                return "aot_prev_val(\"" + ie[1] + "\")"
+            throw of "AOT: temporal interrogative without `at` only supports `prev`"
+        if (ik == 0) or (ik == 6):
+            return "aot_query_at_val(" + (str of ik) + ", \"" + ie[1] + "\", (int)(" + (emit_num of [iat, nm, bt, 0]) + "))"
+        throw of "AOT: temporal where/why/how/who/when not yet supported"
     if t == "ident":
         return "aot_get(g, \"" + node[1] + "\")"
     if t == "binop":
@@ -672,6 +701,10 @@ define emit_stmts(stmts, ind, nm, bt, minits, gf) as:
 define emit_stmt(node, ind, nm, bt, minits, gf) as:
     local t is node[0]
     if t == "_line":
+        # stamp the current source line for the trace tape (mirrors OP_LINE), so
+        # `what is x at L` history entries get the right line.
+        if g_traced == 1:
+            return ind + "g_trace_current_line = " + (str of node[1]) + ";\n" + (emit_stmt of [node[2], ind, nm, bt, minits, gf])
         return emit_stmt of [node[2], ind, nm, bt, minits, gf]
     if t == "assign":
         local name is node[1]
@@ -687,11 +720,18 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
             # observed program: numeric assign goes through the runtime observer
             # (store in env + update the slot's entropy/dH + set last-observer).
             if g_observed == 1:
-                return ind + "aot_observe_num(g, \"" + name + "\", " + (emit_num of [node[2], nm, bt, 0]) + ");\n"
+                local oa is ind + "aot_observe_num(g, \"" + name + "\", " + (emit_num of [node[2], nm, bt, 0]) + ");\n"
+                if g_traced == 1:
+                    oa is oa + ind + "aot_trace_assign(\"" + name + "\", aot_num(aot_get(g, \"" + name + "\")));\n"
+                return oa
             local raw is 0
             if gf[name] == 1:
                 raw is 1
-            return ind + name + " = " + (emit_num of [node[2], nm, bt, raw]) + ";\n"
+            local asn is ind + name + " = " + (emit_num of [node[2], nm, bt, raw]) + ";\n"
+            # temporal: record the new value on the trace tape (prev / at-line)
+            if g_traced == 1:
+                asn is asn + ind + "aot_trace_assign(\"" + name + "\", " + name + ");\n"
+            return asn
         return ind + "aot_set(g, \"" + name + "\", " + (emit_val of [node[2], nm, bt]) + ");\n"
     if t == "index_assign":
         local tgt is unwrap of node[1]
@@ -1871,6 +1911,8 @@ define emit_program(ast) as:
         stmts is ast[1]
     # Observer programs: numeric vars are env-boxed + observed (no unboxing).
     g_observed is uses_observer of ast
+    # Temporal programs: record numeric assignments on the trace tape.
+    g_traced is has_interrogate of ast
     # Partition top-level function definitions from the rest (main body).
     local funcs is []
     local rest is []
