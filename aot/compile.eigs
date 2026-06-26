@@ -885,6 +885,10 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
         if bt[name] == 1:
             local cc is unwrap of node[2]
             if (is_buf_create of node[2]) == 1:
+                # `buffer of [r, c]` -> a shaped 2-D buffer; pass the list Value.
+                local barg is unwrap of cc[2]
+                if barg[0] == "list":
+                    return ind + name + " = aot_call_name(g, \"buffer\", " + (emit_val of [cc[2], nm, bt]) + ");\n"
                 # Always create via the heap-zeroed `buffer` builtin: `zeros` is
                 # arena-allocated and the AOT's flat arena clobbers it.
                 return ind + name + " = aot_call_name(g, \"buffer\", make_num(" + (emit_num of [cc[2], nm, bt, 0]) + "));\n"
@@ -2010,7 +2014,12 @@ define emit_args(node, fname, nm, bt) as:
             # path); a non-ident arg falls back to an owned emit_val.
             local te is unwrap of elems[k]
             if te[0] == "ident":
-                s is s + "env_get(g, \"" + te[1] + "\")"
+                # a buffer/tensor C global is a Value* by name; otherwise read the
+                # env BORROWED (callee doesn't consume the tensor/dict arg).
+                if bt[te[1]] == 1:
+                    s is s + te[1]
+                else:
+                    s is s + "env_get(g, \"" + te[1] + "\")"
             else:
                 s is s + (emit_val of [elems[k], nm, bt])
         else:
