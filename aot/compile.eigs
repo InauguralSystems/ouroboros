@@ -1024,23 +1024,36 @@ define emit_func_proto(fn, finfo) as:
             sig is sig + "double"
     return sig + ");\n"
 
-define emit_function(fn, finfo) as:
+define emit_function(fn, finfo, gnm, gbt) as:
     local name is fn[1]
     local params is fn[2]
     local body is fn[3]
     local ptypes is finfo["ptypes"]
     local fnm is {}
     local fbt is {}
+    # seed with module globals so functions can read them (file-scope in C);
+    # params/locals shadow same-named globals below.
+    local gn is keys of gnm
+    for k in range of (len of gn):
+        if gnm[gn[k]] == 1:
+            fnm[gn[k]] is 1
+    local gb is keys of gbt
+    for k in range of (len of gb):
+        if gbt[gb[k]] == 1:
+            fbt[gb[k]] is 1
     for k in range of (len of params):
         if (ptypes[k]) == "buf":
             fbt[params[k]] is 1
+            fnm[params[k]] is 0
         else:
             fnm[params[k]] is 1
+            fbt[params[k]] is 0
     # local buffers created in the body
     local lb is infer_buffers of body
     local lbn is keys of lb
     for k in range of (len of lbn):
         fbt[lbn[k]] is 1
+        fnm[lbn[k]] is 0
     local ba is collect_assigns of [body, {}]
     local banames is keys of ba
     for k in range of (len of banames):
@@ -1057,7 +1070,8 @@ define emit_function(fn, finfo) as:
         else:
             sig is sig + "double " + params[k]
     sig is sig + ")"
-    # locals: buffers -> Value*, numerics -> double (params excluded)
+    # locals: buffers -> Value*, numerics -> double (params + globals excluded;
+    # an assignment to a global updates the file-global, not a new local).
     local decls is ""
     for k in range of (len of banames):
         local v is banames[k]
@@ -1065,7 +1079,10 @@ define emit_function(fn, finfo) as:
         for p in range of (len of params):
             if params[p] == v:
                 isparam is 1
-        if isparam == 0:
+        local isglobal is 0
+        if (gnm[v] == 1) or (gbt[v] == 1):
+            isglobal is 1
+        if (isparam == 0) and (isglobal == 0):
             if fbt[v] == 1:
                 decls is decls + "    Value* " + v + " = NULL;\n"
             else:
@@ -1104,35 +1121,37 @@ define emit_program(ast) as:
         for j in range of (len of flbn):
             ffbt[flbn[j]] is 1
         g_funcs[fn[1]] is {"ptypes": pt, "ret": (func_ret_type of [fn, ffbt])}
-    # Emit functions with EMPTY value-bounds (their params are unbounded, so maps
-    # inside them stay guarded — sound). Forward protos first, for recursion.
+    # Module globals are computed first so functions can READ them (they become
+    # file-scope vars in C; a function's params/locals shadow same-named globals).
+    local bt is infer_buffers of rest
+    local nm is infer_numeric of [rest, bt]
+    # Emit functions with EMPTY value-bounds (params/globals unbounded -> maps
+    # inside them stay guarded, sound). Forward protos first, for recursion.
     g_scalbound is {}
     g_bufbound is {}
     local fc is ""
     for k in range of (len of funcs):
         fc is fc + (emit_func_proto of [funcs[k], g_funcs[(funcs[k])[1]]])
     for k in range of (len of funcs):
-        fc is fc + "\n" + (emit_function of [funcs[k], g_funcs[(funcs[k])[1]]])
-    # Module-scope analysis runs on the main body (functions are self-contained).
-    local bt is infer_buffers of rest
-    local nm is infer_numeric of [rest, bt]
+        fc is fc + "\n" + (emit_function of [funcs[k], g_funcs[(funcs[k])[1]], nm, bt])
     g_scalbound is infer_scalar_bounds of [rest, nm]
     g_bufbound is infer_buffer_bounds of [rest, bt]
     local minits is module_inits of rest
-    # main locals + body
-    local decls is ""
+    # module globals as FILE-SCOPE decls (so functions can read them); main's
+    # body assigns them (no re-declaration in main).
+    local gdecls is ""
     local names is keys of nm
     for i in range of (len of names):
         if nm[names[i]] == 1:
-            decls is decls + "    double " + names[i] + " = 0;\n"
+            gdecls is gdecls + "static double " + names[i] + " = 0;\n"
     local bnames is keys of bt
     for i in range of (len of bnames):
         if bt[bnames[i]] == 1:
-            decls is decls + "    Value* " + bnames[i] + " = NULL;\n"
+            gdecls is gdecls + "static Value* " + bnames[i] + " = NULL;\n"
     local body is emit_stmts of [rest, "    ", nm, bt, minits, {}]
-    local hdr is "#include \"aot_rt.h\"\n\nstatic Env* g = NULL;\n\n" + fc + "\nint main(void) {\n    g = aot_boot(); (void)g;\n"
+    local hdr is "#include \"aot_rt.h\"\n\nstatic Env* g = NULL;\n" + gdecls + "\n" + fc + "\nint main(void) {\n    g = aot_boot(); (void)g;\n"
     local ftr is "    aot_shutdown(g);\n    return 0;\n}\n"
-    return hdr + decls + body + ftr
+    return hdr + body + ftr
 
 # ---- driver ----
 argv is args of null
