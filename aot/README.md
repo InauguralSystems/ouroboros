@@ -90,6 +90,11 @@ bytes**. `dot of [a,b]` over a 4096-wide buffer, 200k times:
 The matvec itself stays native-scalar (byte-exact ~19×) — its `W[i*nout+j]`
 column access is strided, not a contiguous `dot`.
 
+`sum of a` and `norm of a` (L2) are the same association-unspecified family —
+`aot_sum` / `aot_norm` are the matching reassociated SIMD reductions (`norm`
+squares each lane before the reduce, then `sqrt`s the total). Both compare with
+tolerance (`*_tol.eigs`), not bytes.
+
 ## Slices
 
 1. **DONE** — literals, arithmetic + comparison, module-level `x is expr`,
