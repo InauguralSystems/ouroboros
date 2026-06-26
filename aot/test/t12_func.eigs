@@ -1,0 +1,11 @@
+define sq(x) as:
+    return x * x
+
+define fib(n) as:
+    if n < 2:
+        return n
+    return (fib of (n - 1)) + (fib of (n - 2))
+
+print of (sq of 5)
+print of (fib of 10)
+print of (fib of 20)

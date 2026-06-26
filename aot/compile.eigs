@@ -35,6 +35,9 @@ ARITH_OPS is {"+": 1, "-": 1, "*": 1, "/": 1, "%": 1, "==": 1, "!=": 1, "<": 1, 
 # the packed guard can be ELIDED (no overflow possible -> raw SIMD).
 g_bufbound is {}
 g_scalbound is {}
+# Set of user-defined numeric functions (name -> 1). A call to one is numeric;
+# emitted as a native C `double name(double, ...)` call. Set in emit_program.
+g_funcs is {}
 
 define unwrap(node) as:
     loop while node[0] == "_line":
@@ -105,6 +108,8 @@ define is_num_expr(node, nm, bt) as:
                 if a[0] == "ident":
                     if bt[a[1]] == 1:
                         return 1
+            if g_funcs[callee[1]] == 1:
+                return 1
         return 0
     return 0
 
@@ -321,8 +326,14 @@ define emit_num(node, nm, bt, raw) as:
         local tgt is unwrap of node[1]
         return "aot_buf_get(" + tgt[1] + ", " + (emit_num of [node[2], nm, bt, 0]) + ")"
     if t == "call":
-        local a is unwrap of node[2]
-        return "aot_buf_len(" + a[1] + ")"
+        local callee is unwrap of node[1]
+        if callee[0] == "ident":
+            if callee[1] == "len":
+                local a is unwrap of node[2]
+                return "aot_buf_len(" + a[1] + ")"
+            if g_funcs[callee[1]] == 1:
+                return emit_call_num of [node, nm, bt]
+        throw of "AOT: emit_num unexpected call"
     if t == "binop":
         local op is node[1]
         local l is emit_num of [node[2], nm, bt, raw]
@@ -413,6 +424,8 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
         local s is ind + "while (" + (emit_cond of [node[1], nm, bt]) + ") {\n"
         s is s + (emit_stmts of [node[2], ind + "    ", nm, bt, minits, lg])
         return s + ind + "}\n"
+    if t == "return":
+        return ind + "return " + (emit_num of [node[1], nm, bt, 0]) + ";\n"
     throw of ("AOT: cannot emit statement node '" + t + "'")
 
 # ---- buffer value-bound inference (for guard elision in vectorized maps) ----
@@ -750,15 +763,97 @@ define emit_vectorized(node, vinfo, ind, nm, bt, minits) as:
     s is s + i2 + "}\n"
     return s + ind + "}\n"
 
+# ---- numeric user functions (slice 2): double name(double, ...) ----
+define emit_call_num(node, nm, bt) as:
+    local fname is (unwrap of node[1])[1]
+    local arg is unwrap of node[2]
+    if arg[0] == "null":
+        return fname + "()"
+    if arg[0] == "list":
+        local elems is arg[1]
+        if (len of elems) == 1:
+            throw of ("AOT: call " + fname + " of (x), not [x], for a single arg")
+        local s is fname + "("
+        for k in range of (len of elems):
+            if k > 0:
+                s is s + ", "
+            s is s + (emit_num of [elems[k], nm, bt, 0])
+        return s + ")"
+    return fname + "(" + (emit_num of [node[2], nm, bt, 0]) + ")"
+
+define emit_func_proto(fn) as:
+    local sig is "static double " + fn[1] + "("
+    local params is fn[2]
+    if (len of params) == 0:
+        sig is sig + "void"
+    for k in range of (len of params):
+        if k > 0:
+            sig is sig + ", "
+        sig is sig + "double"
+    return sig + ");\n"
+
+define emit_function(fn) as:
+    local name is fn[1]
+    local params is fn[2]
+    local body is fn[3]
+    # Inside a numeric function every param + body-assigned name is a C double.
+    local fnm is {}
+    for k in range of (len of params):
+        fnm[params[k]] is 1
+    local ba is collect_assigns of [body, {}]
+    local banames is keys of ba
+    for k in range of (len of banames):
+        fnm[banames[k]] is 1
+    local sig is "static double " + name + "("
+    if (len of params) == 0:
+        sig is sig + "void"
+    for k in range of (len of params):
+        if k > 0:
+            sig is sig + ", "
+        sig is sig + "double " + params[k]
+    sig is sig + ")"
+    # locals = body-assigned names that are not params
+    local decls is ""
+    for k in range of (len of banames):
+        local v is banames[k]
+        local isparam is 0
+        for p in range of (len of params):
+            if params[p] == v:
+                isparam is 1
+        if isparam == 0:
+            decls is decls + "    double " + v + " = 0;\n"
+    local fminits is module_inits of body
+    local bodyc is emit_stmts of [body, "    ", fnm, {}, fminits, {}]
+    return sig + " {\n" + decls + bodyc + "    return 0;\n}\n"
+
 define emit_program(ast) as:
     local stmts is ast
     if ast[0] == "block":
         stmts is ast[1]
-    local bt is infer_buffers of stmts
-    local nm is infer_numeric of [stmts, bt]
-    g_scalbound is infer_scalar_bounds of [stmts, nm]
-    g_bufbound is infer_buffer_bounds of [stmts, bt]
-    local minits is module_inits of stmts
+    # Partition top-level function definitions from the rest (main body).
+    local funcs is []
+    local rest is []
+    for k in range of (len of stmts):
+        local u is unwrap of stmts[k]
+        if u[0] == "func":
+            funcs is (append of [funcs, u])
+        else:
+            rest is (append of [rest, stmts[k]])
+    for k in range of (len of funcs):
+        g_funcs[(funcs[k])[1]] is 1
+    # Module-scope analysis runs on the main body (functions are self-contained).
+    local bt is infer_buffers of rest
+    local nm is infer_numeric of [rest, bt]
+    g_scalbound is infer_scalar_bounds of [rest, nm]
+    g_bufbound is infer_buffer_bounds of [rest, bt]
+    local minits is module_inits of rest
+    # function prototypes (forward decls, for recursion) then definitions
+    local fc is ""
+    for k in range of (len of funcs):
+        fc is fc + (emit_func_proto of funcs[k])
+    for k in range of (len of funcs):
+        fc is fc + "\n" + (emit_function of funcs[k])
+    # main locals + body
     local decls is ""
     local names is keys of nm
     for i in range of (len of names):
@@ -768,8 +863,8 @@ define emit_program(ast) as:
     for i in range of (len of bnames):
         if bt[bnames[i]] == 1:
             decls is decls + "    Value* " + bnames[i] + " = NULL;\n"
-    local body is emit_stmts of [stmts, "    ", nm, bt, minits, {}]
-    local hdr is "#include \"aot_rt.h\"\n\nint main(void) {\n    Env* g = aot_boot(); (void)g;\n"
+    local body is emit_stmts of [rest, "    ", nm, bt, minits, {}]
+    local hdr is "#include \"aot_rt.h\"\n\n" + fc + "\nint main(void) {\n    Env* g = aot_boot(); (void)g;\n"
     local ftr is "    aot_shutdown(g);\n    return 0;\n}\n"
     return hdr + decls + body + ftr
 
