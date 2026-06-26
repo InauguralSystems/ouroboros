@@ -1,0 +1,32 @@
+# break / continue in scalar loops.
+total is 0
+i is 0
+loop while i < 100:
+    i is i + 1
+    if i > 5:
+        break
+    total is total + i
+print of total
+
+# continue: skip evens (increment is before the continue, so it terminates)
+s is 0
+j is 0
+loop while j < 10:
+    j is j + 1
+    if (j % 2) == 0:
+        continue
+    s is s + j
+print of s
+
+# nested: break only exits the inner loop
+outer is 0
+a is 0
+loop while a < 3:
+    b is 0
+    loop while b < 100:
+        b is b + 1
+        if b > 2:
+            break
+        outer is outer + 1
+    a is a + 1
+print of outer
