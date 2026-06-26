@@ -315,3 +315,28 @@ capability gain (consumer code compiles byte-exact; mixed code still gets the bi
 multiple on its interpreted-scalar parts), but the honest rule is: the AOT
 accelerates code the VM *interprets*. The verbatim bench corrected the proxy
 bench — the measurement-is-the-moat trap, caught in the act.
+
+### F-OURO-16 — the flat-buffer matvec is bandwidth-bound; output-axis SIMD regresses it
+
+Phase 2b set out to add output-axis SIMD + guard elision to `aot_tensor_matmul`.
+Neither applied:
+
+- **No guard to elide.** `ne_matmul_buf` (the VM kernel the AOT matches) is
+  *already raw* — the matmul accumulation never calls `num_guard` (the downstream
+  `add` guards). So the AOT matmul is unguarded by construction; there is no
+  `num_guard` to remove (unlike the user-written buffer-loop matmul of #31).
+
+- **SIMD made it slower.** A hand-rolled output-axis SIMD (vectorize the output
+  column `j`, accumulate across `k` in registers) measured **0.144s vs 0.100s**
+  for the 433→64→32→6 forward (4000×, SSE2). Reason: it puts `k` innermost, which
+  **strides `b` by `cols`**. The plain i-k-j form keeps `j` (the output column)
+  innermost — a *contiguous* axpy `o[i,:] += a[i,k]*b[k,:]` that the compiler
+  auto-vectorizes and that sweeps `b` linearly, cache-perfectly. For a batch-1
+  matvec the kernel is bound by streaming the weight matrix, not by SIMD compute,
+  so the contiguous form already wins.
+
+The matmul was therefore left as the contiguous i-k-j (with a comment recording
+this so it isn't "optimized" back into a strided SIMD regression). **The Phase-2
+speedup was fully captured by the zero-copy view (2a): ~2.8× over the VM, ~28×
+over the original nested-list VM** — removing the per-call flatten and the
+builtin-dispatch/refcount overhead, not the matmul inner loop.

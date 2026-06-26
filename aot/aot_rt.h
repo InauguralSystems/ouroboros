@@ -507,11 +507,23 @@ static AotTensor aot_tensor_matmul(AotTensor a, AotTensor b) {
     o.rows = a.rows; o.cols = b.cols;
     o.is1d = a.is1d;                           /* 1-D result iff the left operand is a vector */
     o.kind = a.kind; o.owns = 1;
-    o.data = (double*)calloc((size_t)(o.rows * o.cols), sizeof(double));
-    for (long i = 0; i < a.rows; i++)          /* raw i-k-j, no guard: matches ne_matmul_buf */
-        for (long k = 0; k < a.cols; k++)
-            for (long j = 0; j < b.cols; j++)
-                o.data[i * b.cols + j] += a.data[i * a.cols + k] * b.data[k * b.cols + j];
+    long ac = a.cols, bc = b.cols;
+    o.data = (double*)calloc((size_t)(o.rows * bc), sizeof(double));
+    /* i-k-j with j (the output column) innermost: o[i, :] += a[i,k] * b[k, :] is a
+     * CONTIGUOUS axpy over j that the compiler auto-vectorizes with perfect cache
+     * locality (b swept row-by-row, linearly). Raw, no guard — matches
+     * ne_matmul_buf byte-for-byte; -ffp-contract=off keeps the mul+add unfused.
+     * A hand-rolled output-axis SIMD (k innermost) instead STRIDES b by bc and
+     * measured SLOWER — the contiguous form already wins. */
+    for (long i = 0; i < a.rows; i++) {
+        const double *arow = a.data + i * ac;
+        double *orow = o.data + i * bc;
+        for (long k = 0; k < ac; k++) {
+            double aik = arow[k];
+            const double *brow = b.data + k * bc;
+            for (long j = 0; j < bc; j++) orow[j] += aik * brow[j];
+        }
+    }
     return o;
 }
 
