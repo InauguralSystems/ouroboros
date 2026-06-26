@@ -135,8 +135,17 @@ src[i] * k; …` compiles to `static void scale(Value*, Value*, double)` whose l
 **vectorizes** (the map machinery works over buffer params), and `define
 dot_sum(a, m) as: … return s` is a `double` reduction. Calls pass buffer args by
 `Value*` and numeric args as doubles (`scale(ys, xs, 3); dot_sum(ys, n)`).
-`test/t15_buffunc`. Limits: no local buffer creation inside functions (would need
-the global env), no buffer-returning functions yet, no module-global reads.
+`test/t15_buffunc`.
+
+**Buffer-returning functions + local buffers.** A function may create a local
+buffer (`g` is now a file-global `Env*`) and return it — the return type is
+inferred `Value*` when the body returns a buffer. So `define make_range(m) as:
+out is zeros of m; loop … out[i] is i*i …; return out` compiles to
+`static Value* make_range(double)` whose fill **vectorizes**, and the caller
+recognizes `sq is make_range of n` as a buffer. `test/t16_bufret`. (Note: call
+with `f of x`, not `f(x)` — EigenScript has no paren-call syntax.) Limits: no
+module-global reads inside functions; mixed numeric/buffer returns in one
+function aren't type-checked.
 
 ## Neighbor indexing / stencils
 
@@ -157,7 +166,7 @@ guard-elision only when literal; binop bounds stay guarded — sound.) Also fixe
 latent bug: `zeros of N` is arena-allocated and the AOT's flat arena clobbered
 it, so buffers are now created via the heap-zeroed `buffer` builtin (same length-N
 zero buffer; surfaced by the oracle on an unwritten-element read). Next:
-buffer-returning functions; local buffer creation in functions.
+module-global reads inside functions; mutating-in-place vs return conventions.
 
 ## Speed: the specialization spike landed (~64×)
 
