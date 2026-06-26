@@ -1,0 +1,12 @@
+v is 1000.0
+steps is 0
+loop while improving:
+    v is v / 2.0
+    steps is steps + 1
+    if steps > 50:
+        break
+print of ("steps=" + (str of steps))
+n is 0
+loop while n < 5:
+    n is n + 1
+print of ("plain=" + (str of n))

@@ -712,6 +712,10 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
             if bt[rexpr[1]] == 1:
                 return ind + "return " + rexpr[1] + ";\n"
         return ind + "return " + (emit_num of [node[1], nm, bt, 0]) + ";\n"
+    if t == "break":
+        return ind + "break;\n"
+    if t == "continue":
+        return ind + "continue;\n"
     throw of ("AOT: cannot emit statement node '" + t + "'")
 
 # ---- buffer value-bound inference (for guard elision in vectorized maps) ----
