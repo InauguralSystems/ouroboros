@@ -971,12 +971,45 @@ define is_buf_producing(rhs) as:
                     return 1
     return 0
 
+# Also a buffer if PASSED to an already-analyzed function at a buffer position
+# (so `forward(out, x)` calling `matvec(out, x, …)` infers out/x as buffers).
+define find_buf_param_use(node, name) as:
+    if (type of node) != "list":
+        return 0
+    if (len of node) == 0:
+        return 0
+    if node[0] == "call":
+        local callee is unwrap of node[1]
+        if callee[0] == "ident":
+            if g_funcs[callee[1]] != null:
+                local arg is unwrap of node[2]
+                local elems is []
+                if arg[0] == "list":
+                    elems is arg[1]
+                else:
+                    elems is [arg]
+                local pts is (g_funcs[callee[1]])["ptypes"]
+                for k in range of (len of elems):
+                    if (pts[k]) == "buf":
+                        local e is unwrap of elems[k]
+                        if (e[0] == "ident") and (e[1] == name):
+                            return 1
+    for k in range of (len of node):
+        if (find_buf_param_use of [node[k], name]) == 1:
+            return 1
+    return 0
+
 define func_ptypes(fn) as:
     local params is fn[2]
     local body is fn[3]
     local pt is []
     for p in range of (len of params):
+        local isbuf is 0
         if (find_buffer_use of [body, params[p]]) == 1:
+            isbuf is 1
+        if (find_buf_param_use of [body, params[p]]) == 1:
+            isbuf is 1
+        if isbuf == 1:
             pt is (append of [pt, "buf"])
         else:
             pt is (append of [pt, "num"])
