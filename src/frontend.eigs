@@ -918,7 +918,7 @@ define _p_parse_primary(p) as:
         _p_advance of p
         return ["num", 0]
 
-    # Temporal: prev of x  (kind 6). Matches the C grammar.
+    # Temporal: prev of x [at <line>]  (kind 6). Matches the C grammar.
     if tt == "kw":
         if (_p_peek_val of p) == "prev":
             _p_advance of p
@@ -926,7 +926,12 @@ define _p_parse_primary(p) as:
                 if (_p_peek_val of p) == "of":
                     _p_advance of p
             prev_expr is _p_parse_primary of p
-            return ["interrogate", 6, prev_expr, null]
+            prev_at is null
+            if (_p_peek_type of p) == "kw":
+                if (_p_peek_val of p) == "at":
+                    _p_advance of p
+                    prev_at is _p_parse_primary of p
+            return ["interrogate", 6, prev_expr, prev_at]
 
     # Interrogatives: `<kw> is x [at <line>]` (what/who/when/where/why/how).
     # Matches the C grammar (not the meta-interpreter's `<kw> of x`).

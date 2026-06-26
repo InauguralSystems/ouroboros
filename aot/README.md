@@ -331,8 +331,12 @@ onto it via `trace_record_obs`, exactly like `OBSERVE_NAME_POST`. `when is x at 
 completes the set: the interrogate result routes through `slot_to_value` (like
 the VM's `INTERROGATE_NAMED_AT`) rather than assuming a double, so it's
 polymorphic — number, string (`who`), or `null` on a miss. `t34_temporal_obs`
-(where/why/how/when) and `t35_who` (who + what) match the VM byte-for-byte. The
-only remaining temporal gap is the frontend not parsing `prev of x at L`.
+(where/why/how/when) and `t35_who` (who + what) match the VM byte-for-byte.
+`prev of x at L` parses now too — the frontend's `prev` form was missing the
+optional `at <line>` the C grammar allows (it's just `prev` with a line, kind 6
+with an `at`), fixed in the self-hosting frontend (byte-exact vs C; bootstrap
+holds) so both the ouroboros compiler and the AOT accept it (`t36_prev_at`).
+Every temporal interrogative form now compiles.
 
 ## Slices
 

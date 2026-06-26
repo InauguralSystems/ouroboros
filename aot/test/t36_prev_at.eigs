@@ -1,0 +1,9 @@
+x is 11
+x is 22
+x is 33
+x is 44
+print of ("prevAt2=" + (str of (prev of x at 2)))
+print of ("prevAt3=" + (str of (prev of x at 3)))
+print of ("prevAt99=" + (str of (prev of x at 99)))
+print of ("prevAt1=" + (str of (prev of x at 1)))
+print of ("prev=" + (str of (prev of x)))
