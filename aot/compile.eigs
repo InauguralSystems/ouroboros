@@ -807,8 +807,27 @@ define emit_val(node, nm, bt) as:
                 ks is kn[1]
             ds is ds + " dict_set_owned(_d, \"" + (c_escape of ks) + "\", " + (emit_val of [pr[1], nm, bt]) + ");"
         return ds + " _d; })"
+    if t == "unary":
+        local uop is node[1]
+        if uop == "not":
+            # `not x` -> 1.0 if x is falsy else 0.0 (a number; matches the VM).
+            # aot_truthy consumes its operand, so no extra decref is needed.
+            return "make_num(aot_truthy(" + (emit_val of [node[2], nm, bt]) + ") ? 0.0 : 1.0)"
+        if uop == "-":
+            return "make_num(-(aot_num(" + (emit_val of [node[2], nm, bt]) + ")))"
+        throw of ("AOT: cannot emit value unary '" + uop + "'")
     if t == "binop":
-        return (binfn of node[1]) + "(" + (emit_val of [node[2], nm, bt]) + ", " + (emit_val of [node[3], nm, bt]) + ")"
+        local bop is node[1]
+        # `and`/`or` short-circuit and return the OPERAND value (1 and 2 -> 2,
+        # 0 or 3 -> 3), not a boolean. is_truthy does NOT consume, so the kept
+        # operand survives; the discarded one is decref'd. The right operand is
+        # only evaluated on the taken branch (C ?: short-circuits its arms),
+        # matching the VM's short-circuit semantics.
+        if bop == "and":
+            return "({ Value* _x = (" + (emit_val of [node[2], nm, bt]) + "); is_truthy(_x) ? ({ val_decref(_x); (" + (emit_val of [node[3], nm, bt]) + "); }) : _x; })"
+        if bop == "or":
+            return "({ Value* _x = (" + (emit_val of [node[2], nm, bt]) + "); is_truthy(_x) ? _x : ({ val_decref(_x); (" + (emit_val of [node[3], nm, bt]) + "); }); })"
+        return (binfn of bop) + "(" + (emit_val of [node[2], nm, bt]) + ", " + (emit_val of [node[3], nm, bt]) + ")"
     if t == "call":
         local callee is unwrap of node[1]
         if callee[0] != "ident":
