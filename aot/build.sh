@@ -15,7 +15,12 @@ SRC="$EIGS_DIR/src"
 PROG="$1"
 OUT="${2:-./a.out}"
 DEFS="-DEIGENSCRIPT_EXT_HTTP=0 -DEIGENSCRIPT_EXT_MODEL=0 -DEIGENSCRIPT_EXT_DB=0 -DEIGENSCRIPT_VERSION=\"aot\""
-CFLAGS="-O3 ${AOT_ARCH:--march=native}"   # widest host SIMD by default; AOT_ARCH overrides (e.g. -msse2 to force 2-wide)
+# -ffp-contract=off: the VM never fuses multiply-add, so neither may we. Without
+# it, the num_guard-elided matmul (`vadd(acc, vmul(x,w))`, no guard barrier
+# between them) gets fused into a single-rounding FMA on FMA-capable targets
+# (AVX2 -march=native), diverging from the VM's two-rounding mul-then-add. The
+# guarded path's vguard already blocks fusion; this makes the elided path match.
+CFLAGS="-O3 -ffp-contract=off ${AOT_ARCH:--march=native}"   # widest host SIMD; AOT_ARCH overrides (e.g. -msse2 to force 2-wide)
 LIB="build/libeigsrt.a"
 CORE="eigenscript lexer parser builtins builtins_tensor hash arena state strbuf \
       ext_store fmt lint chunk compiler vm jit trace eigs_embed"
