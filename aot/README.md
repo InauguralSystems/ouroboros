@@ -27,6 +27,40 @@ bash test/run.sh                        # differential harness: native == VM
 
 Override the runtime checkout with `EIGS_DIR=` (default `../../EigenScript`).
 
+## Flat-buffer tensor arc (the AOT measuring its own real-world reach)
+
+Pointing the AOT at *verbatim* consumer neural code (not hand-extracted kernels)
+exposed a measurement trap and drove a clean, byte-exact optimization across the
+whole stack. The scope is in
+[`DESIGN_flat_buffer_tensor.md`](DESIGN_flat_buffer_tensor.md); the negative
+results are F-OURO-15/16 in [`../FINDINGS.md`](../FINDINGS.md).
+
+**The trap (F-OURO-15).** The AOT compiles Tidepool's exact `policy_forward`
+(matmul/add/relu over a dict-stored policy) byte-identically — but only **~1.1×**
+over the VM, not the ~90× a buffer-loop *rewrite* shows. Two reasons: the VM's
+tensor builtins are already native C, and the workload is **flatten-bound** — both
+the VM and the AOT re-flatten the constant nested-list weights every call. The
+90× belonged to flat-buffer storage, not to nested-list tensors + builtins. The
+verbatim bench corrected the proxy bench.
+
+**The fix.** A tensor backed by a contiguous `double[]` + shape removes the
+flatten on both sides:
+
+| stage | where | result |
+|---|---|---|
+| shaped `VAL_BUFFER` + buffer-native matmul/add/relu | EigenScript #275 | **~11×** on the VM (433→64→32→6 forward) |
+| AOT **zero-copy view** over a shaped buffer | ouroboros #42 | **~2.8×** over the now-fast VM, **~28×** over the original nested-list VM |
+| output-axis SIMD on the tensor matmul | ouroboros #43 | **doesn't apply** — the matvec is bandwidth-bound; SIMD strides the weights and regresses it (F-OURO-16). The win was fully the zero-copy view. |
+| Tidepool **inference** → buffers | Tidepool #7 | **~7×** per forward, byte-identical (0/6 q mismatches) |
+| Tidepool **trainer** → all-buffer backprop | Tidepool #8 | **~1.8×**, **bit-identical** weights after 30 steps |
+| iLambdaAi | assessed | arc doesn't extend — its generator computes via a ternary/bucket model orthogonal to the tensor builtins |
+
+Every step is gated against the VM as a local oracle (byte-exact, or bit-identical
+weights for the trainer). The AOT's role here was as much **a measuring device** —
+catching that the headline number was a proxy artifact — as a compiler.
+`t37_tensor_forward` (nested-list) and `t38_buffer_tensor` (shaped-buffer view)
+pin both representations in the harness.
+
 ## Benchmark
 
 A real numeric kernel — a degree-5 Horner-polynomial activation applied
