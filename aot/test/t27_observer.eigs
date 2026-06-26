@@ -1,0 +1,18 @@
+x is 500.0
+x is 400.0
+x is 320.0
+x is 256.0
+x is 205.0
+x is 164.0
+x is 131.0
+x is 105.0
+x is 84.0
+x is 67.0
+x is 54.0
+x is 43.0
+print of ("conv=" + (str of converged))
+print of ("stab=" + (str of stable))
+print of ("impr=" + (str of improving))
+print of ("dive=" + (str of diverging))
+print of ("osci=" + (str of oscillating))
+print of ("equi=" + (str of equilibrium))

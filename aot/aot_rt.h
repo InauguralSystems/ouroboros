@@ -297,6 +297,46 @@ static inline double aot_norm_range(Value *A, double sa, double ea) {
     return num_guard(sqrt(s));
 }
 
+/* ---- observer system ----
+ * An observed numeric variable lives in the env (so it has a tracked slot) and
+ * its assignment mirrors the VM's OBSERVE_NAME_POST: store, resolve the slot,
+ * update its entropy/dH window, and mark it the global last-observer. Bare
+ * predicates (converged/stable/...) read that last-observer's slot — exactly
+ * CASE(PREDICATE). Both call the runtime's observer fns, so the VM stays the
+ * oracle. (Unboxing is off for observed programs — observation needs the slot.) */
+static void aot_observe_num(Env *e, const char *name, double val) {
+    env_set_local_owned(e, name, make_num(val));
+    if (g_unobserved_depth != 0) return;
+    int oidx = -1, odepth = 0;
+    Env *oe = env_resolve_chain(e, name, env_hash_name(name), &oidx, &odepth);
+    if (oe && oidx >= 0) {
+        observer_slot_update_num(oe, oidx, val);
+        g_last_obs_slot_env = oe;
+        g_last_obs_slot_idx = oidx;
+    }
+}
+static int aot_predicate(int kind) {
+    if (g_last_obs_slot_idx >= 0 && g_last_obs_slot_env &&
+        g_last_obs_slot_idx < g_last_obs_slot_env->obs_cap) {
+        const ObserverSlot *s = &g_last_obs_slot_env->obs[g_last_obs_slot_idx];
+        switch (kind) {
+        case 0: return observer_slot_converged(s);
+        case 1: return observer_slot_stable(s);
+        case 2: return observer_slot_improving(s);
+        case 3: return observer_slot_oscillating(s);
+        case 4: return observer_slot_diverging(s);
+        case 5: return observer_slot_equilibrium(s);
+        }
+    }
+    return 0;
+}
+/* read an observed numeric var back out of the env (consumes the fetched ref) */
+static double aot_num(Value *v) {
+    double d = (v && v->type == VAL_NUM) ? v->data.num : 0.0;
+    val_decref(v);
+    return d;
+}
+
 /* ---- call a global/builtin by name, single arg (consumes arg) ---- */
 static Value *aot_call_name(Env *g, const char *name, Value *arg) {
     Value *fn = env_get(g, name);

@@ -41,6 +41,25 @@ g_scalbound is {}
 # measured ~2x lever for matmul-style index-heavy loops). Set per function /
 # module body (like g_bufbound) by infer_int.
 g_int is {}
+# 1 if the program uses the observer system (bare predicates). When set, numeric
+# variables are kept in the env (boxed) and their assignments go through the
+# runtime observer (aot_observe_num) so the slot trajectory + predicates match
+# the VM — unboxing/int-typing are off (observation needs the env slot).
+g_observed is 0
+
+# Does this AST contain a bare observer predicate (converged/stable/...)?
+define has_predicate(node) as:
+    if (type of node) != "list":
+        return 0
+    if (len of node) == 0:
+        return 0
+    if node[0] == "predicate":
+        return 1
+    for k in range of (len of node):
+        if (has_predicate of node[k]) == 1:
+            return 1
+    return 0
+
 # Set of user-defined numeric functions (name -> 1). A call to one is numeric;
 # emitted as a native C `double name(double, ...)` call. Set in emit_program.
 g_funcs is {}
@@ -85,6 +104,8 @@ define is_num_expr(node, nm, bt) as:
     if t == "_line":
         return is_num_expr of [node[2], nm, bt]
     if t == "num":
+        return 1
+    if t == "predicate":
         return 1
     if t == "ident":
         if nm[node[1]] == 1:
@@ -509,7 +530,12 @@ define emit_num(node, nm, bt, raw) as:
         return emit_num of [node[2], nm, bt, raw]
     if t == "num":
         return str of node[1]
+    if t == "predicate":
+        return "((double)aot_predicate(" + (str of node[1]) + "))"
     if t == "ident":
+        # in an observed program numeric vars live in the env (boxed)
+        if g_observed == 1:
+            return "aot_num(aot_get(g, \"" + node[1] + "\"))"
         return node[1]
     if t == "unary":
         local uop is node[1]
@@ -632,6 +658,10 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
             # buffer var assigned from a buffer-returning function call
             return ind + name + " = " + (emit_call_num of [node[2], nm, bt]) + ";\n"
         if nm[name] == 1:
+            # observed program: numeric assign goes through the runtime observer
+            # (store in env + update the slot's entropy/dH + set last-observer).
+            if g_observed == 1:
+                return ind + "aot_observe_num(g, \"" + name + "\", " + (emit_num of [node[2], nm, bt, 0]) + ");\n"
             local raw is 0
             if gf[name] == 1:
                 raw is 1
@@ -1795,6 +1825,8 @@ define emit_program(ast) as:
     local stmts is ast
     if ast[0] == "block":
         stmts is ast[1]
+    # Observer programs: numeric vars are env-boxed + observed (no unboxing).
+    g_observed is has_predicate of ast
     # Partition top-level function definitions from the rest (main body).
     local funcs is []
     local rest is []
@@ -1841,11 +1873,16 @@ define emit_program(ast) as:
     # module globals as FILE-SCOPE decls (so functions can read them); main's
     # body assigns them (no re-declaration in main).
     # integer names for the module body (also makes integer globals `long`).
-    g_int is infer_int of [rest, [], nm, bt]
+    # In an observed program nothing is unboxed/int-typed (vars live in the env).
+    g_int is {}
+    if g_observed == 0:
+        g_int is infer_int of [rest, [], nm, bt]
     local gdecls is ""
     local names is keys of nm
     for i in range of (len of names):
-        if nm[names[i]] == 1:
+        # observed numeric vars live in the env (created by aot_observe_num), so
+        # no file-scope decl; otherwise emit static long/double.
+        if (nm[names[i]] == 1) and (g_observed == 0):
             if g_int[names[i]] == 1:
                 gdecls is gdecls + "static long " + names[i] + " = 0;\n"
             else:
