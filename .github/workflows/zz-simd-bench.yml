@@ -1,0 +1,14 @@
+name: zz-simd-bench
+on: pull_request
+permissions:
+  contents: read
+jobs:
+  bench:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          grep -m1 'model name' /proc/cpuinfo
+          echo -n "SIMD: "; grep -m1 flags /proc/cpuinfo | grep -oE 'avx[0-9a-z_]*' | sort -u | tr '\n' ' '; echo
+          gcc -O3 -march=native aot/bench/simd_guard.c -o /tmp/sp -lm
+          /tmp/sp
