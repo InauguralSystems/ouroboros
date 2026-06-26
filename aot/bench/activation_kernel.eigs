@@ -1,0 +1,30 @@
+# Real numeric kernel: a degree-5 Horner-polynomial activation applied
+# element-wise to a buffer, as a reusable buffer-function, run many times
+# (the shape of an ML activation layer). The function's `out[i] = poly(x[i])`
+# map vectorizes (guarded packed SIMD, since buffer params are unbounded), and
+# the whole thing compiles to native C linked against the runtime.
+#
+# Build:  bash build.sh bench/activation_kernel.eigs /tmp/k && /tmp/k
+# Measured (dev box, SSE2 2-wide, 4096 x 400 = 1.64M poly evals):
+#   VM 9.992s   AOT 0.033s   => ~303x, byte-identical output.
+#   (Combines native + unboxed + raw-pointer + SIMD; cloud AVX2 is wider.)
+
+define activate(out, x) as:
+    i is 0
+    loop while i < (len of out):
+        out[i] is ((((x[i] * 0.1 + 0.2) * x[i] - 0.3) * x[i] + 0.4) * x[i] - 0.5) * x[i]
+        i is i + 1
+
+n is 4096
+x is zeros of n
+out is zeros of n
+i is 0
+loop while i < n:
+    x[i] is i * 0.001
+    i is i + 1
+r is 0
+loop while r < 400:
+    activate of [out, x]
+    r is r + 1
+print of out[100]
+print of out[4000]

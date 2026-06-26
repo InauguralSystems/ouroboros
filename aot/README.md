@@ -27,6 +27,24 @@ bash test/run.sh                        # differential harness: native == VM
 
 Override the runtime checkout with `EIGS_DIR=` (default `../../EigenScript`).
 
+## Benchmark
+
+A real numeric kernel — a degree-5 Horner-polynomial activation applied
+element-wise to a buffer as a reusable buffer-function, run 400× (the shape of an
+ML activation layer; `bench/activation_kernel.eigs`):
+
+| 1.64M poly evals (4096 × 400) | time |
+|---|---|
+| VM (interpreter + JIT) | 9.99s |
+| **AOT** | **0.033s** |
+| **speedup** | **~303×**, byte-identical |
+
+The full stack compounds: native code (no bytecode dispatch) × unboxed doubles
+(no `make_num` per op) × raw buffer pointers (no per-element bounds/`buf_get`) ×
+packed SIMD — all preserving no-NaN/Inf (the guard is *in* the vectorized loop).
+Dev box, SSE2 2-wide; cloud AVX2 is wider. (Tighter scalar loops are ~64×; this
+kernel's heavier per-element VM overhead makes the gap larger.)
+
 ## Slices
 
 1. **DONE** — literals, arithmetic + comparison, module-level `x is expr`,
