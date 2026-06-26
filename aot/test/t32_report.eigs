@@ -1,0 +1,17 @@
+# report of x: the most-specific predicate of x's trajectory, as a string.
+x is 500.0
+x is 400.0
+x is 320.0
+x is 256.0
+x is 205.0
+print of ("rx=" + (report of x))
+y is 7.0
+y is 7.0
+y is 7.0
+print of ("ry=" + (report of y))
+z is 1.0
+z is 10.0
+z is 100.0
+z is 1000.0
+print of ("rz=" + (report of z))
+print of ("ru=" + (report of x))

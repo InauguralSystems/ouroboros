@@ -60,6 +60,27 @@ define has_predicate(node) as:
             return 1
     return 0
 
+# Does this AST contain a `report of x` call? (also marks a program observed,
+# since report reads x's observed slot — the VM observes every assignment.)
+define has_report(node) as:
+    if (type of node) != "list":
+        return 0
+    if (len of node) == 0:
+        return 0
+    if node[0] == "call":
+        local rc is unwrap of node[1]
+        if (rc[0] == "ident") and (rc[1] == "report"):
+            return 1
+    for k in range of (len of node):
+        if (has_report of node[k]) == 1:
+            return 1
+    return 0
+
+define uses_observer(ast) as:
+    if (has_predicate of ast) == 1:
+        return 1
+    return has_report of ast
+
 # Set of user-defined numeric functions (name -> 1). A call to one is numeric;
 # emitted as a native C `double name(double, ...)` call. Set in emit_program.
 g_funcs is {}
@@ -629,6 +650,11 @@ define emit_val(node, nm, bt) as:
         local callee is node[1]
         if callee[0] != "ident":
             throw of "AOT: only named calls supported"
+        # `report of x` -> the most-specific predicate of x's observed slot.
+        if callee[1] == "report":
+            local ra is unwrap of node[2]
+            if ra[0] == "ident":
+                return "aot_report(g, \"" + ra[1] + "\")"
         return "aot_call_name(g, \"" + callee[1] + "\", " + (emit_val of [node[2], nm, bt]) + ")"
     throw of ("AOT: cannot emit value node '" + t + "'")
 
@@ -1844,7 +1870,7 @@ define emit_program(ast) as:
     if ast[0] == "block":
         stmts is ast[1]
     # Observer programs: numeric vars are env-boxed + observed (no unboxing).
-    g_observed is has_predicate of ast
+    g_observed is uses_observer of ast
     # Partition top-level function definitions from the rest (main body).
     local funcs is []
     local rest is []

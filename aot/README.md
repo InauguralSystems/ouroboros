@@ -303,8 +303,14 @@ in EigenScript #274 — the AOT has no VM frame, so it needs the env-explicit
 form), so a stall-terminated loop halts at the exact same iteration. `loop while
 not diverging` over a constant — whose condition never goes false — halts at
 `steps=100` in both the VM and the AOT (`t31_observer_stall`); `observer_halt`'s
-`loop while improving … break` stays byte-exact (`t30`). Still not yet: `report`,
-interrogatives (`what/why/how is x`), temporal queries (`prev of x`, `x at L`).
+`loop while improving … break` stays byte-exact (`t30`).
+
+`report of x` — the most-specific predicate of x's slot, as a string — is
+recognized (`aot_report` mirrors `CASE(REPORT_NAME)`: resolve the slot →
+`observer_slot_report`, else `"equilibrium"`). A program using `report` is marked
+observed even without a bare predicate (the VM observes every assignment, so x's
+trajectory must be tracked); `t32_report` matches the VM byte-for-byte. Still not
+yet: interrogatives (`what/why/how is x`), temporal queries (`prev of x`, `x at L`).
 
 ## Slices
 
