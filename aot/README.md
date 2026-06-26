@@ -225,11 +225,17 @@ Measured (`bench/matmul.eigs`, d_model=512, 100 passes, dev box):
 | **+ output-axis SIMD** | **8.4s** |
 | **total** | **~4.1×**, byte-identical |
 
-That's ~2× from int indexing × ~2× from SSE2 2-wide SIMD; AVX2 (4-wide, cloud)
-roughly doubles the SIMD factor again. End-to-end the full transformer block
-went 0.975s → 0.612s (**~85×** over the VM's 52.0s). `t22_int_index` pins the int
-win + the 2⁷⁰-accumulator boundary; `t24_outvec` pins the SIMD path + scalar tail
-(both byte-exact).
+That's ~2× from int indexing × ~2× from SSE2 2-wide SIMD. End-to-end the full
+transformer block went 0.975s → 0.612s (**~85×** over the VM's 52.0s).
+`t22_int_index` pins the int win + the 2⁷⁰-accumulator boundary; `t24_outvec`
+pins the SIMD path + scalar tail (both byte-exact).
+
+**AVX2 validated** (`.github/workflows/aot-avx2-bench.yml`, AMD EPYC 9V74): the
+dev box is SSE2 (2-wide), so width-4 was confirmed in CI. `AOT_VW=4` is selected
+under `-march=native`, the full differential harness stays correct at width 4
+(byte-exact, plus the `*_tol` reductions within tolerance — the AVX2
+horizontal-sum + 4-lane reassociation hold), and the same matmul is **1.90×**
+faster at 4-wide than 2-wide on that machine — the width scales as expected.
 
 ## Slices
 
