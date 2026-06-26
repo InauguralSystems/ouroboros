@@ -117,6 +117,41 @@ The one contiguous-reduction opportunity is `scores[i][j] = dot(Q_row_i,
 K_row_j)`. Surfaced a frontend gap: the lexer doesn't parse scientific notation
 (`1e30` → `1` + a stray `e30` ident), so the mask sentinel uses a plain integer.
 
+### Full transformer block (end-to-end + profile)
+
+The whole pre-norm block — `h = x + attention(layernorm(x))`, then `out = h +
+ffn(layernorm(h))` at iLambdaAi's dims (d_model=32, d_ff=64, seq_len=8),
+`bench/transformer_block.eigs` — exercises everything at once: int-indexed
+matmul, layernorm (ranged `sum` for the mean + `sqrt`), attention (slice
+score-`dot` + softmax `sum`/`exp`), GELU (tanh via `exp`), and residual adds.
+(`sqrt` was added to the emitter; GELU's tanh is computed via `exp` so no new VM
+builtin was needed.)
+
+| 2000 blocks | time |
+|---|---|
+| VM | 52.0s |
+| **AOT** | **0.975s** |
+| **speedup** | **~53×**, byte-identical |
+
+The cumulative speedup is far above any single kernel's (~15–19×) because the
+*entire* block runs as native code — no per-op VM dispatch anywhere in the
+pipeline. **Profiling the AOT block** (the point of the exercise — let the real
+workload name the next bottleneck):
+
+| component | share of block |
+|---|---|
+| attention | 49% |
+| ffn | 49% |
+| layernorm (ranged `sum`) | 3.6% |
+| gelu (`exp`) | 1.2% |
+| residual adds | ~0% |
+
+Drilling in, a single matmul is 0.12–0.23s while GELU is 0.058s and the ranged
+layernorm sums are nearly free — so **~90% of a transformer block is matmul**.
+After integer-indexing, the matmul is unambiguously THE bottleneck; the next
+lever is vectorizing it (byte-exact output-axis SIMD) and/or eliding the
+accumulator `num_guard` (range analysis) — measured, not guessed.
+
 ### Ranged reductions over slices
 
 Once the frontend learned to slice flat buffers into rows, the AOT lowers
