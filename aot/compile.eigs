@@ -97,6 +97,22 @@ define has_interrogate(node) as:
             return 1
     return 0
 
+# where/why/how is x at L (kinds 3/4/5) need the observer SNAPSHOT, so the var
+# must be observed (env-boxed, slot-tracked) AND g_trace_obs_hist on.
+g_obs_traced is 0
+define has_obs_interrogate(node) as:
+    if (type of node) != "list":
+        return 0
+    if (len of node) == 0:
+        return 0
+    if node[0] == "interrogate":
+        if (node[1] == 3) or (node[1] == 4) or (node[1] == 5):
+            return 1
+    for k in range of (len of node):
+        if (has_obs_interrogate of node[k]) == 1:
+            return 1
+    return 0
+
 # Set of user-defined numeric functions (name -> 1). A call to one is numeric;
 # emitted as a native C `double name(double, ...)` call. Set in emit_program.
 g_funcs is {}
@@ -660,17 +676,18 @@ define emit_val(node, nm, bt) as:
         return "make_null()"
     if t == "interrogate":
         # ["interrogate", kind, expr, at]. Result is a number (hit) or null
-        # (miss), so a Value. kinds: 0 what, 6 prev. where/why/how = slice 2.
+        # (miss), so a Value. kinds: 0 what, 2 when, 3/4/5 where/why/how, 6 prev
+        # (all numeric); 1 who (a name string) is not handled yet.
         local ik is node[1]
         local ie is unwrap of node[2]
         local iat is node[3]
+        if ik == 1:
+            throw of "AOT: temporal `who is x` not yet supported"
         if iat == null:
             if ik == 6:
                 return "aot_prev_val(\"" + ie[1] + "\")"
             throw of "AOT: temporal interrogative without `at` only supports `prev`"
-        if (ik == 0) or (ik == 6):
-            return "aot_query_at_val(" + (str of ik) + ", \"" + ie[1] + "\", (int)(" + (emit_num of [iat, nm, bt, 0]) + "))"
-        throw of "AOT: temporal where/why/how/who/when not yet supported"
+        return "aot_query_at_val(" + (str of ik) + ", \"" + ie[1] + "\", (int)(" + (emit_num of [iat, nm, bt, 0]) + "))"
     if t == "ident":
         return "aot_get(g, \"" + node[1] + "\")"
     if t == "binop":
@@ -720,9 +737,14 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
             # observed program: numeric assign goes through the runtime observer
             # (store in env + update the slot's entropy/dH + set last-observer).
             if g_observed == 1:
-                local oa is ind + "aot_observe_num(g, \"" + name + "\", " + (emit_num of [node[2], nm, bt, 0]) + ");\n"
+                local orhs is emit_num of [node[2], nm, bt, 0]
+                local oa is ""
+                # trace entry FIRST (creates the history slot), then observe --
+                # so aot_observe_num's trace_record_obs stamps THIS entry's
+                # entropy/dH for `where/why/how is x at L`.
                 if g_traced == 1:
-                    oa is oa + ind + "aot_trace_assign(\"" + name + "\", aot_num(aot_get(g, \"" + name + "\")));\n"
+                    oa is oa + ind + "aot_trace_assign(\"" + name + "\", " + orhs + ");\n"
+                oa is oa + ind + "aot_observe_num(g, \"" + name + "\", " + orhs + ");\n"
                 return oa
             local raw is 0
             if gf[name] == 1:
@@ -1909,10 +1931,16 @@ define emit_program(ast) as:
     local stmts is ast
     if ast[0] == "block":
         stmts is ast[1]
-    # Observer programs: numeric vars are env-boxed + observed (no unboxing).
-    g_observed is uses_observer of ast
     # Temporal programs: record numeric assignments on the trace tape.
     g_traced is has_interrogate of ast
+    # where/why/how need the observer snapshot -> force observed (boxed) + obs-trace.
+    g_obs_traced is has_obs_interrogate of ast
+    # Observer programs: numeric vars are env-boxed + observed (no unboxing).
+    g_observed is 0
+    if (uses_observer of ast) == 1:
+        g_observed is 1
+    if g_obs_traced == 1:
+        g_observed is 1
     # Partition top-level function definitions from the rest (main body).
     local funcs is []
     local rest is []
@@ -1978,7 +2006,10 @@ define emit_program(ast) as:
         if bt[bnames[i]] == 1:
             gdecls is gdecls + "static Value* " + bnames[i] + " = NULL;\n"
     local body is emit_stmts of [rest, "    ", nm, bt, minits, {}]
-    local hdr is "#include \"aot_rt.h\"\n\nstatic Env* g = NULL;\n" + gdecls + "\n" + fc + "\nint main(void) {\n    g = aot_boot(); (void)g;\n"
+    local obshdr is ""
+    if g_obs_traced == 1:
+        obshdr is "    g_trace_obs_hist = 1;\n"
+    local hdr is "#include \"aot_rt.h\"\n\nstatic Env* g = NULL;\n" + gdecls + "\n" + fc + "\nint main(void) {\n    g = aot_boot(); (void)g;\n" + obshdr
     local ftr is "    aot_shutdown(g);\n    return 0;\n}\n"
     return hdr + body + ftr
 
