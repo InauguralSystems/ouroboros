@@ -12,6 +12,7 @@
  * differential oracle. */
 #include "eigs_embed.h"
 #include "eigenscript.h"
+#include "trace.h"
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -339,6 +340,29 @@ static Value *aot_report(Env *e, const char *name) {
     if (oe && oidx >= 0 && oidx < oe->obs_cap && oe->obs[oidx].used)
         return make_str(observer_slot_report(&oe->obs[oidx]));
     return make_str("equilibrium");
+}
+/* ---- temporal interrogatives (the trace tape) ----
+ * `prev of x`, `what is x at L`. trace_assign feeds the per-name prev-map +
+ * (line, value) history independent of the env (so temporal vars stay unboxed)
+ * and independent of any flag, stamping each entry with g_trace_current_line —
+ * which the emitter sets per source line, mirroring OP_LINE. Numeric values
+ * only for now; an unknown/one-assignment name yields 0 (as the VM's miss). */
+static void aot_trace_assign(const char *name, double v) {
+    EigsSlot s; s.d = v;
+    trace_assign(name, s);
+}
+/* The query result is polymorphic: a number on a hit, `null` on a miss (unknown
+ * name / no assignment at-or-before the line) — matching the VM, which returns
+ * VAL_NULL. So these return an owned Value, used through the boxed value path. */
+static Value *aot_prev_val(const char *name) {
+    EigsSlot out;
+    if (trace_query_prev(name, &out)) return make_num(out.d);
+    return make_null();
+}
+static Value *aot_query_at_val(int kind, const char *name, int line) {
+    EigsSlot out;
+    if (trace_query_at(kind, name, line, &out)) return make_num(out.d);
+    return make_null();
 }
 /* read an observed numeric var back out of the env (consumes the fetched ref) */
 static double aot_num(Value *v) {
