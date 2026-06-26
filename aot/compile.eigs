@@ -576,7 +576,7 @@ define is_vec_expr(node, ctr, nm, bt) as:
         return 1
     if t == "binop":
         local op is n[1]
-        if (op != "+") and (op != "-") and (op != "*"):
+        if (op != "+") and (op != "-") and (op != "*") and (op != "/"):
             return 0
         if (is_vec_expr of [n[2], ctr, nm, bt]) == 0:
             return 0
@@ -674,6 +674,8 @@ define emit_vec(node, ctr, raw) as:
     local op is n[1]
     local a is emit_vec of [n[2], ctr, raw]
     local b is emit_vec of [n[3], ctr, raw]
+    if op == "/":
+        return "aot_vdiv(" + a + ", " + b + ")"
     local inner is ""
     if op == "+":
         inner is "aot_vadd(" + a + ", " + b + ")"
@@ -700,6 +702,8 @@ define emit_vscalar(node, ctr, raw) as:
     local op is n[1]
     local a is emit_vscalar of [n[2], ctr, raw]
     local b is emit_vscalar of [n[3], ctr, raw]
+    if op == "/":
+        return "aot_ddiv(" + a + ", " + b + ")"
     local inner is ""
     if op == "+":
         inner is a + " + " + b
