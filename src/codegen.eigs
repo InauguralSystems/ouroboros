@@ -50,6 +50,7 @@ OP_INDEX_GET is 44
 OP_INDEX_SET is 45
 OP_DOT_GET is 46
 OP_DOT_SET is 47
+OP_SLICE_GET is 80
 OP_CALL is 39
 OP_RETURN is 40
 OP_RETURN_NULL is 41
@@ -320,6 +321,18 @@ define cg_node(c, node) as:
         cg_node of [c, node[1]]                        # target
         cg_node of [c, node[2]]                        # index
         cg_emit of [c, OP_INDEX_GET]
+        return null
+    if t == "slice":
+        cg_node of [c, node[1]]                        # target
+        if node[2] == null:                            # start (NULL -> whole)
+            cg_emit of [c, OP_NULL]
+        else:
+            cg_node of [c, node[2]]
+        if node[3] == null:                            # end (NULL -> whole)
+            cg_emit of [c, OP_NULL]
+        else:
+            cg_node of [c, node[3]]
+        cg_emit of [c, OP_SLICE_GET]
         return null
     if t == "dot":
         cg_node of [c, node[1]]                        # target
