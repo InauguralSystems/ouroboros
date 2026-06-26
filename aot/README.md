@@ -286,9 +286,19 @@ observer program is about the observer, not raw arithmetic speed.
 
 `t27_observer` (a diverging trajectory) and `t28_observer_conv` (converging) match
 the VM byte-for-byte. This is **slice 1** — the six bare predicates over observed
-numeric assignments. Not yet: `report` (most-specific resolution), interrogatives
-(`what/why/how is x`), temporal queries (`prev of x`, `x at L`), and observer-based
-loop conditions (`loop while improving`, which needs `break` + the stall-check).
+numeric assignments.
+
+`break` / `continue` are now emitted (they map straight to C — the recognizers
+bail on their loop shapes, so they land in the scalar `while`). That unblocks
+`observer_halt` (`loop while improving: … break`), which now runs byte-exact
+(`t30_observer_halt`). But note the boundary: an observer-based loop condition
+emits *just the predicate* (`while (aot_predicate(improving))`) — the VM's
+**stall-check** (which can halt the loop while the predicate still holds) and the
+absolute iteration cap are **not** emitted. `observer_halt` matches because its
+predicate is false at the first check (the body never runs); an observer-loop
+that relies on the stall-check to terminate would diverge — the oracle would
+catch it, and the stall-check is the next observer slice. Also not yet: `report`,
+interrogatives (`what/why/how is x`), temporal queries (`prev of x`, `x at L`).
 
 ## Slices
 
