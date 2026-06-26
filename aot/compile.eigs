@@ -554,11 +554,11 @@ define is_vec_expr(node, ctr, nm, bt) as:
     if t == "num":
         return 1
     if t == "ident":
-        # bare counter as a value = iota (not yet supported); a loop-invariant
-        # numeric scalar is broadcast across lanes (the loop body only assigns
-        # the counter + buffer elements, so any other scalar is invariant).
+        # the counter as a value = iota ({_vi, _vi+1, ...}); any other numeric
+        # scalar is loop-invariant (the body only assigns the counter + buffer
+        # elements) and is broadcast across lanes.
         if n[1] == ctr:
-            return 0
+            return 1
         if nm[n[1]] == 1:
             return 1
         return 0
@@ -668,6 +668,8 @@ define emit_vec(node, ctr, raw) as:
         local tgt is unwrap of n[1]
         return "aot_vload(_p_" + tgt[1] + " + _vi)"
     if t == "ident":
+        if n[1] == ctr:
+            return "aot_viota(_vi)"
         return "aot_vset(" + n[1] + ")"
     local op is n[1]
     local a is emit_vec of [n[2], ctr, raw]
@@ -692,6 +694,8 @@ define emit_vscalar(node, ctr, raw) as:
         local tgt is unwrap of n[1]
         return "_p_" + tgt[1] + "[_vi]"
     if t == "ident":
+        if n[1] == ctr:
+            return "(double)_vi"
         return n[1]
     local op is n[1]
     local a is emit_vscalar of [n[2], ctr, raw]
