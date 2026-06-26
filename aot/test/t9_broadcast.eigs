@@ -1,0 +1,16 @@
+n is 8
+k is 1.5
+b is 2.0
+xs is zeros of n
+ys is zeros of n
+i is 0
+loop while i < n:
+    xs[i] is 3
+    i is i + 1
+i is 0
+loop while i < n:
+    ys[i] is xs[i] * k + b
+    i is i + 1
+print of ys[0]
+print of ys[7]
+print of (len of ys)
