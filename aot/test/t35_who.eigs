@@ -1,0 +1,7 @@
+score is 11
+score is 22
+score is 33
+print of ("who1=" + (str of (who is score at 1)))
+print of ("who3=" + (str of (who is score at 3)))
+print of ("whatAt2=" + (str of (what is score at 2)))
+print of ("whoMiss=" + (str of (who is score at 99)))

@@ -12,6 +12,7 @@
  * differential oracle. */
 #include "eigs_embed.h"
 #include "eigenscript.h"
+#include "value_slot.h"
 #include "trace.h"
 #include <math.h>
 #include <stdio.h>
@@ -358,17 +359,25 @@ static void aot_trace_assign(const char *name, double v) {
     EigsSlot s; s.d = v;
     trace_assign(name, s);
 }
-/* The query result is polymorphic: a number on a hit, `null` on a miss (unknown
- * name / no assignment at-or-before the line) — matching the VM, which returns
- * VAL_NULL. So these return an owned Value, used through the boxed value path. */
+/* The query result is polymorphic — a number, a string (`who`), or `null` on a
+ * miss — so route the slot through slot_to_value (exactly like the VM's
+ * INTERROGATE_NAMED_AT) rather than assuming a double, then drop the slot's ref. */
 static Value *aot_prev_val(const char *name) {
     EigsSlot out;
-    if (trace_query_prev(name, &out)) return make_num(out.d);
+    if (trace_query_prev(name, &out)) {
+        Value *v = slot_to_value(out);
+        slot_decref(out);
+        return v;
+    }
     return make_null();
 }
 static Value *aot_query_at_val(int kind, const char *name, int line) {
     EigsSlot out;
-    if (trace_query_at(kind, name, line, &out)) return make_num(out.d);
+    if (trace_query_at(kind, name, line, &out)) {
+        Value *v = slot_to_value(out);
+        slot_decref(out);
+        return v;
+    }
     return make_null();
 }
 /* read an observed numeric var back out of the env (consumes the fetched ref) */
