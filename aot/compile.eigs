@@ -108,6 +108,8 @@ define is_num_expr(node, nm, bt) as:
                 if a[0] == "ident":
                     if bt[a[1]] == 1:
                         return 1
+            if callee[1] == "dot":
+                return 1
             if g_funcs[callee[1]] != null:
                 if (g_funcs[callee[1]])["ret"] == "double":
                     return 1
@@ -332,6 +334,14 @@ define emit_num(node, nm, bt, raw) as:
             if callee[1] == "len":
                 local a is unwrap of node[2]
                 return "aot_buf_len(" + a[1] + ")"
+            if callee[1] == "dot":
+                # dot of [a, b] -> reassociated SIMD reduction (association-
+                # unspecified by spec). Args must be two buffer idents.
+                local darg is unwrap of node[2]
+                local delems is darg[1]
+                local da is unwrap of delems[0]
+                local db is unwrap of delems[1]
+                return "aot_dot(" + da[1] + ", " + db[1] + ")"
             if g_funcs[callee[1]] != null:
                 return emit_call_num of [node, nm, bt]
         throw of "AOT: emit_num unexpected call"
