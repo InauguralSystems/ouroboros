@@ -1,0 +1,28 @@
+# Ranged dot over slices (the attention score-dot pattern): out[k] =
+# dot(A[k*D:k*D+D], B[k*D:k*D+D]), batched. `dot of [slice, slice]` lowers to
+# aot_dot_range — raw-pointer SIMD, no per-element bounds-check, batched guard.
+# Measured vs the equivalent explicit indexed scalar reduction (AOT, dev box,
+# 40 reps over 1M dot-elements): ranged beats scalar ~2.5-3x at EVERY D
+# (16..2048) — the win is bounds-check elision + SIMD, not a high-N crossover.
+#   D=16:2.49x  32:2.78x  128:2.93x  256:2.90x  512:2.93x  2048:2.97x
+define dots(out, A, B, M, D) as:
+    k is 0
+    loop while k < M:
+        out[k] is dot of [A[k * D : k * D + D], B[k * D : k * D + D]]
+        k is k + 1
+D is 512
+M is 2048
+A is buffer of (M * D)
+B is buffer of (M * D)
+out is buffer of M
+i is 0
+loop while i < (M * D):
+    A[i] is ((i % 17) - 8) * 0.01
+    B[i] is ((i % 13) - 6) * 0.02
+    i is i + 1
+r is 0
+loop while r < 40:
+    dots of [out, A, B, M, D]
+    r is r + 1
+print of out[0]
+print of out[1]

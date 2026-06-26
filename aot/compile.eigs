@@ -112,11 +112,15 @@ define is_num_expr(node, nm, bt) as:
                 return 1
             if callee[1] == "sum":
                 local sa is unwrap of node[2]
+                if sa[0] == "slice":
+                    return 1
                 if sa[0] == "ident":
                     if bt[sa[1]] == 1:
                         return 1
             if callee[1] == "norm":
                 local na is unwrap of node[2]
+                if na[0] == "slice":
+                    return 1
                 if na[0] == "ident":
                     if bt[na[1]] == 1:
                         return 1
@@ -323,6 +327,24 @@ define loop_gf(loopnode, minits) as:
     return gf
 
 # ---- emission ----
+# A reduction argument is either a buffer ident (whole buffer) or a slice
+# `buf[lo:hi]`. Returns [buf_value_name, lo_C, hi_C] where lo/hi are raw bound
+# expressions (null start -> 0, null end -> aot_buf_len); the runtime helpers
+# resolve negatives + bounds-check exactly like the VM's OP_SLICE_GET.
+define slice_arg_parts(argnode, nm, bt) as:
+    local n is unwrap of argnode
+    if n[0] == "slice":
+        local tgt is unwrap of n[1]
+        local bnm is tgt[1]
+        local lo is "0"
+        if n[2] != null:
+            lo is emit_num of [n[2], nm, bt, 0]
+        local hi is "aot_buf_len(" + bnm + ")"
+        if n[3] != null:
+            hi is emit_num of [n[3], nm, bt, 0]
+        return [bnm, lo, hi]
+    return [n[1], "0", "aot_buf_len(" + n[1] + ")"]
+
 define emit_num(node, nm, bt, raw) as:
     local t is node[0]
     if t == "_line":
@@ -348,18 +370,28 @@ define emit_num(node, nm, bt, raw) as:
                 return "aot_buf_len(" + a[1] + ")"
             if callee[1] == "dot":
                 # dot of [a, b] -> reassociated SIMD reduction (association-
-                # unspecified by spec). Args must be two buffer idents.
-                local darg is unwrap of node[2]
-                local delems is darg[1]
+                # unspecified by spec). Args are buffer idents or slices; a
+                # slice arg lowers to the zero-copy ranged dot.
+                local delems is (unwrap of node[2])[1]
                 local da is unwrap of delems[0]
                 local db is unwrap of delems[1]
-                return "aot_dot(" + da[1] + ", " + db[1] + ")"
+                if (da[0] != "slice") and (db[0] != "slice"):
+                    return "aot_dot(" + da[1] + ", " + db[1] + ")"
+                local pa is slice_arg_parts of [delems[0], nm, bt]
+                local pb is slice_arg_parts of [delems[1], nm, bt]
+                return "aot_dot_range(" + pa[0] + ", " + pa[1] + ", " + pa[2] + ", " + pb[0] + ", " + pb[1] + ", " + pb[2] + ")"
             if callee[1] == "sum":
                 local sa is unwrap of node[2]
-                return "aot_sum(" + sa[1] + ")"
+                if sa[0] != "slice":
+                    return "aot_sum(" + sa[1] + ")"
+                local ps is slice_arg_parts of [node[2], nm, bt]
+                return "aot_sum_range(" + ps[0] + ", " + ps[1] + ", " + ps[2] + ")"
             if callee[1] == "norm":
                 local na is unwrap of node[2]
-                return "aot_norm(" + na[1] + ")"
+                if na[0] != "slice":
+                    return "aot_norm(" + na[1] + ")"
+                local pn is slice_arg_parts of [node[2], nm, bt]
+                return "aot_norm_range(" + pn[0] + ", " + pn[1] + ", " + pn[2] + ")"
             if callee[1] == "exp":
                 # VM exp guards the result (exp of 1000 -> 1e308), so match.
                 return "num_guard(exp(" + (emit_num of [node[2], nm, bt, 0]) + "))"
@@ -937,6 +969,10 @@ define find_buffer_use(node, name) as:
         if (tg[0] == "ident") and (tg[1] == name):
             return 1
     if t == "index_assign":
+        local tg is unwrap of node[1]
+        if (tg[0] == "ident") and (tg[1] == name):
+            return 1
+    if t == "slice":
         local tg is unwrap of node[1]
         if (tg[0] == "ident") and (tg[1] == name):
             return 1

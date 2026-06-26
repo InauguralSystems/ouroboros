@@ -222,6 +222,61 @@ static inline double aot_norm(Value *a) {
     return num_guard(sqrt(s));
 }
 
+/* ---- ranged reductions over a slice `buf[lo:hi]` (zero-copy) ----
+ * `dot of [A[sa:ea], B[sb:eb]]` / `sum of A[s:e]` / `norm of A[s:e]` lower to
+ * these instead of materializing the slice. Bound resolution mirrors the VM's
+ * OP_SLICE_GET exactly (vm.c): integer-only, negatives count from len, then
+ * 0<=start<=end<=len (<= upper end; out-of-range errors like the VM). */
+static inline long aot_sbound(double x, long len) {
+    long i = (long)x;
+    if ((double)i != x) { fprintf(stderr, "slice bound must be an integer, got %g\n", x); exit(1); }
+    if (i < 0) i += len;
+    if (i < 0 || i > len) { fprintf(stderr, "slice bound %ld out of range (length %ld)\n", (long)x, len); exit(1); }
+    return i;
+}
+static inline double aot_dot_range(Value *A, double sa, double ea, Value *B, double sb, double eb) {
+    long la = A->data.buffer.count, lb = B->data.buffer.count;
+    long s1 = aot_sbound(sa, la), e1 = aot_sbound(ea, la);
+    long s2 = aot_sbound(sb, lb), e2 = aot_sbound(eb, lb);
+    if (s1 > e1 || s2 > e2) { fprintf(stderr, "slice start > end\n"); exit(1); }
+    long n1 = e1 - s1, n2 = e2 - s2, n = n1 < n2 ? n1 : n2, i = 0;
+    double *a = A->data.buffer.data + s1, *b = B->data.buffer.data + s2;
+    aot_vec acc = aot_vset(0.0);
+    for (; i + AOT_VW <= n; i += AOT_VW)
+        acc = aot_vguard(aot_vadd(acc, aot_vguard(aot_vmul(aot_vload(a + i), aot_vload(b + i)))));
+    double s = aot_vhsum(acc);
+    for (; i < n; i++) s = num_guard(s + num_guard(a[i] * b[i]));
+    return num_guard(s);
+}
+static inline double aot_sum_range(Value *A, double sa, double ea) {
+    long la = A->data.buffer.count;
+    long s1 = aot_sbound(sa, la), e1 = aot_sbound(ea, la);
+    if (s1 > e1) { fprintf(stderr, "slice start > end\n"); exit(1); }
+    long n = e1 - s1, i = 0;
+    double *a = A->data.buffer.data + s1;
+    aot_vec acc = aot_vset(0.0);
+    for (; i + AOT_VW <= n; i += AOT_VW)
+        acc = aot_vguard(aot_vadd(acc, aot_vload(a + i)));
+    double s = aot_vhsum(acc);
+    for (; i < n; i++) s = num_guard(s + a[i]);
+    return num_guard(s);
+}
+static inline double aot_norm_range(Value *A, double sa, double ea) {
+    long la = A->data.buffer.count;
+    long s1 = aot_sbound(sa, la), e1 = aot_sbound(ea, la);
+    if (s1 > e1) { fprintf(stderr, "slice start > end\n"); exit(1); }
+    long n = e1 - s1, i = 0;
+    double *a = A->data.buffer.data + s1;
+    aot_vec acc = aot_vset(0.0);
+    for (; i + AOT_VW <= n; i += AOT_VW) {
+        aot_vec v = aot_vload(a + i);
+        acc = aot_vguard(aot_vadd(acc, aot_vguard(aot_vmul(v, v))));
+    }
+    double s = aot_vhsum(acc);
+    for (; i < n; i++) s = num_guard(s + num_guard(a[i] * a[i]));
+    return num_guard(sqrt(s));
+}
+
 /* ---- call a global/builtin by name, single arg (consumes arg) ---- */
 static Value *aot_call_name(Env *g, const char *name, Value *arg) {
     Value *fn = env_get(g, name);
