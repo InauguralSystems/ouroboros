@@ -1,0 +1,22 @@
+# `unobserved:` block — assignments inside store their value but don't update
+# the observer slot trajectory (byte-exact with the VM).
+x is 0.0
+i is 0
+loop while i < 6:
+    x is x + 2.0
+    i is i + 1
+print of (report of x)
+unobserved:
+    x is 1000.0
+    x is 2000.0
+print of (report of x)
+print of x
+y is 0.0
+g is 0
+loop while g < 4:
+    unobserved:
+        y is y + 100.0
+    y is y + 1.0
+    g is g + 1
+print of (report of y)
+print of y
