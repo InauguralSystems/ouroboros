@@ -73,6 +73,17 @@ bounded-range analysis eliding guards toward the raw ceiling (~11× on cloud).
 So no-NaN/Inf stays universal and the language still vectorizes — niche by
 identity, general by implementation. Full write-up: **`DESIGN_no_nan_simd.md`**.
 
+**Implemented.** The AOT recognizes the element-wise buffer-map pattern
+(`loop while ctr < bound: buf[ctr] is <+/-/* over buf[ctr] reads & literals>;
+ctr is ctr+1`) and emits a SIMD loop + scalar tail behind a runtime guard
+(`ctr==0 && bound<=len`), falling back to the checked scalar loop otherwise — so
+it's always correct. The packed guard (`aot_vguard`) and a portable SIMD layer
+(`AOT_VW`/`aot_v*`, SSE2/AVX2/scalar per `-march`) live in `aot_rt.h`; builds use
+`-O3 -march=native`. Parity-verified (`test/t8_vecmap`); **3.66× over the VM** on
+a 2M-element compute-heavy map (this box, SSE2 2-wide; AVX2 is wider). Next:
+loop-invariant scalar broadcasts, `i`-as-value (iota), `/`, and range-elision to
+the raw ceiling.
+
 ## Speed: the specialization spike landed (~64×)
 
 Numeric-scalar specialization is implemented (greatest-fixpoint inference:
