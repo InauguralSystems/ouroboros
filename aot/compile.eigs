@@ -675,14 +675,13 @@ define emit_val(node, nm, bt) as:
     if t == "null":
         return "make_null()"
     if t == "interrogate":
-        # ["interrogate", kind, expr, at]. Result is a number (hit) or null
-        # (miss), so a Value. kinds: 0 what, 2 when, 3/4/5 where/why/how, 6 prev
-        # (all numeric); 1 who (a name string) is not handled yet.
+        # ["interrogate", kind, expr, at]. Routes through slot_to_value, so the
+        # result is polymorphic: a number (what/when/where/why/how/prev), a string
+        # (who -> the binding name), or null on a miss. kinds: 0 what, 1 who,
+        # 2 when, 3/4/5 where/why/how, 6 prev.
         local ik is node[1]
         local ie is unwrap of node[2]
         local iat is node[3]
-        if ik == 1:
-            throw of "AOT: temporal `who is x` not yet supported"
         if iat == null:
             if ik == 6:
                 return "aot_prev_val(\"" + ie[1] + "\")"
