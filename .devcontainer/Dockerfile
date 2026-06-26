@@ -24,10 +24,10 @@ RUN apt-get update \
 # Build + install EigenScript at the pinned ref onto /usr/local (binary on
 # PATH, stdlib at /usr/local/lib/eigenscript — found relative to the binary).
 # EIGS_REF may be a tag, branch, or commit SHA (fetched directly, so an
-# immutable SHA stays reproducible). Pinned to the `dot`/`sum`/`norm` reduction
-# builtins (EigenScript #272 + #273), needed by the AOT's reassociated SIMD
-# reductions.
-ARG EIGS_REF=1e634d1d58e8253c9f04a36136f7c0e855504700
+# immutable SHA stays reproducible). Pinned past the `dot`/`sum`/`norm` reductions
+# (#272/#273) and the exported observer-loop step (#274), needed by the AOT's
+# observer-loop halting.
+ARG EIGS_REF=8d6cf4fded3eb7f3da4785865fae2d80446daa85
 RUN mkdir -p /opt/eigenscript-src && cd /opt/eigenscript-src && git init -q \
  && git remote add origin https://github.com/InauguralSystems/EigenScript.git \
  && git fetch -q --depth 1 origin "${EIGS_REF}" && git checkout -q FETCH_HEAD \

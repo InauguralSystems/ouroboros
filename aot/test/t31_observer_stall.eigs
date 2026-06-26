@@ -1,0 +1,8 @@
+# A loop whose CONDITION never goes false: `not diverging` stays true while x
+# holds constant. The VM's observer stall-check is the only thing that halts it
+# (after 100 converged iterations). The AOT must halt at the exact same step.
+steps is 0
+loop while not diverging:
+    steps is steps + 1
+    x is 5.0
+print of ("steps=" + (str of steps))
