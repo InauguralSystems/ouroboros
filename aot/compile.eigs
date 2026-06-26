@@ -652,6 +652,9 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
         local vinfo is vec_loop of [node, nm, bt]
         if vinfo != null:
             return emit_vectorized of [node, vinfo, ind, nm, bt, minits]
+        local ov is outvec_loop of [node, nm, bt]
+        if ov != null:
+            return emit_outvec of [ov, ind, nm, bt]
         local lg is loop_gf of [node, minits]
         local s is ind + "while (" + (emit_cond of [node[1], nm, bt]) + ") {\n"
         s is s + (emit_stmts of [node[2], ind + "    ", nm, bt, minits, lg])
@@ -1108,6 +1111,240 @@ define emit_vectorized(node, vinfo, ind, nm, bt, minits) as:
     s is s + i3 + "while (" + (emit_cond of [node[1], nm, bt]) + ") {\n"
     s is s + (emit_stmts of [node[2], i3 + "    ", nm, bt, minits, lg])
     s is s + i3 + "}\n"
+    s is s + i2 + "}\n"
+    return s + ind + "}\n"
+
+# ---- output-axis SIMD for matmul-shaped loops ----
+# Vectorize the OUTPUT-column loop `o`, not the reduction: each SIMD lane is an
+# independent output `out[.. + o0+k]` summed over the inner index in the SAME
+# order the scalar VM uses, so it is BYTE-EXACT (no reassociation). The shape:
+#   loop while O < OBOUND:        # output column
+#       ACC is 0
+#       D is 0
+#       loop while D < IBOUND:    # reduction
+#           ACC is ACC + TERM
+#           D is D + 1
+#       RES[SBASE + O] is ACC     # contiguous store (O coeff 1)
+#       O is O + 1
+# TERM's buffer reads must each be O-independent (broadcast) or `base + O`
+# (coeff 1 -> contiguous vector load). The vector path touches a SUBSET of the
+# scalar loop's indices (same o range, grouped), so it inherits its bounds.
+
+# An index `base + O` / `O + base` with O appearing once at coeff 1 -> base node.
+define extract_o_base(idxnode, O) as:
+    local n is unwrap of idxnode
+    if (n[0] == "ident") and (n[1] == O):
+        return ["num", 0]
+    if n[0] == "binop":
+        if n[1] == "+":
+            local a is unwrap of n[2]
+            local b is unwrap of n[3]
+            if (a[0] == "ident") and (a[1] == O) and ((name_in_expr of [n[3], O]) == 0):
+                return n[3]
+            if (b[0] == "ident") and (b[1] == O) and ((name_in_expr of [n[2], O]) == 0):
+                return n[2]
+    return null
+
+# TERM is vectorizable over O if every read is O-independent or `base+O`.
+define term_ov_ok(node, O) as:
+    local n is unwrap of node
+    local t is n[0]
+    if t == "num":
+        return 1
+    if t == "ident":
+        if n[1] == O:
+            return 0
+        return 1
+    if t == "index":
+        if (name_in_expr of [n[2], O]) == 1:
+            if (extract_o_base of [n[2], O]) == null:
+                return 0
+            return 1
+        return 1
+    if t == "binop":
+        local op is n[1]
+        if (op != "+") and (op != "-") and (op != "*"):
+            return 0
+        if (term_ov_ok of [n[2], O]) == 0:
+            return 0
+        return term_ov_ok of [n[3], O]
+    return 0
+
+define collect_ov_bufs(node, O, acc) as:
+    local n is unwrap of node
+    if n[0] == "index":
+        if (name_in_expr of [n[2], O]) == 1:
+            acc[(unwrap of n[1])[1]] is 1
+        return null
+    if n[0] == "binop":
+        collect_ov_bufs of [n[2], O, acc]
+        collect_ov_bufs of [n[3], O, acc]
+        return null
+    return null
+
+# Emit TERM as a packed vector over O (lanes = consecutive output columns).
+define emit_term_ov(node, O, nm, bt) as:
+    local n is unwrap of node
+    local t is n[0]
+    if t == "num":
+        return "aot_vset(" + (str of n[1]) + ")"
+    if t == "ident":
+        return "aot_vset((double)" + n[1] + ")"
+    if t == "index":
+        local tg is unwrap of n[1]
+        if (name_in_expr of [n[2], O]) == 1:
+            local base is extract_o_base of [n[2], O]
+            return "aot_vload(_pv_" + tg[1] + " + " + (emit_int of base) + " + " + O + ")"
+        if (is_int_expr of n[2]) == 1:
+            return "aot_vset(aot_buf_get_i(" + tg[1] + ", " + (emit_int of n[2]) + "))"
+        return "aot_vset(aot_buf_get(" + tg[1] + ", " + (emit_num of [n[2], nm, bt, 0]) + "))"
+    local op is n[1]
+    local a is emit_term_ov of [n[2], O, nm, bt]
+    local b is emit_term_ov of [n[3], O, nm, bt]
+    if op == "*":
+        return "aot_vguard(aot_vmul(" + a + ", " + b + "))"
+    if op == "+":
+        return "aot_vguard(aot_vadd(" + a + ", " + b + "))"
+    return "aot_vguard(aot_vsub(" + a + ", " + b + "))"
+
+define outvec_loop(node, nm, bt) as:
+    local cond is unwrap of node[1]
+    if cond[0] != "binop":
+        return null
+    if cond[1] != "<":
+        return null
+    local lhs is unwrap of cond[2]
+    if lhs[0] != "ident":
+        return null
+    local O is lhs[1]
+    local OBOUND is cond[3]
+    local raw is node[2]
+    local stmts is []
+    for k in range of (len of raw):
+        stmts is (append of [stmts, unwrap of raw[k]])
+    if (len of stmts) != 5:
+        return null
+    # stmt0: ACC is 0
+    local s0 is stmts[0]
+    if s0[0] != "assign":
+        return null
+    local ACC is s0[1]
+    local s0r is unwrap of s0[2]
+    if s0r[0] != "num":
+        return null
+    if s0r[1] != 0:
+        return null
+    # stmt2: inner reduction loop -> D, IBOUND, TERM
+    local s2 is stmts[2]
+    if s2[0] != "loop":
+        return null
+    local icond is unwrap of s2[1]
+    if icond[0] != "binop":
+        return null
+    if icond[1] != "<":
+        return null
+    local ilhs is unwrap of icond[2]
+    if ilhs[0] != "ident":
+        return null
+    local D is ilhs[1]
+    local IBOUND is icond[3]
+    local ibody is []
+    for k in range of (len of s2[2]):
+        ibody is (append of [ibody, unwrap of (s2[2])[k]])
+    if (len of ibody) != 2:
+        return null
+    local a0 is ibody[0]
+    if a0[0] != "assign":
+        return null
+    if a0[1] != ACC:
+        return null
+    local a0r is unwrap of a0[2]
+    if a0r[0] != "binop":
+        return null
+    if a0r[1] != "+":
+        return null
+    local a0l is unwrap of a0r[2]
+    if a0l[0] != "ident":
+        return null
+    if a0l[1] != ACC:
+        return null
+    local TERM is a0r[3]
+    # stmt1: D is 0 (inner counter init)
+    local s1 is stmts[1]
+    if s1[0] != "assign":
+        return null
+    if s1[1] != D:
+        return null
+    # stmt3: RES[SIDX] is ACC
+    local s3 is stmts[3]
+    if s3[0] != "index_assign":
+        return null
+    local rtg is unwrap of s3[1]
+    if rtg[0] != "ident":
+        return null
+    local RES is rtg[1]
+    if bt[RES] != 1:
+        return null
+    local SIDX is s3[2]
+    local sval is unwrap of s3[3]
+    if sval[0] != "ident":
+        return null
+    if sval[1] != ACC:
+        return null
+    # stmt4: O is O + 1
+    local s4 is stmts[4]
+    if s4[0] != "assign":
+        return null
+    if s4[1] != O:
+        return null
+    local SBASE is extract_o_base of [SIDX, O]
+    if SBASE == null:
+        return null
+    if (name_in_expr of [TERM, O]) == 0:
+        return null
+    if (term_ov_ok of [TERM, O]) == 0:
+        return null
+    local ovb is {}
+    collect_ov_bufs of [TERM, O, ovb]
+    return {"O": O, "OBOUND": OBOUND, "ACC": ACC, "D": D, "IBOUND": IBOUND, "RES": RES, "SIDX": SIDX, "SBASE": SBASE, "TERM": TERM, "ovbufs": (keys of ovb)}
+
+define emit_outvec(d, ind, nm, bt) as:
+    local O is d["O"]
+    local OB is emit_num of [d["OBOUND"], nm, bt, 0]
+    local IB is emit_num of [d["IBOUND"], nm, bt, 0]
+    local D is d["D"]
+    local ACC is d["ACC"]
+    local RES is d["RES"]
+    local SBASE is emit_int of d["SBASE"]
+    local TERM is d["TERM"]
+    local ovbufs is d["ovbufs"]
+    local i2 is ind + "    "
+    local i3 is i2 + "    "
+    local i4 is i3 + "    "
+    local s is ind + "{\n"
+    s is s + i2 + "double* _pv_" + RES + " = aot_buf_data(" + RES + ");\n"
+    for k in range of (len of ovbufs):
+        s is s + i2 + "double* _pv_" + ovbufs[k] + " = aot_buf_data(" + ovbufs[k] + ");\n"
+    # vector loop over O (each lane = one output column), byte-exact d-order sum
+    s is s + i2 + "for (; " + O + " + AOT_VW <= " + OB + "; " + O + " += AOT_VW) {\n"
+    s is s + i3 + "aot_vec _acc = aot_vset(0.0);\n"
+    s is s + i3 + D + " = 0;\n"
+    s is s + i3 + "while (" + D + " < " + IB + ") {\n"
+    s is s + i4 + "_acc = aot_vguard(aot_vadd(_acc, " + (emit_term_ov of [TERM, O, nm, bt]) + "));\n"
+    s is s + i4 + D + " = " + D + " + 1;\n"
+    s is s + i3 + "}\n"
+    s is s + i3 + "aot_vstore(_pv_" + RES + " + " + SBASE + " + " + O + ", _acc);\n"
+    s is s + i2 + "}\n"
+    # scalar tail for the remaining columns (reuses the checked emit path)
+    s is s + i2 + "while (" + O + " < " + OB + ") {\n"
+    s is s + i3 + ACC + " = 0;\n"
+    s is s + i3 + D + " = 0;\n"
+    s is s + i3 + "while (" + D + " < " + IB + ") {\n"
+    s is s + i4 + ACC + " = num_guard(" + ACC + " + " + (emit_num of [TERM, nm, bt, 0]) + ");\n"
+    s is s + i4 + D + " = " + D + " + 1;\n"
+    s is s + i3 + "}\n"
+    s is s + i3 + "aot_buf_set_i(" + RES + ", " + (emit_int of d["SIDX"]) + ", " + ACC + ");\n"
+    s is s + i3 + O + " = " + O + " + 1;\n"
     s is s + i2 + "}\n"
     return s + ind + "}\n"
 
