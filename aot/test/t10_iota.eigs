@@ -1,0 +1,14 @@
+n is 7
+xs is zeros of n
+ys is zeros of n
+i is 0
+loop while i < n:
+    xs[i] is i * 2
+    i is i + 1
+i is 0
+loop while i < n:
+    ys[i] is xs[i] + i
+    i is i + 1
+print of xs[6]
+print of ys[0]
+print of ys[6]
