@@ -127,7 +127,19 @@ work. A call `f of (x)` / `f of [a, b]` in numeric context emits `f(x)` / `f(a, 
 (use `f of (x)`, not `f of [x]`, for one arg — the 1-element list doesn't spread).
 `test/t12_func`; `fib(32)` runs **~37× over the VM** (native recursion). Functions
 are self-contained numeric (no module-global reads, no buffer/string params yet).
-Next: neighbor indexing (`buf[i±1]`) for stencils; boxed/buffer function params.
+
+## Neighbor indexing / stencils
+
+A map may read `buf[i ± c]` (constant offset), e.g. a difference `out[i] =
+in[i] - in[i-1]` or a blur. Reads off the ends would wrap (negative) or error
+(positive OOB) in the VM, so the vectorized loop is **split**: the safe interior
+`[-min_off, n - max_off)` vectorizes raw with offset pointers (`_p_in + _vi - 1`),
+while the head/tail boundaries use the **checked** path (`aot_buf_get`, which
+resolves negatives and bounds-errors exactly like the VM). `test/t13_stencil`.
+*Limits:* the write index must be `i` (offset 0); a full-range loop with a `+c`
+read errors at the tail like the VM, and a safe `i < n-1` bound isn't recognized
+yet (the bound must be an ident/num) — so positive-offset stencils need padded
+buffers for now. Next: binop loop bounds; boxed/buffer function params.
 
 ## Speed: the specialization spike landed (~64×)
 

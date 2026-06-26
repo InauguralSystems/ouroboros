@@ -582,11 +582,24 @@ define is_vec_expr(node, ctr, nm, bt) as:
             return 0
         if bt[tgt[1]] != 1:
             return 0
-        if idx[0] != "ident":
+        # index must be the counter, or counter +/- a constant (a neighbor)
+        if idx[0] == "ident":
+            if idx[1] == ctr:
+                return 1
             return 0
-        if idx[1] != ctr:
-            return 0
-        return 1
+        if idx[0] == "binop":
+            if (idx[1] != "+") and (idx[1] != "-"):
+                return 0
+            local ia is unwrap of idx[2]
+            local ib is unwrap of idx[3]
+            if ia[0] != "ident":
+                return 0
+            if ia[1] != ctr:
+                return 0
+            if ib[0] != "num":
+                return 0
+            return 1
+        return 0
     if t == "binop":
         local op is n[1]
         if (op != "+") and (op != "-") and (op != "*") and (op != "/"):
@@ -595,6 +608,32 @@ define is_vec_expr(node, ctr, nm, bt) as:
             return 0
         return is_vec_expr of [n[3], ctr, nm, bt]
     return 0
+
+# Neighbor-offset helpers: idx node is `ctr` (0) or `ctr +/- const`.
+define idx_offset(idxnode, ctr) as:
+    local n is unwrap of idxnode
+    if n[0] == "ident":
+        return 0
+    local c is (unwrap of n[3])[1]
+    if n[1] == "+":
+        return c
+    return 0 - c
+
+define off_suffix(idxnode, ctr) as:
+    local o is idx_offset of [idxnode, ctr]
+    if o == 0:
+        return ""
+    if o > 0:
+        return " + " + (str of o)
+    return " - " + (str of (0 - o))
+
+define collect_offsets(node, ctr, acc) as:
+    local n is unwrap of node
+    if n[0] == "index":
+        return append of [acc, (idx_offset of [n[2], ctr])]
+    if n[0] == "binop":
+        return collect_offsets of [n[3], ctr, (collect_offsets of [n[2], ctr, acc])]
+    return acc
 
 define collect_read_bufs(node, bufs) as:
     local n is unwrap of node
@@ -679,7 +718,7 @@ define emit_vec(node, ctr, raw) as:
         return "aot_vset(" + (str of n[1]) + ")"
     if t == "index":
         local tgt is unwrap of n[1]
-        return "aot_vload(_p_" + tgt[1] + " + _vi)"
+        return "aot_vload(_p_" + tgt[1] + " + _vi" + (off_suffix of [n[2], ctr]) + ")"
     if t == "ident":
         if n[1] == ctr:
             return "aot_viota(_vi)"
@@ -707,7 +746,7 @@ define emit_vscalar(node, ctr, raw) as:
         return str of n[1]
     if t == "index":
         local tgt is unwrap of n[1]
-        return "_p_" + tgt[1] + "[_vi]"
+        return "_p_" + tgt[1] + "[_vi" + (off_suffix of [n[2], ctr]) + "]"
     if t == "ident":
         if n[1] == ctr:
             return "(double)_vi"
@@ -728,13 +767,50 @@ define emit_vscalar(node, ctr, raw) as:
         return "(" + inner + ")"
     return "num_guard(" + inner + ")"
 
+# Checked boundary value: buffer reads go through aot_buf_get (integer/negative-
+# resolve/bounds, exactly like the VM) using _vi + offset; the counter is _vi.
+define emit_vcheck(node, ctr) as:
+    local n is unwrap of node
+    local t is n[0]
+    if t == "num":
+        return str of n[1]
+    if t == "ident":
+        if n[1] == ctr:
+            return "(double)_vi"
+        return n[1]
+    if t == "index":
+        local tgt is unwrap of n[1]
+        return "aot_buf_get(" + tgt[1] + ", (double)(_vi" + (off_suffix of [n[2], ctr]) + "))"
+    local op is n[1]
+    local a is emit_vcheck of [n[2], ctr]
+    local b is emit_vcheck of [n[3], ctr]
+    if op == "/":
+        return "aot_ddiv(" + a + ", " + b + ")"
+    if op == "+":
+        return "num_guard(" + a + " + " + b + ")"
+    if op == "-":
+        return "num_guard(" + a + " - " + b + ")"
+    return "num_guard(" + a + " * " + b + ")"
+
 define emit_vectorized(node, vinfo, ind, nm, bt, minits) as:
     local ctr is vinfo["ctr"]
     local bufs is vinfo["bufs"]
     local assigns is vinfo["assigns"]
     local boundc is emit_num of [vinfo["bound"], nm, bt, 0]
+    # offset range across all reads (write is at offset 0)
+    local offs is []
+    for a in range of (len of assigns):
+        offs is collect_offsets of [(assigns[a])["val"], ctr, offs]
+    local minoff is 0
+    local maxoff is 0
+    for k in range of (len of offs):
+        if offs[k] < minoff:
+            minoff is offs[k]
+        if offs[k] > maxoff:
+            maxoff is offs[k]
     local i2 is ind + "    "
     local i3 is i2 + "    "
+    local i4 is i3 + "    "
     local s is ind + "{\n"
     s is s + i2 + "long _n = (long)(" + boundc + ");\n"
     for k in range of (len of bufs):
@@ -743,16 +819,31 @@ define emit_vectorized(node, vinfo, ind, nm, bt, minits) as:
     for k in range of (len of bufs):
         guard is guard + " && _n <= (long)aot_buf_len(" + bufs[k] + ")"
     s is s + i2 + "if (" + guard + ") {\n"
+    # safe interior [_lo, _hi): all neighbor offsets land in [0, _n)
+    s is s + i3 + "long _lo = " + (str of (0 - minoff)) + "; if (_lo > _n) _lo = _n;\n"
+    s is s + i3 + "long _hi = _n - " + (str of maxoff) + "; if (_hi < _lo) _hi = _lo;\n"
     s is s + i3 + "long _vi = 0;\n"
-    s is s + i3 + "for (; _vi + AOT_VW <= _n; _vi += AOT_VW) {\n"
+    # head boundary: checked (matches VM wrap/error)
+    s is s + i3 + "for (; _vi < _lo; _vi++) {\n"
+    for a in range of (len of assigns):
+        s is s + i4 + "aot_buf_set(" + (assigns[a])["buf"] + ", (double)_vi, " + (emit_vcheck of [(assigns[a])["val"], ctr]) + ");\n"
+    s is s + i3 + "}\n"
+    # interior vector
+    s is s + i3 + "for (; _vi + AOT_VW <= _hi; _vi += AOT_VW) {\n"
     for a in range of (len of assigns):
         local rw is map_elidable of (assigns[a])["val"]
-        s is s + i3 + "    aot_vstore(_p_" + (assigns[a])["buf"] + " + _vi, " + (emit_vec of [(assigns[a])["val"], ctr, rw]) + ");\n"
+        s is s + i4 + "aot_vstore(_p_" + (assigns[a])["buf"] + " + _vi, " + (emit_vec of [(assigns[a])["val"], ctr, rw]) + ");\n"
     s is s + i3 + "}\n"
-    s is s + i3 + "for (; _vi < _n; _vi++) {\n"
+    # interior scalar remainder: raw (still in-bounds)
+    s is s + i3 + "for (; _vi < _hi; _vi++) {\n"
     for a in range of (len of assigns):
         local rw2 is map_elidable of (assigns[a])["val"]
-        s is s + i3 + "    _p_" + (assigns[a])["buf"] + "[_vi] = " + (emit_vscalar of [(assigns[a])["val"], ctr, rw2]) + ";\n"
+        s is s + i4 + "_p_" + (assigns[a])["buf"] + "[_vi] = " + (emit_vscalar of [(assigns[a])["val"], ctr, rw2]) + ";\n"
+    s is s + i3 + "}\n"
+    # tail boundary: checked
+    s is s + i3 + "for (; _vi < _n; _vi++) {\n"
+    for a in range of (len of assigns):
+        s is s + i4 + "aot_buf_set(" + (assigns[a])["buf"] + ", (double)_vi, " + (emit_vcheck of [(assigns[a])["val"], ctr]) + ");\n"
     s is s + i3 + "}\n"
     s is s + i3 + ctr + " = (double)_n;\n"
     s is s + i2 + "} else {\n"

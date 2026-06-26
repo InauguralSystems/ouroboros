@@ -1,0 +1,14 @@
+n is 16
+xs is zeros of n
+ys is zeros of n
+i is 0
+loop while i < n:
+    xs[i] is i + 1
+    i is i + 1
+i is 0
+loop while i < n:
+    ys[i] is xs[i] - xs[i - 1]
+    i is i + 1
+print of ys[0]
+print of ys[1]
+print of ys[15]
