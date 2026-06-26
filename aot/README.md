@@ -60,11 +60,18 @@ map, real semantics):
 
 Only fully-raw vectorizes — and raw is **unsound** (admits NaN/Inf, diverging
 from the VM). `-ffast-math` would let the clamp vectorize, but it *is* dropping
-the no-NaN/Inf guarantee. So the ~3–9× vectorization win is fundamentally in
-tension with the language's no-NaN/Inf semantic. Capturing it is a **language
-decision** (e.g. an opt-in "native-float" mode for marked hot numeric arrays),
-not something AOT can do soundly on its own. AOT made the tradeoff concrete and
-measurable.
+the no-NaN/Inf guarantee. So the vectorization win looked like it required
+*relaxing* no-NaN/Inf.
+
+**Resolved — it doesn't.** The guarantee is *observable behavior* (the compiler
+"as-if" rule), not a per-op branch. `num_guard`'s effect can be delivered as a
+branch-free **packed** guard (`cmp x,x` + `and` for NaN→0, `min`/`max` clamp)
+that vectorizes and is byte-exact vs scalar `num_guard` (verified incl. NaN/Inf).
+Spike (`bench/simd_guard.c`): the sound packed guard runs **3.67× over
+scalar-guard on cloud AVX2** (1.37× on this box's 2-wide SSE2), with the
+bounded-range analysis eliding guards toward the raw ceiling (~11× on cloud).
+So no-NaN/Inf stays universal and the language still vectorizes — niche by
+identity, general by implementation. Full write-up: **`DESIGN_no_nan_simd.md`**.
 
 ## Speed: the specialization spike landed (~64×)
 
