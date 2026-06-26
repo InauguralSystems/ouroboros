@@ -1,0 +1,6 @@
+x is 11
+x is 22
+x is 33
+print of (prev of x at 2)
+print of (prev of x at 3)
+print of (prev of x)
