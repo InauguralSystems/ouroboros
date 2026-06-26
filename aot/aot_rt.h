@@ -197,6 +197,31 @@ static inline double aot_dot(Value *a, Value *b) {
     return num_guard(s);
 }
 
+/* sum of a / norm of a — sibling association-unspecified reductions (same
+ * reassociated-SIMD license as aot_dot; tolerance oracle, not byte-exact). */
+static inline double aot_sum(Value *a) {
+    double *d = a->data.buffer.data;
+    long n = a->data.buffer.count, i = 0;
+    aot_vec acc = aot_vset(0.0);
+    for (; i + AOT_VW <= n; i += AOT_VW)
+        acc = aot_vguard(aot_vadd(acc, aot_vload(d + i)));
+    double s = aot_vhsum(acc);
+    for (; i < n; i++) s = num_guard(s + d[i]);
+    return num_guard(s);
+}
+static inline double aot_norm(Value *a) {
+    double *d = a->data.buffer.data;
+    long n = a->data.buffer.count, i = 0;
+    aot_vec acc = aot_vset(0.0);
+    for (; i + AOT_VW <= n; i += AOT_VW) {
+        aot_vec v = aot_vload(d + i);
+        acc = aot_vguard(aot_vadd(acc, aot_vguard(aot_vmul(v, v))));
+    }
+    double s = aot_vhsum(acc);
+    for (; i < n; i++) s = num_guard(s + num_guard(d[i] * d[i]));
+    return num_guard(sqrt(s));
+}
+
 /* ---- call a global/builtin by name, single arg (consumes arg) ---- */
 static Value *aot_call_name(Env *g, const char *name, Value *arg) {
     Value *fn = env_get(g, name);
