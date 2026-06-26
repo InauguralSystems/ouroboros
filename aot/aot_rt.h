@@ -546,6 +546,50 @@ static AotTensor aot_tensor_relu(AotTensor a) {
 }
 
 /* ---- call a global/builtin by name, single arg (consumes arg) ---- */
+/* ---- value-context indexing: target[idx] ----------------------------------
+ * Mirrors vm.c jit_helper_index_get's slow path byte-for-byte: list/dict/string/
+ * buffer, integer check, negative resolution then bounds (vm_index_resolve).
+ * Consumes both operands; returns an owned result (null on a dict miss). The
+ * error line is 0 (the AOT doesn't track VM line numbers), but a valid index —
+ * the only path the differential harness exercises — is byte-exact. */
+static int aot_idx_is_int(double d, int *out) { int i = (int)d; if ((double)i != d) return 0; *out = i; return 1; }
+static int aot_idx_resolve(int *i, int len) { int r = (*i < 0) ? *i + len : *i; if (r < 0 || r >= len) return 0; *i = r; return 1; }
+
+static Value *aot_index_get(Value *target, Value *idx) {
+    Value *result = NULL;
+    if (target->type == VAL_LIST && idx->type == VAL_NUM) {
+        int i;
+        if (!aot_idx_is_int(idx->data.num, &i))
+            runtime_error(0, "index must be an integer, got %g", idx->data.num);
+        else if (aot_idx_resolve(&i, target->data.list.count)) {
+            result = target->data.list.items[i]; val_incref(result);
+        } else
+            runtime_error(0, "index %d out of range (list length %d)", i, target->data.list.count);
+    } else if (target->type == VAL_DICT && idx->type == VAL_STR) {
+        Value *v = dict_get(target, idx->data.str);
+        if (v) { result = v; val_incref(result); }
+    } else if (target->type == VAL_STR && idx->type == VAL_NUM) {
+        int i;
+        if (!aot_idx_is_int(idx->data.num, &i))
+            runtime_error(0, "index must be an integer, got %g", idx->data.num);
+        else if (aot_idx_resolve(&i, (int)strlen(target->data.str))) {
+            char b[2] = { target->data.str[i], 0 }; result = make_str(b);
+        } else
+            runtime_error(0, "string index %d out of range (length %d)", i, (int)strlen(target->data.str));
+    } else if (target->type == VAL_BUFFER && idx->type == VAL_NUM) {
+        int i;
+        if (!aot_idx_is_int(idx->data.num, &i))
+            runtime_error(0, "index must be an integer, got %g", idx->data.num);
+        else if (aot_idx_resolve(&i, target->data.buffer.count))
+            result = make_num(target->data.buffer.data[i]);
+        else
+            runtime_error(0, "buffer index %d out of range (length %d)", i, target->data.buffer.count);
+    }
+    val_decref(target);
+    val_decref(idx);
+    return result ? result : make_null();
+}
+
 static Value *aot_call_name(Env *g, const char *name, Value *arg) {
     Value *fn = env_get(g, name);
     if (!fn) { fprintf(stderr, "aot: undefined function '%s'\n", name); exit(1); }
