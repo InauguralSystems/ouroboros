@@ -309,8 +309,19 @@ not diverging` over a constant — whose condition never goes false — halts at
 recognized (`aot_report` mirrors `CASE(REPORT_NAME)`: resolve the slot →
 `observer_slot_report`, else `"equilibrium"`). A program using `report` is marked
 observed even without a bare predicate (the VM observes every assignment, so x's
-trajectory must be tracked); `t32_report` matches the VM byte-for-byte. Still not
-yet: interrogatives (`what/why/how is x`), temporal queries (`prev of x`, `x at L`).
+trajectory must be tracked); `t32_report` matches the VM byte-for-byte.
+
+**Temporal interrogatives** read the trace tape, a *different* subsystem from the
+observer slots. `prev of x` (previous value) and `what is x at L` (value bound at
+source line L) are slice 1. `trace_assign` feeds a per-name prev-map + (line,
+value) history **independent of the env** — so temporal vars stay *unboxed* — and
+independent of any flag, stamping each entry with `g_trace_current_line`, which
+the emitter sets per source line (mirroring `OP_LINE`). The query is polymorphic
+— a number on a hit, `null` on a miss (unknown name / no assignment at-or-before
+the line) — so `aot_prev_val` / `aot_query_at_val` return a `Value` through the
+boxed path (`t33_temporal`, incl. `null` misses, matches the VM byte-for-byte).
+Slice 2 — `where/why/how is x at L` (observer snapshots, need `trace_record_obs`)
+and `who/when` — fails loudly for now (`AOT: temporal … not yet supported`).
 
 ## Slices
 
