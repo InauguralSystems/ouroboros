@@ -91,8 +91,15 @@ map emits raw vector arithmetic. Sound (parity-verified) and only fires when
 proven. Measured: **5.18× over the per-op-guarded path** on a compute-bound map
 (this box, SSE2; AVX2 wider) — the move from the guarded floor toward the raw
 ceiling. `t8_vecmap` exercises the elided path (bounded fill); `t7_buffer`/`buf1`
-keep guards (unbounded fill). Next: loop-invariant scalar broadcasts, `i`-as-value
-(iota), `/`.
+keep guards (unbounded fill).
+
+**Scalar broadcasts.** A loop-invariant numeric scalar in a map expression is
+broadcast across lanes (`aot_vset(k)`) — the loop body only assigns the counter +
+buffer elements, so any other scalar is invariant. Scalar *value*-bounds are
+tracked too (a scalar assigned only literals → bounded by `max |literal|`), so
+the realistic kernel `out[i] = in[i]*scale + bias` with constant coefficients
+elides the guard and emits raw vector arithmetic (`test/t9_broadcast`). Next:
+`i`-as-value (iota), `/`.
 
 ## Speed: the specialization spike landed (~64×)
 
