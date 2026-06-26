@@ -552,7 +552,18 @@ static Value *aot_call_name(Env *g, const char *name, Value *arg) {
     Value *res;
     if (fn->type == VAL_BUILTIN) res = fn->data.builtin(arg);
     else                         res = call_eigs_fn(fn, arg);
+    if (!res) { val_decref(arg); return make_null(); }
+    /* A builtin may return the arg itself, or one of its elements BORROWED
+     * (e.g. append -> target = arg[0]). Mirror vm.c's direct-borrow heuristic:
+     * keep arg's ref if res IS arg; incref a borrowed arg-element before the arg
+     * is torn down. Owned returns aren't arg elements, so they're untouched. */
+    if (res == arg) return res;
+    if (arg && arg->type == VAL_LIST) {
+        for (int i = 0; i < arg->data.list.count; i++) {
+            if (arg->data.list.items[i] == res) { val_incref(res); break; }
+        }
+    }
     val_decref(arg);
-    return res ? res : make_null();
+    return res;
 }
 #endif /* AOT_RT_H */
