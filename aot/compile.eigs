@@ -67,7 +67,7 @@ define infer_buffers(stmts) as:
         if (len of rhss) > 0:
             local allbuf is 1
             for j in range of (len of rhss):
-                if (is_buf_create of rhss[j]) == 0:
+                if (is_buf_producing of rhss[j]) == 0:
                     allbuf is 0
             if allbuf == 1:
                 bt[v] is 1
@@ -395,11 +395,13 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
     if t == "assign":
         local name is node[1]
         if bt[name] == 1:
-            # Always create via the heap-zeroed `buffer` builtin: `zeros` is
-            # arena-allocated and the AOT's flat arena clobbers it (same
-            # observable result — a length-N zero buffer).
             local cc is unwrap of node[2]
-            return ind + name + " = aot_call_name(g, \"buffer\", make_num(" + (emit_num of [cc[2], nm, bt, 0]) + "));\n"
+            if (is_buf_create of node[2]) == 1:
+                # Always create via the heap-zeroed `buffer` builtin: `zeros` is
+                # arena-allocated and the AOT's flat arena clobbers it.
+                return ind + name + " = aot_call_name(g, \"buffer\", make_num(" + (emit_num of [cc[2], nm, bt, 0]) + "));\n"
+            # buffer var assigned from a buffer-returning function call
+            return ind + name + " = " + (emit_call_num of [node[2], nm, bt]) + ";\n"
         if nm[name] == 1:
             local raw is 0
             if gf[name] == 1:
@@ -435,6 +437,10 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
         s is s + (emit_stmts of [node[2], ind + "    ", nm, bt, minits, lg])
         return s + ind + "}\n"
     if t == "return":
+        local rexpr is unwrap of node[1]
+        if rexpr[0] == "ident":
+            if bt[rexpr[1]] == 1:
+                return ind + "return " + rexpr[1] + ";\n"
         return ind + "return " + (emit_num of [node[1], nm, bt, 0]) + ";\n"
     throw of ("AOT: cannot emit statement node '" + t + "'")
 
@@ -926,6 +932,45 @@ define find_return(node) as:
             return 1
     return 0
 
+define find_return_node(node) as:
+    if (type of node) != "list":
+        return null
+    if (len of node) == 0:
+        return null
+    if node[0] == "return":
+        return node[1]
+    for k in range of (len of node):
+        local r is find_return_node of node[k]
+        if r != null:
+            return r
+    return null
+
+# ret type: void (no return) | Value* (returns a buffer) | double (numeric).
+define func_ret_type(fn, fbt) as:
+    local r is find_return_node of fn[3]
+    if r == null:
+        return "void"
+    local re is unwrap of r
+    if re[0] == "ident":
+        if fbt[re[1]] == 1:
+            return "Value*"
+    if (is_buf_create of r) == 1:
+        return "Value*"
+    return "double"
+
+# a var is buffer-producing if assigned `buffer/zeros of N` or a Value*-returning call
+define is_buf_producing(rhs) as:
+    if (is_buf_create of rhs) == 1:
+        return 1
+    local n is unwrap of rhs
+    if n[0] == "call":
+        local callee is unwrap of n[1]
+        if callee[0] == "ident":
+            if g_funcs[callee[1]] != null:
+                if (g_funcs[callee[1]])["ret"] == "Value*":
+                    return 1
+    return 0
+
 define func_ptypes(fn) as:
     local params is fn[2]
     local body is fn[3]
@@ -991,10 +1036,16 @@ define emit_function(fn, finfo) as:
             fbt[params[k]] is 1
         else:
             fnm[params[k]] is 1
+    # local buffers created in the body
+    local lb is infer_buffers of body
+    local lbn is keys of lb
+    for k in range of (len of lbn):
+        fbt[lbn[k]] is 1
     local ba is collect_assigns of [body, {}]
     local banames is keys of ba
     for k in range of (len of banames):
-        fnm[banames[k]] is 1
+        if fbt[banames[k]] != 1:
+            fnm[banames[k]] is 1
     local sig is "static " + finfo["ret"] + " " + name + "("
     if (len of params) == 0:
         sig is sig + "void"
@@ -1006,6 +1057,7 @@ define emit_function(fn, finfo) as:
         else:
             sig is sig + "double " + params[k]
     sig is sig + ")"
+    # locals: buffers -> Value*, numerics -> double (params excluded)
     local decls is ""
     for k in range of (len of banames):
         local v is banames[k]
@@ -1014,12 +1066,17 @@ define emit_function(fn, finfo) as:
             if params[p] == v:
                 isparam is 1
         if isparam == 0:
-            decls is decls + "    double " + v + " = 0;\n"
+            if fbt[v] == 1:
+                decls is decls + "    Value* " + v + " = NULL;\n"
+            else:
+                decls is decls + "    double " + v + " = 0;\n"
     local fminits is module_inits of body
     local bodyc is emit_stmts of [body, "    ", fnm, fbt, fminits, {}]
     local tailret is ""
     if (finfo["ret"]) == "double":
         tailret is "    return 0;\n"
+    elif (finfo["ret"]) == "Value*":
+        tailret is "    return NULL;\n"
     return sig + " {\n" + decls + bodyc + tailret + "}\n"
 
 define emit_program(ast) as:
@@ -1037,10 +1094,16 @@ define emit_program(ast) as:
             rest is (append of [rest, stmts[k]])
     for k in range of (len of funcs):
         local fn is funcs[k]
-        local ret is "void"
-        if (find_return of fn[3]) == 1:
-            ret is "double"
-        g_funcs[fn[1]] is {"ptypes": (func_ptypes of fn), "ret": ret}
+        local pt is func_ptypes of fn
+        local ffbt is {}
+        for p in range of (len of fn[2]):
+            if (pt[p]) == "buf":
+                ffbt[(fn[2])[p]] is 1
+        local flb is infer_buffers of fn[3]
+        local flbn is keys of flb
+        for j in range of (len of flbn):
+            ffbt[flbn[j]] is 1
+        g_funcs[fn[1]] is {"ptypes": pt, "ret": (func_ret_type of [fn, ffbt])}
     # Emit functions with EMPTY value-bounds (their params are unbounded, so maps
     # inside them stay guarded — sound). Forward protos first, for recursion.
     g_scalbound is {}
@@ -1067,7 +1130,7 @@ define emit_program(ast) as:
         if bt[bnames[i]] == 1:
             decls is decls + "    Value* " + bnames[i] + " = NULL;\n"
     local body is emit_stmts of [rest, "    ", nm, bt, minits, {}]
-    local hdr is "#include \"aot_rt.h\"\n\n" + fc + "\nint main(void) {\n    Env* g = aot_boot(); (void)g;\n"
+    local hdr is "#include \"aot_rt.h\"\n\nstatic Env* g = NULL;\n\n" + fc + "\nint main(void) {\n    g = aot_boot(); (void)g;\n"
     local ftr is "    aot_shutdown(g);\n    return 0;\n}\n"
     return hdr + decls + body + ftr
 

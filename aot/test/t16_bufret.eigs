@@ -1,0 +1,14 @@
+define make_range(m) as:
+    out is zeros of m
+    i is 0
+    loop while i < m:
+        out[i] is i * i
+        i is i + 1
+    return out
+
+n is 8
+sq is make_range of n
+print of sq[0]
+print of sq[3]
+print of sq[7]
+print of (len of sq)
