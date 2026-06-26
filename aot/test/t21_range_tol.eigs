@@ -1,0 +1,18 @@
+# Ranged reductions over slices: dot/sum/norm of buf[lo:hi] lower to zero-copy
+# aot_dot_range/aot_sum_range/aot_norm_range (reassociated -> tolerance harness).
+b is buffer of 300
+i is 0
+loop while i < 300:
+    b[i] is i * 0.013 - 1.7
+    i is i + 1
+print of (dot of [b[0:150], b[150:300]])
+print of (dot of [b[7:130], b[100:223]])
+print of (sum of b[40:290])
+print of (norm of b[0:256])
+# a slice argument mixed with whole-buffer is handled too
+c is buffer of 150
+i is 0
+loop while i < 150:
+    c[i] is i * 0.02 + 0.5
+    i is i + 1
+print of (dot of [b[0:150], c[:]])
