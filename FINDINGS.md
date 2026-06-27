@@ -340,3 +340,45 @@ this so it isn't "optimized" back into a strided SIMD regression). **The Phase-2
 speedup was fully captured by the zero-copy view (2a): ~2.8× over the VM, ~28×
 over the original nested-list VM** — removing the per-call flatten and the
 builtin-dispatch/refcount overhead, not the matmul inner loop.
+
+### F-OURO-17 — the AOT now compiles a full real observer program (dynamics/life.eigs), byte-exact
+
+The earlier dynamics assessment concluded the AOT was a numeric/buffer **subset
+compiler**: the observer *primitives* were byte-exact (the t27–t36 harness), but
+*real* observer code — built from those primitives via strings, lists, functions,
+for-loops, and observed function-locals — didn't compile. That verdict no longer
+holds. `dynamics/life.eigs` (Conway's Life: scalar `report` vs the temporal
+signature that actually distinguishes a blinker from a block) now AOT-compiles
+and runs **byte-identical to the VM, end to end.**
+
+Seven gaps were closed, one byte-exact PR each, with `life.eigs` as the
+forcing-function oracle (each fix advanced it exactly one gap):
+
+| gap | what it took |
+|---|---|
+| value-context `not`/`and`/`or` | `and`/`or` short-circuit returning the operand, not a bool |
+| list/string locals, returns, `append` | non-numeric local/return typing + the `append` direct-borrow ref |
+| value-context indexing `x[i]` | `aot_index_get` mirroring `vm_index_get` (negative/bounds) |
+| `unobserved:` block | bracket the body with the runtime depth counter |
+| `for var in iter` | materialize + walk; `collect_assigns` descends for-bodies |
+| strings (f-strings, `==`, concat) | already worked; 3 surrounding typing fixes |
+| observed functions | per-function observation + env-param seeding |
+
+The observed-function gap was the architectural one and surfaced a debugging
+cascade — segfault → infinite loop → `e-310` garbage → byte-exact — each step
+localized from the generated C plus a minimal repro:
+
+- A user variable named `g` (life's loop counter) shadowed the emitted global
+  `Env* g`, passing a `long` where the Env was expected. The emitted Env was
+  renamed to a reserved `__eigs_g`.
+- An observed loop var was int-typed, so the *read* used the bare C name (a stuck
+  spurious local) while the *write* went to the env — a non-incrementing counter.
+  Observed functions no longer int-type their locals.
+- A **list**-returning function was treated as buffer-producing, so its result was
+  indexed as a `double[]` → garbage. Only buffer-*returning* functions are now
+  buffer-producing (`retbuf`); a boxed-list index in numeric context reads via
+  `aot_index_get`.
+
+The AOT is still a deliberate subset (one boundary remains guarded, not built:
+*nested* observed functions need a per-call env), but "real observer code doesn't
+compile" is no longer the boundary.

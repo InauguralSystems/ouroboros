@@ -372,6 +372,33 @@ with an `at`), fixed in the self-hosting frontend (byte-exact vs C; bootstrap
 holds) so both the ouroboros compiler and the AOT accept it (`t36_prev_at`).
 Every temporal interrogative form now compiles.
 
+## Real observer code (dynamics/life.eigs) — byte-exact end to end
+
+The observer/temporal *primitives* above were always byte-exact (t27–t36), but a
+[dynamics assessment](../FINDINGS.md) found the AOT was a numeric/buffer **subset
+compiler**: real observer code, built from those primitives via strings, lists,
+functions, `for`-loops, and observed function-locals, didn't compile. That's no
+longer true. `dynamics/life.eigs` — Conway's Life, where scalar `report of
+population` *can't* tell a blinker from a block but the temporal signature history
+can — now AOT-compiles and runs **byte-identical to the VM, end to end.**
+
+Seven gaps closed it, one byte-exact PR each, with `life.eigs` as the
+forcing-function oracle (each fix advanced it exactly one gap): value-context
+`not`/`and`/`or` (short-circuit, returns the operand); list/string locals,
+returns & `append`; value-context indexing (`aot_index_get`, negative + bounds);
+the `unobserved:` block; `for var in iter`; strings/f-strings; and **observed
+functions**. The last is the architectural one — observation is now detected
+**per function** (a non-observing function emits unboxed C even inside an observed
+program — correct *and* faster), with an observing function's params seeded into
+the env at entry. Its debugging cascade (segfault → infinite loop → `e-310`
+garbage → byte-exact) is recorded as **F-OURO-17**; the emitted env was renamed
+`g → __eigs_g` (a user var named `g` had shadowed it), and only buffer-*returning*
+functions are buffer-producing (a list return was being indexed as a `double[]`).
+
+`t37`–`t44` pin these. The AOT is still a deliberate subset — one boundary stays
+guarded, not built (*nested* observed functions need a per-call env) — but the
+boundary is no longer "real observer code."
+
 ## Slices
 
 1. **DONE** — literals, arithmetic + comparison, module-level `x is expr`,
