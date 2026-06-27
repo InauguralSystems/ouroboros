@@ -411,11 +411,20 @@ boundary is no longer "real observer code."
 3. **typed numeric buffers DONE** (checked path) — `buffer of N` / `zeros of N`
    become C `Value*`; element read/write via `aot_buf_get`/`aot_buf_set` (integer
    check + negative-index resolve + bounds), `len of buf` via `aot_buf_len`.
-   Parity-verified (`test/t7_buffer`). The *vectorized* path is blocked on a
-   semantic decision — see "Vectorization vs no-NaN/Inf" below. Lists/dicts/for
-   next.
-4. observer ops (`observer_slot_update*` are callable — the differentiator comes along)
+   Parity-verified (`test/t7_buffer`); the vectorized path landed too — see
+   "Vectorization vs no-NaN/Inf" below.
+4. **observer + temporal DONE** — predicates, `report`, observer-loop stall-check,
+   `prev`/`what`/`who`/`when`/`where`/`why`/`how` (`t27`–`t36`). See the Observer
+   section above.
 5. **type specialization** — numeric-scalar spike **DONE** (see Speed below, ~64×).
+6. **flat-buffer tensors DONE** — shaped `VAL_BUFFER` (EigenScript #275) + an AOT
+   zero-copy view; the matmul/reductions path. See "Flat-buffer tensor arc" above.
+7. **value layer + real observer code DONE** — lists/strings/dicts as values
+   (locals, returns, indexing, `append`), value-context `not`/`and`/`or`,
+   `for var in iter`, the `unobserved:` block, and per-function observation, so a
+   complete real observer program (`dynamics/life.eigs`) compiles byte-exact
+   (`t37`–`t44`). See "Real observer code" above. Remaining guarded boundary:
+   nested observed functions (a per-call env).
 
 ## Vectorization vs no-NaN/Inf (a forge-the-language finding)
 

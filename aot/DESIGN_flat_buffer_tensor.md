@@ -1,5 +1,13 @@
 # Flat-buffer tensor type — design scope
 
+**Status: LANDED (all phases).** Phase 1 = EigenScript #275 (shaped `VAL_BUFFER`,
+~11× VM). Phase 2 = ouroboros #42 (AOT zero-copy view, ~28× over the original
+nested-list VM) + #43 (F-OURO-16: output-axis SIMD doesn't apply — the matvec is
+bandwidth-bound). Phase 3 = Tidepool #7 (inference, ~7×) + #8 (the trainer,
+bit-identical weights). Phase 2b (a per-call-cached flatten / further SIMD) was
+not needed and is not built. The doc below is the original scope, kept for the
+rationale + the decision record.
+
 ## Why
 
 Tensors today are **nested lists** of boxed `Value` numbers. Every `matmul` /
