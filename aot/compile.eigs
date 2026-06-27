@@ -515,6 +515,38 @@ define infer_numeric(stmts, bt) as:
                     changed is 1
     return nm
 
+# Like infer_numeric, but pre-seeds a set of names as numeric (a function's
+# numeric params + globals) so locals that depend on them stay numeric, while
+# correctly demoting locals whose assignments are NOT numeric (boxed literals,
+# `len of <list>`, value-returning calls). Used by emit_function so locals are
+# typed like the body actually computes them, not by a blanket "assigned ->
+# numeric" rule.
+define infer_numeric_seeded(stmts, bt, seed) as:
+    local assigns is collect_assigns of [stmts, {}]
+    local names is keys of assigns
+    local nm is {}
+    local sk is keys of seed
+    for i in range of (len of sk):
+        if seed[sk[i]] == 1:
+            nm[sk[i]] is 1
+    for i in range of (len of names):
+        nm[names[i]] is 1
+    local changed is 1
+    loop while changed == 1:
+        changed is 0
+        for i in range of (len of names):
+            local v is names[i]
+            if nm[v] == 1:
+                local rhss is assigns[v]
+                local allnum is 1
+                for j in range of (len of rhss):
+                    if (is_num_expr of [rhss[j], nm, bt]) == 0:
+                        allnum is 0
+                if allnum == 0:
+                    nm[v] is 0
+                    changed is 1
+    return nm
+
 # ---- bounded-induction analysis (guard-free vars in a loop) ----
 define module_inits(stmts) as:
     local mi is {}
@@ -2098,7 +2130,20 @@ define emit_args(node, fname, nm, bt) as:
         if k > 0:
             s is s + ", "
         if (ptypes[k]) == "buf":
-            s is s + (unwrap of elems[k])[1]
+            # a buffer arg is a Value*: a plain ident -> its C name; a
+            # buffer-returning call (e.g. `seed_blinker of W`) -> emit the call.
+            local be is unwrap of elems[k]
+            if be[0] == "ident":
+                # a buffer C var by name; a boxed Value that holds a buffer at
+                # runtime (e.g. an env-stored list element) is read from the env.
+                if bt[be[1]] == 1:
+                    s is s + be[1]
+                else:
+                    s is s + "env_get(g, \"" + be[1] + "\")"
+            elif be[0] == "call":
+                s is s + (emit_call_num of [be, nm, bt])
+            else:
+                s is s + (emit_val of [elems[k], nm, bt])
         elif ((ptypes[k]) == "tensor") or ((ptypes[k]) == "dict"):
             # pass the tensor/dict Value BORROWED (callee doesn't consume it): an
             # ident reads the env without an incref (no per-call leak in the hot
@@ -2187,17 +2232,25 @@ define emit_function(fn, finfo, gnm, gbt) as:
     local banames is keys of ba
     for k in range of (len of banames):
         local bav is banames[k]
-        if (fbt[bav] != 1) and (g_tensor[bav] != 1):
-            # don't type a local as numeric if any assignment is a boxed value
-            # (list/str/dict/null) — it lives in the env, not a C double. (Value-
-            # returning CALLS are already excluded via fbt by is_buf_producing.)
-            local anyboxed is 0
-            local bavr is ba[bav]
-            for j in range of (len of bavr):
-                if (is_boxed_node of bavr[j]) == 1:
-                    anyboxed is 1
-            if anyboxed == 0:
-                fnm[bav] is 1
+        # A local assigned in the body SHADOWS a same-named global: if it isn't a
+        # function-local buffer (lb) or a buffer param, clear any global-buffer
+        # seed so it's classified from the function's own body (e.g. step's
+        # numeric `rr` shadowing a buffer global `rr` in the caller's scope).
+        if (lb[bav] != 1):
+            local isbufparam is 0
+            for p in range of (len of params):
+                if (params[p] == bav) and ((ptypes[p]) == "buf"):
+                    isbufparam is 1
+            if isbufparam == 0:
+                fbt[bav] is 0
+    # Classify locals numeric via SEEDED inference: globals + numeric params (in
+    # fnm) are the seed; a local is numeric iff every assignment is numeric. This
+    # correctly demotes boxed values, `len of <list>`, and value-returning calls.
+    local lnm is infer_numeric_seeded of [body, fbt, fnm]
+    local lnk is keys of lnm
+    for k in range of (len of lnk):
+        if (lnm[lnk[k]] == 1) and (fbt[lnk[k]] != 1) and (g_tensor[lnk[k]] != 1):
+            fnm[lnk[k]] is 1
     # integer names for this scope (params forced + int-by-assignment locals);
     # sets g_int, which is_int_expr/emit_num/emit_stmt read while emitting.
     g_int is infer_int of [body, params, fnm, fbt]

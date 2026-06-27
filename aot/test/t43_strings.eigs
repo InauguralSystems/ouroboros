@@ -1,0 +1,17 @@
+name is "blinker"
+period is 2
+msg is f"period-{period} oscillator: {name}"
+print of msg
+print of (name == "blinker")
+print of (name == "block")
+g is "a" + "b" + "c"
+print of g
+define classify(n) as:
+    if n == 0:
+        return "zero"
+    if n > 0:
+        return "pos"
+    return "neg"
+print of (classify of 5)
+print of (classify of 0)
+print of f"val={classify of (0 - 3)}"
