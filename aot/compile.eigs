@@ -724,7 +724,7 @@ define emit_num(node, nm, bt, raw) as:
     if t == "ident":
         # in an observed program numeric vars live in the env (boxed)
         if g_observed == 1:
-            return "aot_num(aot_get(g, \"" + node[1] + "\"))"
+            return "aot_num(aot_get(__eigs_g, \"" + node[1] + "\"))"
         return node[1]
     if t == "unary":
         local uop is node[1]
@@ -734,6 +734,11 @@ define emit_num(node, nm, bt, raw) as:
         return "((" + uv + " == 0.0) ? 1.0 : 0.0)"
     if t == "index":
         local tgt is unwrap of node[1]
+        # a buffer C var -> aot_buf_get; a boxed value (list element used in a
+        # numeric context, e.g. rr[1] where rr is a boxed list) -> index then
+        # extract the number.
+        if (tgt[0] == "ident") and (bt[tgt[1]] != 1):
+            return "aot_num(aot_index_get(" + (emit_val of [node[1], nm, bt]) + ", make_num(" + (emit_num of [node[2], nm, bt, 0]) + ")))"
         if (is_int_expr of node[2]) == 1:
             return "aot_buf_get_i(" + tgt[1] + ", " + (emit_int of node[2]) + ")"
         return "aot_buf_get(" + tgt[1] + ", " + (emit_num of [node[2], nm, bt, 0]) + ")"
@@ -824,7 +829,7 @@ define emit_val(node, nm, bt) as:
             throw of "AOT: temporal interrogative without `at` only supports `prev`"
         return "aot_query_at_val(" + (str of ik) + ", \"" + ie[1] + "\", (int)(" + (emit_num of [iat, nm, bt, 0]) + "))"
     if t == "ident":
-        return "aot_get(g, \"" + node[1] + "\")"
+        return "aot_get(__eigs_g, \"" + node[1] + "\")"
     if t == "index":
         # target[idx] on a boxed value (list/dict/string/buffer). A buffer index
         # is numeric and handled by emit_num; this is the boxed-value path.
@@ -878,13 +883,13 @@ define emit_val(node, nm, bt) as:
         if callee[1] == "report":
             local ra is unwrap of node[2]
             if ra[0] == "ident":
-                return "aot_report(g, \"" + ra[1] + "\")"
+                return "aot_report(__eigs_g, \"" + ra[1] + "\")"
         # user function returning a Value* (e.g. a tensor-returning forward pass)
         # -> direct native C call.
         if g_funcs[callee[1]] != null:
             if (g_funcs[callee[1]])["ret"] == "Value*":
                 return (callee[1]) + "(" + (emit_args of [node, callee[1], nm, bt]) + ")"
-        return "aot_call_name(g, \"" + callee[1] + "\", " + (emit_val of [node[2], nm, bt]) + ")"
+        return "aot_call_name(__eigs_g, \"" + callee[1] + "\", " + (emit_val of [node[2], nm, bt]) + ")"
     throw of ("AOT: cannot emit value node '" + t + "'")
 
 # Render a tensor-valued expression as a C `AotTensor` expr. Producers (matmul/
@@ -949,10 +954,10 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
                 # `buffer of [r, c]` -> a shaped 2-D buffer; pass the list Value.
                 local barg is unwrap of cc[2]
                 if barg[0] == "list":
-                    return ind + name + " = aot_call_name(g, \"buffer\", " + (emit_val of [cc[2], nm, bt]) + ");\n"
+                    return ind + name + " = aot_call_name(__eigs_g, \"buffer\", " + (emit_val of [cc[2], nm, bt]) + ");\n"
                 # Always create via the heap-zeroed `buffer` builtin: `zeros` is
                 # arena-allocated and the AOT's flat arena clobbers it.
-                return ind + name + " = aot_call_name(g, \"buffer\", make_num(" + (emit_num of [cc[2], nm, bt, 0]) + "));\n"
+                return ind + name + " = aot_call_name(__eigs_g, \"buffer\", make_num(" + (emit_num of [cc[2], nm, bt, 0]) + "));\n"
             # buffer var assigned from a buffer-returning function call
             return ind + name + " = " + (emit_call_num of [node[2], nm, bt]) + ";\n"
         if nm[name] == 1:
@@ -966,7 +971,7 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
                 # entropy/dH for `where/why/how is x at L`.
                 if g_traced == 1:
                     oa is oa + ind + "aot_trace_assign(\"" + name + "\", " + orhs + ");\n"
-                oa is oa + ind + "aot_observe_num(g, \"" + name + "\", " + orhs + ");\n"
+                oa is oa + ind + "aot_observe_num(__eigs_g, \"" + name + "\", " + orhs + ");\n"
                 return oa
             local raw is 0
             if gf[name] == 1:
@@ -976,7 +981,7 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
             if g_traced == 1:
                 asn is asn + ind + "aot_trace_assign(\"" + name + "\", " + name + ");\n"
             return asn
-        return ind + "aot_set(g, \"" + name + "\", " + (emit_val of [node[2], nm, bt]) + ");\n"
+        return ind + "aot_set(__eigs_g, \"" + name + "\", " + (emit_val of [node[2], nm, bt]) + ");\n"
     if t == "index_assign":
         local tgt is unwrap of node[1]
         if tgt[0] == "ident":
@@ -1006,9 +1011,9 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
         # (can halt while the predicate still holds); a plain condition gets the
         # cap only. No vectorization here — observed numerics are env-boxed.
         if g_observed == 1:
-            local chk is "eigs_loop_cap_step(g)"
+            local chk is "eigs_loop_cap_step(__eigs_g)"
             if (has_predicate of node[1]) == 1:
-                chk is "eigs_loop_stall_step(g)"
+                chk is "eigs_loop_stall_step(__eigs_g)"
             local olg is loop_gf of [node, minits]
             local os is ind + "while (" + (emit_cond of [node[1], nm, bt]) + ") {\n"
             os is os + ind + "    if (" + chk + ") break;\n"
@@ -1071,7 +1076,7 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
         local fo is ind + "{ Value* " + itv + " = " + itexpr + ";\n"
         fo is fo + ind + "  long " + nv + " = aot_iter_len(" + itv + ");\n"
         fo is fo + ind + "  for (long " + kv + " = 0; " + kv + " < " + nv + "; " + kv + "++) {\n"
-        fo is fo + ind + "    aot_set(g, \"" + fvar + "\", aot_iter_get(" + itv + ", " + kv + "));\n"
+        fo is fo + ind + "    aot_set(__eigs_g, \"" + fvar + "\", aot_iter_get(" + itv + ", " + kv + "));\n"
         fo is fo + (emit_stmts of [fbody, ind + "    ", nm, bt, minits, gf])
         fo is fo + ind + "  }\n"
         if fowned == 1:
@@ -2050,6 +2055,47 @@ define func_ret_tensor(fn) as:
             return 1
     return 0
 
+# Does this function return a BUFFER specifically (vs a boxed list/str/dict)? A
+# call to it is buffer-producing (its result var is a Value* buffer, indexed with
+# aot_buf_get); a list/str/dict-returning Value* function is NOT buffer-producing
+# (its result is a boxed value, indexed with aot_index_get).
+define func_ret_buf(fn, fbt) as:
+    local r is find_return_node of fn[3]
+    if r == null:
+        return 0
+    local re is unwrap of r
+    if re[0] == "ident":
+        if fbt[re[1]] == 1:
+            return 1
+    if (is_buf_create of r) == 1:
+        return 1
+    return 0
+
+# Does this function observe (predicates/report) or use temporal queries on its
+# own scope? Such a function routes locals/params through the GLOBAL env (Part
+# 2a), which clobbers if it nests inside another observing function.
+define func_observed(fn) as:
+    if (uses_observer of fn[3]) == 1:
+        return 1
+    return has_interrogate of fn[3]
+
+# Does this AST call a user function that is itself observed/temporal?
+define calls_observed(node) as:
+    if (type of node) != "list":
+        return 0
+    if (len of node) == 0:
+        return 0
+    if node[0] == "call":
+        local callee is unwrap of node[1]
+        if callee[0] == "ident":
+            if g_funcs[callee[1]] != null:
+                if (g_funcs[callee[1]])["observed"] == 1:
+                    return 1
+    for k in range of (len of node):
+        if (calls_observed of node[k]) == 1:
+            return 1
+    return 0
+
 # a var is buffer-producing if assigned `buffer/zeros of N` or a Value*-returning call
 define is_buf_producing(rhs) as:
     if (is_buf_create of rhs) == 1:
@@ -2063,7 +2109,9 @@ define is_buf_producing(rhs) as:
                 # it's an ordinary boxed value (env), not a buffer global.
                 if (g_funcs[callee[1]])["rettensor"] == 1:
                     return 0
-                if (g_funcs[callee[1]])["ret"] == "Value*":
+                # only a BUFFER-returning function makes its result a buffer; a
+                # list/str/dict-returning Value* function yields a boxed value.
+                if (g_funcs[callee[1]])["retbuf"] == 1:
                     return 1
     return 0
 
@@ -2139,7 +2187,7 @@ define emit_args(node, fname, nm, bt) as:
                 if bt[be[1]] == 1:
                     s is s + be[1]
                 else:
-                    s is s + "env_get(g, \"" + be[1] + "\")"
+                    s is s + "env_get(__eigs_g, \"" + be[1] + "\")"
             elif be[0] == "call":
                 s is s + (emit_call_num of [be, nm, bt])
             else:
@@ -2155,7 +2203,7 @@ define emit_args(node, fname, nm, bt) as:
                 if bt[te[1]] == 1:
                     s is s + te[1]
                 else:
-                    s is s + "env_get(g, \"" + te[1] + "\")"
+                    s is s + "env_get(__eigs_g, \"" + te[1] + "\")"
             else:
                 s is s + (emit_val of [elems[k], nm, bt])
         else:
@@ -2190,6 +2238,26 @@ define emit_function(fn, finfo, gnm, gbt) as:
     local name is fn[1]
     local params is fn[2]
     local body is fn[3]
+    # Per-function observation: a function is observed/traced by ITS OWN body, so
+    # a function that doesn't observe emits UNBOXED (params/locals as C doubles),
+    # even inside an observed program. Saved/restored around the body emit.
+    local _save_obs is g_observed
+    local _save_tr is g_traced
+    local _save_otr is g_obs_traced
+    g_traced is has_interrogate of body
+    g_obs_traced is has_obs_interrogate of body
+    g_observed is 0
+    if (uses_observer of body) == 1:
+        g_observed is 1
+    if g_obs_traced == 1:
+        g_observed is 1
+    # Part 2a routes an observed/temporal function's locals through the GLOBAL
+    # env, which is correct only when such functions don't nest. Fail loudly
+    # rather than silently miscompile the nested case (the per-call env, Part 2b,
+    # is what lifts this).
+    if (g_observed == 1) or (g_traced == 1):
+        if (calls_observed of body) == 1:
+            throw of ("AOT: observed/temporal function '" + name + "' calls another observed/temporal function — needs a per-call env (Part 2b), not yet supported")
     local ptypes is finfo["ptypes"]
     local fnm is {}
     local fbt is {}
@@ -2230,6 +2298,9 @@ define emit_function(fn, finfo, gnm, gbt) as:
         fnm[lbn[k]] is 0
     local ba is collect_assigns of [body, {}]
     local banames is keys of ba
+    # Names a local SHADOWS away from a same-named global buffer -> must be
+    # DECLARED locally (not skipped as the global) in the decl loop.
+    local shadowed is {}
     for k in range of (len of banames):
         local bav is banames[k]
         # A local assigned in the body SHADOWS a same-named global: if it isn't a
@@ -2242,6 +2313,8 @@ define emit_function(fn, finfo, gnm, gbt) as:
                 if (params[p] == bav) and ((ptypes[p]) == "buf"):
                     isbufparam is 1
             if isbufparam == 0:
+                if gbt[bav] == 1:
+                    shadowed[bav] is 1
                 fbt[bav] is 0
     # Classify locals numeric via SEEDED inference: globals + numeric params (in
     # fnm) are the seed; a local is numeric iff every assignment is numeric. This
@@ -2252,8 +2325,13 @@ define emit_function(fn, finfo, gnm, gbt) as:
         if (lnm[lnk[k]] == 1) and (fbt[lnk[k]] != 1) and (g_tensor[lnk[k]] != 1):
             fnm[lnk[k]] is 1
     # integer names for this scope (params forced + int-by-assignment locals);
-    # sets g_int, which is_int_expr/emit_num/emit_stmt read while emitting.
-    g_int is infer_int of [body, params, fnm, fbt]
+    # sets g_int, which is_int_expr/emit_num/emit_stmt read while emitting. In an
+    # OBSERVED function, numerics are env-boxed (routed through aot_get/observe),
+    # so they must NOT be int-typed — emit_int would emit the bare C name instead
+    # of the env value (a stuck spurious local), as a non-incrementing loop var.
+    g_int is {}
+    if g_observed == 0:
+        g_int is infer_int of [body, params, fnm, fbt]
     local sig is "static " + finfo["ret"] + " " + name + "("
     if (len of params) == 0:
         sig is sig + "void"
@@ -2281,6 +2359,15 @@ define emit_function(fn, finfo, gnm, gbt) as:
         for k in range of (len of params):
             if (ptypes[k]) == "tensor":
                 decls is decls + "    AotTensor " + params[k] + " = aot_treg(aot_tensor_from_value(" + params[k] + "_v));\n"
+    # Part 2a — observed function: its numeric params are C vars but the body
+    # reads them via the env (g_observed routes idents through aot_get). Seed them
+    # into the env at entry. Correct while observed functions don't nest/recurse
+    # (the body-call guard above rejects that case); the per-call-env fix (2b) is
+    # what removes the limitation.
+    if g_observed == 1:
+        for k in range of (len of params):
+            if (ptypes[k]) == "num":
+                decls is decls + "    aot_set(__eigs_g, \"" + params[k] + "\", make_num(" + params[k] + "));\n"
     # locals: tensors -> AotTensor, buffers -> Value*, integers -> long, other
     # numerics -> double (params + globals excluded; an assign to a global
     # updates the global).
@@ -2293,6 +2380,9 @@ define emit_function(fn, finfo, gnm, gbt) as:
         local isglobal is 0
         if (gnm[v] == 1) or (gbt[v] == 1):
             isglobal is 1
+        # a local that shadows a global buffer is declared locally, not skipped.
+        if shadowed[v] == 1:
+            isglobal is 0
         if (isparam == 0) and (isglobal == 0):
             if g_tensor[v] == 1:
                 decls is decls + "    AotTensor " + v + " = aot_tensor_null();\n"
@@ -2312,7 +2402,11 @@ define emit_function(fn, finfo, gnm, gbt) as:
             tailret is "    aot_tframe_leave(_tmark);\n    return NULL;\n"
         else:
             tailret is "    return NULL;\n"
-    return sig + " {\n" + decls + bodyc + tailret + "}\n"
+    local _result is sig + " {\n" + decls + bodyc + tailret + "}\n"
+    g_observed is _save_obs
+    g_traced is _save_tr
+    g_obs_traced is _save_otr
+    return _result
 
 define emit_program(ast) as:
     local stmts is ast
@@ -2361,7 +2455,7 @@ define emit_program(ast) as:
             if (pt[p]) != "buf":
                 if (uses_int_forcing of [fn[3], (fn[2])[p]]) == 1:
                     ip[(fn[2])[p]] is 1
-        g_funcs[fn[1]] is {"ptypes": pt, "ret": (func_ret_type of [fn, ffbt]), "iparams": ip, "rettensor": (func_ret_tensor of fn)}
+        g_funcs[fn[1]] is {"ptypes": pt, "ret": (func_ret_type of [fn, ffbt]), "iparams": ip, "rettensor": (func_ret_tensor of fn), "retbuf": (func_ret_buf of [fn, ffbt]), "observed": (func_observed of fn)}
     # Module globals are computed first so functions can READ them (they become
     # file-scope vars in C; a function's params/locals shadow same-named globals).
     local bt is infer_buffers of rest
@@ -2406,8 +2500,8 @@ define emit_program(ast) as:
     local obshdr is ""
     if g_obs_traced == 1:
         obshdr is "    g_trace_obs_hist = 1;\n"
-    local hdr is "#include \"aot_rt.h\"\n\nstatic Env* g = NULL;\n" + gdecls + "\n" + fc + "\nint main(void) {\n    g = aot_boot(); (void)g;\n" + obshdr
-    local ftr is "    aot_shutdown(g);\n    return 0;\n}\n"
+    local hdr is "#include \"aot_rt.h\"\n\nstatic Env* __eigs_g = NULL;\n" + gdecls + "\n" + fc + "\nint main(void) {\n    __eigs_g = aot_boot(); (void)__eigs_g;\n" + obshdr
+    local ftr is "    aot_shutdown(__eigs_g);\n    return 0;\n}\n"
     return hdr + body + ftr
 
 # ---- driver ----
