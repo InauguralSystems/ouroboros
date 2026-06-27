@@ -1,0 +1,23 @@
+# Per-function observation: a non-observing function unboxes its param/locals
+# (C vars) even in an observed program; an observing function routes its locals/
+# params through the env and reads them back (report + observed-local return).
+define dbl(x) as:
+    y is x * 2
+    return y
+define f(n) as:
+    acc is 0.0
+    i is 0
+    loop while i < n:
+        acc is acc + 2.0
+        i is i + 1
+    return [report of acc, acc, i]
+z is dbl of 5
+r is f of 3
+print of z
+print of r[0]
+print of r[1]
+print of r[2]
+m is 0.0
+loop while m < 4:
+    m is m + 1.0
+print of (report of m)
