@@ -1,0 +1,29 @@
+# A function with mixed return kinds must NOT be classified buffer-producing
+# (func_ret_buf) off its first return alone: a caller would then use the
+# buffer-specialized aot_buf_get on a plain list value and read garbage. Mixed
+# buffer/list returns are generic Value*, indexed with boxed aot_index_get.
+# Differential vs the VM oracle.
+define maybe_buf(n) as:
+    if n > 0:
+        b is buffer of 2
+        b[0] is 7
+        b[1] is 8
+        return b
+    return [1, 2]
+
+define rmaybe_buf(n) as:
+    if n > 0:
+        return [9, 8]
+    b is zeros of 2
+    b[0] is 3
+    b[1] is 4
+    return b
+
+x is maybe_buf of 0
+print of x[0]
+y is maybe_buf of 1
+print of y[0]
+p is rmaybe_buf of 1
+print of p[1]
+q is rmaybe_buf of 0
+print of q[0]
