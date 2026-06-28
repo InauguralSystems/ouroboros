@@ -175,6 +175,13 @@ define eigen_tokenize(source) as:
             if (handled == 0) and (c == "f") and ((pos + 1) < src_len):
                 if (char_at of [source, pos + 1]) == "\"":
                     pos is pos + 2
+                    # Wrap the whole desugaring in parens so the f-string is a
+                    # single primary (like the C parser's TOK_FSTR), regardless
+                    # of surrounding precedence. Without this, `print of f"..."`
+                    # mis-parses once `of` binds tightly: `of` would take only
+                    # the first `seg` and leave `+ (str of ...)` as a stray
+                    # statement.
+                    append of [tokens, ["lparen", null, line]]
                     has_segments is 0
                     buf is ""
                     reading_fstr is 1
@@ -256,6 +263,7 @@ define eigen_tokenize(source) as:
                         append of [tokens, ["str", buf, line]]
                     elif has_segments == 0:
                         append of [tokens, ["str", "", line]]
+                    append of [tokens, ["rparen", null, line]]  # close the wrap
                     handled is 1
             # Strings
             if (handled == 0) and (c == "\""):
@@ -286,8 +294,17 @@ define eigen_tokenize(source) as:
                         pos is pos + 1
                 append of [tokens, ["str", buf, line]]
                 handled is 1
-            # Numbers
-            if (handled == 0) and ((_is_digit of c) == 1):
+            # Numbers (integer, decimal, leading-dot, scientific notation),
+            # matching the C lexer's strtod. A leading `.` starts a number only
+            # when followed by a digit, so `.field` still lexes as a dot.
+            num_start is 0
+            if handled == 0:
+                if (_is_digit of c) == 1:
+                    num_start is 1
+                elif (c == ".") and ((pos + 1) < src_len):
+                    if (_is_digit of (char_at of [source, pos + 1])) == 1:
+                        num_start is 1
+            if num_start == 1:
                 buf is ""
                 has_dot is 0
                 reading_num is 1
@@ -302,6 +319,25 @@ define eigen_tokenize(source) as:
                         pos is pos + 1
                     else:
                         reading_num is 0
+                # Exponent: e/E, optional sign, >=1 digit. The lookahead guards
+                # against consuming a bare `e` (strtod parity: `1e` -> 1 + `e`).
+                if pos < src_len:
+                    ech is char_at of [source, pos]
+                    if (ech == "e") or (ech == "E"):
+                        ep is pos + 1
+                        esign is ""
+                        if ep < src_len:
+                            sc is char_at of [source, ep]
+                            if (sc == "+") or (sc == "-"):
+                                esign is sc
+                                ep is ep + 1
+                        if ep < src_len:
+                            if (_is_digit of (char_at of [source, ep])) == 1:
+                                buf is buf + ech + esign
+                                pos is ep
+                                loop while (pos < src_len) and ((_is_digit of (char_at of [source, pos])) == 1):
+                                    buf is buf + (char_at of [source, pos])
+                                    pos is pos + 1
                 append of [tokens, ["num", num of buf, line]]
                 handled is 1
             # Identifiers and keywords
@@ -878,7 +914,12 @@ define _p_parse_call(p) as:
         if (_p_peek_type of p) == "kw":
             if (_p_peek_val of p) == "of":
                 _p_advance of p
-                arg is _p_parse_add of p
+                # RHS is unary-or-tighter, matching the C parser
+                # (parser.c parse_relation): `of` does not absorb trailing
+                # infix, so `sqrt of x + 1` is `(sqrt of x) + 1` and
+                # `len of xs - 1` is `(len of xs) - 1`. Right-associative
+                # `f of g of x` and `f of -x` still work (unary recurses).
+                arg is _p_parse_unary of p
                 left is ["call", left, arg]
             else:
                 parsing is 0
