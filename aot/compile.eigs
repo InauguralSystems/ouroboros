@@ -41,6 +41,13 @@ g_scalbound is {}
 # measured ~2x lever for matmul-style index-heavy loops). Set per function /
 # module body (like g_bufbound) by infer_int.
 g_int is {}
+# Declared C return type of the function currently being emitted (func_ret_type's
+# verdict). The return-statement emitter coerces its value to match this — boxing
+# a numeric value (make_num) for a Value* function, or unboxing an env-boxed
+# value (aot_num) for a double function — so the emitted C is type-correct even
+# when the body's per-variable numeric inference disagrees with func_ret_type
+# (e.g. a numeric local demoted to env-boxed storage by `for` handling).
+g_ret_type is ""
 # 1 if the program uses the observer system (bare predicates). When set, numeric
 # variables are kept in the env (boxed) and their assignments go through the
 # runtime observer (aot_observe_num) so the slot trajectory + predicates match
@@ -1044,10 +1051,21 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
             if g_tensor[rexpr[1]] == 1:
                 return ind + "{ Value* _r = aot_tensor_to_value(" + rexpr[1] + "); aot_tframe_leave(_tmark); return _r; }\n"
         # numeric return -> a C double; anything else (list/str/dict/non-numeric)
-        # is a boxed Value* (matches func_ret_type's "Value*" classification).
+        # is a boxed Value*. Coerce the emitted value to the function's declared
+        # return type (g_ret_type) so the C is type-correct even when the body's
+        # per-variable inference disagrees with func_ret_type — e.g. a numeric
+        # local demoted to env-boxed storage by `for` handling is returned from a
+        # `double` function: unbox it with aot_num. Both coercions are
+        # value-preserving, so output stays byte-exact with the VM.
         if (is_num_expr of [node[1], nm, bt]) == 1:
-            return ind + "return " + (emit_num of [node[1], nm, bt, 0]) + ";\n"
-        return ind + "return " + (emit_val of [node[1], nm, bt]) + ";\n"
+            local nv is emit_num of [node[1], nm, bt, 0]
+            if g_ret_type == "Value*":
+                return ind + "return make_num(" + nv + ");\n"
+            return ind + "return " + nv + ";\n"
+        local vv is emit_val of [node[1], nm, bt]
+        if g_ret_type == "double":
+            return ind + "return aot_num(" + vv + ");\n"
+        return ind + "return " + vv + ";\n"
     if t == "break":
         return ind + "break;\n"
     if t == "continue":
@@ -2244,6 +2262,8 @@ define emit_function(fn, finfo, gnm, gbt) as:
     local _save_obs is g_observed
     local _save_tr is g_traced
     local _save_otr is g_obs_traced
+    local _save_ret is g_ret_type
+    g_ret_type is finfo["ret"]
     g_traced is has_interrogate of body
     g_obs_traced is has_obs_interrogate of body
     g_observed is 0
@@ -2406,6 +2426,7 @@ define emit_function(fn, finfo, gnm, gbt) as:
     g_observed is _save_obs
     g_traced is _save_tr
     g_obs_traced is _save_otr
+    g_ret_type is _save_ret
     return _result
 
 define emit_program(ast) as:
