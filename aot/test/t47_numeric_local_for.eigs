@@ -14,7 +14,24 @@ define scale(n) as:
         s is s + (i * 2)
     return s + 1
 
+# Mixed-return functions: func_ret_type must look at EVERY return, not just the
+# first. A numeric-then-boxed function (or the reverse) is declared Value*, so a
+# boxed return is never coerced through aot_num (which silently miscompiled it).
+define maybe(n) as:
+    if n > 0:
+        return n + 1
+    return [n]
+
+define rmaybe(n) as:
+    if n > 0:
+        return [n]
+    return n + 1
+
 print of (accum of 0)
 print of (accum of 4)
 print of (scale of 5)
 print of (accum of 3 + scale of 3)
+print of (maybe of 1)
+print of (maybe of 0)
+print of (rmaybe of 1)
+print of (rmaybe of 0)
