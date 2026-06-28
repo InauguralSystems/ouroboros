@@ -25,14 +25,27 @@ dot-access), so any difference is a real finding:
 Reproducible: every run prints its master seed; re-run with --seed N. Each
 finding's program text is saved under --findings-dir for a minimal repro.
 
+IMPORTANT -- point the oracle at the PINNED VM. EIGS must be the SAME
+EigenScript the AOT is built and tested against: ouroboros's
+.devcontainer/Dockerfile `EIGS_REF` (a tag/branch/SHA; currently v0.19.0), NOT
+your local main checkout. The default below is the sibling working tree for dev
+convenience, but a main checkout that is AHEAD of the pin will flag main-vs-pin
+deltas (a language feature in main but not yet in the pinned VM) as false
+"drift" -- not actionable until EIGS_REF moves. For CI-relevant results, install
+the pinned ref and run with EIGS=$(command -v eigenscript), or build the pinned
+tag and point EIGS at that binary. (This bit once: the soft-keyword feature on
+EigenScript main flagged a "drift" the v0.19.0-pinned AOT shouldn't chase.)
+
 Usage:
-    python3 fuzzdiff.py [--count N] [--seed N] [--findings-dir DIR]
-                        [--strict-gaps] [--quiet]
+    EIGS=<pinned-vm> python3 fuzzdiff.py [--count N] [--seed N]
+                        [--findings-dir DIR] [--strict-gaps] [--quiet]
 Exit status: nonzero if any DIVERGENCE (or any AOT_GAP under --strict-gaps).
 """
 import argparse, os, random, subprocess, sys, tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+# Default oracle = the sibling working tree (dev convenience). For CI-relevant
+# results set EIGS to the PINNED VM (.devcontainer Dockerfile EIGS_REF) instead.
 EIGS = os.environ.get("EIGS", os.path.join(HERE, "..", "..", "EigenScript", "src", "eigenscript"))
 
 
@@ -170,6 +183,8 @@ def main():
     if not os.path.exists(EIGS):
         sys.exit(f"VM binary not found: {EIGS} (set EIGS=...)")
     print(f"fuzzdiff: seed={seed} count={args.count} VM={EIGS}")
+    print("  (oracle must match ouroboros's pinned EIGS_REF; a main checkout "
+          "ahead of the pin yields non-actionable main-vs-pin 'drift')")
 
     divergences, gaps, skipped, tested = [], [], 0, 0
     tmp = tempfile.mkdtemp(prefix="fuzzdiff.")

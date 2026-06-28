@@ -382,3 +382,28 @@ localized from the generated C plus a minimal repro:
 The AOT is still a deliberate subset (one boundary remains guarded, not built:
 *nested* observed functions need a per-call env), but "real observer code doesn't
 compile" is no longer the boundary.
+
+### F-OURO-18 — AOT soft-keyword frontend support is ready but PIN-GATED — TRACKING
+
+`fuzzdiff.py` found real second-parser drift: the canonical EigenScript parser
+(`parser.c`, on EigenScript **main** / `[Unreleased]`) now binds the soft
+keywords `prev`/`at` and the six question words as ordinary identifiers in
+binding positions, but the AOT frontend (`src/frontend.eigs`) still rejected
+them (`unexpected token kw 'at'`). Commit **2adcb31** fixes this — mirrors the
+canonical rule in `frontend.eigs`, adds `aot/test/t49_soft_keyword_idents.eigs`,
+and isolates the fuzzer's soft-keyword generator from the separate compound-assign
+gap (`at += N` → `at is at + N`). It passed locally (full AOT parity + self-host
+bootstrap; fuzzdiff clean).
+
+It was **reverted** (d359dec) because the feature is NOT in the pinned VM:
+`.devcontainer/Dockerfile` pins `EIGS_REF=v0.19.0`, whose VM rejects soft-keyword
+identifiers, so the patched AOT *over-accepts* relative to its oracle and t49
+diverged in CI. Per policy, the AOT must byte-match the **pinned** VM, not main.
+
+ACTION (do this with the next `EIGS_REF` bump): when `EIGS_REF` moves to a release
+that includes the soft-keyword feature, `git cherry-pick 2adcb31` to re-land the
+frontend fix + t49. The cherry-pick also restores the `at += N` → `at is at + N`
+generator isolation in `fuzzdiff.py` — **keep it**, or the fuzzer will conflate
+"soft keywords accepted" with "compound assignment unsupported" (a separate,
+still-open AOT emitter gap). Run `fuzzdiff.py` with `EIGS` pointed at the pinned
+VM, never local main.
