@@ -27,6 +27,27 @@ for prog in test/programs/*.eigs; do
   fi
 done
 
+# Negative cases: the front-end must REJECT (not silently skip) characters the C
+# lexer rejects — the `=` of `+=`, bitwise `& | ^ ~`, etc. Silently skipping them
+# produced a silently-WRONG parse (`x += 3` → `x + 3` discarded; `~5` → `5`), so
+# these can't be parity cases (the C VM compiles `+=`/bitwise) — ouroboros must
+# error (non-zero exit) instead.
+echo "--- reject (front-end raises on unknown characters, not silent-skip) ---"
+reject_one() {
+  printf '%s\n' "$1" > /tmp/ouro_reject.eigs
+  if "$EIGS" ouroboros.eigs /tmp/ouro_reject.eigs >/dev/null 2>&1; then
+    echo "FAIL: accepted [$(printf '%s' "$1" | tr '\n' ';')] (should reject)"; fail=1
+  else
+    echo "PASS: rejected [$(printf '%s' "$1" | tr '\n' ';')]"
+  fi
+  rm -f /tmp/ouro_reject.eigs
+}
+reject_one 'print of (~5)'
+reject_one 'print of (6 & 3)'
+reject_one 'x is 5
+x += 3
+print of x'
+
 echo "--- bootstrap (full self-host: front-end + codegen, byte-exact fixed point) ---"
 if "$EIGS" test/bootstrap.eigs 2>/dev/null | grep -q "PASS"; then
   echo "PASS: bootstrap fixed point"
