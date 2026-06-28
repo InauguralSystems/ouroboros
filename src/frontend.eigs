@@ -531,38 +531,6 @@ define _p_expect(p, ttype) as:
     _p_advance of p
     return tok
 
-# Soft keywords are usable as ordinary identifiers outside their special forms,
-# mirroring the canonical C parser (EigenScript/src/parser.c). prev/at tokenize
-# as "kw", the six question words as "interrogative".
-# Identifier-like in a binding position (params, loop vars, catch, local):
-define _tok_ident_like(tok) as:
-    if tok[0] == "ident":
-        return 1
-    if tok[0] == "interrogative":
-        return 1
-    if tok[0] == "kw":
-        if (tok[1] == "prev") or (tok[1] == "at"):
-            return 1
-    return 0
-
-# A bare `X is ...` assignment target: identifier-like minus the question words
-# (`what is e` is the interrogative form). prev/at have no `is` special form.
-define _tok_assign_name(tok) as:
-    if tok[0] == "ident":
-        return 1
-    if tok[0] == "kw":
-        if (tok[1] == "prev") or (tok[1] == "at"):
-            return 1
-    return 0
-
-# Consume an identifier-like token in a binding position; return it.
-define _p_expect_ident_like(p) as:
-    tok is _p_cur of p
-    if (_tok_ident_like of tok) == 0:
-        throw of f"parse error: expected identifier, got {tok[0]} ('{tok[1]}') at line {tok[2]}"
-    _p_advance of p
-    return tok
-
 define _p_skip_newlines(p) as:
     loop while (_p_peek_type of p) == "newline":
         _p_advance of p
@@ -608,7 +576,7 @@ define _p_parse_statement(p) as:
         # here. A name that shadows a module binding is not exercised.)
         if (_p_peek_val of p) == "local":
             _p_advance of p
-            local_tok is _p_expect_ident_like of p
+            local_tok is _p_expect of [p, "ident"]
             if (_p_peek_type of p) == "kw":
                 if (_p_peek_val of p) == "is":
                     _p_advance of p
@@ -622,7 +590,7 @@ define _p_parse_statement(p) as:
             params is []
             if (_p_peek_type of p) == "lparen":
                 _p_advance of p
-                loop while (_tok_ident_like of (_p_cur of p)) == 1:
+                loop while (_p_peek_type of p) == "ident":
                     append of [params, (_p_cur of p)[1]]
                     _p_advance of p
                     if (_p_peek_type of p) == "comma":
@@ -670,7 +638,7 @@ define _p_parse_statement(p) as:
         # for
         if (_p_peek_val of p) == "for":
             _p_advance of p
-            var_tok is _p_expect_ident_like of p
+            var_tok is _p_expect of [p, "ident"]
             _p_expect of [p, "kw"]
             iter is _p_parse_expr of p
             _p_expect of [p, "colon"]
@@ -700,7 +668,7 @@ define _p_parse_statement(p) as:
             _p_skip_newlines of p
             _p_expect of [p, "kw"]
             err_name is "err"
-            if (_tok_ident_like of (_p_cur of p)) == 1:
+            if (_p_peek_type of p) == "ident":
                 err_name is (_p_cur of p)[1]
                 _p_advance of p
             _p_expect of [p, "colon"]
@@ -763,9 +731,8 @@ define _p_parse_statement(p) as:
             body is _p_parse_block of p
             return ["_line", _stmt_line, ["unobserved", body]]
 
-    # Dot-/index-assignment and plain assignment. prev/at are valid assignment
-    # targets too (soft keywords); question words stay interrogative (not here).
-    if (_tok_assign_name of (_p_cur of p)) == 1:
+    # Dot-assignment and index-assignment: ident.field is val, ident[i] is val
+    if tt == "ident":
         # Check for dot/bracket after ident
         peek1 is _p_peek_at of [p, 1]
         if (peek1[0] == "dot") or (peek1[0] == "lbracket"):
@@ -992,28 +959,20 @@ define _p_parse_primary(p) as:
         _p_advance of p
         return ["num", 0]
 
-    # Temporal: `prev of x [at <line>]` (kind 6); bare `prev`/`at` are ordinary
-    # identifiers (soft keywords), matching the C grammar.
+    # Temporal: prev of x [at <line>]  (kind 6). Matches the C grammar.
     if tt == "kw":
         if (_p_peek_val of p) == "prev":
             _p_advance of p
-            is_temporal is 0
             if (_p_peek_type of p) == "kw":
                 if (_p_peek_val of p) == "of":
-                    is_temporal is 1
-            if is_temporal == 1:
-                _p_advance of p
-                prev_expr is _p_parse_primary of p
-                prev_at is null
-                if (_p_peek_type of p) == "kw":
-                    if (_p_peek_val of p) == "at":
-                        _p_advance of p
-                        prev_at is _p_parse_primary of p
-                return ["interrogate", 6, prev_expr, prev_at]
-            return ["ident", "prev"]
-        if (_p_peek_val of p) == "at":
-            _p_advance of p
-            return ["ident", "at"]
+                    _p_advance of p
+            prev_expr is _p_parse_primary of p
+            prev_at is null
+            if (_p_peek_type of p) == "kw":
+                if (_p_peek_val of p) == "at":
+                    _p_advance of p
+                    prev_at is _p_parse_primary of p
+            return ["interrogate", 6, prev_expr, prev_at]
 
     # Interrogatives: `<kw> is x [at <line>]` (what/who/when/where/why/how).
     # Matches the C grammar (not the meta-interpreter's `<kw> of x`).
@@ -1100,7 +1059,7 @@ define _p_parse_primary(p) as:
         if (_p_peek_type of p) == "kw":
             if (_p_peek_val of p) == "for":
                 _p_advance of p
-                var_tok is _p_expect_ident_like of p
+                var_tok is _p_expect of [p, "ident"]
                 _p_expect of [p, "kw"]
                 iter_expr is _p_parse_expr of p
                 filter_expr is null
