@@ -446,8 +446,12 @@ define eigen_tokenize(source) as:
                     pos is pos + 1
                     handled is 1
                 else:
-                    # Unknown character — skip
-                    pos is pos + 1
+                    # Unknown character — raise, matching the C lexer. Silently
+                    # skipping it dropped real tokens (the `=` of `+=`, the
+                    # bitwise `& | ^ ~`, `\`, `@`, …) and produced a
+                    # silently-WRONG parse instead of an error — e.g. `x += 3`
+                    # lexed as `x + 3` (discarded) and `~5` as `5`.
+                    throw of ("ouroboros: unexpected character '" + c + "' at line " + (str of line))
 
     # Emit remaining dedents
     loop while (len of indent_stack) > 1:
