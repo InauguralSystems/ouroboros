@@ -119,10 +119,8 @@ def gen_fstring(r):
 def gen_soft_keyword_idents(r):
     # prev/at are identifier-like outside their special forms; `what` binds as a
     # loop var / param (just not before bare `is`).
-    # (compound assign `+=` is a separate, general AOT gap -- keep it out so
-    #  this family isolates soft-keyword identity.)
     return (f"at is {_int(r)}\n"
-            f"at is at + {_pint(r)}\n"
+            f"at += {_pint(r)}\n"
             f"prev is {_int(r)}\n"
             f"for what in [{_pint(r)}, {_pint(r)}, {_pint(r)}]:\n"
             f"    at is at + what\n"
