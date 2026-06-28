@@ -1,0 +1,9 @@
+# Scientific-notation and leading-dot numeric literals (strtod parity with the
+# C lexer). Differential vs the VM oracle.
+print of 1e2
+print of 1e-2
+print of .5e2
+print of 1E2
+print of 2.5e3
+print of (1e2 + 1)
+print of (.5e1 * 4)
