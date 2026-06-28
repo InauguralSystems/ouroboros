@@ -1,0 +1,20 @@
+# A numeric local mutated inside a `for` is demoted to env-boxed storage, but
+# the function's return type still infers `double`. The return statement coerces
+# the boxed value to match (aot_num), so the C is type-correct and output stays
+# byte-exact with the VM. Differential vs the VM oracle.
+define accum(n) as:
+    x is 10
+    for i in range of n:
+        x is x + i
+    return x
+
+define scale(n) as:
+    s is 0
+    for i in range of n:
+        s is s + (i * 2)
+    return s + 1
+
+print of (accum of 0)
+print of (accum of 4)
+print of (scale of 5)
+print of (accum of 3 + scale of 3)
