@@ -456,8 +456,16 @@ define cg_node(c, node) as:
         append of [c.loops, {"header": header, "breaks": []}]
         local jn is cg_emit_jump of [c, OP_ITER_NEXT]
         cg_emit of [c, OP_LOOP_ENV_FRESH]
-        cg_emit of [c, OP_SET_NAME_LOCAL]
-        cg_emit_u16 of [c, cg_const of [c, node[1]]]
+        # Bind the loop var. If it already owns a local slot (a parameter or an
+        # earlier assignment in this function), write THAT slot — the body reads
+        # it via GET_LOCAL, and a SET_NAME_LOCAL would leave the slot stale, so
+        # the body never sees the iteration value (silent wrong result).
+        if (c.is_function == 1) and (has_key of [c.locals, node[1]]):
+            cg_emit of [c, OP_SET_LOCAL]
+            cg_emit_u16 of [c, c.locals[node[1]]]
+        else:
+            cg_emit of [c, OP_SET_NAME_LOCAL]
+            cg_emit_u16 of [c, cg_const of [c, node[1]]]
         cg_emit of [c, OP_POP]
         cg_block_discard of [c, node[3]]
         cg_emit of [c, OP_LOOP_ENV_END]
@@ -553,6 +561,21 @@ define cg_scan_module_names(stmts) as:
             MODULE_NAMES[s[1]] is 1
         if s[0] == "func":
             MODULE_NAMES[s[1]] is 1
+        # Descend into top-level block bodies — a name first bound inside a
+        # module-scope if/loop/for/try is still a module binding (the C runtime
+        # resolves it dynamically). Missing it made an inner function shadow the
+        # name instead of mutating the global (silent wrong result). Function
+        # bodies are NOT scanned (their assignments are function-scope).
+        if s[0] == "if":
+            cg_scan_module_names of s[2]
+            cg_scan_module_names of s[3]
+        if s[0] == "loop":
+            cg_scan_module_names of s[2]
+        if s[0] == "for":
+            cg_scan_module_names of s[3]
+        if s[0] == "try":
+            cg_scan_module_names of s[1]
+            cg_scan_module_names of s[3]
 
 # Compile source to a chunk descriptor: [code, constants, functions, 0, name, []].
 define ouro_compile(source) as:
