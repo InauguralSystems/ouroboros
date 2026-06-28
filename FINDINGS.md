@@ -423,3 +423,26 @@ generator isolation in `fuzzdiff.py` — **keep it**, or the fuzzer will conflat
 "soft keywords accepted" with "compound assignment unsupported" (a separate,
 still-open AOT emitter gap). Run `fuzzdiff.py` with `EIGS` pointed at the pinned
 VM, never local main.
+
+---
+
+## F-OURO-19 — front-end silently SKIPPED unknown characters → silent-wrong; now RAISES — FIXED
+
+The lexer's catch-all `else: # Unknown character — skip` (frontend.eigs) dropped
+any byte it didn't tokenize and advanced — so a construct built from an
+unsupported character lexed to a *different, valid-looking* token stream and
+compiled to a silently-WRONG program instead of erroring:
+- `x += 3` lexed as `x`, `+`, `3` (the `=` skipped) → the expression `x + 3` was
+  computed and discarded; `x` never changed.
+- `~5` lexed as `5` (the `~` skipped) → printed `5`, not `-6`.
+- bitwise `& | ^` were skipped likewise.
+
+The C lexer *rejects* these characters (`unexpected character`); the AOT emitter
+genuinely does not yet support compound-assignment / bitwise operators, but the
+front-end must FAIL LOUD rather than miscompile. The catch-all now
+`throw`s `ouroboros: unexpected character '<c>' at line N`, matching the C
+lexer's reject behavior. These can't be **parity** cases (the C VM *compiles*
+`+=`/bitwise), so they live as **reject** cases in `test/run.sh` (ouroboros must
+exit non-zero). Implementing the operators is the remaining follow-up; this
+closes the silent-wrong half. Validated against the pinned v0.19.0 VM: 34
+parity + 3 reject + bootstrap fixed point all green.
