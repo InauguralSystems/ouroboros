@@ -114,10 +114,26 @@ module scope → `SET_NAME` (mutate the outer binding); otherwise → a fresh lo
 slot. Reads are `GET_LOCAL` for known locals, else `GET_NAME`. ouroboros
 pre-scans the module for top-level assigns/defines to seed the module-name set,
 which is what makes `counter is counter + 1` inside a function mutate the module
-`counter` while a function's own temporaries stay local. (The `local` keyword is
-not yet covered — the vendored front-end doesn't tokenize it; for-loop variables
-bind via `SET_NAME_LOCAL`/`GET_NAME`, correct unless a loop var name collides
-with a local slot in the same function.)
+`counter` while a function's own temporaries stay local.
+
+**Two silent miscompiles here, both FIXED (the upstream re-review caught them; the
+32-program suite missed them because no sample hit either case):**
+- **for-loop variable vs. a local slot.** The `for` codegen unconditionally
+  emitted `SET_NAME_LOCAL` for the loop var, but if that name already owned a
+  local slot (a parameter, or an earlier assignment) the body read the slot via
+  `GET_LOCAL` and never saw the iteration value (`define f(i) as: for i in
+  [10,20]: …` → C 30, ouroboros 0). Now: a loop var that already owns a slot is
+  written with `SET_LOCAL` to that slot, matching the slot-reading body and the C
+  runtime (incl. the value persisting after the loop).
+- **module name first bound inside a block.** `cg_scan_module_names` only walked
+  *direct* top-level assigns/defines, so a global first created inside a
+  module-scope `if`/`loop`/`for`/`try` was absent from the module-name set — an
+  inner function then shadowed it with a fresh local instead of mutating it
+  (`if 1==1: counter is 0` then `define inc()…counter…` → C 2, ouroboros 0). The
+  scan now descends into those block bodies (not into function bodies — those are
+  function scope). Reduced reproducers: `test/programs/for_var_slot_collision.eigs`,
+  `test/programs/module_name_in_block.eigs`. (The `local` keyword is now tokenized
+  by the front-end.)
 
 ---
 
