@@ -2091,31 +2091,48 @@ define func_ret_type(fn, fbt) as:
 # Does this function return a TENSOR (its return ident is a tensor local)? Such a
 # call yields a boxed nested-list Value at the caller, not a buffer global.
 define func_ret_tensor(fn) as:
-    local r is find_return_node of fn[3]
-    if r == null:
+    local rets is []
+    collect_return_nodes of [fn[3], rets]
+    if (len of rets) == 0:
         return 0
-    local re is unwrap of r
-    if re[0] == "ident":
-        local ftt is infer_tensors of fn[3]
-        if ftt[re[1]] == 1:
-            return 1
-    return 0
+    # tensor-returning ONLY if EVERY return is a tensor local; a mixed
+    # tensor/other function is generic Value* (callers must not use the
+    # tensor-serialization path on a non-tensor return).
+    local ftt is infer_tensors of fn[3]
+    for i in range of (len of rets):
+        local re is unwrap of rets[i]
+        local istensor is 0
+        if re[0] == "ident":
+            if ftt[re[1]] == 1:
+                istensor is 1
+        if istensor == 0:
+            return 0
+    return 1
 
 # Does this function return a BUFFER specifically (vs a boxed list/str/dict)? A
 # call to it is buffer-producing (its result var is a Value* buffer, indexed with
 # aot_buf_get); a list/str/dict-returning Value* function is NOT buffer-producing
 # (its result is a boxed value, indexed with aot_index_get).
 define func_ret_buf(fn, fbt) as:
-    local r is find_return_node of fn[3]
-    if r == null:
+    local rets is []
+    collect_return_nodes of [fn[3], rets]
+    if (len of rets) == 0:
         return 0
-    local re is unwrap of r
-    if re[0] == "ident":
-        if fbt[re[1]] == 1:
-            return 1
-    if (is_buf_create of r) == 1:
-        return 1
-    return 0
+    # buffer-producing ONLY if EVERY return is a buffer (a buffer-local ident or
+    # a direct buffer/zeros-of-N create). A mixed buffer/list function is generic
+    # Value*; callers must index it with boxed aot_index_get, not the
+    # buffer-specialized aot_buf_get (which on a list value reads garbage).
+    for i in range of (len of rets):
+        local re is unwrap of rets[i]
+        local isbuf is 0
+        if re[0] == "ident":
+            if fbt[re[1]] == 1:
+                isbuf is 1
+        if (is_buf_create of rets[i]) == 1:
+            isbuf is 1
+        if isbuf == 0:
+            return 0
+    return 1
 
 # Does this function observe (predicates/report) or use temporal queries on its
 # own scope? Such a function routes locals/params through the GLOBAL env (Part
