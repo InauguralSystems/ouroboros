@@ -1,0 +1,15 @@
+# The for-loop variable reuses a name that already owns a local slot (a param,
+# or an earlier assignment). The body must read the iteration value via that
+# slot — ouroboros bound the loop var by name and left the slot stale.
+define f(i) as:
+    total is 0
+    for i in [10, 20]:
+        total is total + i
+    return total
+print of (f of 0)
+
+define g(acc) as:
+    for acc in [1, 2, 3]:
+        local z is acc
+    return acc
+print of (g of 0)
