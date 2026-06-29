@@ -25,8 +25,14 @@ OP_SUB is 5
 OP_MUL is 6
 OP_DIV is 7
 OP_MOD is 8
+OP_BAND is 9
+OP_BOR is 10
+OP_BXOR is 11
+OP_SHL is 12
+OP_SHR is 13
 OP_NEG is 14
 OP_NOT is 15
+OP_BNOT is 16
 OP_EQ is 17
 OP_NE is 18
 OP_LT is 19
@@ -155,6 +161,16 @@ define cg_binop_code(op) as:
         return OP_DIV
     if op == "%":
         return OP_MOD
+    if op == "&":
+        return OP_BAND
+    if op == "|":
+        return OP_BOR
+    if op == "^":
+        return OP_BXOR
+    if op == "<<":
+        return OP_SHL
+    if op == ">>":
+        return OP_SHR
     if op == "==":
         return OP_EQ
     if op == "!=":
@@ -279,6 +295,8 @@ define cg_node(c, node) as:
         cg_node of [c, node[2]]
         if node[1] == "-":
             cg_emit of [c, OP_NEG]
+        elif node[1] == "~":
+            cg_emit of [c, OP_BNOT]
         else:
             cg_emit of [c, OP_NOT]
         return null

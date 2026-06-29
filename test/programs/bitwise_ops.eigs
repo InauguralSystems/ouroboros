@@ -1,0 +1,38 @@
+# Compound assignment (+= -= *= /= and the bitwise forms) and bitwise operators
+# (& | ^ ~ << >>), with precedence. The C VM compiles all of these; this is a
+# byte-for-byte parity case proving ouroboros now does too (was a reject case).
+x is 5
+x += 3
+print of x
+x -= 2
+print of x
+x *= 4
+print of x
+x /= 3
+print of x
+
+# bitwise binary + unary
+print of (6 & 3)
+print of (6 | 1)
+print of (6 ^ 3)
+print of (~5)
+print of (1 << 4)
+print of (256 >> 2)
+
+# precedence: & tighter than |, shift looser than +, bitor tighter than ==
+print of (5 & 3 | 8)
+print of (1 << 2 + 1)
+print of (4 | 1 == 5)
+
+# bitwise compound assignment
+m is 12
+m &= 10
+print of m
+m |= 1
+print of m
+m ^= 3
+print of m
+m <<= 2
+print of m
+m >>= 1
+print of m
