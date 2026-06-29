@@ -446,3 +446,25 @@ lexer's reject behavior. These can't be **parity** cases (the C VM *compiles*
 exit non-zero). Implementing the operators is the remaining follow-up; this
 closes the silent-wrong half. Validated against the pinned v0.19.0 VM: 34
 parity + 3 reject + bootstrap fixed point all green.
+
+## F-OURO-20 — front-end OVER-ACCEPTED `true`/`false` as boolean literals → silent-wrong; now plain identifiers — FIXED
+
+The front-end lexed `true`→literal `1` and `false`→literal `0` (a keyword-token
+pair, plus parser primaries returning `["num", 1]`/`["num", 0]`). **EigenScript
+has no boolean keywords** — the C lexer has no `true`/`false` token; they are
+ordinary identifiers and the language uses `1`/`0`. So ouroboros diverged from
+the C oracle three ways:
+- `print of true` → C: `Error: undefined variable 'true'`; ouroboros: `1`.
+- `x is true` → C: error; ouroboros: `x = 1` (silent miscompile).
+- `true is 5` (a valid assignment to the name `true` in C) → C: `5`; ouroboros:
+  `parse error: unexpected token kw 'is'` (a keyword can't be an lvalue).
+
+Fix: drop `true`/`false` entirely (no back-compat) — removed from `_keywords`,
+the lexer's literal-emission elifs, and the parser's primary handling. They now
+fall through to the `ident` path and behave as plain names, byte-for-byte with
+the C evaluator (undefined unless bound; assignable like any identifier). The
+front-end never used them itself, so the bootstrap fixed point is unaffected.
+Permanent positive parity case: `test/programs/true_false_are_identifiers.eigs`
+(uses them as bound names). Validated against the pinned v0.19.0 VM: 35 parity +
+3 reject + bootstrap fixed point all green. (Same silent-wrong class as
+F-OURO-19; F-OURO-13: the premise was reproduced minimally before fixing.)
