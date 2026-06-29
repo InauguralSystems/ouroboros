@@ -362,6 +362,14 @@ define eigen_tokenize(source) as:
                 else:
                     append of [tokens, ["ident", buf, line]]
                 handled is 1
+            # Three-character operators (<<=, >>=) — must precede the two-char
+            # checks so longest-match wins.
+            if (handled == 0) and ((pos + 2) < src_len):
+                three is (c + (char_at of [source, pos + 1])) + (char_at of [source, pos + 2])
+                if (three == "<<=") or (three == ">>="):
+                    append of [tokens, ["op", three, line]]
+                    pos is pos + 3
+                    handled is 1
             # Two-character operators
             if (handled == 0) and ((pos + 1) < src_len):
                 next is char_at of [source, pos + 1]
@@ -390,9 +398,21 @@ define eigen_tokenize(source) as:
                     append of [tokens, ["pipe", null, line]]
                     pos is pos + 2
                     handled is 1
+                elif (two == "+=") or (two == "-=") or (two == "*=") or (two == "/="):
+                    append of [tokens, ["op", two, line]]
+                    pos is pos + 2
+                    handled is 1
+                elif (two == "&=") or (two == "|=") or (two == "^="):
+                    append of [tokens, ["op", two, line]]
+                    pos is pos + 2
+                    handled is 1
+                elif (two == "<<") or (two == ">>"):
+                    append of [tokens, ["op", two, line]]
+                    pos is pos + 2
+                    handled is 1
             # Single-character operators and punctuation
             if handled == 0:
-                if (contains of ["+-*/%<>", c]) == 1:
+                if (contains of ["+-*/%<>&|^~", c]) == 1:
                     append of [tokens, ["op", c, line]]
                     pos is pos + 1
                     handled is 1
@@ -760,6 +780,15 @@ define _p_parse_statement(p) as:
                 _p_advance of p
                 expr is _p_parse_expr of p
                 return ["_line", _stmt_line, ["assign", name, expr]]
+        # Compound assignment: `x += e` desugars to `x is x + e` (and the
+        # arithmetic/bitwise family), matching the C parser's compound_to_op
+        # desugaring. The LHS read is an ["ident", name] node.
+        if (_p_peek_type of p) == "op":
+            cbase is _compound_base_op of (_p_peek_val of p)
+            if cbase != "":
+                _p_advance of p
+                cexpr is _p_parse_expr of p
+                return ["_line", _stmt_line, ["assign", name, ["binop", cbase, ["ident", name], cexpr]]]
         # Not an assignment — restore and parse as expression
         set_at of [p, 1, saved_pos]
 
@@ -845,27 +874,100 @@ define _p_parse_not(p) as:
     return _p_parse_comparison of p
 
 define _p_parse_comparison(p) as:
-    left is _p_parse_add of p
+    left is _p_parse_bitor of p
     if (_p_peek_type of p) == "op":
         op is _p_peek_val of p
         if op == "==":
             _p_advance of p
-            return ["binop", "==", left, _p_parse_add of p]
+            return ["binop", "==", left, _p_parse_bitor of p]
         if op == "!=":
             _p_advance of p
-            return ["binop", "!=", left, _p_parse_add of p]
+            return ["binop", "!=", left, _p_parse_bitor of p]
         if op == "<":
             _p_advance of p
-            return ["binop", "<", left, _p_parse_add of p]
+            return ["binop", "<", left, _p_parse_bitor of p]
         if op == ">":
             _p_advance of p
-            return ["binop", ">", left, _p_parse_add of p]
+            return ["binop", ">", left, _p_parse_bitor of p]
         if op == "<=":
             _p_advance of p
-            return ["binop", "<=", left, _p_parse_add of p]
+            return ["binop", "<=", left, _p_parse_bitor of p]
         if op == ">=":
             _p_advance of p
-            return ["binop", ">=", left, _p_parse_add of p]
+            return ["binop", ">=", left, _p_parse_bitor of p]
+    return left
+
+# Compound-assignment operator -> its base binary operator. "" for a
+# non-compound op token. Mirrors C's compound_to_op (src/parser.c).
+define _compound_base_op(op) as:
+    if op == "+=":
+        return "+"
+    if op == "-=":
+        return "-"
+    if op == "*=":
+        return "*"
+    if op == "/=":
+        return "/"
+    if op == "&=":
+        return "&"
+    if op == "|=":
+        return "|"
+    if op == "^=":
+        return "^"
+    if op == "<<=":
+        return "<<"
+    if op == ">>=":
+        return ">>"
+    return ""
+
+# Bitwise precedence (looser -> tighter): bitor | bitxor ^ bitand & shift << >>
+# Mirrors the C parser chain comparison -> bitor -> bitxor -> bitand -> shift ->
+# addition (src/parser.c). Each level is left-associative like add/mul.
+define _p_parse_bitor(p) as:
+    left is _p_parse_bitxor of p
+    loop while (_p_peek_type of p) == "op":
+        op is _p_peek_val of p
+        if op == "|":
+            _p_advance of p
+            left is ["binop", "|", left, _p_parse_bitxor of p]
+        else:
+            return left
+    return left
+
+define _p_parse_bitxor(p) as:
+    left is _p_parse_bitand of p
+    loop while (_p_peek_type of p) == "op":
+        op is _p_peek_val of p
+        if op == "^":
+            _p_advance of p
+            left is ["binop", "^", left, _p_parse_bitand of p]
+        else:
+            return left
+    return left
+
+define _p_parse_bitand(p) as:
+    left is _p_parse_shift of p
+    loop while (_p_peek_type of p) == "op":
+        op is _p_peek_val of p
+        if op == "&":
+            _p_advance of p
+            left is ["binop", "&", left, _p_parse_shift of p]
+        else:
+            return left
+    return left
+
+define _p_parse_shift(p) as:
+    left is _p_parse_add of p
+    loop while (_p_peek_type of p) == "op":
+        op is _p_peek_val of p
+        if op == "<<":
+            _p_advance of p
+            left is ["binop", "<<", left, _p_parse_add of p]
+        elif op == ">>":
+            _p_advance of p
+            left is ["binop", ">>", left, _p_parse_add of p]
+        else:
+            return left
     return left
 
 define _p_parse_add(p) as:
@@ -904,6 +1006,9 @@ define _p_parse_unary(p) as:
         if (_p_peek_val of p) == "-":
             _p_advance of p
             return ["unary", "-", _p_parse_unary of p]
+        if (_p_peek_val of p) == "~":
+            _p_advance of p
+            return ["unary", "~", _p_parse_unary of p]
     return _p_parse_call of p
 
 define _p_parse_call(p) as:

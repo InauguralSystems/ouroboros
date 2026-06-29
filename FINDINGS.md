@@ -468,3 +468,35 @@ Permanent positive parity case: `test/programs/true_false_are_identifiers.eigs`
 (uses them as bound names). Validated against the pinned v0.19.0 VM: 35 parity +
 3 reject + bootstrap fixed point all green. (Same silent-wrong class as
 F-OURO-19; F-OURO-13: the premise was reproduced minimally before fixing.)
+
+## F-OURO-21 — `+=`/bitwise operators IMPLEMENTED (were reject-only) — DONE
+
+The C VM compiles compound assignment (`+= -= *= /= &= |= ^= <<= >>=`) and the
+bitwise operators (`& | ^ ~ << >>`), but ouroboros only *rejected* them
+(F-OURO-19 made the front-end fail loud on the unknown characters rather than
+silently miscompile). That left a real coverage gap: ouroboros did not cover the
+full language the C VM accepts. Now implemented end to end:
+
+- **Lexer** (frontend.eigs): tokenizes `& | ^ ~ << >>`, the two-char compound
+  ops `+= -= *= /= &= |= ^=`, and the three-char `<<= >>=` (a new longest-match
+  three-char pass precedes the two-char checks).
+- **Parser** (frontend.eigs): four new left-associative precedence levels
+  inserted between `comparison` and `add` — `bitor | -> bitxor ^ -> bitand & ->
+  shift << >>` — mirroring the C chain (src/parser.c). EigenScript's precedence
+  is NOT C's: bitwise binds *tighter* than comparison (`4 | 1 == 5` is
+  `(4|1)==5` = 1), and shift is looser than `+` (`1 << 2 + 1` = `1 << 3` = 8).
+  Unary `~` added alongside `-`. Compound assignment desugars `x += e` ->
+  `x is x + e` (AST `["assign", name, ["binop", base, ["ident", name], e]]`),
+  matching C's compound_to_op — so it needs NO new codegen.
+- **Codegen** (codegen.eigs): `OP_BAND/BOR/BXOR/SHL/SHR` (9-13) in
+  cg_binop_code, `OP_BNOT` (16) for unary `~`.
+
+The three former reject cases (`~5`, `6 & 3`, `x += 3`) became the parity
+program test/programs/bitwise_ops.eigs (full op set + precedence + bitwise
+compound assign), byte-exact vs the C VM. The reject section now uses
+genuinely-unknown characters (`@`, backtick, `$`) that both the C lexer and
+ouroboros still error on — preserving the F-OURO-19 fail-loud guarantee.
+Validated: 36 parity + 3 reject + bootstrap fixed point all green. The bootstrap
+fixed point holding is the key check — the front-end+codegen, extended with the
+new operators, still reproduce their own bytecode byte-for-byte (self-host
+preserved). ouroboros now covers the operator surface of the C VM.
