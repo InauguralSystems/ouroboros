@@ -21,7 +21,7 @@
 # Token types (strings for readability):
 # "num", "str", "ident", "op", "kw", "newline", "indent", "dedent", "eof"
 # "lparen", "rparen", "lbracket", "rbracket", "lbrace", "rbrace"
-# "comma", "colon", "dot", "arrow", "pipe", "null", "true", "false"
+# "comma", "colon", "dot", "arrow", "pipe", "null"
 
 define _is_digit(c) as:
     return contains of ["0123456789", c]
@@ -42,7 +42,7 @@ define _is_space(c) as:
     return 0
 
 # Full keyword list matching C lexer
-_keywords is ["is", "of", "define", "as", "if", "else", "elif", "loop", "while", "return", "and", "or", "not", "for", "in", "null", "try", "catch", "break", "continue", "import", "match", "case", "unobserved", "local", "prev", "at", "what", "who", "when", "where", "why", "how", "converged", "stable", "improving", "oscillating", "diverging", "equilibrium", "true", "false"]
+_keywords is ["is", "of", "define", "as", "if", "else", "elif", "loop", "while", "return", "and", "or", "not", "for", "in", "null", "try", "catch", "break", "continue", "import", "match", "case", "unobserved", "local", "prev", "at", "what", "who", "when", "where", "why", "how", "converged", "stable", "improving", "oscillating", "diverging", "equilibrium"]
 
 # Interrogative keywords
 _interrogatives is ["what", "who", "when", "where", "why", "how"]
@@ -353,10 +353,6 @@ define eigen_tokenize(source) as:
                         reading_id is 0
                 if buf == "null":
                     append of [tokens, ["null", null, line]]
-                elif buf == "true":
-                    append of [tokens, ["true", 1, line]]
-                elif buf == "false":
-                    append of [tokens, ["false", 0, line]]
                 elif (_is_interrogative of buf) == 1:
                     append of [tokens, ["interrogative", buf, line]]
                 elif (_is_predicate of buf) == 1:
@@ -954,14 +950,6 @@ define _p_parse_primary(p) as:
     if tt == "null":
         _p_advance of p
         return ["null"]
-
-    if tt == "true":
-        _p_advance of p
-        return ["num", 1]
-
-    if tt == "false":
-        _p_advance of p
-        return ["num", 0]
 
     # Temporal: prev of x [at <line>]  (kind 6). Matches the C grammar.
     if tt == "kw":

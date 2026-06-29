@@ -1,0 +1,11 @@
+# `true`/`false` are NOT keywords/boolean literals in EigenScript — the C VM has
+# no such tokens, so they are ordinary identifiers (EigenScript uses 1/0). The
+# front-end used to lex them into literal 1/0, which silently miscompiled
+# `print of true` to `1` and rejected `true is 5`. They must behave as plain
+# names here, byte-for-byte with the C evaluator.
+true is 5
+false is 7
+print of (true + false)
+print of true
+local truthy is 1
+print of truthy
