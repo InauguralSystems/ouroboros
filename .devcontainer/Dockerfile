@@ -27,7 +27,7 @@ RUN apt-get update \
 # immutable tag/SHA stays reproducible). Pinned to v0.19.0 — the release that
 # ships the flat-buffer tensors (shaped VAL_BUFFER, #275) the AOT's zero-copy
 # tensor view needs, plus the `dot`/`norm` reduction builtins (#272/#273).
-ARG EIGS_REF=v0.21.1
+ARG EIGS_REF=v0.21.2
 RUN mkdir -p /opt/eigenscript-src && cd /opt/eigenscript-src && git init -q \
  && git remote add origin https://github.com/InauguralSystems/EigenScript.git \
  && git fetch -q --depth 1 origin "${EIGS_REF}" && git checkout -q FETCH_HEAD \
