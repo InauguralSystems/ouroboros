@@ -27,15 +27,17 @@ for prog in test/programs/*.eigs; do
   fi
 done
 
-# Negative cases: the front-end must REJECT (not silently skip) characters the C
-# lexer also rejects. (`+=`/bitwise `& | ^ ~ << >>` USED to be here, but they are
-# now fully supported — see test/programs/bitwise_ops.eigs parity. These remain
-# genuinely-unknown characters the C lexer errors on; ouroboros must too, with a
-# non-zero exit, not a silent skip.)
-echo "--- reject (front-end raises on unknown characters, not silent-skip) ---"
+# Negative cases: the front-end must REJECT (not silently skip) input the C
+# parser/lexer also rejects. (`+=`/bitwise `& | ^ ~ << >>` USED to be here, but
+# they are now fully supported — see test/programs/bitwise_ops.eigs parity.)
+# Both sides are checked: the C oracle must reject too, so a reject case can't
+# silently rot into a valid program the front-end wrongly refuses.
+echo "--- reject (front-end raises where the C parser/lexer raises) ---"
 reject_one() {
   printf '%s\n' "$1" > /tmp/ouro_reject.eigs
-  if "$EIGS" ouroboros.eigs /tmp/ouro_reject.eigs >/dev/null 2>&1; then
+  if "$EIGS" /tmp/ouro_reject.eigs >/dev/null 2>&1; then
+    echo "FAIL: C oracle accepted [$(printf '%s' "$1" | tr '\n' ';')] (reject case is stale)"; fail=1
+  elif "$EIGS" ouroboros.eigs /tmp/ouro_reject.eigs >/dev/null 2>&1; then
     echo "FAIL: accepted [$(printf '%s' "$1" | tr '\n' ';')] (should reject)"; fail=1
   else
     echo "PASS: rejected [$(printf '%s' "$1" | tr '\n' ';')]"
@@ -51,6 +53,9 @@ reject_one 'x is $5'
 reject_one 'z is [10,20].x'
 reject_one 'z is "ab".foo'
 reject_one 'z is 5 .foo'
+# Statement terminator (#326, v0.23.0 pin): leftover tokens after a simple
+# statement are a parse error — "one statement per line".
+reject_one 'x is 2 x is 3'
 
 echo "--- bootstrap (full self-host: front-end + codegen, byte-exact fixed point) ---"
 if "$EIGS" test/bootstrap.eigs 2>/dev/null | grep -q "PASS"; then

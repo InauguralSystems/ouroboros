@@ -27,7 +27,7 @@ finding's program text is saved under --findings-dir for a minimal repro.
 
 IMPORTANT -- point the oracle at the PINNED VM. EIGS must be the SAME
 EigenScript the AOT is built and tested against: ouroboros's
-.devcontainer/Dockerfile `EIGS_REF` (a tag/branch/SHA; currently v0.19.0), NOT
+.devcontainer/Dockerfile `EIGS_REF` (a tag/branch/SHA), NOT
 your local main checkout. The default below is the sibling working tree for dev
 convenience, but a main checkout that is AHEAD of the pin will flag main-vs-pin
 deltas (a language feature in main but not yet in the pinned VM) as false
