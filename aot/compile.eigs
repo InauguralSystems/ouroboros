@@ -990,6 +990,11 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
             return asn
         return ind + "aot_set(__eigs_g, \"" + name + "\", " + (emit_val of [node[2], nm, bt]) + ");\n"
     if t == "index_assign":
+        # Compound form (`l[i] += e`, 5th elem = base op) is not lowered here
+        # yet -- node[3] is the RAW rhs, so emitting it as a plain set would be
+        # a silent wrong-value. Fail loudly instead.
+        if (len of node) >= 5:
+            throw of "AOT: compound index assignment not supported yet"
         local tgt is unwrap of node[1]
         if tgt[0] == "ident":
             if bt[tgt[1]] == 1:
@@ -2494,6 +2499,15 @@ define emit_program(ast) as:
     for k in range of (len of stmts):
         local u is unwrap of stmts[k]
         if u[0] == "func":
+            # Frontend "func" nodes now carry per-param defaults (5th elem,
+            # null when absent). The AOT calling convention has no argc, so
+            # defaults can't fire -- fail LOUDLY rather than silently binding
+            # a missing arg to garbage (the worst-outcome class).
+            if (len of u) >= 5:
+                local u_defs is u[4]
+                for dk in range of (len of u_defs):
+                    if u_defs[dk] != null:
+                        throw of ("AOT: parameter defaults not supported yet (" + u[1] + ")")
             funcs is (append of [funcs, u])
         else:
             rest is (append of [rest, stmts[k]])

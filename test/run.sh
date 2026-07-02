@@ -45,6 +45,12 @@ reject_one() {
 reject_one 'print of (3 @ 4)'
 reject_one 'print of (3 ` 4)'
 reject_one 'x is $5'
+# Dot-postfix on num/str/list literals: the C parser rejects these at parse
+# time (only [idx] postfix is allowed there); the front-end used to accept
+# them and fail at runtime -- a silent parse-acceptance divergence (#57).
+reject_one 'z is [10,20].x'
+reject_one 'z is "ab".foo'
+reject_one 'z is 5 .foo'
 
 echo "--- bootstrap (full self-host: front-end + codegen, byte-exact fixed point) ---"
 if "$EIGS" test/bootstrap.eigs 2>/dev/null | grep -q "PASS"; then

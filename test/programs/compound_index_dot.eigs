@@ -1,0 +1,38 @@
+# Compound assignment on index and dot targets (ouroboros#57 item 4).
+# C desugars `obj.f += e` re-reading the target and keeps `l[i] += e`
+# once-evaluated via OP_DUP2; the side-effecting-index case below proves
+# the index expression runs exactly once.
+d is {"k": 10, "m": 3}
+d["k"] += 5
+print of d["k"]
+d.m *= 4
+print of d.m
+l is [1, 2, 3]
+l[1] += 100
+print of l[1]
+l[2] -= 1
+l[0] *= 9
+print of l
+# bitwise compound forms on targets
+d["k"] &= 12
+print of d["k"]
+d.m <<= 2
+print of d.m
+# nested index target
+g is [[1, 2], [3, 4]]
+g[0][1] += 10
+print of g[0][1]
+# index expression evaluated ONCE (C: DUP2, not re-evaluation)
+i is 0
+define bump as:
+    i is i + 1
+    return i
+l2 is [10, 20, 30]
+l2[bump of 0] += 5
+print of l2
+print of i
+# inside a function (locals + module dict)
+define poke(x) as:
+    d["k"] += x
+    return d["k"]
+print of (poke of 2)
