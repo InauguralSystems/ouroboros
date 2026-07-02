@@ -24,10 +24,11 @@ RUN apt-get update \
 # Build + install EigenScript at the pinned ref onto /usr/local (binary on
 # PATH, stdlib at /usr/local/lib/eigenscript — found relative to the binary).
 # EIGS_REF may be a tag, branch, or commit SHA (fetched directly, so an
-# immutable tag/SHA stays reproducible). Pinned to v0.19.0 — the release that
-# ships the flat-buffer tensors (shaped VAL_BUFFER, #275) the AOT's zero-copy
-# tensor view needs, plus the `dot`/`norm` reduction builtins (#272/#273).
-ARG EIGS_REF=v0.21.2
+# immutable tag/SHA stays reproducible). Pinned to v0.23.0 — statement
+# terminator enforced (#326), prev/at + question-word identifier fallbacks
+# take full postfix (#328), break/continue outside a loop are compile errors
+# (#337), out-of-range OP_SET_LOCAL raises instead of silently dropping (#348).
+ARG EIGS_REF=v0.23.0
 RUN mkdir -p /opt/eigenscript-src && cd /opt/eigenscript-src && git init -q \
  && git remote add origin https://github.com/InauguralSystems/EigenScript.git \
  && git fetch -q --depth 1 origin "${EIGS_REF}" && git checkout -q FETCH_HEAD \

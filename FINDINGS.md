@@ -550,12 +550,46 @@ EIGS_REF pin v0.21.2. All six pin-safe items are now implemented:
   reserve. The AOT emitter throws loudly on defaults (its calling convention
   has no argc).
 
-NOT implemented (deliberately): statement-terminator enforcement (upstream
-#326) — unreleased at the pin; enforcing it now would over-reject vs the
-pinned oracle.
+NOT implemented at the v0.21.2 pin (deliberately): statement-terminator
+enforcement (upstream #326) — unreleased at that pin; enforcing it then would
+have over-rejected vs the pinned oracle. Landed with the v0.23.0 bump below.
 
 New parity programs: hex_literals, compound_index_dot, destructuring,
 param_defaults, soft_keyword_binding (41 programs + bootstrap green); three
 new reject cases (`[10,20].x`, `"ab".foo`, `5 .foo`); AOT harness 49/49 green
 against the pinned runtime. The bootstrap fixed point holding again proves the
 extended front-end+codegen still reproduce their own bytecode byte-for-byte.
+
+**Pin bump to v0.23.0 (follow-up):** EIGS_REF moved v0.21.2 → v0.23.0 and the
+two mirrors deferred above landed:
+
+- **Statement terminator (upstream #326)**: `_p_end_statement` now runs at
+  the simple-statement return points (assign, compound assign, destructure,
+  local, return, break, continue, import, expression statement) — leftover
+  tokens are a parse error, "one statement per line". Block statements
+  (if/for/loop/define/try/match/unobserved) consume their own DEDENT and
+  deliberately do NOT get the check. New reject case `x is 2 x is 3`;
+  reject_one now also asserts the C oracle rejects, so a reject case can't
+  rot into a valid program the front-end wrongly refuses.
+  **Upstream #326 gap found (surface upstream):** the C parser's DOT-/INDEX-
+  assign paths return WITHOUT the terminator check — `d.k is 2 3`,
+  `d.k += 5 6`, `l[0] is 8 9`, `l[0] += 1 4` all silently DISCARD the
+  trailing token at v0.23.0 (verified vs the oracle; parser.c's member-
+  assignment lookahead has no p_end_statement). The frontend mirrors the gap
+  (oracle wins — enforcing there would over-reject) and locks it in with
+  parity program stmt_terminator_gap.eigs, which doubles as a canary: it
+  starts failing the moment a future pin closes the gap.
+- **Soft-keyword postfix (upstream #328)**: the prev/at identifier fallbacks
+  take the FULL dot+bracket postfix chain, and the question-word fallback is
+  full postfix too (dot AND bracket — verified vs the oracle: `how.k` works
+  in a `for how in [{"k":1}]:` loop). Consequence, verified vs the oracle:
+  `prev[0] is 9` at statement level is a PARSE error at v0.23.0 (the fallback
+  takes the postfix as an expression; the leftover `is` hits #326) — the
+  dot/index-assign lookahead stays gated on plain idents. New parity programs
+  soft_keyword_postfix.eigs + aot/test/t50_soft_postfix.eigs;
+  soft_keyword_binding.eigs's old "fallback takes no postfix" tail updated.
+- **`__defaults_pad` STAYS** (upstream #348 chose runtime-error over
+  auto-reserve): out-of-range OP_SET_LOCAL now raises "SET_LOCAL slot N out
+  of range" instead of silently dropping, so the pad is the legitimate slot
+  reservation — without it the defaults prologue would raise on every
+  underfed call. Comment updated; defaults verified against the new oracle.

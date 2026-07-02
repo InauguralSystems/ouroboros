@@ -1,0 +1,18 @@
+# Soft-keyword identifier fallbacks take the FULL dot+bracket postfix chain
+# since the v0.23.0 pin (upstream #328): prev/at and the question words index
+# and dot like plain idents outside their special forms.
+prev is [1, 2]
+print of prev[0]
+print of prev[1:2]
+at is {"k": 5}
+print of at.k
+prev is {"m": [7, 8]}
+print of prev.m[1]
+for how in [{"k": 1}]:
+    print of how.k
+for who in [[10, 20]]:
+    print of who[1]
+# special forms still win over the fallback
+x is 1
+x is 5
+print of (prev of x)

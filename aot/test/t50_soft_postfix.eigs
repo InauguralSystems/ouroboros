@@ -1,0 +1,14 @@
+# prev/at + question-word identifier fallbacks take the full postfix chain
+# since the v0.23.0 pin (upstream #328). AOT subset: list indexing only (no
+# dict literals / list-slice values in the AOT subset — dot and slice postfix
+# are covered by the self-host corpus, test/programs/soft_keyword_postfix.eigs).
+prev is [1, 2, 3]
+print of prev[0]
+at is [4, 5]
+print of at[1]
+for how in [[10, 20]]:
+    print of how[1]
+# special form still wins over the fallback
+x is 1
+x is 5
+print of (prev of x)

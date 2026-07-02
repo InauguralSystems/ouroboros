@@ -578,12 +578,15 @@ define cg_func(c, node) as:
                 cg_patch_jump of [fc, dhole]
     cg_block_discard of [fc, body]                    # body statements discarded
     # Underfed-call slot guarantee: the pinned VM pre-allocates env slots
-    # (env_reserve_slots) only when local_count > param_count, and OP_SET_LOCAL
-    # silently drops writes to slots >= env->count. A defaults prologue in a
-    # function with NO body locals would therefore write into a nonexistent
-    # slot on an underfed call. Padding one never-read local slot forces the
-    # reserve, so every param slot exists (null) before the prologue runs —
-    # the same placeholder state the C compiler's native path produces.
+    # (env_reserve_slots) only when local_count > param_count. Since the
+    # v0.23.0 pin (#348) OP_SET_LOCAL on a slot >= env->count RAISES
+    # "SET_LOCAL slot N out of range" (it used to silently drop the write) —
+    # upstream chose runtime-error over auto-reserve, so this pad is the
+    # legitimate reservation mechanism: without it, the defaults prologue in
+    # a function with NO body locals would raise on every underfed call.
+    # Padding one never-read local slot forces the reserve, so every param
+    # slot exists (null) before the prologue runs — the same placeholder
+    # state the C compiler's native path produces.
     if (has_defaults == 1) and (fc.next_slot == (len of params)):
         cg_add_local of [fc, "__defaults_pad"]
     cg_emit of [fc, OP_RETURN_NULL]                   # fall-through return

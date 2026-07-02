@@ -1,0 +1,17 @@
+# Upstream #326 gap, mirrored deliberately (v0.23.0 pin): the C parser's
+# dot-/index-assign paths return WITHOUT the statement-terminator check, so
+# trailing tokens after them are silently DISCARDED (not a parse error) —
+# unlike every other simple statement. Both sides must agree byte-for-byte;
+# if this program starts parse-erroring at a future pin, upstream closed the
+# gap and the frontend's exemption (src/frontend.eigs _p_end_statement note)
+# should be removed with that bump.
+d is {"k": 1}
+d.k is 2 3
+print of d.k
+d.k += 5 6
+print of d.k
+l is [1]
+l[0] is 8 9
+print of l[0]
+l[0] += 1 4
+print of l[0]
