@@ -647,6 +647,25 @@ define _p_skip_newlines(p) as:
     loop while (_p_peek_type of p) == "newline":
         _p_advance of p
 
+# Statement-terminator enforcement (upstream #326, in the v0.23.0 pin): a
+# SIMPLE statement must be followed by newline / dedent / eof — leftover
+# tokens are a parse error ("one statement per line"). Called at the simple-
+# statement return points only; block statements (if/for/loop/define/try/
+# match/unobserved) consume their own DEDENT, so they must NOT get this check.
+# Deliberate exemption mirroring the oracle: the C parser's dot-/index-assign
+# paths (parser.c member-assignment lookahead) return WITHOUT this check —
+# an upstream #326 gap; `d.k is 2 3` silently discards the `3` at v0.23.0.
+define _p_end_statement(p) as:
+    tt is _p_peek_type of p
+    if tt == "newline":
+        return null
+    if tt == "eof":
+        return null
+    if tt == "dedent":
+        return null
+    tok is _p_cur of p
+    throw of f"parse error: unexpected {tok[0]} ('{tok[1]}') after statement at line {tok[2]} — one statement per line"
+
 define _p_parse_block(p) as:
     stmts is []
     if (_p_peek_type of p) == "indent":
@@ -693,6 +712,7 @@ define _p_parse_statement(p) as:
                 if (_p_peek_val of p) == "is":
                     _p_advance of p
             local_expr is _p_parse_expr of p
+            _p_end_statement of p
             return ["_line", _stmt_line, ["assign", local_tok[1], local_expr]]
         if (_p_peek_val of p) == "define":
             _p_advance of p
@@ -762,6 +782,7 @@ define _p_parse_statement(p) as:
         if (_p_peek_val of p) == "return":
             _p_advance of p
             expr is _p_parse_expr of p
+            _p_end_statement of p
             return ["_line", _stmt_line, ["return", expr]]
 
         # for
@@ -808,17 +829,20 @@ define _p_parse_statement(p) as:
         # break
         if (_p_peek_val of p) == "break":
             _p_advance of p
+            _p_end_statement of p
             return ["_line", _stmt_line, ["break"]]
 
         # continue
         if (_p_peek_val of p) == "continue":
             _p_advance of p
+            _p_end_statement of p
             return ["_line", _stmt_line, ["continue"]]
 
         # import
         if (_p_peek_val of p) == "import":
             _p_advance of p
             name_tok is _p_expect of [p, "ident"]
+            _p_end_statement of p
             return ["_line", _stmt_line, ["import", name_tok[1]]]
 
         # match
@@ -905,11 +929,14 @@ define _p_parse_statement(p) as:
             _p_advance of p                               # skip ']'
             _p_advance of p                               # skip 'is' (scan verified)
             d_rhs is _p_parse_expr of p
+            _p_end_statement of p
             return ["_line", _stmt_line, ["destructure", d_names, d_rhs]]
 
     # Dot-/index-assignment: PLAIN-ident targets only (C gates this lookahead
-    # on TOK_IDENT — the prev/at identifier fallback takes no postfix at the
-    # pinned runtime). `is` and the compound family are both accepted; C
+    # on TOK_IDENT). A soft-keyword base with postfix (`prev[0] is e`) parses
+    # as an expression statement whose leftover `is` then hits the #326
+    # terminator check — a parse error at the v0.23.0 pin, verified vs the
+    # oracle. `is` and the compound family are both accepted; C
     # desugars dot compounds by re-reading the target and keeps index
     # compounds once-evaluated (OP_DUP2), mirrored here via a 5th
     # index_assign element carrying the base op.
@@ -923,6 +950,11 @@ define _p_parse_statement(p) as:
                     if (_p_peek_val of p) == "is":
                         _p_advance of p
                         expr is _p_parse_expr of p
+                        # NO _p_end_statement: the v0.23.0 C parser's
+                        # dot/index-assign paths return WITHOUT the #326
+                        # terminator check (upstream gap, verified vs the
+                        # oracle: `d.k is 2 3` silently discards the `3`).
+                        # Enforcing here would over-reject vs the oracle.
                         return ["_line", _stmt_line, ["dot_assign", target[1], target[2], expr]]
                 if (_p_peek_type of p) == "op":
                     cbase is _compound_base_op of (_p_peek_val of p)
@@ -930,19 +962,22 @@ define _p_parse_statement(p) as:
                         _p_advance of p
                         cexpr is _p_parse_expr of p
                         # obj.f += e  →  obj.f is obj.f + e (C clones the
-                        # target subtree — it is evaluated twice).
+                        # target subtree — it is evaluated twice). No #326
+                        # check — see the dot_assign note above.
                         return ["_line", _stmt_line, ["dot_assign", target[1], target[2], ["binop", cbase, ["dot", target[1], target[2]], cexpr]]]
             if target[0] == "index":
                 if (_p_peek_type of p) == "kw":
                     if (_p_peek_val of p) == "is":
                         _p_advance of p
                         expr is _p_parse_expr of p
+                        # No #326 check — see the dot_assign note above.
                         return ["_line", _stmt_line, ["index_assign", target[1], target[2], expr]]
                 if (_p_peek_type of p) == "op":
                     cbase is _compound_base_op of (_p_peek_val of p)
                     if cbase != "":
                         _p_advance of p
                         cexpr is _p_parse_expr of p
+                        # No #326 check — see the dot_assign note above.
                         return ["_line", _stmt_line, ["index_assign", target[1], target[2], cexpr, cbase]]
             # Not an assignment — restore and fall through
             set_at of [p, 1, saved_pos]
@@ -959,6 +994,7 @@ define _p_parse_statement(p) as:
             _p_advance of p
             _p_advance of p
             expr is _p_parse_expr of p
+            _p_end_statement of p
             return ["_line", _stmt_line, ["assign", cur_tok[1], expr]]
     if (_tok_ident_like of cur_tok) == 1:
         if peek1[0] == "op":
@@ -967,10 +1003,12 @@ define _p_parse_statement(p) as:
                 _p_advance of p
                 _p_advance of p
                 cexpr is _p_parse_expr of p
+                _p_end_statement of p
                 return ["_line", _stmt_line, ["assign", cur_tok[1], ["binop", cbase, ["ident", cur_tok[1]], cexpr]]]
 
     # Expression statement
     expr is _p_parse_expr of p
+    _p_end_statement of p
     return ["_line", _stmt_line, expr]
 
 # ---- Bracket parser: index `t[i]` or half-open slice `t[start:end]` ----
@@ -1193,11 +1231,11 @@ define _p_parse_call(p) as:
     # Handle `of` application only. Dot/index postfix lives INSIDE
     # _p_parse_primary per primary kind, mirroring the canonical C parser
     # (parse_primary): the postfix set depends on the primary — idents,
-    # parens (incl. desugared f-strings) and dict literals take `.field`
-    # and `[idx]`; num/str/list literals and the question-word identifier
-    # fallback take `[idx]` only; listcomps, null, predicates and the
-    # prev/at identifier fallback take none. A call result (`f of x`) takes
-    # no postfix at all — C's parse_relation returns it directly.
+    # parens (incl. desugared f-strings), dict literals, and (since the
+    # v0.23.0 pin, #328) the prev/at and question-word identifier fallbacks
+    # take `.field` and `[idx]`; num/str/list literals take `[idx]` only;
+    # listcomps, null and predicates take none. A call result (`f of x`)
+    # takes no postfix at all — C's parse_relation returns it directly.
     parsing is 1
     loop while parsing == 1:
         if (_p_peek_type of p) == "kw":
@@ -1217,9 +1255,9 @@ define _p_parse_call(p) as:
     return left
 
 # Postfix chains for primaries, mirroring the C parser's per-primary loops.
-# _p_postfix_full: `.field` + `[idx]`/slices (idents, parens, dicts).
-# _p_postfix_brackets: `[idx]`/slices only (num/str/list literals,
-# question-word identifier fallback).
+# _p_postfix_full: `.field` + `[idx]`/slices (idents, parens, dicts, and the
+# prev/at + question-word identifier fallbacks since the v0.23.0 pin).
+# _p_postfix_brackets: `[idx]`/slices only (num/str/list literals).
 define _p_postfix_full(p, node) as:
     chaining is 1
     loop while chaining == 1:
@@ -1278,10 +1316,12 @@ define _p_parse_primary(p) as:
                         _p_advance of p
                         prev_at is _p_parse_primary of p
                 return ["interrogate", 6, prev_expr, prev_at]
-            return ["ident", "prev"]
+            # Identifier fallback: takes the FULL dot+bracket postfix chain
+            # like a plain ident (upstream #328, in the v0.23.0 pin).
+            return _p_postfix_full of [p, ["ident", "prev"]]
         if (_p_peek_val of p) == "at":
             _p_advance of p
-            return ["ident", "at"]
+            return _p_postfix_full of [p, ["ident", "at"]]
 
     # Interrogatives: `<kw> is x [at <line>]` (what/who/when/where/why/how).
     # Matches the C grammar (not the meta-interpreter's `<kw> of x`).
@@ -1299,9 +1339,10 @@ define _p_parse_primary(p) as:
                         _p_advance of p
                         at_expr is _p_parse_primary of p
                 return ["interrogate", kind, iexpr, at_expr]
-        # Not `<kw> is ...` — treat as a plain identifier. C's question-word
-        # fallback takes [idx] postfix only (no dot).
-        return _p_postfix_brackets of [p, ["ident", tok[1]]]
+        # Not `<kw> is ...` — treat as a plain identifier. Since v0.23.0
+        # (#328) the C question-word fallback takes the full dot+bracket
+        # postfix chain (verified vs the oracle: `how.k` works).
+        return _p_postfix_full of [p, ["ident", tok[1]]]
 
     # Predicates: converged, stable, improving, oscillating, diverging, equilibrium
     if tt == "predicate":

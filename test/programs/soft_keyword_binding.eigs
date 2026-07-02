@@ -1,9 +1,8 @@
 # prev/at (and question words) in binding position — F-OURO-18 re-land
 # (ouroboros#57 item 3). prev/at bind with `is` and compound ops, serve as
-# params / loop vars, and their special forms still win. At the pinned
-# runtime the identifier FALLBACK takes no postfix (`prev[0]` splits into
-# `prev` + a discarded `[0]` statement — upstream #328 changes this on
-# main, unreleased).
+# params / loop vars, and their special forms still win. Since the v0.23.0
+# pin (#328) the identifier FALLBACK takes the full dot+bracket postfix
+# chain — see soft_keyword_postfix.eigs.
 prev is [1, 2]
 print of prev
 at is 3
@@ -20,7 +19,5 @@ print of total
 x is 1
 x is 5
 print of (prev of x)
-# fallback takes no postfix: `[0]` below is a separate, discarded statement
 p2 is prev
-[0]
 print of p2[0]
