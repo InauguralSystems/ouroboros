@@ -1,0 +1,36 @@
+# Parameter defaults `define f(x, k is 2)` (ouroboros#57 item 6).
+# A default fires only for MISSING args (an explicit null stays null);
+# the default expression is evaluated at call time in the callee env, so
+# it sees the current globals. Underfed calls with and without body
+# locals both work (the pinned VM only pre-allocates local slots when
+# local_count > param_count — codegen pads one slot for that).
+define f(x, k is 2) as:
+    return x + k
+print of (f of (5))
+print of (f of [5, 10])
+# explicit null suppresses the default
+define shownull(x, k is 2) as:
+    if k == null:
+        return "null"
+    return k
+print of (shownull of [1, null])
+print of (shownull of (1))
+# default expression reads the CURRENT global at call time
+c is 10
+define g(a, k is c + 1) as:
+    tmp is k * 2
+    return a + tmp
+print of (g of (5))
+c is 100
+print of (g of (5))
+print of (g of [5, 3])
+# single defaulted param, zero-arg call
+define h(k is 2) as:
+    return k * 7
+print of (h of [])
+# several defaults, partial supply
+define q(a, b is 20, k is 9) as:
+    return [a, b, k]
+print of (q of (1))
+print of (q of [1, 2])
+print of (q of [1, 2, 3])
