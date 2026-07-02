@@ -50,6 +50,7 @@ OP_JUMP_IF_FALSE is 31
 OP_JUMP_IF_FALSE_PEEK is 33
 OP_JUMP_IF_TRUE_PEEK is 34
 OP_POP is 35
+OP_DUP2 is 37
 OP_CLOSURE is 38
 OP_DICT is 43
 OP_INDEX_GET is 44
@@ -75,6 +76,8 @@ OP_INTERROGATE is 58
 OP_PREDICATE is 59
 OP_INTERROGATE_NAMED is 76
 OP_INTERROGATE_NAMED_AT is 77
+OP_DEFAULT_PARAM is 78
+OP_DESTRUCTURE_UNPACK is 79
 # #262 Phase-3 slot model: re-observe a name binding AFTER its SET (the binding
 # now exists), so the per-binding Env slot — not the Value object — carries the
 # trajectory the predicates/report/interrogatives read. The C compiler emits
@@ -360,8 +363,30 @@ define cg_node(c, node) as:
     if t == "index_assign":
         cg_node of [c, node[1]]                        # target
         cg_node of [c, node[2]]                        # index
-        cg_node of [c, node[3]]                        # value (kept on stack)
+        if (len of node) >= 5:
+            # Compound (`l[i] += e`): target/index evaluated ONCE, mirroring
+            # the C compiler's DUP2 → INDEX_GET → expr → binop → INDEX_SET.
+            cg_emit of [c, OP_DUP2]
+            cg_emit of [c, OP_INDEX_GET]
+            cg_node of [c, node[3]]                    # raw rhs
+            cg_emit of [c, cg_binop_code of node[4]]
+        else:
+            cg_node of [c, node[3]]                    # value (kept on stack)
         cg_emit of [c, OP_INDEX_SET]
+        return null
+    if t == "destructure":
+        # ["destructure", [names], rhs] — compile rhs, unpack into N stack
+        # slots (element 0 at TOS), then store each name (stores keep TOS)
+        # with an OP_POP between names; the last value remains, matching the
+        # one-value-per-statement convention (C's AST_LIST_PATTERN_ASSIGN).
+        cg_node of [c, node[2]]
+        local d_names is node[1]
+        cg_emit of [c, OP_DESTRUCTURE_UNPACK]
+        cg_emit_u16 of [c, len of d_names]
+        for i in range of (len of d_names):
+            cg_store_name of [c, d_names[i]]
+            if i < ((len of d_names) - 1):
+                cg_emit of [c, OP_POP]
         return null
     if t == "dot_assign":
         cg_node of [c, node[1]]                        # target
@@ -528,7 +553,39 @@ define cg_func(c, node) as:
     local fc is cg_new of 1
     for i in range of (len of params):
         cg_add_local of [fc, params[i]]               # params -> slots 0..P-1
+    # Default-param prologue (mirrors the C compiler): for each param with a
+    # default, OP_DEFAULT_PARAM <slot> <skip>; <default expr>; OP_SET_LOCAL;
+    # OP_POP. The opcode compares slot vs frame->call_argc — if the caller
+    # supplied the arg it skips the default (an explicit null stays null).
+    # The descriptor format has no first_default field (the pinned
+    # vm_run_bytecode sets it to param_count), but OP_DEFAULT_PARAM reads
+    # only call_argc, so the hand-emitted prologue is sufficient.
+    local has_defaults is 0
+    if (len of node) >= 5:
+        local defaults is node[4]
+        for i in range of (len of defaults):
+            if defaults[i] != null:
+                has_defaults is 1
+                cg_emit of [fc, OP_DEFAULT_PARAM]
+                cg_emit_u16 of [fc, i]
+                local dhole is len of fc.code
+                cg_emit of [fc, 0]
+                cg_emit of [fc, 0]
+                cg_node of [fc, defaults[i]]
+                cg_emit of [fc, OP_SET_LOCAL]
+                cg_emit_u16 of [fc, i]
+                cg_emit of [fc, OP_POP]
+                cg_patch_jump of [fc, dhole]
     cg_block_discard of [fc, body]                    # body statements discarded
+    # Underfed-call slot guarantee: the pinned VM pre-allocates env slots
+    # (env_reserve_slots) only when local_count > param_count, and OP_SET_LOCAL
+    # silently drops writes to slots >= env->count. A defaults prologue in a
+    # function with NO body locals would therefore write into a nonexistent
+    # slot on an underfed call. Padding one never-read local slot forces the
+    # reserve, so every param slot exists (null) before the prologue runs —
+    # the same placeholder state the C compiler's native path produces.
+    if (has_defaults == 1) and (fc.next_slot == (len of params)):
+        cg_add_local of [fc, "__defaults_pad"]
     cg_emit of [fc, OP_RETURN_NULL]                   # fall-through return
     local desc is [fc.code, fc.consts, fc.functions, len of params, fname, fc.local_names]
     local fn_idx is len of c.functions
@@ -579,6 +636,10 @@ define cg_scan_module_names(stmts) as:
             MODULE_NAMES[s[1]] is 1
         if s[0] == "func":
             MODULE_NAMES[s[1]] is 1
+        if s[0] == "destructure":
+            local d_names is s[1]
+            for di in range of (len of d_names):
+                MODULE_NAMES[d_names[di]] is 1
         # Descend into top-level block bodies — a name first bound inside a
         # module-scope if/loop/for/try is still a module binding (the C runtime
         # resolves it dynamically). Missing it made an inner function shadow the

@@ -131,7 +131,8 @@ def gen_fstring(r):
 
 def gen_soft_keyword_idents(r):
     # prev/at are identifier-like outside their special forms; `what` binds as a
-    # loop var / param (just not before bare `is`).
+    # loop var / param (just not before bare `is`). Compound `at +=` is fine
+    # since #55 (the parser desugars it to a plain assign).
     return (f"at is {_int(r)}\n"
             f"at += {_pint(r)}\n"
             f"prev is {_int(r)}\n"
