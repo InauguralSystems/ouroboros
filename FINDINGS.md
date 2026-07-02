@@ -500,3 +500,62 @@ Validated: 36 parity + 3 reject + bootstrap fixed point all green. The bootstrap
 fixed point holding is the key check — the front-end+codegen, extended with the
 new operators, still reproduce their own bytecode byte-for-byte (self-host
 preserved). ouroboros now covers the operator surface of the C VM.
+
+## F-OURO-22 — frontend drift vs the canonical parser closed (pin-safe subset of #57) — FIXED
+
+A differential pass (issue #57) found two silent-class diverges and four
+over-rejections in src/frontend.eigs vs the canonical C parser at the
+EIGS_REF pin v0.21.2. All six pin-safe items are now implemented:
+
+- **Hex literals** (silent-wrong): the number lexer now mirrors strtod's hex
+  acceptance — `0x/0X` + hex digits, hex fractions (`0x10.f` = 16.9375, digits
+  a-f count), lone trailing dot (`0x2.` -> 2), binary exponent `p/P` with the
+  same lookahead guard as `e` (`0x1p` -> 1 + ident `p`), and `0x` with no hex
+  digit lexing as `0` + ident, exactly like strtod.
+- **Dot-postfix on literals** (silent parse-acceptance divergence): postfix
+  now lives per-primary inside _p_parse_primary, mirroring parse_primary's
+  per-kind loops — idents/parens (incl. desugared f-strings)/dicts take
+  `.field`+`[idx]`; num/str/list literals and the question-word fallback take
+  `[idx]` only; listcomps/null/predicates and the prev/at fallback take NONE;
+  a call result (`f of x`) takes no postfix (C's parse_relation returns it
+  directly). `[10,20].x` / `"ab".foo` are now parse-rejected like C, and
+  `[x for x in l][0]` splits like C (the `[0]` is a discarded statement).
+- **Compound assignment on dot/index targets**: `d.m *= 4` desugars re-reading
+  the target (C clones the subtree — evaluated twice); `l[i] += e` carries the
+  base op as a 5th index_assign element and codegen lowers it via OP_DUP2 →
+  INDEX_GET → rhs → binop → INDEX_SET, so target/index evaluate ONCE (proved
+  by a side-effecting-index parity case). The AOT emitter throws LOUDLY on the
+  compound form (not yet lowered there).
+- **F-OURO-18 re-land** (2adcb31, prev/at + question words in binding
+  position): cherry-picked now that the pin (v0.21.2) contains the v0.20.0
+  soft-keyword change. One deliberate correction to the original: the
+  dot/index-assignment lookahead stays gated on plain idents (C gates it on
+  TOK_IDENT), and the prev/at identifier fallback takes NO postfix — at the
+  pin `prev[0]` splits into `prev` + a discarded `[0]` (upstream #328 changes
+  this on main; that alignment waits for the next EIGS_REF bump).
+- **Destructuring** `[a, b] is rhs`: statement-level bracket-count scan
+  committed on `] is`, identifiers-only pattern (C rejects soft keywords,
+  index/field targets, trailing commas), exact-length runtime check via
+  OP_DESTRUCTURE_UNPACK + per-name stores. Over-long rhs errors like C
+  (a naive desugar to indexed reads would have silently accepted it).
+- **Parameter defaults** `define f(x, k is 2)`: parsed like C (trailing-only,
+  required-after-default is a parse error), fires only for MISSING args
+  (explicit null stays null), default expr evaluated at call time in the
+  callee env. Codegen emits the same OP_DEFAULT_PARAM prologue as the C
+  compiler. **Runtime gotcha discovered:** the pinned VM pre-allocates env
+  slots only when local_count > param_count, and OP_SET_LOCAL *silently
+  drops* writes to slots >= env->count — so a defaults prologue in a function
+  with no body locals wrote into a nonexistent slot on an underfed call.
+  codegen pads one never-read local slot ("__defaults_pad") to force the
+  reserve. The AOT emitter throws loudly on defaults (its calling convention
+  has no argc).
+
+NOT implemented (deliberately): statement-terminator enforcement (upstream
+#326) — unreleased at the pin; enforcing it now would over-reject vs the
+pinned oracle.
+
+New parity programs: hex_literals, compound_index_dot, destructuring,
+param_defaults, soft_keyword_binding (41 programs + bootstrap green); three
+new reject cases (`[10,20].x`, `"ab".foo`, `5 .foo`); AOT harness 49/49 green
+against the pinned runtime. The bootstrap fixed point holding again proves the
+extended front-end+codegen still reproduce their own bytecode byte-for-byte.

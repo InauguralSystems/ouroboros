@@ -41,6 +41,9 @@ define _is_space(c) as:
         return 1
     return 0
 
+define _is_hex_digit(c) as:
+    return contains of ["0123456789abcdefABCDEF", c]
+
 # Full keyword list matching C lexer
 _keywords is ["is", "of", "define", "as", "if", "else", "elif", "loop", "while", "return", "and", "or", "not", "for", "in", "null", "try", "catch", "break", "continue", "import", "match", "case", "unobserved", "local", "prev", "at", "what", "who", "when", "where", "why", "how", "converged", "stable", "improving", "oscillating", "diverging", "equilibrium"]
 
@@ -305,6 +308,61 @@ define eigen_tokenize(source) as:
                     if (_is_digit of (char_at of [source, pos + 1])) == 1:
                         num_start is 1
             if num_start == 1:
+                # Hex literals (strtod parity, matching the C lexer's strtod
+                # delegation): 0x/0X starts a hex number only when followed by
+                # a hex digit, or by `.` + hex digit (`0x` alone lexes as `0`
+                # then ident `x`, like strtod). Fraction digits are hex too
+                # (`0x10.f` is 16.9375), a lone trailing dot is consumed
+                # (`0x2.` -> 2), and the binary exponent p/P takes an optional
+                # sign and >=1 decimal digit (lookahead-guarded: `0x1p` -> 1,
+                # leaving `p`).
+                is_hex is 0
+                if (c == "0") and ((pos + 2) < src_len):
+                    xch is char_at of [source, pos + 1]
+                    if (xch == "x") or (xch == "X"):
+                        nch is char_at of [source, pos + 2]
+                        if (_is_hex_digit of nch) == 1:
+                            is_hex is 1
+                        elif (nch == ".") and ((pos + 3) < src_len):
+                            if (_is_hex_digit of (char_at of [source, pos + 3])) == 1:
+                                is_hex is 1
+                if is_hex == 1:
+                    buf is "0x"
+                    pos is pos + 2
+                    hex_dot is 0
+                    reading_hex is 1
+                    loop while (pos < src_len) and (reading_hex == 1):
+                        hch is char_at of [source, pos]
+                        if (_is_hex_digit of hch) == 1:
+                            buf is buf + hch
+                            pos is pos + 1
+                        elif (hch == ".") and (hex_dot == 0):
+                            hex_dot is 1
+                            buf is buf + hch
+                            pos is pos + 1
+                        else:
+                            reading_hex is 0
+                    # Binary exponent: p/P, optional sign, >=1 decimal digit.
+                    if pos < src_len:
+                        pch is char_at of [source, pos]
+                        if (pch == "p") or (pch == "P"):
+                            pp is pos + 1
+                            psign is ""
+                            if pp < src_len:
+                                psc is char_at of [source, pp]
+                                if (psc == "+") or (psc == "-"):
+                                    psign is psc
+                                    pp is pp + 1
+                            if pp < src_len:
+                                if (_is_digit of (char_at of [source, pp])) == 1:
+                                    buf is buf + pch + psign
+                                    pos is pp
+                                    loop while (pos < src_len) and ((_is_digit of (char_at of [source, pos])) == 1):
+                                        buf is buf + (char_at of [source, pos])
+                                        pos is pos + 1
+                    append of [tokens, ["num", num of buf, line]]
+                    handled is 1
+            if (num_start == 1) and (handled == 0):
                 buf is ""
                 has_dot is 0
                 reading_num is 1
@@ -505,7 +563,9 @@ define eigen_tokenize(source) as:
 #   ["dict", [[key, val], ...]]
 #   ["dot", target, "field"]
 #   ["dot_assign", target, "field", expr]
-#   ["index_assign", target, index, expr]
+#   ["index_assign", target, index, expr]          (5th elem: compound base op)
+#   ["destructure", [names], expr]
+#   ["func", name, [params], body, [defaults]]     (defaults: expr or null per param)
 #   ["lambda", [params], body_expr]
 #   ["match", expr, [[pattern, body], ...]]
 #   ["break"]
@@ -548,6 +608,38 @@ define _p_expect(p, ttype) as:
     tok is _p_cur of p
     if tok[0] != ttype:
         throw of f"parse error: expected {ttype}, got {tok[0]} ('{tok[1]}') at line {tok[2]}"
+    _p_advance of p
+    return tok
+
+# Soft keywords are usable as ordinary identifiers outside their special forms,
+# mirroring the canonical C parser (EigenScript/src/parser.c). prev/at tokenize
+# as "kw", the six question words as "interrogative".
+# Identifier-like in a binding position (params, loop vars, catch, local):
+define _tok_ident_like(tok) as:
+    if tok[0] == "ident":
+        return 1
+    if tok[0] == "interrogative":
+        return 1
+    if tok[0] == "kw":
+        if (tok[1] == "prev") or (tok[1] == "at"):
+            return 1
+    return 0
+
+# A bare `X is ...` assignment target: identifier-like minus the question words
+# (`what is e` is the interrogative form). prev/at have no `is` special form.
+define _tok_assign_name(tok) as:
+    if tok[0] == "ident":
+        return 1
+    if tok[0] == "kw":
+        if (tok[1] == "prev") or (tok[1] == "at"):
+            return 1
+    return 0
+
+# Consume an identifier-like token in a binding position; return it.
+define _p_expect_ident_like(p) as:
+    tok is _p_cur of p
+    if (_tok_ident_like of tok) == 0:
+        throw of f"parse error: expected identifier, got {tok[0]} ('{tok[1]}') at line {tok[2]}"
     _p_advance of p
     return tok
 
@@ -596,7 +688,7 @@ define _p_parse_statement(p) as:
         # here. A name that shadows a module binding is not exercised.)
         if (_p_peek_val of p) == "local":
             _p_advance of p
-            local_tok is _p_expect of [p, "ident"]
+            local_tok is _p_expect_ident_like of p
             if (_p_peek_type of p) == "kw":
                 if (_p_peek_val of p) == "is":
                     _p_advance of p
@@ -606,18 +698,35 @@ define _p_parse_statement(p) as:
             _p_advance of p
             name_tok is _p_expect of [p, "ident"]
             name is name_tok[1]
-            # Optional params
+            # Optional params; each may carry a trailing default
+            # (`define f(a, b is 10)`), matching the C parser. A required
+            # param may not follow a defaulted one.
             params is []
+            param_defaults is []
+            first_default is 0 - 1
             if (_p_peek_type of p) == "lparen":
                 _p_advance of p
-                loop while (_p_peek_type of p) == "ident":
+                loop while (_tok_ident_like of (_p_cur of p)) == 1:
                     append of [params, (_p_cur of p)[1]]
                     _p_advance of p
+                    has_default is 0
+                    if (_p_peek_type of p) == "kw":
+                        if (_p_peek_val of p) == "is":
+                            _p_advance of p
+                            append of [param_defaults, _p_parse_expr of p]
+                            has_default is 1
+                            if first_default < 0:
+                                first_default is (len of params) - 1
+                    if has_default == 0:
+                        append of [param_defaults, null]
+                        if first_default >= 0:
+                            throw of f"parse error: required parameter '{params[(len of params) - 1]}' cannot follow a parameter with a default at line {_stmt_line}"
                     if (_p_peek_type of p) == "comma":
                         _p_advance of p
                 _p_expect of [p, "rparen"]
             if (len of params) == 0:
                 params is ["n"]
+                param_defaults is [null]
             # as:
             if (_p_peek_type of p) == "kw":
                 if (_p_peek_val of p) == "as":
@@ -625,7 +734,7 @@ define _p_parse_statement(p) as:
             _p_expect of [p, "colon"]
             _p_skip_newlines of p
             body is _p_parse_block of p
-            return ["_line", _stmt_line, ["func", name, params, body]]
+            return ["_line", _stmt_line, ["func", name, params, body, param_defaults]]
 
         # if
         if (_p_peek_val of p) == "if":
@@ -658,7 +767,7 @@ define _p_parse_statement(p) as:
         # for
         if (_p_peek_val of p) == "for":
             _p_advance of p
-            var_tok is _p_expect of [p, "ident"]
+            var_tok is _p_expect_ident_like of p
             _p_expect of [p, "kw"]
             iter is _p_parse_expr of p
             _p_expect of [p, "colon"]
@@ -688,7 +797,7 @@ define _p_parse_statement(p) as:
             _p_skip_newlines of p
             _p_expect of [p, "kw"]
             err_name is "err"
-            if (_p_peek_type of p) == "ident":
+            if (_tok_ident_like of (_p_cur of p)) == 1:
                 err_name is (_p_cur of p)[1]
                 _p_advance of p
             _p_expect of [p, "colon"]
@@ -751,46 +860,114 @@ define _p_parse_statement(p) as:
             body is _p_parse_block of p
             return ["_line", _stmt_line, ["unobserved", body]]
 
-    # Dot-assignment and index-assignment: ident.field is val, ident[i] is val
+    # Destructuring assignment: [a, b] is rhs (C parse_statement's bracket
+    # scan: bracket-count to the matching ']'; committed once the next token
+    # is `is`, with destructure-specific errors — identifiers only, no
+    # trailing comma).
+    if tt == "lbracket":
+        d_found is 0
+        d_i is p[1] + 1
+        d_depth is 0
+        d_scanning is 1
+        loop while (d_scanning == 1) and (d_i < (len of p[0])):
+            d_tok is p[0][d_i]
+            if d_tok[0] == "lbracket":
+                d_depth is d_depth + 1
+            elif d_tok[0] == "rbracket":
+                if d_depth == 0:
+                    if (d_i + 1) < (len of p[0]):
+                        d_next is p[0][d_i + 1]
+                        if (d_next[0] == "kw") and (d_next[1] == "is"):
+                            d_found is 1
+                    d_scanning is 0
+                else:
+                    d_depth is d_depth - 1
+            elif d_tok[0] == "eof":
+                d_scanning is 0
+            d_i is d_i + 1
+        if d_found == 1:
+            _p_advance of p                               # skip '['
+            d_names is []
+            d_collect is 1
+            loop while d_collect == 1:
+                if (_p_peek_type of p) != "ident":
+                    throw of f"parse error: destructuring pattern requires identifiers at line {_stmt_line}"
+                append of [d_names, (_p_cur of p)[1]]
+                _p_advance of p
+                if (_p_peek_type of p) == "rbracket":
+                    d_collect is 0
+                elif (_p_peek_type of p) == "comma":
+                    _p_advance of p
+                    if (_p_peek_type of p) == "rbracket":
+                        throw of f"parse error: trailing comma in destructuring pattern at line {_stmt_line}"
+                else:
+                    throw of f"parse error: expected ',' or ']' in destructuring pattern at line {_stmt_line}"
+            _p_advance of p                               # skip ']'
+            _p_advance of p                               # skip 'is' (scan verified)
+            d_rhs is _p_parse_expr of p
+            return ["_line", _stmt_line, ["destructure", d_names, d_rhs]]
+
+    # Dot-/index-assignment: PLAIN-ident targets only (C gates this lookahead
+    # on TOK_IDENT — the prev/at identifier fallback takes no postfix at the
+    # pinned runtime). `is` and the compound family are both accepted; C
+    # desugars dot compounds by re-reading the target and keeps index
+    # compounds once-evaluated (OP_DUP2), mirrored here via a 5th
+    # index_assign element carrying the base op.
     if tt == "ident":
-        # Check for dot/bracket after ident
         peek1 is _p_peek_at of [p, 1]
         if (peek1[0] == "dot") or (peek1[0] == "lbracket"):
             saved_pos is p[1]
             target is _p_parse_postfix of p
-            if (target[0] == "dot") and ((_p_peek_type of p) == "kw"):
-                if (_p_peek_val of p) == "is":
-                    _p_advance of p
-                    expr is _p_parse_expr of p
-                    return ["_line", _stmt_line, ["dot_assign", target[1], target[2], expr]]
-            if (target[0] == "index") and ((_p_peek_type of p) == "kw"):
-                if (_p_peek_val of p) == "is":
-                    _p_advance of p
-                    expr is _p_parse_expr of p
-                    return ["_line", _stmt_line, ["index_assign", target[1], target[2], expr]]
+            if target[0] == "dot":
+                if (_p_peek_type of p) == "kw":
+                    if (_p_peek_val of p) == "is":
+                        _p_advance of p
+                        expr is _p_parse_expr of p
+                        return ["_line", _stmt_line, ["dot_assign", target[1], target[2], expr]]
+                if (_p_peek_type of p) == "op":
+                    cbase is _compound_base_op of (_p_peek_val of p)
+                    if cbase != "":
+                        _p_advance of p
+                        cexpr is _p_parse_expr of p
+                        # obj.f += e  →  obj.f is obj.f + e (C clones the
+                        # target subtree — it is evaluated twice).
+                        return ["_line", _stmt_line, ["dot_assign", target[1], target[2], ["binop", cbase, ["dot", target[1], target[2]], cexpr]]]
+            if target[0] == "index":
+                if (_p_peek_type of p) == "kw":
+                    if (_p_peek_val of p) == "is":
+                        _p_advance of p
+                        expr is _p_parse_expr of p
+                        return ["_line", _stmt_line, ["index_assign", target[1], target[2], expr]]
+                if (_p_peek_type of p) == "op":
+                    cbase is _compound_base_op of (_p_peek_val of p)
+                    if cbase != "":
+                        _p_advance of p
+                        cexpr is _p_parse_expr of p
+                        return ["_line", _stmt_line, ["index_assign", target[1], target[2], cexpr, cbase]]
             # Not an assignment — restore and fall through
             set_at of [p, 1, saved_pos]
 
-        # Assignment: ident is expr
-        saved_pos is p[1]
-        name is (_p_cur of p)[1]
-        _p_advance of p
-        if (_p_peek_type of p) == "kw":
-            if (_p_peek_val of p) == "is":
-                _p_advance of p
-                expr is _p_parse_expr of p
-                return ["_line", _stmt_line, ["assign", name, expr]]
-        # Compound assignment: `x += e` desugars to `x is x + e` (and the
-        # arithmetic/bitwise family), matching the C parser's compound_to_op
-        # desugaring. The LHS read is an ["ident", name] node.
-        if (_p_peek_type of p) == "op":
-            cbase is _compound_base_op of (_p_peek_val of p)
+    # Plain assignment `X is e` (identifier-like minus the question words —
+    # `what is e` is the interrogative form; prev/at qualify) and compound
+    # `X += e` (the FULL identifier-like set including question words —
+    # compound is never interrogative). Mirrors C's tok_is_assign_name /
+    # tok_is_ident_like split.
+    cur_tok is _p_cur of p
+    peek1 is _p_peek_at of [p, 1]
+    if (_tok_assign_name of cur_tok) == 1:
+        if (peek1[0] == "kw") and (peek1[1] == "is"):
+            _p_advance of p
+            _p_advance of p
+            expr is _p_parse_expr of p
+            return ["_line", _stmt_line, ["assign", cur_tok[1], expr]]
+    if (_tok_ident_like of cur_tok) == 1:
+        if peek1[0] == "op":
+            cbase is _compound_base_op of peek1[1]
             if cbase != "":
                 _p_advance of p
+                _p_advance of p
                 cexpr is _p_parse_expr of p
-                return ["_line", _stmt_line, ["assign", name, ["binop", cbase, ["ident", name], cexpr]]]
-        # Not an assignment — restore and parse as expression
-        set_at of [p, 1, saved_pos]
+                return ["_line", _stmt_line, ["assign", cur_tok[1], ["binop", cbase, ["ident", cur_tok[1]], cexpr]]]
 
     # Expression statement
     expr is _p_parse_expr of p
@@ -1013,7 +1190,14 @@ define _p_parse_unary(p) as:
 
 define _p_parse_call(p) as:
     left is _p_parse_primary of p
-    # Handle postfix: .field, [idx], "fn of arg"
+    # Handle `of` application only. Dot/index postfix lives INSIDE
+    # _p_parse_primary per primary kind, mirroring the canonical C parser
+    # (parse_primary): the postfix set depends on the primary — idents,
+    # parens (incl. desugared f-strings) and dict literals take `.field`
+    # and `[idx]`; num/str/list literals and the question-word identifier
+    # fallback take `[idx]` only; listcomps, null, predicates and the
+    # prev/at identifier fallback take none. A call result (`f of x`) takes
+    # no postfix at all — C's parse_relation returns it directly.
     parsing is 1
     loop while parsing == 1:
         if (_p_peek_type of p) == "kw":
@@ -1028,16 +1212,33 @@ define _p_parse_call(p) as:
                 left is ["call", left, arg]
             else:
                 parsing is 0
-        elif (_p_peek_type of p) == "lbracket":
-            _p_advance of p
-            left is _p_parse_bracket of [p, left]
-        elif (_p_peek_type of p) == "dot":
-            _p_advance of p
-            key_tok is _p_expect of [p, "ident"]
-            left is ["dot", left, key_tok[1]]
         else:
             parsing is 0
     return left
+
+# Postfix chains for primaries, mirroring the C parser's per-primary loops.
+# _p_postfix_full: `.field` + `[idx]`/slices (idents, parens, dicts).
+# _p_postfix_brackets: `[idx]`/slices only (num/str/list literals,
+# question-word identifier fallback).
+define _p_postfix_full(p, node) as:
+    chaining is 1
+    loop while chaining == 1:
+        if (_p_peek_type of p) == "dot":
+            _p_advance of p
+            key_tok is _p_expect of [p, "ident"]
+            node is ["dot", node, key_tok[1]]
+        elif (_p_peek_type of p) == "lbracket":
+            _p_advance of p
+            node is _p_parse_bracket of [p, node]
+        else:
+            chaining is 0
+    return node
+
+define _p_postfix_brackets(p, node) as:
+    loop while (_p_peek_type of p) == "lbracket":
+        _p_advance of p
+        node is _p_parse_bracket of [p, node]
+    return node
 
 define _p_parse_primary(p) as:
     tt is _p_peek_type of p
@@ -1045,31 +1246,42 @@ define _p_parse_primary(p) as:
     if tt == "num":
         tok is _p_cur of p
         _p_advance of p
-        return ["num", tok[1]]
+        # C: numeric literals take [idx] postfix only — `1.5.x` / `[1,2].x`
+        # style dot-postfix is a parse error at the canonical parser.
+        return _p_postfix_brackets of [p, ["num", tok[1]]]
 
     if tt == "str":
         tok is _p_cur of p
         _p_advance of p
-        return ["str", tok[1]]
+        # C: string literals take [idx] postfix only.
+        return _p_postfix_brackets of [p, ["str", tok[1]]]
 
     if tt == "null":
         _p_advance of p
         return ["null"]
 
-    # Temporal: prev of x [at <line>]  (kind 6). Matches the C grammar.
+    # Temporal: `prev of x [at <line>]` (kind 6); bare `prev`/`at` are ordinary
+    # identifiers (soft keywords), matching the C grammar.
     if tt == "kw":
         if (_p_peek_val of p) == "prev":
             _p_advance of p
+            is_temporal is 0
             if (_p_peek_type of p) == "kw":
                 if (_p_peek_val of p) == "of":
-                    _p_advance of p
-            prev_expr is _p_parse_primary of p
-            prev_at is null
-            if (_p_peek_type of p) == "kw":
-                if (_p_peek_val of p) == "at":
-                    _p_advance of p
-                    prev_at is _p_parse_primary of p
-            return ["interrogate", 6, prev_expr, prev_at]
+                    is_temporal is 1
+            if is_temporal == 1:
+                _p_advance of p
+                prev_expr is _p_parse_primary of p
+                prev_at is null
+                if (_p_peek_type of p) == "kw":
+                    if (_p_peek_val of p) == "at":
+                        _p_advance of p
+                        prev_at is _p_parse_primary of p
+                return ["interrogate", 6, prev_expr, prev_at]
+            return ["ident", "prev"]
+        if (_p_peek_val of p) == "at":
+            _p_advance of p
+            return ["ident", "at"]
 
     # Interrogatives: `<kw> is x [at <line>]` (what/who/when/where/why/how).
     # Matches the C grammar (not the meta-interpreter's `<kw> of x`).
@@ -1087,8 +1299,9 @@ define _p_parse_primary(p) as:
                         _p_advance of p
                         at_expr is _p_parse_primary of p
                 return ["interrogate", kind, iexpr, at_expr]
-        # Not `<kw> is ...` — treat as a plain identifier
-        return ["ident", tok[1]]
+        # Not `<kw> is ...` — treat as a plain identifier. C's question-word
+        # fallback takes [idx] postfix only (no dot).
+        return _p_postfix_brackets of [p, ["ident", tok[1]]]
 
     # Predicates: converged, stable, improving, oscillating, diverging, equilibrium
     if tt == "predicate":
@@ -1100,7 +1313,7 @@ define _p_parse_primary(p) as:
     if tt == "ident":
         tok is _p_cur of p
         _p_advance of p
-        return ["ident", tok[1]]
+        return _p_postfix_full of [p, ["ident", tok[1]]]
 
     if tt == "lparen":
         # Check for lambda: (params) => expr
@@ -1138,12 +1351,13 @@ define _p_parse_primary(p) as:
             _p_expect of [p, "arrow"]
             body is _p_parse_expr of p
             return ["lambda", params, body]
-        # Not a lambda — restore and parse as grouping
+        # Not a lambda — restore and parse as grouping. Parenthesized
+        # expressions (including desugared f-strings) take full postfix.
         set_at of [p, 1, saved_pos]
         _p_advance of p
         expr is _p_parse_expr of p
         _p_expect of [p, "rparen"]
-        return expr
+        return _p_postfix_full of [p, expr]
 
     if tt == "lbracket":
         _p_advance of p
@@ -1156,7 +1370,7 @@ define _p_parse_primary(p) as:
         if (_p_peek_type of p) == "kw":
             if (_p_peek_val of p) == "for":
                 _p_advance of p
-                var_tok is _p_expect of [p, "ident"]
+                var_tok is _p_expect_ident_like of p
                 _p_expect of [p, "kw"]
                 iter_expr is _p_parse_expr of p
                 filter_expr is null
@@ -1173,7 +1387,9 @@ define _p_parse_primary(p) as:
                 break
             append of [elems, _p_parse_expr of p]
         _p_expect of [p, "rbracket"]
-        return ["list", elems]
+        # C: list literals take [idx] postfix only (listcomps take none —
+        # that branch returns directly above).
+        return _p_postfix_brackets of [p, ["list", elems]]
 
     # Dict literal: {"key": value, ...}
     if tt == "lbrace":
@@ -1193,7 +1409,7 @@ define _p_parse_primary(p) as:
                 val is _p_parse_expr of p
                 append of [pairs, [key, val]]
         _p_expect of [p, "rbrace"]
-        return ["dict", pairs]
+        return _p_postfix_full of [p, ["dict", pairs]]
 
     throw of f"parse error: unexpected token {tt} '{_p_peek_val of p}'"
 
@@ -1310,6 +1526,39 @@ define _get_observer(name) as:
         return _eigen_obs[name]
     return [0, 0, 0, 0]
 
+# Apply a base binary operator to two already-evaluated values (used by the
+# compound index-assignment desugar; mirrors the binop evaluation below).
+define _apply_binop(op, left, right) as:
+    if op == "+":
+        if (type of left) == "str":
+            return left + (str of right)
+        if (type of right) == "str":
+            return (str of left) + right
+        return left + right
+    if op == "-":
+        return left - right
+    if op == "*":
+        return left * right
+    if op == "/":
+        if right == 0:
+            return 0
+        return left / right
+    if op == "%":
+        if right == 0:
+            return 0
+        return left % right
+    if op == "&":
+        return left & right
+    if op == "|":
+        return left | right
+    if op == "^":
+        return left ^ right
+    if op == "<<":
+        return left << right
+    if op == ">>":
+        return left >> right
+    throw of f"unsupported compound operator {op}"
+
 define eigen_eval(node, env) as:
     if node == null:
         return null
@@ -1422,17 +1671,29 @@ define eigen_eval(node, env) as:
         if (type of fn) == "list":
             if (len of fn) >= 4:
                 if fn[0] == "__eigen_fn__":
-                    # fn is [__eigen_fn__, name, params, body]
+                    # fn is [__eigen_fn__, name, params, body, defaults?]
                     params is fn[2]
                     body is fn[3]
                     call_env is _env_new of env
+                    bound_n is 0
                     if (len of params) > 1:
                         if (type of arg) == "list":
                             for pi in range of (len of params):
                                 if pi < (len of arg):
                                     _env_set_local of [call_env, params[pi], arg[pi]]
+                                    bound_n is bound_n + 1
                     else:
                         _env_set_local of [call_env, params[0], arg]
+                        bound_n is 1
+                    # Trailing parameter defaults: fill slots the caller did
+                    # not supply (missing args only — an explicit null stays
+                    # null), evaluated at call time in the callee env.
+                    if (len of fn) >= 5:
+                        fdefs is fn[4]
+                        for pi in range of (len of params):
+                            if (pi >= bound_n) and (pi < (len of fdefs)):
+                                if fdefs[pi] != null:
+                                    _env_set_local of [call_env, params[pi], eigen_eval of [fdefs[pi], call_env]]
                     _eigen_returning is 0
                     result is _eval_block of [body, call_env]
                     if _eigen_returning == 1:
@@ -1486,6 +1747,10 @@ define eigen_eval(node, env) as:
         target is eigen_eval of [node[1], env]
         idx is eigen_eval of [node[2], env]
         val is eigen_eval of [node[3], env]
+        # Compound form (5th element = base op): target/index evaluated once,
+        # read-modify-write, mirroring C's OP_DUP2 lowering.
+        if (len of node) >= 5:
+            val is _apply_binop of [node[4], target[idx], val]
         if (type of target) == "list":
             set_at of [target, idx, val]
             return val
@@ -1493,6 +1758,18 @@ define eigen_eval(node, env) as:
             dict_set of [target, str of idx, val]
             return val
         throw of f"cannot index-assign on {type of target}"
+
+    if ntype == "destructure":
+        d_val is eigen_eval of [node[2], env]
+        d_names is node[1]
+        if (type of d_val) != "list":
+            throw of f"destructuring requires a list, got {type of d_val}"
+        if (len of d_val) != (len of d_names):
+            throw of f"destructuring expected list of length {len of d_names}, got {len of d_val}"
+        for di in range of (len of d_names):
+            _env_set of [env, d_names[di], d_val[di]]
+            _update_observer of [d_names[di], d_val[di]]
+        return d_val[(len of d_names) - 1]
 
     if ntype == "lambda":
         params is node[1]
@@ -1551,8 +1828,11 @@ define eigen_eval(node, env) as:
         name is node[1]
         params is node[2]
         body is node[3]
+        fn_defaults is []
+        if (len of node) >= 5:
+            fn_defaults is node[4]
         # Don't capture env to avoid circular references in value lists
-        fn_val is ["__eigen_fn__", name, params, body]
+        fn_val is ["__eigen_fn__", name, params, body, fn_defaults]
         _env_set of [env, name, fn_val]
         return fn_val
 
