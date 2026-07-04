@@ -2196,7 +2196,7 @@ define find_buf_param_use(node, name) as:
             if g_funcs[callee[1]] != null:
                 local arg is unwrap of node[2]
                 local elems is []
-                if arg[0] == "list":
+                if (arg[0] == "list") and ((len of arg) == 2):
                     elems is arg[1]
                 else:
                     elems is [arg]
@@ -2235,6 +2235,9 @@ define emit_args(node, fname, nm, bt) as:
     local elems is []
     if arg[0] == "null":
         elems is []
+    elif (arg[0] == "list") and ((len of arg) == 3):
+        # #355: parenthesized literal list — ONE argument, never spread.
+        elems is [arg]
     elif arg[0] == "list":
         if (len of arg[1]) == 1:
             throw of ("AOT: call " + fname + " of (x), not [x], for a single arg")
