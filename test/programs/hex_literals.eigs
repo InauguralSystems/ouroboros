@@ -1,8 +1,10 @@
-# Hex literals — the C lexer delegates numbers to strtod, which accepts
-# 0x/0X hex integers, hex fractions (digits a-f in the fraction!), and the
-# binary exponent p/P. `0x` with no hex digit lexes as `0` then an ident,
-# so only real hex prefixes take this path. Byte-for-byte parity case for
-# ouroboros#57 item 1 (was: `0x10` lexed as `0` + stray `x10`).
+# Hex INTEGER literals — the v0.25.0 contract (upstream #378): the C
+# lexer consumes 0x/0X + hex digits itself; strtod never sees a hex
+# prefix. `0x` with no hex digit after it (incl. `0x.8`) lexes as `0` +
+# a stray identifier = loud parse error on every profile — the reject
+# cases live in test/run.sh (reject_one asserts the C oracle refuses
+# too). Byte-for-byte parity case; supersedes the strtod-parity version
+# (hex fractions / p-exponents are gone from the language).
 print of 0x10
 print of 0X10
 print of 0xff
@@ -11,9 +13,8 @@ print of 0xABCDEF
 h is 0x1A
 print of h
 print of (h + 0x1)
-# hex float forms strtod accepts
-print of 0x1p3
-print of 0x.8
-print of 0x10.f
+print of 0x000F
+print of 0x80000000
+print of (0x12378086 % 0x10000)
 # arithmetic on hex, precedence unchanged
 print of (0x10 * 2 + 0x2)

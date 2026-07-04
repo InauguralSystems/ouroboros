@@ -614,7 +614,7 @@ under-arity calls are all unsupported there — each throws loudly), so the
 self-host program IS the parity proof for this bump; the existing tN suite
 pins that bare spread is unchanged.
 
-## F-OURO-24 — hex literals became a LEXED form upstream (#378); frontend follows at the next pin bump — TRACKING
+## F-OURO-24 — hex literals became a LEXED form upstream (#378); frontend follows at the next pin bump — FIXED (v0.25.0 bump)
 
 EigenScript #378 (merged to main 2026-07-03, UNRELEASED — not in the
 v0.24.0 pin) ends the strtod delegation for hex: the canonical lexer now
@@ -635,3 +635,16 @@ past #378, in the SAME bump:
   `reject_one` cases for `0x1p4` / `0xA.8` (the C oracle now rejects them
   too, so reject parity is assertable);
 - re-run both harnesses against the new pinned oracle.
+
+EXECUTED with the v0.25.0 bump (2026-07-04): frontend.eigs lexes hex
+integers itself (digit accumulate via _hex_val — `num of "0x…"` no
+longer involved, so the value path is profile-independent too); the
+fraction/p-exponent paths are deleted; the decisive-prefix behavior
+(`0x`/`0x.8` → `0` + stray ident, loud) falls out of the plain-number
+fallthrough with no special case. Frontend review during the flip also
+CAUGHT AN UPSTREAM RESIDUE: #378's first cut still let glibc strtod see
+`0x.8` (hosted 0.5, freestanding parse error) — fixed upstream in the
+same release (decisive-prefix in lexer.c; suite [50b] gained rejects
+for 0x1p4/0x.8/0x), so the reject_one cases here assert against a
+genuinely closed oracle. hex_literals.eigs re-cut to the integer-only
+contract; reject_one gains the three forms.

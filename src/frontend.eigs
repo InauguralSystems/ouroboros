@@ -44,6 +44,14 @@ define _is_space(c) as:
 define _is_hex_digit(c) as:
     return contains of ["0123456789abcdefABCDEF", c]
 
+define _hex_val(c) as:
+    local i is index_of of ["0123456789abcdefABCDEF", c]
+    if i < 0:
+        return 0
+    if i >= 16:
+        return i - 6
+    return i
+
 # Full keyword list matching C lexer
 _keywords is ["is", "of", "define", "as", "if", "else", "elif", "loop", "while", "return", "and", "or", "not", "for", "in", "null", "try", "catch", "break", "continue", "import", "match", "case", "unobserved", "local", "prev", "at", "what", "who", "when", "where", "why", "how", "converged", "stable", "improving", "oscillating", "diverging", "equilibrium"]
 
@@ -308,59 +316,32 @@ define eigen_tokenize(source) as:
                     if (_is_digit of (char_at of [source, pos + 1])) == 1:
                         num_start is 1
             if num_start == 1:
-                # Hex literals (strtod parity, matching the C lexer's strtod
-                # delegation): 0x/0X starts a hex number only when followed by
-                # a hex digit, or by `.` + hex digit (`0x` alone lexes as `0`
-                # then ident `x`, like strtod). Fraction digits are hex too
-                # (`0x10.f` is 16.9375), a lone trailing dot is consumed
-                # (`0x2.` -> 2), and the binary exponent p/P takes an optional
-                # sign and >=1 decimal digit (lookahead-guarded: `0x1p` -> 1,
-                # leaving `p`).
+                # Hex INTEGER literals (v0.25.0 pin, upstream #378): the C
+                # lexer consumes 0x/0X + hex digits itself — strtod never
+                # sees a hex prefix. 0x starts a hex number ONLY when a hex
+                # digit follows; otherwise (`0x`, `0x.8`) the plain-number
+                # path below lexes just the `0`, the `x` re-lexes as an
+                # identifier, and the parse fails loudly — identical to the
+                # C lexer's decisive-prefix behavior. Hex-float fraction and
+                # p/P-exponent forms are gone from the language.
                 is_hex is 0
                 if (c == "0") and ((pos + 2) < src_len):
                     xch is char_at of [source, pos + 1]
                     if (xch == "x") or (xch == "X"):
-                        nch is char_at of [source, pos + 2]
-                        if (_is_hex_digit of nch) == 1:
+                        if (_is_hex_digit of (char_at of [source, pos + 2])) == 1:
                             is_hex is 1
-                        elif (nch == ".") and ((pos + 3) < src_len):
-                            if (_is_hex_digit of (char_at of [source, pos + 3])) == 1:
-                                is_hex is 1
                 if is_hex == 1:
-                    buf is "0x"
+                    hval is 0
                     pos is pos + 2
-                    hex_dot is 0
                     reading_hex is 1
                     loop while (pos < src_len) and (reading_hex == 1):
                         hch is char_at of [source, pos]
                         if (_is_hex_digit of hch) == 1:
-                            buf is buf + hch
-                            pos is pos + 1
-                        elif (hch == ".") and (hex_dot == 0):
-                            hex_dot is 1
-                            buf is buf + hch
+                            hval is (hval * 16) + (_hex_val of hch)
                             pos is pos + 1
                         else:
                             reading_hex is 0
-                    # Binary exponent: p/P, optional sign, >=1 decimal digit.
-                    if pos < src_len:
-                        pch is char_at of [source, pos]
-                        if (pch == "p") or (pch == "P"):
-                            pp is pos + 1
-                            psign is ""
-                            if pp < src_len:
-                                psc is char_at of [source, pp]
-                                if (psc == "+") or (psc == "-"):
-                                    psign is psc
-                                    pp is pp + 1
-                            if pp < src_len:
-                                if (_is_digit of (char_at of [source, pp])) == 1:
-                                    buf is buf + pch + psign
-                                    pos is pp
-                                    loop while (pos < src_len) and ((_is_digit of (char_at of [source, pos])) == 1):
-                                        buf is buf + (char_at of [source, pos])
-                                        pos is pos + 1
-                    append of [tokens, ["num", num of buf, line]]
+                    append of [tokens, ["num", hval, line]]
                     handled is 1
             if (num_start == 1) and (handled == 0):
                 buf is ""

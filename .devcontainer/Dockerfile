@@ -28,7 +28,7 @@ RUN apt-get update \
 # terminator enforced (#326), prev/at + question-word identifier fallbacks
 # take full postfix (#328), break/continue outside a loop are compile errors
 # (#337), out-of-range OP_SET_LOCAL raises instead of silently dropping (#348).
-ARG EIGS_REF=v0.24.0
+ARG EIGS_REF=v0.25.0
 RUN mkdir -p /opt/eigenscript-src && cd /opt/eigenscript-src && git init -q \
  && git remote add origin https://github.com/InauguralSystems/EigenScript.git \
  && git fetch -q --depth 1 origin "${EIGS_REF}" && git checkout -q FETCH_HEAD \
