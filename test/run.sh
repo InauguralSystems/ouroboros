@@ -47,6 +47,11 @@ reject_one() {
 reject_one 'print of (3 @ 4)'
 reject_one 'print of (3 ` 4)'
 reject_one 'x is $5'
+# v0.25.0 (upstream #378): hex is INTEGER-only and the prefix is decisive —
+# hex-float forms and a bare 0x are loud parse errors on both sides.
+reject_one 'x is 0x1p4'
+reject_one 'x is 0x.8'
+reject_one 'x is 0x'
 # Dot-postfix on num/str/list literals: the C parser rejects these at parse
 # time (only [idx] postfix is allowed there); the front-end used to accept
 # them and fail at runtime -- a silent parse-acceptance divergence (#57).
