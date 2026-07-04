@@ -56,6 +56,14 @@ reject_one 'z is 5 .foo'
 # Statement terminator (#326, v0.23.0 pin): leftover tokens after a simple
 # statement are a parse error — "one statement per line".
 reject_one 'x is 2 x is 3'
+# v0.24.0: upstream #351 closed the dot-/index-assign terminator gap — these
+# were the stmt_terminator_gap.eigs matched-bug canary until the pin moved.
+reject_one 'd is {"k": 1}
+d.k is 2 3'
+reject_one 'l is [1]
+l[0] is 8 9'
+reject_one 'l is [1]
+l[0] += 1 4'
 
 echo "--- bootstrap (full self-host: front-end + codegen, byte-exact fixed point) ---"
 if "$EIGS" test/bootstrap.eigs 2>/dev/null | grep -q "PASS"; then

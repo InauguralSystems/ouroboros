@@ -1,0 +1,12 @@
+# #355 (v0.24.0): parentheses always mean ONE argument — a parenthesized
+# literal list binds whole instead of spreading.
+define fst(a, b) as:
+    return a
+define one(a) as:
+    return a
+print of (fst of ([10, 20]))
+print of (fst of [10, 20])
+print of (one of ([1, 2, 3]))
+print of (len of (one of ([])))
+xs is [7, 8]
+print of (fst of (xs))

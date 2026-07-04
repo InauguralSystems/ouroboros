@@ -652,9 +652,9 @@ define _p_skip_newlines(p) as:
 # tokens are a parse error ("one statement per line"). Called at the simple-
 # statement return points only; block statements (if/for/loop/define/try/
 # match/unobserved) consume their own DEDENT, so they must NOT get this check.
-# Deliberate exemption mirroring the oracle: the C parser's dot-/index-assign
-# paths (parser.c member-assignment lookahead) return WITHOUT this check —
-# an upstream #326 gap; `d.k is 2 3` silently discards the `3` at v0.23.0.
+# (v0.24.0: upstream #351 closed the old dot-/index-assign terminator gap —
+# the exemption that used to live on those paths is gone; the reject canary
+# in test/ pins the enforcement.)
 define _p_end_statement(p) as:
     tt is _p_peek_type of p
     if tt == "newline":
@@ -950,11 +950,10 @@ define _p_parse_statement(p) as:
                     if (_p_peek_val of p) == "is":
                         _p_advance of p
                         expr is _p_parse_expr of p
-                        # NO _p_end_statement: the v0.23.0 C parser's
-                        # dot/index-assign paths return WITHOUT the #326
-                        # terminator check (upstream gap, verified vs the
-                        # oracle: `d.k is 2 3` silently discards the `3`).
-                        # Enforcing here would over-reject vs the oracle.
+                        # v0.24.0 pin: upstream #351 closed the #326 gap on
+                        # dot/index-assign — the oracle now enforces the
+                        # terminator here, so we do too.
+                        _p_end_statement of p
                         return ["_line", _stmt_line, ["dot_assign", target[1], target[2], expr]]
                 if (_p_peek_type of p) == "op":
                     cbase is _compound_base_op of (_p_peek_val of p)
@@ -962,22 +961,25 @@ define _p_parse_statement(p) as:
                         _p_advance of p
                         cexpr is _p_parse_expr of p
                         # obj.f += e  →  obj.f is obj.f + e (C clones the
-                        # target subtree — it is evaluated twice). No #326
-                        # check — see the dot_assign note above.
+                        # target subtree — it is evaluated twice). #351
+                        # closed: terminator enforced (see dot_assign note).
+                        _p_end_statement of p
                         return ["_line", _stmt_line, ["dot_assign", target[1], target[2], ["binop", cbase, ["dot", target[1], target[2]], cexpr]]]
             if target[0] == "index":
                 if (_p_peek_type of p) == "kw":
                     if (_p_peek_val of p) == "is":
                         _p_advance of p
                         expr is _p_parse_expr of p
-                        # No #326 check — see the dot_assign note above.
+                        # #351 closed: terminator enforced (see dot_assign note).
+                        _p_end_statement of p
                         return ["_line", _stmt_line, ["index_assign", target[1], target[2], expr]]
                 if (_p_peek_type of p) == "op":
                     cbase is _compound_base_op of (_p_peek_val of p)
                     if cbase != "":
                         _p_advance of p
                         cexpr is _p_parse_expr of p
-                        # No #326 check — see the dot_assign note above.
+                        # #351 closed: terminator enforced (see dot_assign note).
+                        _p_end_statement of p
                         return ["_line", _stmt_line, ["index_assign", target[1], target[2], cexpr, cbase]]
             # Not an assignment — restore and fall through
             set_at of [p, 1, saved_pos]
@@ -1398,7 +1400,15 @@ define _p_parse_primary(p) as:
         _p_advance of p
         expr is _p_parse_expr of p
         _p_expect of [p, "rparen"]
-        return _p_postfix_full of [p, expr]
+        expr is _p_postfix_full of [p, expr]
+        # #355 (v0.24.0): parens always mean ONE argument — a parenthesized
+        # literal list carries a 3rd marker slot so call sites do not
+        # spread it. Postfix-consumed forms wrap in index/dot nodes and
+        # fall through untouched.
+        if expr[0] == "list":
+            if (len of expr) == 2:
+                return ["list", expr[1], 1]
+        return expr
 
     if tt == "lbracket":
         _p_advance of p
