@@ -399,7 +399,7 @@ The AOT is still a deliberate subset (one boundary remains guarded, not built:
 *nested* observed functions need a per-call env), but "real observer code doesn't
 compile" is no longer the boundary.
 
-### F-OURO-18 — AOT soft-keyword frontend support is ready but PIN-GATED — TRACKING
+### F-OURO-18 — AOT soft-keyword frontend support is ready but PIN-GATED — DONE (re-landed at the v0.21.2 bump; #328 postfix alignment landed with v0.23.0 — t49/t50 pin both)
 
 `fuzzdiff.py` found real second-parser drift: the canonical EigenScript parser
 (`parser.c`, on EigenScript **main** / `[Unreleased]`) now binds the soft
@@ -593,3 +593,23 @@ two mirrors deferred above landed:
   of range" instead of silently dropping, so the pad is the legitimate slot
   reservation — without it the defaults prologue would raise on every
   underfed call. Comment updated; defaults verified against the new oracle.
+
+## F-OURO-23 — AOT lacks a whole-list user-fn param class; #355 paren args throw LOUDLY — TRACKING
+
+The v0.24.0 bump mirrors upstream #355 (parens always mean one argument) in
+`frontend.eigs` (a parenthesized literal list carries a 3rd marker slot) and
+`codegen.eigs` (marked lists never spread) — the self-host tier proves full
+parity (`test/programs/paren_no_spread.eigs`). The AOT emitter honors the
+marker at both user-fn call sites, but its param specialization has no
+generic "whole list" class (`func_ptypes`: num default / dict / tensor /
+buf from body usage), so `f of ([a, b])` to a user function emits
+`emit_num(list)` → **loud build-time throw** ("emit_num on non-numeric node
+list"). That failure mode is correct per the contract (loud beats silent
+spread, which is what pre-mirror emission would have produced — a silent
+semantics divergence from the v0.24.0 oracle). Lifting the limit means a
+generic `Value*` param class inferred when call sites pass non-numeric
+wholes; do it when a real AOT consumer needs it. No AOT-tier test can pin
+the new semantics in-envelope (whole-list args, defaulted params, and
+under-arity calls are all unsupported there — each throws loudly), so the
+self-host program IS the parity proof for this bump; the existing tN suite
+pins that bare spread is unchanged.
