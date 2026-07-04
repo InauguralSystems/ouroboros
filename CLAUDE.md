@@ -48,8 +48,10 @@ python3 aot/fuzzdiff.py             # differential fuzzing
   oracle ALSO rejects, so reject cases can't rot into over-rejections.
 - **`frontend.eigs` drifts silently — mirror `parser.c` precisely.**
   Verified pain points: `of` binds unary-or-tighter; numeric lexing must
-  match `strtod` (scientific, leading-dot, hex with `p`-exponent and
-  lookahead guards); f-string desugaring parenthesized as one primary;
+  match the pinned oracle (scientific + leading-dot with lookahead
+  guards; since v0.25.0 hex is INTEGER-only, lexed not strtod — the 0x
+  prefix is decisive and hex-float forms are loud parse errors);
+  f-string desugaring parenthesized as one primary;
   postfix is per-primary; the full precedence chain
   `or→and→cmp→bitor→bitxor→bitand→shift→add→mul→unary→call→primary`.
   Since v0.24.0: a parenthesized literal list carries a 3rd marker slot
