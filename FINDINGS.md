@@ -613,3 +613,25 @@ the new semantics in-envelope (whole-list args, defaulted params, and
 under-arity calls are all unsupported there — each throws loudly), so the
 self-host program IS the parity proof for this bump; the existing tN suite
 pins that bare spread is unchanged.
+
+## F-OURO-24 — hex literals became a LEXED form upstream (#378); frontend follows at the next pin bump — TRACKING
+
+EigenScript #378 (merged to main 2026-07-03, UNRELEASED — not in the
+v0.24.0 pin) ends the strtod delegation for hex: the canonical lexer now
+consumes `0x`/`0X` + hex digits itself, on every profile, and the
+accidentally-accepted hex-FLOAT forms (`0x10.f`, `0x1p4`) are loud parse
+errors instead of numbers. (Found by EigenOS M12: the freestanding
+mini_strtod has no hex path, so `0xFF` parsed hosted and lexed as `0` +
+ident `xFF` on bare metal.)
+
+`frontend.eigs` today mirrors the v0.24.0 oracle exactly — hex ints AND
+hex fractions AND p/P binary exponents (the lookahead-guarded block near
+line 312) — so per the pin rule there is NOTHING to change yet: switching
+early would flag false drift against the pinned VM. When `EIGS_REF` moves
+past #378, in the SAME bump:
+- drop the hex-fraction and p-exponent paths (hex digits only; `0x` alone
+  still lexes as `0` + ident `x`, which #378 keeps);
+- add parity programs: hex-int forms (case, adjacency, `0xFF+1`) plus
+  `reject_one` cases for `0x1p4` / `0xA.8` (the C oracle now rejects them
+  too, so reject parity is assertable);
+- re-run both harnesses against the new pinned oracle.
