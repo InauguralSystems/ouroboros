@@ -45,9 +45,13 @@ calls, list literals, **control flow** (`if`/`elif`/`else`, `loop while`,
 `define`, parameters, `return`, slot-allocated locals, recursion, and the
 `f of [a,b]` arg-spread calling convention; **dicts, indexing, dot access,
 comprehensions**; and the **observer opcodes** — `OBSERVE_ASSIGN` on every `is`,
-the six `PREDICATE`s, and the `LOOP_STALL_CHECK`/`LOOP_CAP_CHECK` classifier.
-25/25 programs at byte-identical parity with the C evaluator (incl. factorial,
-fibonacci, and firing observer predicates over full windows).
+the six `PREDICATE`s, and the `LOOP_STALL_CHECK`/`LOOP_CAP_CHECK` classifier;
+**interrogatives + temporal** (`what`/`who`/`when`/… `is x [at line]`, `prev of
+x`), **bitwise + compound assignment**, **destructuring**, **parameter
+defaults**, and **hex literals**. All 43 programs in `test/programs/` are at
+byte-identical parity with the C evaluator (plus 14 `reject_one` cases and the
+byte-exact bootstrap fixed point; incl. factorial, fibonacci, and firing
+observer predicates over full windows).
 
 ### Roadmap
 
@@ -74,10 +78,20 @@ fibonacci, and firing observer predicates over full windows).
       `OP_LINE` emission, and the `record_history` primitive for runtime history.
       All forms byte-for-byte with the C evaluator.
 
+## Native (AOT) compiler
+
+The repo holds a *second* compiler: `aot/compile.eigs` lowers EigenScript AST to
+C (linked against `aot/aot_rt.h`) for native execution, instead of to bytecode.
+Same rule — the bytecode VM is the byte-exact oracle: every `aot/test/tN_*.eigs`
+program is diffed byte-for-byte against `eigenscript PROG.eigs`, and CI runs both
+suites. See `aot/README.md` for the emitter, the differential harness, and the
+performance arc.
+
 ## Layout
 
     src/frontend.eigs   tokenizer + parser (vendored from lib/eigen.eigs)
     src/codegen.eigs    AST -> bytecode (the self-hosted back-end)
+    aot/                native AOT compiler (AST -> C); see aot/README.md
     ouroboros.eigs      CLI: compile + run a source file
     test/programs/      sample programs
     test/run.sh         behavioral-parity oracle vs the C evaluator
