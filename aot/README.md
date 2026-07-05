@@ -148,8 +148,8 @@ guarded `exp`); softmax is the only place it appears. Like the matvec, the win
 is native+unboxed, not SIMD: every heavy kernel (the four projection matmuls,
 the score matmul, the context matmul) is a strided reduction → native-scalar.
 The one contiguous-reduction opportunity is `scores[i][j] = dot(Q_row_i,
-K_row_j)`. Surfaced a frontend gap: the lexer doesn't parse scientific notation
-(`1e30` → `1` + a stray `e30` ident), so the mask sentinel uses a plain integer.
+K_row_j)`. Surfaced a frontend gap (scientific notation), since fixed — `t46_sci_literals`
+pins it; the bench still uses the plain-integer mask sentinel.
 
 ### Full transformer block (end-to-end + profile)
 
@@ -250,8 +250,6 @@ so it inherits the scalar path's bounds safety. Recognized by `outvec_loop` (the
 `for o { s=0; for d { s += TERM } out[base+o]=s }` shape, `TERM`'s reads each
 `o`-independent → broadcast or `base+o` → vector load).
 
-Measured (`bench/matmul.eigs`, d_model=512, 100 passes, dev box):
-
 ### Accumulator num_guard elision
 
 The reduction's per-op `num_guard` (NaN→0, clamp ±1e308) is the last cost. It
@@ -263,6 +261,8 @@ can exceed 1e308 → `num_guard` is provably identity → run the **unguarded**
 accumulation (byte-identical to the VM); else fall back to the guarded path
 (which clamps exactly like the VM). Recognized by `matmul_loop` (the i-loop
 wrapping an outvec o-loop whose term is a two-read product `A[.]*B[.]`).
+
+Measured (`bench/matmul.eigs`, d_model=512, 100 passes, dev box):
 
 | matmul codegen | time |
 |---|---|
@@ -407,7 +407,7 @@ boundary is no longer "real observer code."
 2. **numeric functions DONE** — `define f(p…) as: … return e` compiles to native
    `double f(double…)` with forward prototypes (recursion/mutual recursion),
    params + locals as C doubles, calls `f(args)` in numeric context. `fib(32)`:
-   ~37× over the VM. (Boxed/buffer params are a later extension.)
+   ~37× over the VM. (Boxed/buffer params landed later — see *Buffer params* below.)
 3. **typed numeric buffers DONE** (checked path) — `buffer of N` / `zeros of N`
    become C `Value*`; element read/write via `aot_buf_get`/`aot_buf_set` (integer
    check + negative-index resolve + bounds), `len of buf` via `aot_buf_len`.
@@ -621,8 +621,7 @@ element-wise loop `out[i] = f(in[i])` (no carried dependency):
 
 `num_guard`'s branches **block auto-vectorization**; the guard-free loop
 vectorizes. That ~2–4× lands on element-wise numeric array loops — exactly the
-portfolio's hot code (transformer matmuls, physics solvers, neural nets). Two
-things capture it, in a later slice: **typed numeric arrays/buffers** (so there
-are vectorizable loops to emit) and compiling the *generated* C at
-**`-O3 -march=native`** (the current `-O2` doesn't auto-vectorize). Until then
-there's nothing vectorizable to compile, so the build stays `-O2`.
+portfolio's hot code (transformer matmuls, physics solvers, neural nets). Both
+things that capture it landed: **typed numeric arrays/buffers** (slice 3, so
+there are vectorizable loops to emit) and compiling the *generated* C at
+**`-O3 -march=native`** (`build.sh`; the old `-O2` didn't auto-vectorize).

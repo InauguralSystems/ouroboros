@@ -579,6 +579,10 @@ two mirrors deferred above landed:
   (oracle wins — enforcing there would over-reject) and locks it in with
   parity program stmt_terminator_gap.eigs, which doubles as a canary: it
   starts failing the moment a future pin closes the gap.
+  **Closure:** the canary fired at the v0.24.0 pin bump — upstream #351 closed
+  the dot-/index-assign gap, so stmt_terminator_gap.eigs was retired and the
+  cases now live as reject_one entries in test/run.sh (which assert the C
+  oracle also rejects).
 - **Soft-keyword postfix (upstream #328)**: the prev/at identifier fallbacks
   take the FULL dot+bracket postfix chain, and the question-word fallback is
   full postfix too (dot AND bracket — verified vs the oracle: `how.k` works
