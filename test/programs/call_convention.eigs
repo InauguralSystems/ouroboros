@@ -1,3 +1,8 @@
+# Call convention (#405, v0.27.0): a BARE literal list after `of` is ALWAYS
+# the argument list, at every element count — `f of []` zero args,
+# `f of [x]` ONE arg (the element x, not a 1-element list), `f of [a, b]`
+# two args. A parenthesized literal list `f of ([x])` still passes the list
+# whole (#355). A non-literal arg (variable) is always one argument.
 define wrap(x) as:
     return x
 define add(a, b) as:
