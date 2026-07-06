@@ -618,6 +618,18 @@ under-arity calls are all unsupported there — each throws loudly), so the
 self-host program IS the parity proof for this bump; the existing tN suite
 pins that bare spread is unchanged.
 
+**v0.27.0 bump update (upstream #405, one call rule):** a bare literal list
+after `of` is now ALWAYS an argument list at every count, so `f of [x]`
+passes ONE arg (the element) and is **in-envelope** — the AOT's dedicated
+1-element throw ("call f of (x), not [x], for a single arg") was removed
+from `emit_args`, and `codegen.eigs` dropped its count!=1 no-spread guard
+(mirroring the dropped count>1 guard in the canonical `compiler.c`).
+Whole-list args to user fns now arise only via the #355 paren form
+`f of ([x])`, which still hits the `emit_num(list)` loud build-time throw
+described above — the TRACKING status (no generic `Value*` param class) is
+unchanged. `test/programs/call_convention.eigs` pins the new rule at the
+self-host tier.
+
 ## F-OURO-24 — hex literals became a LEXED form upstream (#378); frontend follows at the next pin bump — FIXED (v0.25.0 bump)
 
 EigenScript #378 (merged to main 2026-07-03, UNRELEASED — not in the

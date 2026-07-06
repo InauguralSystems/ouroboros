@@ -24,13 +24,14 @@ RUN apt-get update \
 # Build + install EigenScript at the pinned ref onto /usr/local (binary on
 # PATH, stdlib at /usr/local/lib/eigenscript — found relative to the binary).
 # EIGS_REF may be a tag, branch, or commit SHA (fetched directly, so an
-# immutable tag/SHA stays reproducible). Pinned to v0.26.0 — the frontend
-# mirrors this release's parser: statement terminator (#326), full-postfix
+# immutable tag/SHA stays reproducible). Pinned to v0.27.0 — the compilers
+# mirror this release's call rule: a bare literal list after 'of' is always
+# an argument list at every count (#405, v0.27.0), parens still pass one
+# argument (#355, v0.24.0); plus statement terminator (#326), full-postfix
 # prev/at + question-word fallbacks (#328), out-of-range OP_SET_LOCAL raises
-# (#348), the dot-/index-assign terminator gap closed (#351, v0.24.0), and
-# integer-only hex lexed-not-strtod (v0.25.0). Bump this ARG and the frontend
-# together (the deferred-mirror rule).
-ARG EIGS_REF=v0.26.0
+# (#348), and integer-only hex lexed-not-strtod (v0.25.0). Bump this ARG and
+# the frontend/codegen together (the deferred-mirror rule).
+ARG EIGS_REF=v0.27.0
 RUN mkdir -p /opt/eigenscript-src && cd /opt/eigenscript-src && git init -q \
  && git remote add origin https://github.com/InauguralSystems/EigenScript.git \
  && git fetch -q --depth 1 origin "${EIGS_REF}" && git checkout -q FETCH_HEAD \

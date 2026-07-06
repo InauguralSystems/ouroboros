@@ -2239,8 +2239,9 @@ define emit_args(node, fname, nm, bt) as:
         # #355: parenthesized literal list — ONE argument, never spread.
         elems is [arg]
     elif arg[0] == "list":
-        if (len of arg[1]) == 1:
-            throw of ("AOT: call " + fname + " of (x), not [x], for a single arg")
+        # #405 (v0.27.0): a bare literal list is ALWAYS the argument list, at
+        # every count — `f of [x]` is one arg (the element), so it is now
+        # in-envelope for the AOT (the old whole-list binding threw here).
         elems is arg[1]
     else:
         elems is [arg]
