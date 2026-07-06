@@ -14,7 +14,10 @@ EIG="${EIGS:-$EIGS_DIR/src/eigenscript}"
 SRC="$EIGS_DIR/src"
 PROG="$1"
 OUT="${2:-./a.out}"
-DEFS="-DEIGENSCRIPT_EXT_HTTP=0 -DEIGENSCRIPT_EXT_MODEL=0 -DEIGENSCRIPT_EXT_DB=0 -DEIGENSCRIPT_VERSION=\"aot\""
+# EIGENSCRIPT_VERSION must survive the eval'd gcc line as a C string: the
+# escaped inner quotes get eaten by eval, leaving a bare identifier — harmless
+# while only stringified, a build break once code compares it (trace.c #411).
+DEFS="-DEIGENSCRIPT_EXT_HTTP=0 -DEIGENSCRIPT_EXT_MODEL=0 -DEIGENSCRIPT_EXT_DB=0 -DEIGENSCRIPT_VERSION='\"aot\"'"
 # -ffp-contract=off: the VM never fuses multiply-add, so neither may we. Without
 # it, the num_guard-elided matmul (`vadd(acc, vmul(x,w))`, no guard barrier
 # between them) gets fused into a single-rounding FMA on FMA-capable targets
