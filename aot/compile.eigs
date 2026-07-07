@@ -52,6 +52,12 @@ g_int is {}
 # when the body's per-variable numeric inference disagrees with func_ret_type
 # (e.g. a numeric local demoted to env-boxed storage by `for` handling).
 g_ret_type is ""
+# --dump-inference (#65 spec_audit): instead of C, print one record per name
+# with its inferred storage kind and first-assignment line, so the audit tool
+# can join inference verdicts against a trace tape's runtime evidence. The
+# report is deterministic for a given source (AST order, no timestamps).
+g_dump is 0
+g_dump_out is ""
 # 1 if the program uses the observer system (bare predicates). When set, numeric
 # variables are kept in the env (boxed) and their assignments go through the
 # runtime observer (aot_observe_num) so the slot trajectory + predicates match
@@ -2504,6 +2510,38 @@ define emit_call_num(node, nm, bt) as:
     local fname is (unwrap of node[1])[1]
     return (cn of fname) + "(" + (emit_args of [node, fname, nm, bt]) + ")"
 
+# ---- --dump-inference support (#65 spec_audit) ----
+# Walk a body recording each name's FIRST-assignment source line (from the
+# frontend's _line wrappers) and the set of for-loop variables. Deterministic:
+# pure AST order.
+define dump_scan(node, cur, lines, forvars) as:
+    if (type of node) != "list":
+        return 0
+    if (len of node) == 0:
+        return 0
+    local ln is cur
+    if node[0] == "_line":
+        ln is node[1]
+        dump_scan of [node[2], ln, lines, forvars]
+        return 0
+    if node[0] == "assign":
+        if lines[node[1]] == null:
+            lines[node[1]] is ln
+    if node[0] == "for":
+        forvars[node[1]] is 1
+        if lines[node[1]] == null:
+            lines[node[1]] is ln
+    for k in range of (len of node):
+        dump_scan of [node[k], ln, lines, forvars]
+    return 0
+
+# One dump record: D <scope> <role> <name> <kind> <line>
+define dump_rec(scope, role, name, kind, ln) as:
+    local l is ln
+    if l == null:
+        l is 0 - 1
+    g_dump_out is g_dump_out + "D " + scope + " " + role + " " + name + " " + kind + " " + (str of l) + "\n"
+
 define emit_function(fn, finfo, gnm, gbt) as:
     local name is fn[1]
     local params is fn[2]
@@ -2609,6 +2647,50 @@ define emit_function(fn, finfo, gnm, gbt) as:
     g_int is {}
     if g_observed == 0:
         g_int is infer_int of [body, params, fnm, fbt]
+    # --dump-inference: report every param + assigned local with the storage
+    # kind the ASSIGN path actually uses (mirrors emit_stmt's dispatch), so
+    # the audit joins verdicts, not declarations.
+    if g_dump == 1:
+        local dl is {}
+        local dfv is {}
+        dump_scan of [body, 0 - 1, dl, dfv]
+        for k in range of (len of params):
+            local dpk is ptypes[k]
+            local dkind is dpk
+            if dpk == "buf":
+                dkind is "buffer"
+            elif dpk == "num":
+                dkind is "double"
+                if g_observed == 1:
+                    dkind is "observed-env"
+                elif g_int[params[k]] == 1:
+                    dkind is "long"
+            dump_rec of [name, "param", params[k], dkind, dl[params[k]]]
+        for k in range of (len of banames):
+            local dv is banames[k]
+            local disp is 0
+            for p in range of (len of params):
+                if params[p] == dv:
+                    disp is 1
+            if ((gnm[dv] == 1) or (gbt[dv] == 1)) and (shadowed[dv] != 1):
+                disp is 1
+            if disp == 0:
+                local lkind is "boxed-env"
+                if g_tensor[dv] == 1:
+                    lkind is "tensor"
+                elif fbt[dv] == 1:
+                    lkind is "buffer"
+                elif fnm[dv] == 1:
+                    lkind is "double"
+                    if g_observed == 1:
+                        lkind is "observed-env"
+                    elif g_int[dv] == 1:
+                        lkind is "long"
+                dump_rec of [name, "local", dv, lkind, dl[dv]]
+        local dfvn is keys of dfv
+        for k in range of (len of dfvn):
+            if ba[dfvn[k]] == null:
+                dump_rec of [name, "for", dfvn[k], "boxed-env-for", dl[dfvn[k]]]
     local sig is "static " + finfo["ret"] + " " + (cn of name) + "("
     if (len of params) == 0:
         sig is sig + "void"
@@ -2785,6 +2867,32 @@ define emit_program(ast) as:
     g_dict is {}
     g_genp is {}
     g_tensor is infer_tensors of rest
+    # --dump-inference: module-scope records. These are the tape-joinable ones
+    # (A records track top-level bindings), so the audit's evidence lives here.
+    if g_dump == 1:
+        local mdl is {}
+        local mdfv is {}
+        dump_scan of [rest, 0 - 1, mdl, mdfv]
+        local mba is collect_assigns of [rest, {}]
+        local mban is keys of mba
+        for k in range of (len of mban):
+            local mv is mban[k]
+            local mkind is "boxed-env"
+            if g_tensor[mv] == 1:
+                mkind is "tensor"
+            elif bt[mv] == 1:
+                mkind is "buffer"
+            elif nm[mv] == 1:
+                mkind is "double"
+                if g_observed == 1:
+                    mkind is "observed-env"
+                elif g_int[mv] == 1:
+                    mkind is "long"
+            dump_rec of ["module", "global", mv, mkind, mdl[mv]]
+        local mdfvn is keys of mdfv
+        for k in range of (len of mdfvn):
+            if mba[mdfvn[k]] == null:
+                dump_rec of ["module", "for", mdfvn[k], "boxed-env-for", mdl[mdfvn[k]]]
     local gdecls is ""
     local names is keys of nm
     for i in range of (len of names):
@@ -2810,6 +2918,15 @@ define emit_program(ast) as:
 # ---- driver ----
 argv is args of null
 src is read_text of argv[0]
+if (len of argv) > 1:
+    if argv[1] == "--dump-inference":
+        g_dump is 1
 toks is eigen_tokenize of src
 ast is eigen_parse of toks
-print of (emit_program of ast)
+gen_c is emit_program of ast
+if g_dump == 1:
+    # deterministic inference report (#65): header + D records, no C output.
+    print of ("# aot-inference v1 " + argv[0])
+    print of g_dump_out
+else:
+    print of gen_c

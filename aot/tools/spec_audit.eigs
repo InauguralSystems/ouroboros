@@ -1,0 +1,218 @@
+# spec_audit (#65) — replayable profile-guided specialization audit.
+#
+# Joins two artifacts:
+#   1. an EIGS_TRACE tape from a VM run of the program (the profile: byte-
+#      exact, replayable, committable — `A name=value` records are runtime
+#      evidence about every top-level binding, `L` records anchor lines), and
+#   2. the AOT's inference dump (`eigenscript compile.eigs PROG
+#      --dump-inference`): each name's inferred storage kind.
+#
+# Reports, ranked by tape assign count (the profile weight):
+#   MISSED    — inference boxed it (env), but the tape proves every runtime
+#               value was numeric: a missed-specialization site.
+#   OKBOXED   — boxed AND the tape shows non-numeric values: boxing correct.
+#   CONFIRMED — specialized (double/long/buffer/tensor) with tape evidence.
+#   NOTAPE    — module binding never assigned during the traced run.
+#   MISSEDLOCAL — a function-scope boxed name whose tape records are ALL
+#               numeric. Tape A-records carry function locals too, but by
+#               NAME ONLY (no scope qualifier), so counts aggregate across
+#               same-named bindings. Numeric-stability survives aggregation
+#               (all values numeric => each scope's values numeric); the
+#               assign count is the aggregate, flagged as such.
+#   AMBIG     — function-scope boxed name with some non-numeric tape values:
+#               can't attribute which scope produced them — no verdict.
+#   BLIND     — function-scope boxed name never on the tape: no evidence.
+#
+# Determinism: output depends only on the two input files (tape order + AST
+# order; ties broken by name) — same tape, same dump -> byte-identical report.
+#
+# Usage: eigenscript aot/tools/spec_audit.eigs <run.tape> <inference.dump>
+
+define is_numeric_val(v) as:
+    if (len of v) == 0:
+        return 0
+    local c is char_at of [v, 0]
+    if c == "-":
+        return 1
+    if (index_of of ["0123456789.", c]) >= 0:
+        return 1
+    return 0
+
+argv is args of null
+tape_path is argv[0]
+dump_path is argv[1]
+
+# ---- parse the tape ----
+tape_text is read_text of tape_path
+tlines is split of [tape_text, "\n"]
+cur_line is 0 - 1
+tnames is []
+acount is {}
+ncount is {}
+aline is {}
+arecs is 0
+ti is 0
+loop while ti < (len of tlines):
+    tl is tlines[ti]
+    if (len of tl) > 2:
+        tk is char_at of [tl, 0]
+        if tk == "L":
+            cur_line is num of (substr of [tl, 2, (len of tl) - 2])
+        if tk == "A":
+            arest is substr of [tl, 2, (len of tl) - 2]
+            eqp is index_of of [arest, "="]
+            if eqp > 0:
+                an is substr of [arest, 0, eqp]
+                av is substr of [arest, eqp + 1, (len of arest) - eqp - 1]
+                if acount[an] == null:
+                    append of [tnames, an]
+                    acount[an] is 0
+                    ncount[an] is 0
+                    aline[an] is cur_line
+                acount[an] is acount[an] + 1
+                ncount[an] is ncount[an] + (is_numeric_val of av)
+                arecs is arecs + 1
+    ti is ti + 1
+
+# ---- parse the inference dump ----
+dump_text is read_text of dump_path
+dlines is split of [dump_text, "\n"]
+mnames is []
+mkind is {}
+mline is {}
+blind is []
+di is 0
+loop while di < (len of dlines):
+    dl is dlines[di]
+    if (starts_with of [dl, "D "]) == 1:
+        df is split of [dl, " "]
+        dscope is df[1]
+        dname is df[3]
+        dkind is df[4]
+        dln is num of df[5]
+        if dscope == "module":
+            if mkind[dname] == null:
+                append of [mnames, dname]
+            mkind[dname] is dkind
+            mline[dname] is dln
+        else:
+            if (starts_with of [dkind, "boxed-env"]) == 1:
+                append of [blind, [dscope, dname, dkind, dln]]
+    di is di + 1
+
+# ---- join ----
+missed is []
+missedlocal is []
+ambig is []
+noev is []
+okboxed is []
+confirmed is []
+notape is []
+bi is 0
+loop while bi < (len of blind):
+    br is blind[bi]
+    bn is br[1]
+    if acount[bn] == null:
+        append of [noev, br]
+    elif ncount[bn] == acount[bn]:
+        append of [missedlocal, [acount[bn], bn, br[3], br[0], br[2]]]
+    else:
+        append of [ambig, br]
+    bi is bi + 1
+mi is 0
+loop while mi < (len of mnames):
+    mn is mnames[mi]
+    kd is mkind[mn]
+    ln is mline[mn]
+    if ln < 0:
+        if aline[mn] != null:
+            ln is aline[mn]
+    if acount[mn] == null:
+        append of [notape, [mn, kd]]
+    elif (starts_with of [kd, "boxed-env"]) == 1:
+        if ncount[mn] == acount[mn]:
+            append of [missed, [acount[mn], mn, ln, kd]]
+        else:
+            append of [okboxed, [acount[mn], mn, ln, kd]]
+    else:
+        append of [confirmed, [acount[mn], mn, ln, kd]]
+    mi is mi + 1
+
+# rank by assign count desc, name asc (insertion sort — small N, deterministic)
+define rank(rows) as:
+    local i is 1
+    loop while i < (len of rows):
+        local j is i
+        loop while j > 0:
+            local a is rows[j - 1]
+            local b is rows[j]
+            local swap is 0
+            if b[0] > a[0]:
+                swap is 1
+            if (b[0] == a[0]) and (b[1] < a[1]):
+                swap is 1
+            if swap == 1:
+                rows[j - 1] is b
+                rows[j] is a
+            else:
+                break
+            j is j - 1
+        i is i + 1
+
+rank of missed
+rank of missedlocal
+rank of okboxed
+rank of confirmed
+
+# ---- report ----
+print of "# spec_audit v1"
+print of ("# tape: " + tape_path + " (" + (str of arecs) + " A-records, " + (str of (len of tnames)) + " names)")
+print of ("# dump: " + dump_path + " (" + (str of (len of mnames)) + " module names, " + (str of (len of blind)) + " blind function-scope names)")
+ri is 0
+loop while ri < (len of missed):
+    r is missed[ri]
+    print of ("MISSED module " + r[1] + " kind=" + r[3] + " line=" + (str of r[2]) + " assigns=" + (str of r[0]) + " (every traced value numeric)")
+    ri is ri + 1
+ri is 0
+loop while ri < (len of okboxed):
+    r is okboxed[ri]
+    print of ("OKBOXED module " + r[1] + " kind=" + r[3] + " line=" + (str of r[2]) + " assigns=" + (str of r[0]) + " (non-numeric values on tape — boxing is correct)")
+    ri is ri + 1
+ri is 0
+loop while ri < (len of confirmed):
+    r is confirmed[ri]
+    print of ("CONFIRMED module " + r[1] + " kind=" + r[3] + " line=" + (str of r[2]) + " assigns=" + (str of r[0]))
+    ri is ri + 1
+ri is 0
+loop while ri < (len of notape):
+    r is notape[ri]
+    print of ("NOTAPE module " + r[0] + " kind=" + r[1] + " (never assigned in the traced run)")
+    ri is ri + 1
+ri is 0
+loop while ri < (len of missedlocal):
+    r is missedlocal[ri]
+    print of ("MISSEDLOCAL " + r[3] + " " + r[1] + " kind=" + r[4] + " line=" + (str of r[2]) + " assigns=" + (str of r[0]) + " (every traced value numeric; count aggregated by name across scopes)")
+    ri is ri + 1
+ri is 0
+loop while ri < (len of ambig):
+    r is ambig[ri]
+    print of ("AMBIG " + r[0] + " " + r[1] + " kind=" + r[2] + " line=" + (str of r[3]) + " (non-numeric tape values, scope not attributable)")
+    ri is ri + 1
+ri is 0
+loop while ri < (len of noev):
+    r is noev[ri]
+    print of ("BLIND " + r[0] + " " + r[1] + " kind=" + r[2] + " line=" + (str of r[3]) + " (no tape records for this name)")
+    ri is ri + 1
+total_missed is (len of missed) + (len of missedlocal)
+if total_missed > 0:
+    top is null
+    if (len of missed) > 0:
+        top is missed[0]
+        if (len of missedlocal) > 0:
+            if ((missedlocal[0])[0]) > top[0]:
+                top is missedlocal[0]
+    else:
+        top is missedlocal[0]
+    print of ("# verdict: " + (str of total_missed) + " missed site(s); top: " + top[1] + " line " + (str of top[2]) + " (" + (str of top[0]) + " assigns)")
+else:
+    print of "# verdict: no missed specializations under this tape"

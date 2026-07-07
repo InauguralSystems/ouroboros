@@ -806,3 +806,39 @@ lowers a 1-element bare literal list to its ELEMENT at the
 matching the VM). Pinned by t54's `buf_from_list` construction; the
 zero-arg builtin case (`f of []` → empty list on both sides) was already
 equivalent and unchanged.
+
+## F-OURO-28 — spec_audit lands: the tape names the AOT's missed specializations, with evidence instead of guesses (#65 inc. 1)
+
+PGO against ephemeral samples is the incumbent move; ours is auditable —
+an EIGS_TRACE tape is byte-exact, replayable, committable profile
+evidence. Increment 1 is the instrument: `compile.eigs --dump-inference`
+prints one deterministic record per name (scope, role, inferred storage
+kind mirroring the ASSIGN path's actual dispatch, first-assignment line),
+and `aot/tools/spec_audit.eigs` joins that dump against a tape's
+`A name=value` records: a name inference boxed whose every traced value
+was numeric is a MISSED site, ranked by assign count (the profile
+weight). Both stages are byte-for-byte deterministic on the same inputs
+(verified by double-run diff).
+
+**Tape discovery en route:** docs/TRACE.md says `A` records track
+top-level bindings, but function locals ALSO land on the tape — by name
+only, no scope qualifier (checksum probe: `c` ×2324 aggregating
+`_crc_init.c` + `crc32.c`). Counts therefore aggregate across same-named
+scopes, but numeric-STABILITY survives aggregation (all values numeric ⇒
+each scope's values numeric), so function-scope verdicts are sound and
+reported as MISSEDLOCAL with the aggregation caveat; mixed-type
+aggregates are AMBIG (no attribution), never guessed. Upstream doc drift
+to surface.
+
+**First evidence set (checksum probe + the full tN corpus):** the
+dominant missed class is the for-in boxing cascade — the loop var is
+env-boxed by design and every accumulator whose RHS reads it (or an
+env-boxed list index, or a value-semantics and/or) is demoted too, while
+the tape proves them stably numeric (t42: 10 sites; t47/t52: 4 each;
+t49/t53: 2 each; t39: 3; everything else fully specialized — also useful:
+the audit CONFIRMS full specialization on 40+ programs). Top-ranked site:
+**crc32's `c` (line 53, 2324 assigns)** — precisely the variable behind
+the checksum bench's 2.0× generic vs 17× monomorphic gap, now named by
+runtime evidence. That demotion chain (`is_num_expr` rejects
+boxed-target index reads → the accumulator goes env-boxed) is #65
+increment 2: fix it, prove n=5, close the acceptance loop.
