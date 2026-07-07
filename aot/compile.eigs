@@ -33,6 +33,14 @@ ARITH_OPS is {"+": 1, "-": 1, "*": 1, "/": 1, "%": 1, "==": 1, "!=": 1, "<": 1, 
 # the VM's INT_BINOP; operands must be numbers at runtime, so the boxed path
 # routes them through emit_num rather than a Value-level helper.
 BIT_OPS is {"&": 1, "|": 1, "^": 1, "<<": 1, ">>": 1}
+# Ops the VM defines ONLY for numbers (#65 inc. 2) — any non-numeric operand
+# raises ("cannot apply ..."), verified against the v0.27.0 oracle: no string
+# repeat, no list repeat, no coercion. An expression under one of these is
+# numeric-or-error REGARDLESS of operand classification, so is_num_expr can
+# claim it and boxed operands emit through CHECKED reads (aot_num_ck — loud
+# exactly where the VM raises, never a silent 0.0). `+` is NOT here (str+str
+# concatenates); comparisons are NOT here (defined on all values).
+NUMONLY_OPS is {"-": 1, "*": 1, "/": 1, "%": 1, "&": 1, "|": 1, "^": 1, "<<": 1, ">>": 1}
 
 # Value-bound maps (name -> max |value| upper bound, or null = unknown). Set
 # once per program in emit_program; read in the vectorized path to decide whether
@@ -45,6 +53,12 @@ g_scalbound is {}
 # measured ~2x lever for matmul-style index-heavy loops). Set per function /
 # module body (like g_bufbound) by infer_int.
 g_int is {}
+# Buffer-typed names of the CURRENT scope, mirrored for is_int_expr/emit_int
+# (which read globals, not the threaded bt map): `len of x` is int-typed and
+# emitted as aot_buf_len ONLY for a C buffer var — a boxed list/str hitting
+# that fast path is an undeclared C name (#65 inc. 2 surfaced it once the
+# numeric-or-raise binop rule started claiming `len of xs - 1`).
+g_btmap is {}
 # Declared C return type of the function currently being emitted (func_ret_type's
 # verdict). The return-statement emitter coerces its value to match this — boxing
 # a numeric value (make_num) for a Value* function, or unboxing an env-boxed
@@ -341,6 +355,24 @@ define is_num_expr(node, nm, bt) as:
             return 1
         return 0
     if t == "binop":
+        # num-only ops are numeric-or-raise whatever the operands are (#65
+        # inc. 2): claiming them numeric stops the greatest-fixpoint pass
+        # demoting accumulators whose RHS reads a boxed name (the for-in
+        # cascade, crc32's table read). Boxed operands emit via aot_num_ck.
+        if NUMONLY_OPS[node[1]] == 1:
+            return 1
+        # `+` is polymorphic (str+str concatenates) but the VM raises on any
+        # num/non-num mix, so ONE provably numeric side makes the whole
+        # expression numeric-or-raise.
+        if node[1] == "+":
+            if (is_num_expr of [node[2], nm, bt]) == 1:
+                return 1
+            return is_num_expr of [node[3], nm, bt]
+        # and/or return an OPERAND — numeric only when both sides are.
+        if (node[1] == "and") or (node[1] == "or"):
+            if (is_num_expr of [node[2], nm, bt]) == 0:
+                return 0
+            return is_num_expr of [node[3], nm, bt]
         if ARITH_OPS[node[1]] == null:
             return 0
         if (is_num_expr of [node[2], nm, bt]) == 0:
@@ -365,7 +397,22 @@ define is_num_expr(node, nm, bt) as:
                     if bt[a[1]] == 1:
                         return 1
             if callee[1] == "dot":
-                return 1
+                # mirror emit_num's fast-path gate exactly (both C-buffer
+                # idents, or a slice form) — a boxed-operand dot routes
+                # through the generic boxed-call fallback instead, and the
+                # claim here must not exceed what emit_num intercepts.
+                local darg is unwrap of node[2]
+                if darg[0] == "list":
+                    local del is darg[1]
+                    if (len of del) == 2:
+                        local dea is unwrap of del[0]
+                        local deb is unwrap of del[1]
+                        if (dea[0] == "slice") or (deb[0] == "slice"):
+                            return 1
+                        if (dea[0] == "ident") and (deb[0] == "ident"):
+                            if (bt[dea[1]] == 1) and (bt[deb[1]] == 1):
+                                return 1
+                return 0
             if callee[1] == "sum":
                 local sa is unwrap of node[2]
                 if sa[0] == "slice":
@@ -432,7 +479,11 @@ define is_int_expr(node) as:
         local callee is unwrap of n[1]
         if callee[0] == "ident":
             if callee[1] == "len":
-                return 1
+                # int only for a C buffer var — boxed lists route through the
+                # generic numeric path (aot_num_ck of the boxed len call).
+                local la is unwrap of n[2]
+                if (la[0] == "ident") and (g_btmap[la[1]] == 1):
+                    return 1
         return 0
     return 0
 
@@ -812,9 +863,11 @@ define emit_num(node, nm, bt, raw) as:
         if (bt[node[1]] == 1) or (g_dict[node[1]] == 1) or (g_tensor[node[1]] == 1) or (g_genp[node[1]] == 1):
             throw of ("AOT: Value-typed name '" + node[1] + "' read in a numeric context (the VM raises here)")
         # not a declared C numeric: an env-boxed name in a numeric context
-        # (e.g. a for-in loop var indexing a buffer, #70) — read it boxed,
-        # matching emit_val's ident path.
-        return "aot_num(aot_get(__eigs_g, \"" + node[1] + "\"))"
+        # (e.g. a for-in loop var indexing a buffer, #70) — read it boxed.
+        # CHECKED (#65 inc. 2): the VM raises when a non-number reaches an
+        # arithmetic context; aot_num's silent 0.0 was the worst-outcome
+        # class.
+        return "aot_num_ck(aot_get(__eigs_g, \"" + node[1] + "\"))"
     if t == "unary":
         local uop is node[1]
         local uv is emit_num of [node[2], nm, bt, raw]
@@ -833,7 +886,7 @@ define emit_num(node, nm, bt, raw) as:
         # numeric context, e.g. rr[1] where rr is a boxed list) -> index then
         # extract the number.
         if (tgt[0] == "ident") and (bt[tgt[1]] != 1):
-            return "aot_num(aot_index_get(" + (emit_val of [node[1], nm, bt]) + ", make_num(" + (emit_num of [node[2], nm, bt, 0]) + ")))"
+            return "aot_num_ck(aot_index_get(" + (emit_val of [node[1], nm, bt]) + ", make_num(" + (emit_num of [node[2], nm, bt, 0]) + ")))"
         if (is_int_expr of node[2]) == 1:
             return "aot_buf_get_i(" + (cn of tgt[1]) + ", " + (emit_int of node[2]) + ")"
         return "aot_buf_get(" + (cn of tgt[1]) + ", " + (emit_num of [node[2], nm, bt, 0]) + ")"
@@ -841,8 +894,11 @@ define emit_num(node, nm, bt, raw) as:
         local callee is unwrap of node[1]
         if callee[0] == "ident":
             if callee[1] == "len":
+                # buffer fast path only for a C buffer var; a boxed list/str
+                # falls through to the generic boxed-call fallback below.
                 local a is unwrap of node[2]
-                return "aot_buf_len(" + (cn of a[1]) + ")"
+                if (a[0] == "ident") and (bt[a[1]] == 1):
+                    return "aot_buf_len(" + (cn of a[1]) + ")"
             if callee[1] == "dot":
                 # dot of [a, b] -> reassociated SIMD reduction (association-
                 # unspecified by spec). Args are buffer idents or slices; a
@@ -850,23 +906,27 @@ define emit_num(node, nm, bt, raw) as:
                 local delems is (unwrap of node[2])[1]
                 local da is unwrap of delems[0]
                 local db is unwrap of delems[1]
-                if (da[0] != "slice") and (db[0] != "slice"):
-                    return "aot_dot(" + da[1] + ", " + db[1] + ")"
-                local pa is slice_arg_parts of [delems[0], nm, bt]
-                local pb is slice_arg_parts of [delems[1], nm, bt]
-                return "aot_dot_range(" + pa[0] + ", " + pa[1] + ", " + pa[2] + ", " + pb[0] + ", " + pb[1] + ", " + pb[2] + ")"
+                if (da[0] == "ident") and (db[0] == "ident"):
+                    if (bt[da[1]] == 1) and (bt[db[1]] == 1):
+                        return "aot_dot(" + da[1] + ", " + db[1] + ")"
+                if (da[0] == "slice") or (db[0] == "slice"):
+                    local pa is slice_arg_parts of [delems[0], nm, bt]
+                    local pb is slice_arg_parts of [delems[1], nm, bt]
+                    return "aot_dot_range(" + pa[0] + ", " + pa[1] + ", " + pa[2] + ", " + pb[0] + ", " + pb[1] + ", " + pb[2] + ")"
             if callee[1] == "sum":
                 local sa is unwrap of node[2]
-                if sa[0] != "slice":
+                if (sa[0] == "ident") and (bt[sa[1]] == 1):
                     return "aot_sum(" + sa[1] + ")"
-                local ps is slice_arg_parts of [node[2], nm, bt]
-                return "aot_sum_range(" + ps[0] + ", " + ps[1] + ", " + ps[2] + ")"
+                if sa[0] == "slice":
+                    local ps is slice_arg_parts of [node[2], nm, bt]
+                    return "aot_sum_range(" + ps[0] + ", " + ps[1] + ", " + ps[2] + ")"
             if callee[1] == "norm":
                 local na is unwrap of node[2]
-                if na[0] != "slice":
+                if (na[0] == "ident") and (bt[na[1]] == 1):
                     return "aot_norm(" + na[1] + ")"
-                local pn is slice_arg_parts of [node[2], nm, bt]
-                return "aot_norm_range(" + pn[0] + ", " + pn[1] + ", " + pn[2] + ")"
+                if na[0] == "slice":
+                    local pn is slice_arg_parts of [node[2], nm, bt]
+                    return "aot_norm_range(" + pn[0] + ", " + pn[1] + ", " + pn[2] + ")"
             if callee[1] == "exp":
                 # VM exp guards the result (exp of 1000 -> 1e308), so match.
                 return "num_guard(exp(" + (emit_num of [node[2], nm, bt, 0]) + "))"
@@ -875,6 +935,13 @@ define emit_num(node, nm, bt, raw) as:
                 return "num_guard(sqrt(" + (emit_num of [node[2], nm, bt, 0]) + "))"
             if g_funcs[callee[1]] != null:
                 return emit_call_num of [node, nm, bt]
+            # builtin call in a numeric context (#65 inc. 2): emit the boxed
+            # call (emit_val mirrors the VM's arg packing, incl. the one call
+            # rule) and REQUIRE a numeric result — the VM raises here
+            # otherwise. The fast paths above intercept every call shape
+            # is_num_expr claims, so this can't recurse through emit_val's
+            # is_num_expr head.
+            return "aot_num_ck(" + (emit_val of [node, nm, bt]) + ")"
         throw of "AOT: emit_num unexpected call"
     if t == "binop":
         # whole expression proven integer -> native long arithmetic, no guard
@@ -911,6 +978,14 @@ define emit_num(node, nm, bt, raw) as:
             return "aot_ddiv(" + l + ", " + r + ")"
         if op == "%":
             return "aot_dmod(" + l + ", " + r + ")"
+        # numeric and/or (#65 inc. 2, both operands proven numeric): return
+        # the OPERAND like the VM (1 and 2 -> 2, 0 or 3 -> 3). The C ternary
+        # evaluates only the taken arm, preserving short-circuit; -0.0 == 0.0
+        # is falsy on both sides, and returning _l keeps its sign bit exact.
+        if op == "and":
+            return "({ double _sc = " + l + "; _sc == 0.0 ? _sc : (" + r + "); })"
+        if op == "or":
+            return "({ double _sc = " + l + "; _sc != 0.0 ? _sc : (" + r + "); })"
         return "((" + l + " " + op + " " + r + ") ? 1.0 : 0.0)"
     throw of ("AOT: emit_num on non-numeric node " + t)
 
@@ -2645,6 +2720,7 @@ define emit_function(fn, finfo, gnm, gbt) as:
     # so they must NOT be int-typed — emit_int would emit the bare C name instead
     # of the env value (a stuck spurious local), as a non-incrementing loop var.
     g_int is {}
+    g_btmap is fbt
     if g_observed == 0:
         g_int is infer_int of [body, params, fnm, fbt]
     # --dump-inference: report every param + assigned local with the storage
@@ -2861,6 +2937,7 @@ define emit_program(ast) as:
     # integer names for the module body (also makes integer globals `long`).
     # In an observed program nothing is unboxed/int-typed (vars live in the env).
     g_int is {}
+    g_btmap is bt
     if g_observed == 0:
         g_int is infer_int of [rest, [], nm, bt]
     # tensor layer for the module body (functions set their own scope above).

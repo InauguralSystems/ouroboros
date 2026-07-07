@@ -1,0 +1,50 @@
+# t55: the numeric-or-raise binop rule (#65 inc. 2). Ops the VM defines only
+# for numbers (- * / % & | ^ << >>) are claimed numeric regardless of operand
+# classification, so accumulators whose RHS reads a boxed name (a for-in loop
+# var, an env-boxed list element, a boxed `len of`) stay native C doubles
+# instead of demoting to env storage — the spec_audit top finding (crc32's c).
+# Boxed operands emit through CHECKED reads (aot_num_ck: loud exactly where
+# the VM raises, never a silent 0.0). `+` is numeric when EITHER side is
+# provably numeric (str+str still concatenates elsewhere); and/or with both
+# sides numeric return the OPERAND with short-circuit.
+
+# for-in cascade: acc reads the boxed loop var through * and +
+acc is 0
+for v in range of 10:
+    acc is acc + (v * 3)
+print of acc
+
+# env-boxed list element in arithmetic (the crc32 table shape)
+tbl is [5, 10, 15, 20]
+c is 7
+i is 0
+loop while i < 4:
+    c is (c * 2) ^ tbl[i]
+    i is i + 1
+print of c
+
+# boxed len in arithmetic (the t45 regression shape: len of a LIST, not a
+# buffer, must route through the boxed call, not aot_buf_len)
+xs is [10, 20, 30]
+print of (len of xs - 1)
+print of ((len of xs) * (len of xs) + 1)
+
+# numeric and/or return the operand and short-circuit
+a is 3
+b is 0
+print of (a and 5)
+print of (b and 5)
+print of (b or 9)
+print of (a or 9)
+mix is (a and b) or (a * 2)
+print of mix
+
+# `+` with one provably numeric side over a boxed read
+s is 0
+for w in range of 5:
+    s is s + w
+print of s
+
+# string + string still concatenates (the + rule must not claim this)
+greet is "gen" + "eric"
+print of greet
