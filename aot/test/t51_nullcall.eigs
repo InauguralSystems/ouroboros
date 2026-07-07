@@ -13,3 +13,17 @@ print of (seven of null)
 print of ((seven of null) + (fortytwo of null))
 # an explicit numeric arg binds the implicit `n` (unused) — same signature
 print of (seven of 3)
+
+# `f of []` is ALSO a zero-arg call under the #405 one-call rule
+print of (seven of [])
+
+# incoming value dead by REBINDING (the lib/checksum.eigs _crc_init idiom):
+# `local n is 0` kills the implicit param before any read
+define count3() as:
+    local n is 0
+    loop while n < 3:
+        n is n + 1
+    return n
+
+print of (count3 of null)
+print of (count3 of [])
