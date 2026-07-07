@@ -302,6 +302,39 @@ under `-march=native`, the full differential harness stays correct at width 4
 horizontal-sum + 4-lane reassociation hold), and the same matmul is **1.90×**
 faster at 4-wide than 2-wide on that machine — the width scales as expected.
 
+### Compiled stdlib module: `lib/checksum.eigs` (#64 — generic params, and their cost)
+
+The #64 forcing function: compile the upstream checksum module **verbatim** —
+not a hand-extracted kernel — and match the VM byte-for-byte on the published
+vectors (CRC-32 `0xCBF43926`, Adler-32 `0x11E60398`). The module is
+string-or-buffer polymorphic end to end (`_blen`/`_byte` dispatch on
+`type of x`), which is exactly what the **generic `Value*` param class**
+(F-OURO-23) exists for: those params stay boxed and route through the same
+runtime calls the VM makes, so any input type the VM accepts flows byte-exact.
+
+Workload: CRC-32 over a 64 KiB buffer × 50 passes, n=5 medians, dev box
+(`bench/checksum_generic.eigs` — the verbatim module;
+`bench/checksum_mono.eigs` — the same CRC buffer-specialized: `data` a buffer
+param, the table a buffer, no type dispatch):
+
+| CRC-32, 64 KiB × 50 | VM | AOT | speedup |
+|---|---|---|---|
+| `checksum.eigs` verbatim (generic, boxed) | 5.34s | 2.70s | **~2.0×**, byte-identical |
+| monomorphic buffer variant | 1.37s | 0.08s | **~17×**, byte-identical |
+
+The honest reading: **genericity is where the VM's overhead lives, so keeping
+it boxed keeps most of that overhead.** In the verbatim module every byte goes
+through `aot_call_name` (env lookup by name → builtin dispatch) for
+`buf_get`/`char_at`/`ord`, and the CRC table is an env-stored list indexed
+through boxed `aot_index_get` — the AOT wins only the bytecode dispatch,
+hence ~2×. The monomorphic variant is the same algorithm with types the
+specializer can see (buffer param, buffer table, integer counters) and lands
+at ~17× — the specialization ladder above is the multiplier, the generic
+class is the **coverage**: real polymorphic library code now compiles at all
+(it used to throw at build time), and byte-exactness is preserved either way.
+The next envelope lever, when a consumer needs it, is monomorphization by
+call-site signature rather than widening to `Value*`.
+
 ## Observer system (the founding feature)
 
 EigenScript observes every assignment — it tracks each variable's entropy/dH

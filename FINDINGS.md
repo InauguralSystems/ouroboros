@@ -654,7 +654,11 @@ operands, the #355 paren whole-list form — compiles and matches the VM
 byte-for-byte (CRC-32/Adler-32/sum8 on the pinned vectors), plus 150
 fuzzdiff programs with 0 divergences / 0 gaps. `aot/test/
 t54_generic_params.eigs` pins the class, the propagation, and the paren
-whole-list arg. Remaining for #64: the honest README bench (n=5 medians).
+whole-list arg. The README bench (n=5 medians, same PR) closes #64's
+acceptance: verbatim checksum ~2.0× (the boxed generic path keeps the
+VM's dispatch overhead), buffer-monomorphic variant ~17× — the generic
+class buys COVERAGE (real polymorphic stdlib code compiles at all), the
+specialization ladder stays the multiplier.
 
 ## F-OURO-24 — hex literals became a LEXED form upstream (#378); frontend follows at the next pin bump — FIXED (v0.25.0 bump)
 

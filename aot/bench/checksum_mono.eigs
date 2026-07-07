@@ -1,0 +1,41 @@
+# Monomorphic CRC-32: buffer-specialized (no type dispatch, buffer table) —
+# the same 64 KiB x 50-pass workload as checksum_bench.eigs.
+crc_tbl is buffer of 256
+
+define crc_init_b(dummy) as:
+    local n is 0
+    loop while n < 256:
+        local c is n
+        local k is 0
+        loop while k < 8:
+            if (c & 1) == 1:
+                c is (c >> 1) ^ 0xEDB88320
+            else:
+                c is c >> 1
+            k is k + 1
+        buf_set of [crc_tbl, n, c]
+        n is n + 1
+
+define crc32_buf(data) as:
+    local c is 0xFFFFFFFF
+    local i is 0
+    local n is len of data
+    loop while i < n:
+        c is (c >> 8) ^ crc_tbl[(c ^ data[i]) & 0xFF]
+        i is i + 1
+    return (c ^ 0xFFFFFFFF) & 0xFFFFFFFF
+
+crc_init_b of 0
+n is 65536
+data is buffer of n
+i is 0
+loop while i < n:
+    buf_set of [data, i, (i * 7 + 13) % 256]
+    i is i + 1
+reps is 50
+r is 0
+k is 0
+loop while k < reps:
+    r is crc32_buf of data
+    k is k + 1
+print of r
