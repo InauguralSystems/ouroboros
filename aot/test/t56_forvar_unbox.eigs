@@ -1,0 +1,61 @@
+# t56: for-in loop-var unboxing. When the iterable provably yields numbers
+# (range / buffer / all-numeric list literal) and the program is neither
+# observed nor traced, the loop var binds a C double per iteration instead of
+# an env slot — no boxed read-back in the body. Function-scope vars keep the
+# VM's slot semantics (post-loop reads see the last iterate); module-scope
+# vars are loop-block-scoped like the VM (a post-loop read is 'undefined
+# variable' there, an out-of-scope C name here — loud both ways, pinned
+# manually since the harness has no reject tier). A name bound by BOTH an
+# eligible and an ineligible loop is poisoned and stays boxed everywhere.
+
+# module scope: range iterable + accumulator (the audit's cascade shape)
+s is 0
+for i in range of 100:
+    s is s + (i % 7)
+print of s
+
+# module scope: all-numeric list literal
+tot is 0
+for v in [2, 4, 8]:
+    tot is tot + v
+print of tot
+
+# module scope: buffer iterable reads elementwise
+b is buf_from_list of [[10, 20, 30]]
+bs is 0
+for e in b:
+    bs is bs + e
+print of bs
+
+# poisoned name: w is bound by a numeric loop AND a string-list loop — both
+# must stay boxed and byte-exact
+wsum is 0
+for w in [1, 2]:
+    wsum is wsum + w
+names is ""
+for w in ["a", "b"]:
+    names is names + w
+print of wsum
+print of names
+
+# function scope: post-loop read of the last iterate (slot semantics), and a
+# param reused as the loop var
+define last_of(n) as:
+    for k in range of n:
+        local dummy is k
+    return k
+
+define reuse(p) as:
+    for p in range of 4:
+        local d2 is p
+    return p
+
+print of (last_of of 5)
+print of (reuse of 99)
+
+# nested loops, inner var shadowing nothing, accumulating across both
+grid is 0
+for r in range of 4:
+    for c in range of 3:
+        grid is grid + (r * c)
+print of grid
