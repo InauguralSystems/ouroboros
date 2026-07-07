@@ -598,7 +598,7 @@ two mirrors deferred above landed:
   reservation — without it the defaults prologue would raise on every
   underfed call. Comment updated; defaults verified against the new oracle.
 
-## F-OURO-23 — AOT lacks a whole-list user-fn param class; #355 paren args throw LOUDLY — TRACKING
+## F-OURO-23 — AOT lacks a whole-list user-fn param class; #355 paren args throw LOUDLY — FIXED (#64 inc. 2)
 
 The v0.24.0 bump mirrors upstream #355 (parens always mean one argument) in
 `frontend.eigs` (a parenthesized literal list carries a 3rd marker slot) and
@@ -629,6 +629,36 @@ Whole-list args to user fns now arise only via the #355 paren form
 described above — the TRACKING status (no generic `Value*` param class) is
 unchanged. `test/programs/call_convention.eigs` pins the new rule at the
 self-host tier.
+
+**#64 inc. 2 update — the generic `Value*` param class lands (FIXED):**
+`func_ptypes` gains class `"gen"`: a param whose body dispatches on
+`type of x` (checked before the buffer rules — `len of x` beside a type
+dispatch used to classify buf and die on string input at aot_buf_len's
+runtime guard), or that is passed onward at an already-analyzed function's
+gen position (`find_gen_param_use`, one-pass in definition order like the
+buf propagation; a miss stays num and fails loudly at the call site). A
+gen param is a C `Value*` kept BOXED: reads route through the existing
+value machinery (emit_val hands out an incref'd name; builtin calls go
+through `aot_call_name`, indexing through `aot_index_get`, arithmetic
+through the binfn value ops), so any runtime type the VM accepts flows
+byte-exact — string-or-buffer polymorphism costs nothing new. A gen name
+in a PURE-numeric C context joins the buf/dict/tensor loud build throw
+(the VM raises there for non-numbers; a number reaching it is
+conservatively rejected too — loud beats aot_num's silent 0.0), and
+REBINDING a gen param throws (the env-set fallback would leave the C name
+stale — a silent-divergence class). `return`ing a gen param whole makes
+the function `Value*`-returning (`return_node_is_boxed`). With this, the
+whole checksum surface — `_blen`/`_byte` type dispatch, str AND buffer
+args to user fns, `ord`/`char_at`/`buf_get`/`buf_len` on generic
+operands, the #355 paren whole-list form — compiles and matches the VM
+byte-for-byte (CRC-32/Adler-32/sum8 on the pinned vectors), plus 150
+fuzzdiff programs with 0 divergences / 0 gaps. `aot/test/
+t54_generic_params.eigs` pins the class, the propagation, and the paren
+whole-list arg. The README bench (n=5 medians, same PR) closes #64's
+acceptance: verbatim checksum ~2.0× (the boxed generic path keeps the
+VM's dispatch overhead), buffer-monomorphic variant ~17× — the generic
+class buys COVERAGE (real polymorphic stdlib code compiles at all), the
+specialization ladder stays the multiplier.
 
 ## F-OURO-24 — hex literals became a LEXED form upstream (#378); frontend follows at the next pin bump — FIXED (v0.25.0 bump)
 
@@ -758,3 +788,21 @@ to user fns. The probe now fails loudly at the first of these.
 Negative cases (zero-arg-to-reading-callee, str-literal-to-buf-param,
 runtime non-buffer guard) are verified manually — the AOT harness has no
 reject tier yet; worth adding one when the envelope work continues.
+
+## F-OURO-27 — builtin call sites didn't mirror the one call rule: a 1-element bare list passed a 1-wrapper, a SILENT wrong value — FIXED (#64 inc. 2)
+
+The v0.27.0 bump (#68) mirrored upstream #405 at USER-fn call sites
+(`emit_args`) but not at builtin call sites: `emit_val`'s fallback emitted
+`aot_call_name(name, <literal list>)` for any bare literal list. The VM
+packs builtin args as: 1 arg → the raw value, 0 or >1 → a list — so for 0
+and >1 elements the literal-list emit is coincidentally equivalent, but a
+1-element bare list diverged: `buf_from_list of [[49, …]]` handed the
+builtin `[[49…]]` (a 1-wrapper) where the VM hands it the inner list. The
+checksum probe caught it as compiles-and-prints-wrong-numbers — the exact
+worst-outcome class this repo forbids — CRC/Adler/sum8 of a buffer built
+that way were all wrong while the string paths were byte-exact. The fix
+lowers a 1-element bare literal list to its ELEMENT at the
+`aot_call_name` emission site (paren-marked #355 lists still pass whole,
+matching the VM). Pinned by t54's `buf_from_list` construction; the
+zero-arg builtin case (`f of []` → empty list on both sides) was already
+equivalent and unchanged.

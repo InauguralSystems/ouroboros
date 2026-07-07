@@ -162,6 +162,14 @@ g_fsigs is {}
 g_tensor is {}
 # Names of DICT params (Value*), used as dot targets (`policy.w1`).
 g_dict is {}
+# Names of GENERIC params (Value*, #64 inc. 2 / F-OURO-23): a param whose body
+# dispatches on `type of x` (string-or-buffer polymorphic, e.g. checksum's
+# _blen/_byte), or that is passed onward at another function's generic
+# position. Reads stay boxed (aot_call_name / aot_index_get / binfn value
+# ops), so any runtime type the VM accepts flows byte-exact; a read in a
+# PURE-numeric C context throws at build time like the other Value-typed
+# classes. Set per scope.
+g_genp is {}
 
 # A call to a tensor builtin (matmul/add/relu)?
 define is_tensor_call(node) as:
@@ -795,7 +803,7 @@ define emit_num(node, nm, bt, raw) as:
         # context is a VM runtime error (`u & 1`, `w[v]` with v a buffer) — and
         # it is NOT in the env, so the boxed fallback below would silently read
         # null (aot_num -> 0.0, a wrong number). Fail loudly instead.
-        if (bt[node[1]] == 1) or (g_dict[node[1]] == 1) or (g_tensor[node[1]] == 1):
+        if (bt[node[1]] == 1) or (g_dict[node[1]] == 1) or (g_tensor[node[1]] == 1) or (g_genp[node[1]] == 1):
             throw of ("AOT: Value-typed name '" + node[1] + "' read in a numeric context (the VM raises here)")
         # not a declared C numeric: an env-boxed name in a numeric context
         # (e.g. a for-in loop var indexing a buffer, #70) — read it boxed,
@@ -932,6 +940,8 @@ define emit_val(node, nm, bt) as:
             return "({ val_incref(" + (cn of node[1]) + "); " + (cn of node[1]) + "; })"
         if g_dict[node[1]] == 1:
             return "({ val_incref(" + (cn of node[1]) + "); " + (cn of node[1]) + "; })"
+        if g_genp[node[1]] == 1:
+            return "({ val_incref(" + (cn of node[1]) + "); " + (cn of node[1]) + "; })"
         if g_tensor[node[1]] == 1:
             return "aot_tensor_to_value(" + (cn of node[1]) + ")"
         return "aot_get(__eigs_g, \"" + node[1] + "\")"
@@ -1009,6 +1019,16 @@ define emit_val(node, nm, bt) as:
         if g_funcs[callee[1]] != null:
             if (g_funcs[callee[1]])["ret"] == "Value*":
                 return (callee[1]) + "(" + (emit_args of [node, callee[1], nm, bt]) + ")"
+        # Builtin calls mirror the VM's arg packing (one call rule, #405): a
+        # bare literal list IS the argument list — 1 element passes that
+        # element RAW (`buf_from_list of [[bytes]]` hands the builtin the
+        # inner list, not a 1-wrapper); 0 or >1 elements pass a list, which
+        # the literal emit below already matches (the VM packs multi-args
+        # back into a list for builtins). A paren-marked list (3-slot node,
+        # #355) is itself the single argument.
+        local barg is unwrap of node[2]
+        if (barg[0] == "list") and ((len of barg) == 2) and ((len of barg[1]) == 1):
+            return "aot_call_name(__eigs_g, \"" + callee[1] + "\", " + (emit_val of [(barg[1])[0], nm, bt]) + ")"
         return "aot_call_name(__eigs_g, \"" + callee[1] + "\", " + (emit_val of [node[2], nm, bt]) + ")"
     throw of ("AOT: cannot emit value node '" + t + "'")
 
@@ -1066,6 +1086,11 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
         return emit_stmt of [node[2], ind, nm, bt, minits, gf]
     if t == "assign":
         local name is node[1]
+        if g_genp[name] == 1:
+            # A generic param is a C Value* var; the env-set fallback below
+            # would leave every later read of the C name STALE — a silent
+            # divergence. Rebinding a generic param is out of envelope.
+            throw of ("AOT: rebinding generic parameter '" + name + "' is not supported (reads would see the stale incoming value)")
         if g_tensor[name] == 1:
             return ind + (cn of name) + " = " + (emit_tensor of [node[2], nm, bt]) + ";\n"
         if bt[name] == 1:
@@ -2169,10 +2194,13 @@ define collect_return_nodes(node, out) as:
 # Is a single return expression a boxed (non-numeric) Value? Mirrors the
 # classification the return-statement emitter uses, so the declared type and the
 # emission agree.
-define return_node_is_boxed(rnode, fbt, ftt, rba) as:
+define return_node_is_boxed(rnode, fbt, ftt, rba, fgen) as:
     local re is unwrap of rnode
     if re[0] == "ident":
         if fbt[re[1]] == 1:
+            return 1
+        # a generic param returned whole is whatever the caller passed — boxed.
+        if fgen[re[1]] == 1:
             return 1
         # a tensor-returning function serializes its tensor to a Value.
         if ftt[re[1]] == 1:
@@ -2189,7 +2217,7 @@ define return_node_is_boxed(rnode, fbt, ftt, rba) as:
         return 1
     return 0
 
-define func_ret_type(fn, fbt) as:
+define func_ret_type(fn, fbt, fgen) as:
     local rets is []
     collect_return_nodes of [fn[3], rets]
     if (len of rets) == 0:
@@ -2202,7 +2230,7 @@ define func_ret_type(fn, fbt) as:
     local ftt is infer_tensors of fn[3]
     local rba is collect_assigns of [fn[3], {}]
     for i in range of (len of rets):
-        if (return_node_is_boxed of [rets[i], fbt, ftt, rba]) == 1:
+        if (return_node_is_boxed of [rets[i], fbt, ftt, rba, fgen]) == 1:
             return "Value*"
     return "double"
 
@@ -2324,6 +2352,58 @@ define find_buf_param_use(node, name) as:
             return 1
     return 0
 
+# A param whose body dispatches on its runtime type (`type of x`) is GENERIC:
+# it holds whatever the caller passed (string or buffer in checksum), so no
+# specialized class is sound. Checked before the buffer rules — `len of x`
+# beside a `type of x` dispatch would otherwise classify buf and die on
+# string inputs at aot_buf_len's runtime type guard.
+define uses_type_dispatch(node, name) as:
+    if (type of node) != "list":
+        return 0
+    if (len of node) == 0:
+        return 0
+    if node[0] == "call":
+        local callee is unwrap of node[1]
+        if (callee[0] == "ident") and (callee[1] == "type"):
+            local a is unwrap of node[2]
+            if (a[0] == "ident") and (a[1] == name):
+                return 1
+    for k in range of (len of node):
+        if (uses_type_dispatch of [node[k], name]) == 1:
+            return 1
+    return 0
+
+# Generic-ness propagates through calls like buf-ness does: a param passed at
+# an already-analyzed function's "gen" position is itself generic (crc32's
+# `data` flows to _blen/_byte). Definition order bounds this one-pass
+# propagation, same as find_buf_param_use; a miss stays classified num and
+# fails LOUDLY at the call site, never silently.
+define find_gen_param_use(node, name) as:
+    if (type of node) != "list":
+        return 0
+    if (len of node) == 0:
+        return 0
+    if node[0] == "call":
+        local callee is unwrap of node[1]
+        if callee[0] == "ident":
+            if g_funcs[callee[1]] != null:
+                local arg is unwrap of node[2]
+                local elems is []
+                if (arg[0] == "list") and ((len of arg) == 2):
+                    elems is arg[1]
+                else:
+                    elems is [arg]
+                local pts is (g_funcs[callee[1]])["ptypes"]
+                for k in range of (len of elems):
+                    if (pts[k]) == "gen":
+                        local e is unwrap of elems[k]
+                        if (e[0] == "ident") and (e[1] == name):
+                            return 1
+    for k in range of (len of node):
+        if (find_gen_param_use of [node[k], name]) == 1:
+            return 1
+    return 0
+
 define func_ptypes(fn) as:
     local params is fn[2]
     local body is fn[3]
@@ -2334,10 +2414,14 @@ define func_ptypes(fn) as:
             cls is "dict"
         elif (uses_as_tensor_arg of [body, params[p]]) == 1:
             cls is "tensor"
+        elif (uses_type_dispatch of [body, params[p]]) == 1:
+            cls is "gen"
         elif (find_buffer_use of [body, params[p]]) == 1:
             cls is "buf"
         elif (find_buf_param_use of [body, params[p]]) == 1:
             cls is "buf"
+        elif (find_gen_param_use of [body, params[p]]) == 1:
+            cls is "gen"
         pt is (append of [pt, cls])
     return pt
 
@@ -2377,9 +2461,12 @@ define emit_args(node, fname, nm, bt) as:
             # buffer-returning call (e.g. `seed_blinker of W`) -> emit the call.
             local be is unwrap of elems[k]
             if be[0] == "ident":
-                # a buffer C var by name; a boxed Value that holds a buffer at
-                # runtime (e.g. an env-stored list element) is read from the env.
-                if bt[be[1]] == 1:
+                # a buffer C var by name; a generic param holding a buffer at
+                # runtime is ALSO a C Value* (not in the env — the env read
+                # would silently fetch null); a boxed Value that holds a buffer
+                # at runtime (e.g. an env-stored list element) is read from the
+                # env.
+                if (bt[be[1]] == 1) or (g_genp[be[1]] == 1):
                     s is s + be[1]
                 else:
                     s is s + "env_get(__eigs_g, \"" + be[1] + "\")"
@@ -2392,15 +2479,18 @@ define emit_args(node, fname, nm, bt) as:
                 throw of ("AOT: '" + fname + "' expects a buffer argument, got a " + be[0] + " literal (buffer params are not polymorphic yet)")
             else:
                 s is s + (emit_val of [elems[k], nm, bt])
-        elif ((ptypes[k]) == "tensor") or ((ptypes[k]) == "dict"):
-            # pass the tensor/dict Value BORROWED (callee doesn't consume it): an
-            # ident reads the env without an incref (no per-call leak in the hot
-            # path); a non-ident arg falls back to an owned emit_val.
+        elif ((ptypes[k]) == "tensor") or ((ptypes[k]) == "dict") or ((ptypes[k]) == "gen"):
+            # pass the tensor/dict/generic Value BORROWED (callee doesn't consume
+            # it): an ident reads the env without an incref (no per-call leak in
+            # the hot path); a non-ident arg falls back to an owned emit_val
+            # (leaked — the callee can't tell owned from borrowed; a literal to
+            # a Value* param is rare and the process is one-shot).
             local te is unwrap of elems[k]
             if te[0] == "ident":
-                # a buffer/tensor C global is a Value* by name; otherwise read the
-                # env BORROWED (callee doesn't consume the tensor/dict arg).
-                if bt[te[1]] == 1:
+                # a buffer/dict/generic param or buffer C global is a Value* by
+                # name (NOT in the env — the env read would silently fetch
+                # null); otherwise read the env BORROWED.
+                if (bt[te[1]] == 1) or (g_dict[te[1]] == 1) or (g_genp[te[1]] == 1):
                     s is s + te[1]
                 else:
                     s is s + "env_get(__eigs_g, \"" + te[1] + "\")"
@@ -2456,6 +2546,7 @@ define emit_function(fn, finfo, gnm, gbt) as:
     # tensor (nested-list) layer for this scope: tensor locals (assigned from a
     # tensor RHS) + tensor/dict params.
     g_dict is {}
+    g_genp is {}
     g_tensor is infer_tensors of body
     for k in range of (len of params):
         if (ptypes[k]) == "buf":
@@ -2463,6 +2554,10 @@ define emit_function(fn, finfo, gnm, gbt) as:
             fnm[params[k]] is 0
         elif (ptypes[k]) == "dict":
             g_dict[params[k]] is 1
+            fbt[params[k]] is 0
+            fnm[params[k]] is 0
+        elif (ptypes[k]) == "gen":
+            g_genp[params[k]] is 1
             fbt[params[k]] is 0
             fnm[params[k]] is 0
         elif (ptypes[k]) == "tensor":
@@ -2523,6 +2618,8 @@ define emit_function(fn, finfo, gnm, gbt) as:
         if (ptypes[k]) == "buf":
             sig is sig + "Value* " + (cn of params[k])
         elif (ptypes[k]) == "dict":
+            sig is sig + "Value* " + (cn of params[k])
+        elif (ptypes[k]) == "gen":
             sig is sig + "Value* " + (cn of params[k])
         elif (ptypes[k]) == "tensor":
             # received boxed; flattened to an AotTensor local at entry (below).
@@ -2635,9 +2732,12 @@ define emit_program(ast) as:
         local fn is funcs[k]
         local pt is func_ptypes of fn
         local ffbt is {}
+        local ffgen is {}
         for p in range of (len of fn[2]):
             if (pt[p]) == "buf":
                 ffbt[(fn[2])[p]] is 1
+            if (pt[p]) == "gen":
+                ffgen[(fn[2])[p]] is 1
         local flb is infer_buffers of fn[3]
         local flbn is keys of flb
         for j in range of (len of flbn):
@@ -2650,7 +2750,7 @@ define emit_program(ast) as:
         if (len of fn[2]) == 1:
             if (param_unread of [fn[3], (fn[2])[0]]) == 1:
                 nullok is 1
-        g_funcs[fn[1]] is {"ptypes": pt, "ret": (func_ret_type of [fn, ffbt]), "rettensor": (func_ret_tensor of fn), "retbuf": (func_ret_buf of [fn, ffbt]), "observed": (func_observed of fn), "nullok": nullok}
+        g_funcs[fn[1]] is {"ptypes": pt, "ret": (func_ret_type of [fn, ffbt, ffgen]), "rettensor": (func_ret_tensor of fn), "retbuf": (func_ret_buf of [fn, ffbt]), "observed": (func_observed of fn), "nullok": nullok}
     # Module globals are computed first so functions can READ them (they become
     # file-scope vars in C; a function's params/locals shadow same-named globals).
     local bt is infer_buffers of rest
@@ -2683,6 +2783,7 @@ define emit_program(ast) as:
         g_int is infer_int of [rest, [], nm, bt]
     # tensor layer for the module body (functions set their own scope above).
     g_dict is {}
+    g_genp is {}
     g_tensor is infer_tensors of rest
     local gdecls is ""
     local names is keys of nm
