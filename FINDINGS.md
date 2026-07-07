@@ -842,3 +842,46 @@ the checksum bench's 2.0× generic vs 17× monomorphic gap, now named by
 runtime evidence. That demotion chain (`is_num_expr` rejects
 boxed-target index reads → the accumulator goes env-boxed) is #65
 increment 2: fix it, prove n=5, close the acceptance loop.
+
+## F-OURO-29 — the numeric-or-raise rule: spec_audit's top finding fixed, measured, and the loop closed (#65 inc. 2, DONE)
+
+The fix for F-OURO-28's top-ranked site is a CLASSIFIER upgrade, not a
+special case. `is_num_expr` now claims a binop under any op the VM defines
+ONLY for numbers (`- * / % & | ^ << >>` — oracle-verified: no string/list
+repeat, no coercion, every non-numeric operand raises "cannot apply")
+REGARDLESS of operand classification; `+` (polymorphic: str+str concat)
+is claimed when EITHER side is provably numeric; `and`/`or` with both
+sides numeric return the operand via a short-circuit C ternary. The
+greatest-fixpoint pass therefore stops demoting accumulators whose RHS
+reads a boxed name — the for-in cascade and crc32's env-list table read.
+
+Soundness hinges on LOUD boxed reads: a boxed operand now emits through
+`aot_num_ck` (error+exit where the VM raises) instead of `aot_num`'s
+silent 0.0 — the boxed-ident (#70) and boxed-index paths were upgraded
+too, converting a pre-existing silent-tolerance into a faithful loud
+failure (planted fault: `[1,"a"]` element through `*` dies at the same
+point on both tiers, exit 1, after identical prior output). The AOT has
+no try/catch, so a VM-catchable raise can't diverge. `emit_num` gained
+the generic boxed-call fallback (`aot_num_ck(emit_val(call))`, reusing
+the one-call-rule arg packing) for builtins in numeric contexts.
+
+Two regressions caught in-increment by the harness, one latent: the rule
+pulled `len of xs - 1` (xs a boxed LIST) into `is_int_expr`'s
+unconditional len-of claim → `aot_buf_len` on an undeclared C name
+(t45 BUILD FAIL). is_int_expr/emit_int now gate len-of on a new g_btmap
+scope mirror (they read globals, unlike the bt-threaded emitters); the
+dot/sum/norm/len emit_num fast paths got the same bt gates, with
+is_num_expr's dot claim tightened to match exactly (a wider claim than
+the emitter intercepts = infinite recursion through the fallback).
+
+Results: probe re-audit **1 → 0 missed** (crc32's c is a C double);
+corpus re-audit rescues every demoted accumulator (t39 3→0, t42 10→5,
+t47 4→2, t52 4→2, t49 2→1, t53 2→1) — every survivor is the for-in
+loop var itself (boxed by design; the next lever, now cleanly isolated).
+Measured n=5 medians: verbatim checksum 2.70s → 2.14s (−21%,
+byte-identical), ~2.5× over the VM. Both harnesses + 150 fuzzdiff
+programs green against the pin. t55 pins the rule (cascade accumulator,
+env-list-element arithmetic, boxed len shapes, numeric and/or operand
+semantics, str+str unaffected). #65's acceptance is complete: tool on
+2+ real programs, top site fixed with an n=5 win, byte-deterministic
+audit.
