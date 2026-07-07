@@ -365,6 +365,18 @@ reads it), and the top-ranked site was checksum `crc32`'s `c` — 2324 traced
 assigns, all numeric, boxed — exactly the variable behind the generic/
 monomorphic gap above.
 
+**Follow-on: the last MISSED class fell too.** For-in loop vars over
+provably-numeric iterables (range / buffer / numeric list literal) now bind
+C doubles instead of env slots in unobserved/untraced programs — function
+scope keeps the VM's post-loop slot semantics, module scope mirrors the
+VM's loop-scoped binding (a post-loop read is a loud build error where the
+VM raises 'undefined variable'; probing this surfaced — and fixed, for
+recognized loops — a pre-existing silent stale-read divergence). Measured
+n=5: a 2M-iteration module for-in accumulator went 0.75s → 0.55s (−27%,
+byte-exact). After this, every untraced corpus program audits fully
+specialized; traced/observed programs keep boxed loop vars by design
+(slots and history must see the bindings). F-OURO-30 has the full story.
+
 **The loop closed (#65 done).** The fix is the **numeric-or-raise rule**:
 ops the VM defines only for numbers (`- * / % & | ^ << >>`) make an
 expression numeric REGARDLESS of operand classification (the VM raises on a

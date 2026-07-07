@@ -59,6 +59,16 @@ g_int is {}
 # that fast path is an undeclared C name (#65 inc. 2 surfaced it once the
 # numeric-or-raise binop rule started claiming `len of xs - 1`).
 g_btmap is {}
+# For-in loop vars UNBOXED to C doubles in the current scope (the last
+# boxed-env-for class spec_audit isolated). 1 = function scope (declared at
+# function top: the VM's slot semantics let post-loop reads see the last
+# iterate); 2 = module scope (declared INSIDE the loop's C block: the VM
+# loop-scopes the binding — post-loop reads are 'undefined variable' — so an
+# out-of-scope C name turns that into a loud BUILD error, replacing the boxed
+# path's silent stale read). Eligible only when the iterable provably yields
+# numbers (range / buffer / all-numeric list literal), the program is neither
+# observed nor traced, and the name doesn't collide with a non-numeric class.
+g_forunbox is {}
 # Declared C return type of the function currently being emitted (func_ret_type's
 # verdict). The return-statement emitter coerces its value to match this — boxing
 # a numeric value (make_num) for a Value* function, or unboxing an env-boxed
@@ -1316,9 +1326,26 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
         else:
             itexpr is emit_val of [fiter, nm, bt]
         local fo is ind + "{ Value* " + itv + " = " + itexpr + ";\n"
+        if g_forunbox[fvar] == 2:
+            # module scope: the VM loop-scopes the binding (post-loop reads
+            # raise 'undefined variable'), so the C var lives in this block —
+            # a post-loop read is an out-of-scope name, loud at build time
+            # (the boxed path silently served the stale last value).
+            fo is fo + ind + "  double " + (cn of fvar) + " = 0;\n"
         fo is fo + ind + "  long " + nv + " = aot_iter_len(" + itv + ");\n"
         fo is fo + ind + "  for (long " + kv + " = 0; " + kv + " < " + nv + "; " + kv + "++) {\n"
-        fo is fo + ind + "    aot_set(__eigs_g, \"" + fvar + "\", aot_iter_get(" + itv + ", " + kv + "));\n"
+        if g_forunbox[fvar] != null:
+            # unboxed: bind the C double directly — no env write, no boxed
+            # read-back in the body. A buffer iterable reads elementwise
+            # (aot_buf_get_i); anything else takes the materialized element
+            # through the CHECKED extractor (the recognizer proved elements
+            # numeric, so this never fires in-envelope).
+            if fowned == 0:
+                fo is fo + ind + "    " + (cn of fvar) + " = aot_buf_get_i(" + itv + ", " + kv + ");\n"
+            else:
+                fo is fo + ind + "    " + (cn of fvar) + " = aot_num_ck(aot_iter_get(" + itv + ", " + kv + "));\n"
+        else:
+            fo is fo + ind + "    aot_set(__eigs_g, \"" + fvar + "\", aot_iter_get(" + itv + ", " + kv + "));\n"
         fo is fo + (emit_stmts of [fbody, ind + "    ", nm, bt, minits, gf])
         fo is fo + ind + "  }\n"
         if fowned == 1:
@@ -2610,6 +2637,60 @@ define dump_scan(node, cur, lines, forvars) as:
         dump_scan of [node[k], ln, lines, forvars]
     return 0
 
+# Does this for-loop iterable provably yield NUMBERS every iteration?
+# range (the builtin, not a user shadow) yields integers whatever its arg;
+# a C buffer holds doubles; a literal list qualifies when every element is
+# numeric (empty = zero iterations, trivially fine).
+define iter_yields_nums(fiu, nmv, bt) as:
+    if fiu[0] == "call":
+        local callee is unwrap of fiu[1]
+        if (callee[0] == "ident") and (callee[1] == "range"):
+            if g_func_names["range"] != 1:
+                return 1
+        return 0
+    if fiu[0] == "ident":
+        if bt[fiu[1]] == 1:
+            return 1
+        return 0
+    if fiu[0] == "list":
+        local els is fiu[1]
+        for k in range of (len of els):
+            if (is_num_expr of [els[k], nmv, bt]) == 0:
+                return 0
+        return 1
+    return 0
+
+# Collect for-vars eligible for unboxing. acc[v]: 1 = every for-loop binding
+# v so far is eligible; 0 = POISONED (any ineligible loop binding v keeps the
+# name boxed everywhere — two loops sharing a name must agree on storage).
+# strict=1 (module scope) requires the name never module-assigned (post-loop
+# persistence of a pre-bound global through a loop-scoped binding is a
+# semantics knot — skip it); function scope also accepts assigned-numeric.
+define for_unbox_scan(node, ba, nmv, bt, acc, strict) as:
+    if (type of node) != "list":
+        return 0
+    if (len of node) == 0:
+        return 0
+    if node[0] == "func":
+        return 0
+    if node[0] == "for":
+        local v is node[1]
+        local ok is iter_yields_nums of [(unwrap of node[2]), nmv, bt]
+        if (bt[v] == 1) or (g_dict[v] == 1) or (g_tensor[v] == 1) or (g_genp[v] == 1):
+            ok is 0
+        if ba[v] != null:
+            if strict == 1:
+                ok is 0
+            elif nmv[v] != 1:
+                ok is 0
+        if ok == 0:
+            acc[v] is 0
+        elif acc[v] == null:
+            acc[v] is 1
+    for k in range of (len of node):
+        for_unbox_scan of [node[k], ba, nmv, bt, acc, strict]
+    return 0
+
 # One dump record: D <scope> <role> <name> <kind> <line>
 define dump_rec(scope, role, name, kind, ln) as:
     local l is ln
@@ -2723,6 +2804,23 @@ define emit_function(fn, finfo, gnm, gbt) as:
     g_btmap is fbt
     if g_observed == 0:
         g_int is infer_int of [body, params, fnm, fbt]
+    # for-in loop-var unboxing: eligible vars become C doubles for the body
+    # emission (fnm) and the for emitter binds the C name per iteration.
+    g_forunbox is {}
+    if (g_observed == 0) and (g_traced == 0):
+        local fub is {}
+        for_unbox_scan of [body, ba, fnm, fbt, fub, 0]
+        local fubn is keys of fub
+        for k in range of (len of fubn):
+            local fuok is fub[fubn[k]]
+            # a for-var named after a BOXED module global (gnm key present
+            # but not numeric) is mutated via SET_NAME in the VM — a local C
+            # double would silently shadow it. Keep it boxed.
+            if (gnm[fubn[k]] != null) and (gnm[fubn[k]] != 1):
+                fuok is 0
+            if fuok == 1:
+                g_forunbox[fubn[k]] is 1
+                fnm[fubn[k]] is 1
     # --dump-inference: report every param + assigned local with the storage
     # kind the ASSIGN path actually uses (mirrors emit_stmt's dispatch), so
     # the audit joins verdicts, not declarations.
@@ -2766,7 +2864,10 @@ define emit_function(fn, finfo, gnm, gbt) as:
         local dfvn is keys of dfv
         for k in range of (len of dfvn):
             if ba[dfvn[k]] == null:
-                dump_rec of [name, "for", dfvn[k], "boxed-env-for", dl[dfvn[k]]]
+                local fvk is "boxed-env-for"
+                if g_forunbox[dfvn[k]] != null:
+                    fvk is "double"
+                dump_rec of [name, "for", dfvn[k], fvk, dl[dfvn[k]]]
     local sig is "static " + finfo["ret"] + " " + (cn of name) + "("
     if (len of params) == 0:
         sig is sig + "void"
@@ -2830,6 +2931,18 @@ define emit_function(fn, finfo, gnm, gbt) as:
                 decls is decls + "    long " + (cn of v) + " = 0;\n"
             else:
                 decls is decls + "    double " + (cn of v) + " = 0;\n"
+    # unboxed for-in vars that are neither params, assigned locals, nor
+    # globals still need a function-scope C decl (the VM's slot semantics:
+    # post-loop reads see the last iterate).
+    local fudn is keys of g_forunbox
+    for k in range of (len of fudn):
+        local fud is fudn[k]
+        local fudp is 0
+        for p in range of (len of params):
+            if params[p] == fud:
+                fudp is 1
+        if (fudp == 0) and (ba[fud] == null) and (gnm[fud] != 1) and (gbt[fud] != 1):
+            decls is decls + "    double " + (cn of fud) + " = 0;\n"
     local fminits is module_inits of body
     local bodyc is emit_stmts of [body, "    ", fnm, fbt, fminits, {}]
     local tailret is ""
@@ -2944,6 +3057,19 @@ define emit_program(ast) as:
     g_dict is {}
     g_genp is {}
     g_tensor is infer_tensors of rest
+    # for-in loop-var unboxing at module scope. Safe to mutate nm here: the
+    # functions were emitted above with the pre-mutation map, so they still
+    # see the module binding the VM shows them.
+    g_forunbox is {}
+    if (g_observed == 0) and (g_traced == 0):
+        local mfa is collect_assigns of [rest, {}]
+        local mub is {}
+        for_unbox_scan of [rest, mfa, nm, bt, mub, 1]
+        local mubn is keys of mub
+        for k in range of (len of mubn):
+            if mub[mubn[k]] == 1:
+                g_forunbox[mubn[k]] is 2
+                nm[mubn[k]] is 1
     # --dump-inference: module-scope records. These are the tape-joinable ones
     # (A records track top-level bindings), so the audit's evidence lives here.
     if g_dump == 1:
@@ -2969,13 +3095,18 @@ define emit_program(ast) as:
         local mdfvn is keys of mdfv
         for k in range of (len of mdfvn):
             if mba[mdfvn[k]] == null:
-                dump_rec of ["module", "for", mdfvn[k], "boxed-env-for", mdl[mdfvn[k]]]
+                local mfvk is "boxed-env-for"
+                if g_forunbox[mdfvn[k]] != null:
+                    mfvk is "double"
+                dump_rec of ["module", "for", mdfvn[k], mfvk, mdl[mdfvn[k]]]
     local gdecls is ""
     local names is keys of nm
     for i in range of (len of names):
         # observed numeric vars live in the env (created by aot_observe_num), so
         # no file-scope decl; otherwise emit static long/double.
-        if (nm[names[i]] == 1) and (g_observed == 0):
+        # unboxed module for-vars (g_forunbox==2) are declared INSIDE their
+        # loop's C block, not file-scope — the VM loop-scopes the binding.
+        if (nm[names[i]] == 1) and (g_observed == 0) and (g_forunbox[names[i]] != 2):
             if g_int[names[i]] == 1:
                 gdecls is gdecls + "static long " + (cn of names[i]) + " = 0;\n"
             else:
