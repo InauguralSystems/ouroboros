@@ -335,6 +335,35 @@ class is the **coverage**: real polymorphic library code now compiles at all
 The next envelope lever, when a consumer needs it, is monomorphization by
 call-site signature rather than widening to `Value*`.
 
+## spec_audit: replayable profile-guided specialization audit (#65)
+
+HotSpot/.NET PGO optimizes against ephemeral, unauditable samples. Here the
+profile is an **EIGS_TRACE tape** — byte-exact, replayable, committable — and
+the audit closes the loop between runtime evidence and the AOT's
+greatest-fixpoint inference:
+
+```bash
+EIGS_TRACE=run.tape eigenscript prog.eigs > /dev/null          # the profile
+eigenscript compile.eigs prog.eigs --dump-inference > inf.dump  # the verdicts
+eigenscript tools/spec_audit.eigs run.tape inf.dump             # the join
+```
+
+`--dump-inference` prints one deterministic record per name (scope, role,
+inferred storage kind as the assign path actually dispatches it,
+first-assignment line). The audit joins those against the tape's
+`A name=value` records and ranks by assign count: **MISSED** = inference
+boxed it, the tape proves every value was numeric (a specialization the
+compiler left on the table); OKBOXED / CONFIRMED / AMBIG / BLIND keep the
+report honest (tape `A` records carry locals name-only, so cross-scope
+counts aggregate — stability verdicts survive that, attribution doesn't).
+Same tape + same dump → byte-identical report.
+
+First evidence set (checksum + the tN corpus): the dominant missed class is
+the **for-in boxing cascade** (boxed loop var demotes every accumulator that
+reads it), and the top-ranked site is checksum `crc32`'s `c` — 2324 traced
+assigns, all numeric, boxed — exactly the variable behind the ~2.0× vs ~17×
+generic/monomorphic gap above. The measured fix is the next increment.
+
 ## Observer system (the founding feature)
 
 EigenScript observes every assignment — it tracks each variable's entropy/dH
