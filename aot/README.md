@@ -320,6 +320,7 @@ param, the table a buffer, no type dispatch):
 | CRC-32, 64 KiB × 50 | VM | AOT | speedup |
 |---|---|---|---|
 | `checksum.eigs` verbatim (generic, boxed) | 5.34s | 2.70s | **~2.0×**, byte-identical |
+| verbatim, after the spec_audit-driven fix (#65) | 5.34s | 2.14s | **~2.5×**, byte-identical |
 | monomorphic buffer variant | 1.37s | 0.08s | **~17×**, byte-identical |
 
 The honest reading: **genericity is where the VM's overhead lives, so keeping
@@ -358,11 +359,23 @@ report honest (tape `A` records carry locals name-only, so cross-scope
 counts aggregate — stability verdicts survive that, attribution doesn't).
 Same tape + same dump → byte-identical report.
 
-First evidence set (checksum + the tN corpus): the dominant missed class is
+First evidence set (checksum + the tN corpus): the dominant missed class was
 the **for-in boxing cascade** (boxed loop var demotes every accumulator that
-reads it), and the top-ranked site is checksum `crc32`'s `c` — 2324 traced
-assigns, all numeric, boxed — exactly the variable behind the ~2.0× vs ~17×
-generic/monomorphic gap above. The measured fix is the next increment.
+reads it), and the top-ranked site was checksum `crc32`'s `c` — 2324 traced
+assigns, all numeric, boxed — exactly the variable behind the generic/
+monomorphic gap above.
+
+**The loop closed (#65 done).** The fix is the **numeric-or-raise rule**:
+ops the VM defines only for numbers (`- * / % & | ^ << >>`) make an
+expression numeric REGARDLESS of operand classification (the VM raises on a
+non-number, so the AOT's boxed reads go through `aot_num_ck` — loud exactly
+where the VM raises, never a silent 0.0); `+` is numeric when either side
+provably is (str+str still concatenates); numeric `and`/`or` return the
+operand with short-circuit. Re-audit: the probe reports **0 missed**, every
+demoted accumulator across the corpus is rescued, and the only remaining
+MISSED class is the for-in loop var itself (env-boxed by design — the next
+lever, cleanly isolated by the audit). Measured n=5: verbatim checksum
+2.70s → **2.14s** (−21%, byte-identical), ~2.5× over the VM.
 
 ## Observer system (the founding feature)
 

@@ -393,6 +393,20 @@ static double aot_num(Value *v) {
     val_decref(v);
     return d;
 }
+/* CHECKED numeric read (consumes): a boxed value flowing into an arithmetic
+ * context must be a number — the VM raises there ("cannot apply ... to ..."),
+ * so a silent 0.0 would be the worst-outcome class (compiles, prints
+ * garbage). Cold, predictable branch: in-envelope programs never take it. */
+static double aot_num_ck(Value *v) {
+    if (!v || v->type != VAL_NUM) {
+        fprintf(stderr, "non-numeric value in a numeric context (type %d; the VM raises here)\n",
+                v ? (int)v->type : -1);
+        exit(1);
+    }
+    double d = v->data.num;
+    val_decref(v);
+    return d;
+}
 
 /* ---- tensor handles -------------------------------------------------------
  * Flat row-major double buffers that bridge the runtime's nested-list tensor
