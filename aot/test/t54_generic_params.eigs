@@ -1,0 +1,35 @@
+# t54: generic Value* param class (#64 inc. 2, F-OURO-23). A param whose body
+# dispatches on `type of x` is class "gen" — a boxed Value* — so string,
+# buffer, and list callers all flow byte-exact through ONE function; the
+# class propagates to callers that pass their own param onward (sum_bytes ->
+# blen/byte_at, the checksum idiom). Also pins the builtin one-call mirror:
+# a 1-element bare literal list passes its ELEMENT raw (buf_from_list of
+# [[bytes]] hands the builtin the inner list, not a 1-wrapper), and a
+# paren-marked list (#355) reaches a generic param as one whole argument —
+# the original F-OURO-23 repro, formerly a build-time throw.
+
+define blen(x) as:
+    if (type of x) == "buffer":
+        return buf_len of x
+    return len of x
+
+define byte_at(x, i) as:
+    if (type of x) == "buffer":
+        return buf_get of [x, i]
+    return ord of (char_at of [x, i])
+
+define sum_bytes(data) as:
+    local s is 0
+    local i is 0
+    local n is blen of data
+    loop while i < n:
+        s is s + (byte_at of [data, i])
+        i is i + 1
+    return s
+
+print of (blen of "hello")
+print of (sum_bytes of "AB")
+b is buf_from_list of [[7, 9, 250]]
+print of (blen of b)
+print of (sum_bytes of b)
+print of (blen of ([3, 1, 4, 1, 5]))
