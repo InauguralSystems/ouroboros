@@ -664,3 +664,40 @@ same release (decisive-prefix in lexer.c; suite [50b] gained rejects
 for 0x1p4/0x.8/0x), so the reject_one cases here assert against a
 genuinely closed oracle. hex_literals.eigs re-cut to the integer-only
 contract; reject_one gains the three forms.
+
+## F-OURO-25 — for-in loop vars were unreadable in numeric contexts; `f of null` emitted zero-arg calls — FIXED (#69, #70)
+
+Both found while building the #67 keyword test; both were LOUD build
+breaks, not silent divergence.
+
+**#70 (loop var):** the `for` emitter binds the loop var in the env
+(`aot_set` each step), but `emit_num`'s ident case emitted a bare C name
+for every unobserved ident — valid only for names declared as C doubles
+(module globals in `nm`, numeric params/locals in `fnm`). A numeric-context
+read of a loop var (buffer index, `index_assign` RHS) emitted an
+undeclared identifier. Fix: `emit_num` idents not in `nm` read boxed via
+`aot_num(aot_get(...))`, mirroring `emit_val`'s ident path. Fixing that
+unmasked the value-context half: `emit_val`'s index case routed EVERY
+target through the env, so a C-local buffer indexed by a boxed numeric
+(`t + u[j]`) fetched null — now a `bt` ident target reads elementwise via
+`make_num(aot_buf_get(...))` (same VM index semantics, loud on error).
+
+**#69 (null call):** every user fn has >= 1 param — a zero-param
+`define f()` gets an implicit unused `n` from BOTH parsers (parser.c and
+frontend.eigs agree) — yet `emit_args` lowered a `null` argument to zero
+C args, so `f of null` (the only way to call the zero-param idiom) was
+always invalid C ("too few arguments" vs the `(double n)` signature). Fix:
+when the single param is never read in the body (`nullok`, computed at
+registration), the call site passes a dummy 0; a callee that READS its
+param rejects `of null` with a loud build-time throw (the VM binds null,
+which has no C numeric equivalent — guessing 0 would be the silent-wrong
+outcome this repo forbids).
+
+`aot/test/t51_nullcall.eigs` + `t52_forvar_numctx.eigs` pin both. Bench
+note while validating: a stale `aot/build/libeigsrt.a` compiled from local
+main (7 commits past the pin, incl. upstream #465 observer changes) made
+t32_report diverge — false drift, gone once the lib was rebuilt from the
+pinned worktree. The lib cache is mtime-keyed, and a freshly-added
+worktree has OLDER mtimes than a lib built minutes before, so switching
+`EIGS_DIR` does NOT auto-rebuild: `rm aot/build/libeigsrt.a` when moving
+between runtimes.

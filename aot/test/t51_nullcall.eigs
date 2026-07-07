@@ -1,0 +1,15 @@
+# #69: a zero-param `define f()` really has an implicit, unused param `n`
+# (parser defaulting — parser.c and frontend.eigs agree), so its C signature is
+# `(double n)` and a `f of null` call site must pass a dummy 0, not zero args
+# (which was invalid C: "too few arguments"). Callees that READ the param
+# reject `of null` loudly at build time instead.
+define seven() as:
+    return 7
+
+define fortytwo() as:
+    return 6 * 7
+
+print of (seven of null)
+print of ((seven of null) + (fortytwo of null))
+# an explicit numeric arg binds the implicit `n` (unused) — same signature
+print of (seven of 3)
