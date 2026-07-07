@@ -168,6 +168,13 @@ static Value *aot_ne(Value *a, Value *b) {
 /* Index resolution mirrors vm_index_is_int + vm_index_resolve: integer-only,
    negative indexes count from the end, bounds-checked. (Those runtime fns are
    static to vm.c, so replicated here.) */
+/* Type guard: the compiler's buffer class is inferred from usage, so an
+   out-of-envelope input (a string or list reaching a buf-classified param)
+   would otherwise misread the value union — a silent wrong number. Loud beats
+   silent; in-envelope programs never take the branch (predictable, cold). */
+static void aot_buf_expect(Value *b) {
+    if (!b || b->type != VAL_BUFFER) { fprintf(stderr, "buffer op on a non-buffer value\n"); exit(1); }
+}
 static long aot_idx(double d, int count) {
     long i = (long)d;
     if ((double)i != d) { fprintf(stderr, "index must be an integer, got %g\n", d); exit(1); }
@@ -175,8 +182,8 @@ static long aot_idx(double d, int count) {
     if (i < 0 || i >= count) { fprintf(stderr, "buffer index %ld out of range (length %d)\n", (long)d, count); exit(1); }
     return i;
 }
-static double aot_buf_get(Value *b, double idx) { return b->data.buffer.data[aot_idx(idx, b->data.buffer.count)]; }
-static void   aot_buf_set(Value *b, double idx, double v) { b->data.buffer.data[aot_idx(idx, b->data.buffer.count)] = v; }
+static double aot_buf_get(Value *b, double idx) { aot_buf_expect(b); return b->data.buffer.data[aot_idx(idx, b->data.buffer.count)]; }
+static void   aot_buf_set(Value *b, double idx, double v) { aot_buf_expect(b); b->data.buffer.data[aot_idx(idx, b->data.buffer.count)] = v; }
 /* Integer-index fast path: the index was computed in native `long` arithmetic
    (provably-integer induction vars + dimensions), so skip the float integer
    check. Negative-resolve + bounds-check still mirror the VM. */
@@ -185,8 +192,8 @@ static long aot_idx_i(long i, int count) {
     if (i < 0 || i >= count) { fprintf(stderr, "buffer index %ld out of range (length %d)\n", i, count); exit(1); }
     return i;
 }
-static double aot_buf_get_i(Value *b, long idx) { return b->data.buffer.data[aot_idx_i(idx, b->data.buffer.count)]; }
-static void   aot_buf_set_i(Value *b, long idx, double v) { b->data.buffer.data[aot_idx_i(idx, b->data.buffer.count)] = v; }
+static double aot_buf_get_i(Value *b, long idx) { aot_buf_expect(b); return b->data.buffer.data[aot_idx_i(idx, b->data.buffer.count)]; }
+static void   aot_buf_set_i(Value *b, long idx, double v) { aot_buf_expect(b); b->data.buffer.data[aot_idx_i(idx, b->data.buffer.count)] = v; }
 /* max |element|, for the matmul's once-per-call overflow precheck: if
    reduction_len * maxabs(A) * maxabs(B) <= 1e308, no product or partial sum can
    exceed 1e308, so num_guard is identity over the whole reduction and the
@@ -197,9 +204,9 @@ static double aot_buf_maxabs(Value *b) {
     for (i = 0; i < n; i++) { double a = d[i] < 0 ? -d[i] : d[i]; if (a > m) m = a; }
     return m;
 }
-static double aot_buf_len(Value *b) { return (double)b->data.buffer.count; }
+static double aot_buf_len(Value *b) { aot_buf_expect(b); return (double)b->data.buffer.count; }
 /* Raw element pointer for the proven-safe (in-bounds, non-negative) loop path. */
-static double *aot_buf_data(Value *b) { return b->data.buffer.data; }
+static double *aot_buf_data(Value *b) { aot_buf_expect(b); return b->data.buffer.data; }
 
 /* dot of [a,b] = sum_i a[i]*b[i]. The `dot` builtin's spec leaves the summation
  * ASSOCIATION unspecified, which licenses this REASSOCIATED SIMD reduction:

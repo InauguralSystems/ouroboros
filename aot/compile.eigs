@@ -28,7 +28,11 @@ define binfn(op) as:
         throw of ("AOT: unsupported binop " + op)
     return r
 
-ARITH_OPS is {"+": 1, "-": 1, "*": 1, "/": 1, "%": 1, "==": 1, "!=": 1, "<": 1, ">": 1, "<=": 1, ">=": 1}
+ARITH_OPS is {"+": 1, "-": 1, "*": 1, "/": 1, "%": 1, "==": 1, "!=": 1, "<": 1, ">": 1, "<=": 1, ">=": 1, "&": 1, "|": 1, "^": 1, "<<": 1, ">>": 1}
+# Bitwise infix ops: int64 two's-complement over the numeric value — exactly
+# the VM's INT_BINOP; operands must be numbers at runtime, so the boxed path
+# routes them through emit_num rather than a Value-level helper.
+BIT_OPS is {"&": 1, "|": 1, "^": 1, "<<": 1, ">>": 1}
 
 # Value-bound maps (name -> max |value| upper bound, or null = unknown). Set
 # once per program in emit_program; read in the vectorized path to decide whether
@@ -144,6 +148,11 @@ g_funcs is {}
 # is_tensor_call can tell a user-defined matmul/add/relu (which shadows the
 # tensor builtin) from the builtin, regardless of definition order.
 g_func_names is {}
+# name -> the definition's computed C signature ("static RET name(TYPED ARGS)"),
+# recorded by emit_function; forward protos are derived from THESE so proto and
+# definition share one inference authority and can't disagree (#74 — the old
+# proto-side iparams missed int-by-assignment params).
+g_fsigs is {}
 
 # ---- tensor (nested-list) value layer ----
 # Names holding a TENSOR in the current scope -> emitted as C `AotTensor` (a flat
@@ -203,6 +212,22 @@ define infer_tensors(stmts) as:
     return tt
 
 # Does `name` appear as a dot target (`name.field`)? -> a dict param.
+# Is the INCOMING value of param `name` dead — never read before the body
+# unconditionally rebinds it? Scan top-level stmts in order: a plain assign to
+# `name` whose RHS doesn't read it kills the incoming value (safe; `local n is
+# 0` lowers to a plain assign); any statement that reads `name` first — or a
+# compound assign, which reads its target — is a use. Branch-local first
+# assignments are deliberately NOT credited (conservative: reads after them
+# still count as uses of the incoming value).
+define param_unread(body, name) as:
+    for i in range of (len of body):
+        local st is unwrap of body[i]
+        if (st[0] == "assign") and (st[1] == name) and ((len of st) == 3):
+            return ((uses_ident of [st[2], name]) == 0)
+        if (uses_ident of [st, name]) == 1:
+            return 0
+    return 1
+
 # Does `name` appear as an ident (a read) anywhere in the body? Assignment
 # targets are plain strings in the AST, so a pure write does not count.
 define uses_ident(node, name) as:
@@ -766,6 +791,12 @@ define emit_num(node, nm, bt, raw) as:
             return "aot_num(aot_get(__eigs_g, \"" + node[1] + "\"))"
         if nm[node[1]] == 1:
             return cn of node[1]
+        # A Value-typed C name (buffer/dict/tensor param or local) in a numeric
+        # context is a VM runtime error (`u & 1`, `w[v]` with v a buffer) — and
+        # it is NOT in the env, so the boxed fallback below would silently read
+        # null (aot_num -> 0.0, a wrong number). Fail loudly instead.
+        if (bt[node[1]] == 1) or (g_dict[node[1]] == 1) or (g_tensor[node[1]] == 1):
+            throw of ("AOT: Value-typed name '" + node[1] + "' read in a numeric context (the VM raises here)")
         # not a declared C numeric: an env-boxed name in a numeric context
         # (e.g. a for-in loop var indexing a buffer, #70) — read it boxed,
         # matching emit_val's ident path.
@@ -775,7 +806,13 @@ define emit_num(node, nm, bt, raw) as:
         local uv is emit_num of [node[2], nm, bt, raw]
         if uop == "-":
             return "(-(" + uv + "))"
-        return "((" + uv + " == 0.0) ? 1.0 : 0.0)"
+        if uop == "~":
+            # OP_BNOT: int64 complement of the numeric value (#73 — this used
+            # to fall into the `not` arm below, a silent wrong number).
+            return "((double)(~(int64_t)(" + uv + ")))"
+        if uop == "not":
+            return "((" + uv + " == 0.0) ? 1.0 : 0.0)"
+        throw of ("AOT: emit_num unexpected unary '" + uop + "'")
     if t == "index":
         local tgt is unwrap of node[1]
         # a buffer C var -> aot_buf_get; a boxed value (list element used in a
@@ -832,6 +869,20 @@ define emit_num(node, nm, bt, raw) as:
         local op is node[1]
         local l is emit_num of [node[2], nm, bt, raw]
         local r is emit_num of [node[3], nm, bt, raw]
+        # bitwise: the VM's INT_BINOP — int64 two's-complement, shift counts
+        # masked to 0..63 (defined for any count, matching hardware). The
+        # final (double) cast is the VM's own last step (always finite), so
+        # no num_guard — byte-exact by construction.
+        if op == "&":
+            return "((double)((int64_t)(" + l + ") & (int64_t)(" + r + ")))"
+        if op == "|":
+            return "((double)((int64_t)(" + l + ") | (int64_t)(" + r + ")))"
+        if op == "^":
+            return "((double)((int64_t)(" + l + ") ^ (int64_t)(" + r + ")))"
+        if op == "<<":
+            return "((double)((int64_t)(" + l + ") << ((int64_t)(" + r + ") & 63)))"
+        if op == ">>":
+            return "((double)((int64_t)(" + l + ") >> ((int64_t)(" + r + ") & 63)))"
         if op == "+":
             if raw == 1:
                 return "(" + l + " + " + r + ")"
@@ -873,6 +924,16 @@ define emit_val(node, nm, bt) as:
             throw of "AOT: temporal interrogative without `at` only supports `prev`"
         return "aot_query_at_val(" + (str of ik) + ", \"" + ie[1] + "\", (int)(" + (emit_num of [iat, nm, bt, 0]) + "))"
     if t == "ident":
+        # Value-typed C names are NOT in the env: a buffer/dict local or param
+        # is a C Value* — hand out a new ref (emit_val's result is owned); a
+        # tensor is an AotTensor, serialized like the return path. The env
+        # read below would silently produce null for these.
+        if bt[node[1]] == 1:
+            return "({ val_incref(" + (cn of node[1]) + "); " + (cn of node[1]) + "; })"
+        if g_dict[node[1]] == 1:
+            return "({ val_incref(" + (cn of node[1]) + "); " + (cn of node[1]) + "; })"
+        if g_tensor[node[1]] == 1:
+            return "aot_tensor_to_value(" + (cn of node[1]) + ")"
         return "aot_get(__eigs_g, \"" + node[1] + "\")"
     if t == "index":
         # target[idx] on a boxed value (list/dict/string/buffer). A buffer index
@@ -913,9 +974,17 @@ define emit_val(node, nm, bt) as:
             return "make_num(aot_truthy(" + (emit_val of [node[2], nm, bt]) + ") ? 0.0 : 1.0)"
         if uop == "-":
             return "make_num(-(aot_num(" + (emit_val of [node[2], nm, bt]) + ")))"
+        if uop == "~":
+            # numeric at runtime (VM errors otherwise) — emit_num handles boxed
+            return "make_num(" + (emit_num of [node, nm, bt, 0]) + ")"
         throw of ("AOT: cannot emit value unary '" + uop + "'")
     if t == "binop":
         local bop is node[1]
+        # bitwise on boxed operands (e.g. an env-boxed loop var): operands are
+        # numbers at runtime (the VM errors otherwise), so emit through the
+        # numeric path — emit_num reads boxed idents via aot_num(aot_get).
+        if BIT_OPS[bop] == 1:
+            return "make_num(" + (emit_num of [node, nm, bt, 0]) + ")"
         # `and`/`or` short-circuit and return the OPERAND value (1 and 2 -> 2,
         # 0 or 3 -> 3), not a boolean. is_truthy does NOT consume, so the kept
         # operand survives; the discarded one is decref'd. The right operand is
@@ -2278,13 +2347,7 @@ define emit_args(node, fname, nm, bt) as:
     local ptypes is (g_funcs[fname])["ptypes"]
     local elems is []
     if arg[0] == "null":
-        # Every user fn has >= 1 param (zero-param defines get an implicit `n`),
-        # so a bare zero-arg call is never valid C. When the single param is
-        # never read, `f of null` lowers to a dummy 0 (#69); otherwise the body
-        # would see 0 where the VM binds null — fail loudly, never guess.
-        if ((g_funcs[fname])["nullok"]) == 1:
-            return "0"
-        throw of ("AOT: '" + fname + " of null' — the callee reads its parameter (VM binds null, no C equivalent); only a never-read single param (the zero-param define idiom) is supported")
+        elems is []
     elif (arg[0] == "list") and ((len of arg) == 3):
         # #355: parenthesized literal list — ONE argument, never spread.
         elems is [arg]
@@ -2295,6 +2358,16 @@ define emit_args(node, fname, nm, bt) as:
         elems is arg[1]
     else:
         elems is [arg]
+    if (len of elems) == 0:
+        # Zero args (`f of null`, or `f of []` under the #405 one-call rule):
+        # every user fn has >= 1 param (zero-param defines get an implicit
+        # `n`), so a bare zero-arg C call is never valid. When the incoming
+        # value of the single param is dead (nullok), pass a dummy 0 (#69);
+        # otherwise the body would see 0 where the VM binds null/nothing —
+        # fail loudly, never guess.
+        if ((g_funcs[fname])["nullok"]) == 1:
+            return "0"
+        throw of ("AOT: zero-arg call to '" + fname + "' — the callee reads its parameter's incoming value (the VM binds null, no C equivalent); only a dead single param (the zero-param define idiom) is supported")
     local s is ""
     for k in range of (len of elems):
         if k > 0:
@@ -2312,6 +2385,11 @@ define emit_args(node, fname, nm, bt) as:
                     s is s + "env_get(__eigs_g, \"" + be[1] + "\")"
             elif be[0] == "call":
                 s is s + (emit_call_num of [be, nm, bt])
+            elif (be[0] == "str") or (be[0] == "num"):
+                # a literal can never satisfy a buffer param — the buf class is
+                # not polymorphic (strings route through it in VM programs like
+                # checksum's `_blen of "abc"`); loud beats a union misread.
+                throw of ("AOT: '" + fname + "' expects a buffer argument, got a " + be[0] + " literal (buffer params are not polymorphic yet)")
             else:
                 s is s + (emit_val of [elems[k], nm, bt])
         elif ((ptypes[k]) == "tensor") or ((ptypes[k]) == "dict"):
@@ -2335,26 +2413,6 @@ define emit_args(node, fname, nm, bt) as:
 define emit_call_num(node, nm, bt) as:
     local fname is (unwrap of node[1])[1]
     return (cn of fname) + "(" + (emit_args of [node, fname, nm, bt]) + ")"
-
-define emit_func_proto(fn, finfo) as:
-    local sig is "static " + finfo["ret"] + " " + (cn of fn[1]) + "("
-    local params is fn[2]
-    local ptypes is finfo["ptypes"]
-    if (len of params) == 0:
-        sig is sig + "void"
-    local ip is finfo["iparams"]
-    for k in range of (len of params):
-        if k > 0:
-            sig is sig + ", "
-        if (ptypes[k]) == "buf":
-            sig is sig + "Value*"
-        elif ((ptypes[k]) == "tensor") or ((ptypes[k]) == "dict"):
-            sig is sig + "Value*"
-        elif ip[params[k]] == 1:
-            sig is sig + "long"
-        else:
-            sig is sig + "double"
-    return sig + ");\n"
 
 define emit_function(fn, finfo, gnm, gbt) as:
     local name is fn[1]
@@ -2474,6 +2532,7 @@ define emit_function(fn, finfo, gnm, gbt) as:
         else:
             sig is sig + "double " + (cn of params[k])
     sig is sig + ")"
+    g_fsigs[name] is sig
     # tensor scope -> a per-call frame pool; flatten tensor params at entry.
     local tkeys is keys of g_tensor
     local hasT is (len of tkeys) > 0
@@ -2583,33 +2642,35 @@ define emit_program(ast) as:
         local flbn is keys of flb
         for j in range of (len of flbn):
             ffbt[flbn[j]] is 1
-        # integer params: forced by appearing in an index/slice position
-        local ip is {}
-        for p in range of (len of fn[2]):
-            if (pt[p]) != "buf":
-                if (uses_int_forcing of [fn[3], (fn[2])[p]]) == 1:
-                    ip[(fn[2])[p]] is 1
-        # `f of null` is emittable only when the single parameter is never read
-        # (the zero-param `define f()` idiom — the parser binds an implicit,
-        # unused `n`); the call site then passes a dummy 0 (#69).
+        # A zero-arg call (`f of null` / `f of []`) is emittable only when the
+        # single parameter's INCOMING value is dead — never read, or rebound
+        # before any read (the zero-param `define f()` idiom binds an implicit
+        # `n`); the call site then passes a dummy 0 (#69).
         local nullok is 0
         if (len of fn[2]) == 1:
-            if (uses_ident of [fn[3], (fn[2])[0]]) == 0:
+            if (param_unread of [fn[3], (fn[2])[0]]) == 1:
                 nullok is 1
-        g_funcs[fn[1]] is {"ptypes": pt, "ret": (func_ret_type of [fn, ffbt]), "iparams": ip, "rettensor": (func_ret_tensor of fn), "retbuf": (func_ret_buf of [fn, ffbt]), "observed": (func_observed of fn), "nullok": nullok}
+        g_funcs[fn[1]] is {"ptypes": pt, "ret": (func_ret_type of [fn, ffbt]), "rettensor": (func_ret_tensor of fn), "retbuf": (func_ret_buf of [fn, ffbt]), "observed": (func_observed of fn), "nullok": nullok}
     # Module globals are computed first so functions can READ them (they become
     # file-scope vars in C; a function's params/locals shadow same-named globals).
     local bt is infer_buffers of rest
     local nm is infer_numeric of [rest, bt]
     # Emit functions with EMPTY value-bounds (params/globals unbounded -> maps
-    # inside them stay guarded, sound). Forward protos first, for recursion.
+    # inside them stay guarded, sound). Definitions are emitted FIRST (into a
+    # buffer): emit_function computes the real signature — its int inference
+    # sees int-by-assignment params, which the old proto-side iparams missed
+    # (#74) — and records it in g_fsigs; the forward protos (still printed
+    # first, for recursion) are then derived from the recorded sigs, so proto
+    # and definition cannot disagree.
     g_scalbound is {}
     g_bufbound is {}
+    local fdefs is ""
+    for k in range of (len of funcs):
+        fdefs is fdefs + "\n" + (emit_function of [funcs[k], g_funcs[(funcs[k])[1]], nm, bt])
     local fc is ""
     for k in range of (len of funcs):
-        fc is fc + (emit_func_proto of [funcs[k], g_funcs[(funcs[k])[1]]])
-    for k in range of (len of funcs):
-        fc is fc + "\n" + (emit_function of [funcs[k], g_funcs[(funcs[k])[1]], nm, bt])
+        fc is fc + (g_fsigs[(funcs[k])[1]]) + ";\n"
+    fc is fc + fdefs
     g_scalbound is infer_scalar_bounds of [rest, nm]
     g_bufbound is infer_buffer_bounds of [rest, bt]
     local minits is module_inits of rest
