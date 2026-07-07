@@ -701,3 +701,60 @@ pinned worktree. The lib cache is mtime-keyed, and a freshly-added
 worktree has OLDER mtimes than a lib built minutes before, so switching
 `EIGS_DIR` does NOT auto-rebuild: `rm aot/build/libeigsrt.a` when moving
 between runtimes.
+
+## F-OURO-26 — bitwise operators land in the AOT (#64 increment 1); two silent-wrong classes made loud/correct on the way — FIXED (#73, #74)
+
+The checksum forcing function (#64) drove four connected changes:
+
+**Bitwise infix + unary (~).** `& | ^ << >>` emit the VM's INT_BINOP
+exactly: int64 two's-complement over the numeric value, shift counts
+masked to 0..63, and the final `(double)` cast is the VM's own last step
+(always finite → no num_guard, byte-exact by construction). Unary `~` is
+OP_BNOT. #73 was the pre-existing silent-wrong here: emit_num's unary
+case treated every non-`-` op as logical not, so `print of (~5)` gave VM
+-6 / AOT 0 — emit_num and emit_val now dispatch unary ops explicitly and
+throw on anything unknown. `t53_bitops.eigs` pins the semantics
+(masking, negative operands, precedence, boxed loop-var operands, the
+CRC-32 inner loop).
+
+**#74 — one signature authority.** The forward proto typed params from
+registration-time `iparams` (index-forced only) while the definition
+used `infer_int` (also int-by-assignment, e.g. the shadowing `local n is
+0`) — gcc "conflicting types" on `_crc_init`. emit_function now records
+its computed sig in `g_fsigs`; definitions are emitted first (into a
+buffer) and protos are DERIVED from the recorded sigs, so the two can
+never disagree. `iparams` is gone.
+
+**Value-typed C names vs the env.** A buffer/dict/tensor param or local
+is a C variable, NOT an env binding — but emit_val's ident case read the
+env for every name (silent null: `type of x` on a buf param always took
+the string branch), and after the #70 boxed fallback emit_num would have
+done the same (aot_num(null) = 0.0, a wrong number). Now: emit_val hands
+out the C name (increfed; tensors serialize via aot_tensor_to_value);
+emit_num THROWS for Value-typed names in a numeric context (the VM
+raises there). This is what turned the checksum probe from
+compiles-and-prints-garbage into a loud build error at `_byte`.
+
+**Buffer class guards.** The buf param class is inferred from usage, so
+an out-of-envelope input (string reaching a buf param — checksum's
+polymorphic `_blen`) misread the value union silently. A str/num literal
+to a buf param now throws at BUILD time; the aot_buf_* helpers type-check
+at runtime (cold, predictable branch — in-envelope programs never take
+it): `h of s` with s a string global now dies "buffer op on a non-buffer
+value" instead of printing union garbage.
+
+Zero-arg calls: `f of []` (the #405 one-call rule, checksum's
+`_crc_init of []`) joins `f of null` in the #69 lowering, and nullok is
+now `param_unread` — the incoming value is dead if the body rebinds the
+param (straight-line prefix scan) before any read, which is exactly the
+`_crc_init` idiom. Branch-local first assignments deliberately don't
+count (conservative → loud).
+
+Still open for #64: the generic Value* param class (string-or-buffer
+polymorphic params — `_blen`/`_byte` dispatch on `type of x`), `ord`/
+`char_at`/`buf_get`/`buf_len` builtins on generic operands, and str args
+to user fns. The probe now fails loudly at the first of these.
+
+Negative cases (zero-arg-to-reading-callee, str-literal-to-buf-param,
+runtime non-buffer guard) are verified manually — the AOT harness has no
+reject tier yet; worth adding one when the envelope work continues.

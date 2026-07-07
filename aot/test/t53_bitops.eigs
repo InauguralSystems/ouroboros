@@ -1,0 +1,44 @@
+# #64 increment 1 / #73: infix bitwise ops with the VM's INT_BINOP semantics —
+# int64 two's-complement over the numeric value, shift counts masked to 0..63,
+# result cast (double) exactly as the VM does. Unary ~ is OP_BNOT (#73: it
+# used to silently emit logical not — VM -6, AOT 0 on ~5).
+print of (0xEDB88320 & 1)
+print of (0xEDB88320 | 0x12345678)
+print of (0xEDB88320 ^ 0xFFFFFFFF)
+print of (1 << 31)
+print of (0xEDB88320 >> 4)
+print of (~5)
+print of (~(0 - 1))
+# shift-count masking (defined for any count, like the hardware)
+print of (1 << 64)
+print of (1 << 65)
+print of (256 >> 65)
+# negative operand: >> is arithmetic (sign-propagating) on int64
+print of ((0 - 8) >> 1)
+print of ((0 - 1) & 0xFF)
+# precedence chain: shift binds tighter than &, & tighter than ^, ^ tighter than |
+print of (1 | 2 ^ 6 & 12 << 1)
+# boxed contexts: a for-in loop var (env-boxed) as bit-op operand
+tbl is zeros of 4
+for j in range of 4:
+    tbl[j] is (j << 2) ^ (j & 1)
+tot is 0
+for j in range of 4:
+    tot is tot + tbl[j]
+print of tot
+
+# the CRC-32 inner-loop shape (one table entry, reflected polynomial)
+define crc_entry(n) as:
+    local c is n
+    local k is 0
+    loop while k < 8:
+        if (c & 1) == 1:
+            c is (c >> 1) ^ 0xEDB88320
+        else:
+            c is c >> 1
+        k is k + 1
+    return c
+
+print of (crc_entry of 0)
+print of (crc_entry of 1)
+print of (crc_entry of 255)
