@@ -1,0 +1,44 @@
+# t44 (#67): user identifiers named after C keywords must compile — the
+# emitter mangles them at C-identifier emission points (uu_ prefix; u_ would
+# collide with the BSD u_int/u_char typedefs in <sys/types.h>). Env-string
+# paths (aot_get / observer keys) keep the source name. Only C keywords that
+# are NOT EigenScript keywords can be identifiers at all (`while`/`for`/...
+# are rejected by both parsers). Exercises: fn names, params, locals, a
+# global, a global list, an int-classified local, a buffer local with
+# keyword-named indexing, and call sites. (Zero-param defines and numeric
+# for-var reads are separate pre-existing envelope gaps — see #69/#70 —
+# deliberately not used here.)
+
+double is 2.5
+static is [10, 20, 30]
+
+define int(register) as:
+    local const is register * 2.0
+    return const + double
+
+define float(n) as:
+    local extern is 0.0
+    local do is 0
+    loop while do < n:
+        extern is extern + (int of do)
+        do is do + 1
+    return extern
+
+define char(void) as:
+    local union is zeros of 4
+    local signed is 0
+    loop while signed < 4:
+        union[signed] is signed * 1.5
+        signed is signed + 1
+    local enum is 0.0
+    local goto is 0
+    loop while goto < 4:
+        enum is enum + union[goto]
+        goto is goto + 1
+    return enum + void
+
+print of (int of 3.0)
+print of (float of 5.0)
+print of (char of 0.5)
+print of static[1]
+print of double

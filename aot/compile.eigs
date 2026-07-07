@@ -92,6 +92,23 @@ define uses_observer(ast) as:
 # When set, every numeric assignment is recorded on the trace tape (independent
 # of the env, so temporal vars stay unboxed) and each source line is stamped.
 g_traced is 0
+# ---- #67: C-keyword identifier mangling -----------------------------------
+# A user identifier that is a C keyword (`double`, `int`, `static`, ...) is
+# legal EigenScript but invalid as a C identifier, so gen.c failed to compile.
+# cn() mangles at C-IDENTIFIER EMISSION POINTS ONLY (u_ prefix): declarations,
+# signatures, call sites, and bare-name reads. Env-string paths (aot_get /
+# aot_observe_num / aot_trace_assign KEYS, aot_query names) keep the source
+# name, so `who is x at L` and observer output stay byte-exact with the VM.
+# Only C keywords that are NOT EigenScript keywords can reach here (the
+# parsers reject `while`/`for`/`if`/... as identifiers on both sides).
+g_c_kw is {"auto": 1, "char": 1, "const": 1, "default": 1, "do": 1, "double": 1, "enum": 1, "extern": 1, "float": 1, "goto": 1, "inline": 1, "int": 1, "long": 1, "register": 1, "restrict": 1, "short": 1, "signed": 1, "sizeof": 1, "static": 1, "struct": 1, "switch": 1, "typedef": 1, "union": 1, "unsigned": 1, "void": 1, "volatile": 1, "main": 1}
+
+define cn(name) as:
+    if (has_key of [g_c_kw, name]) == 1:
+        # uu_ not u_: glibc <sys/types.h> typedefs the BSD u_int/u_char/...
+        return "uu_" + name
+    return name
+
 define has_interrogate(node) as:
     if (type of node) != "list":
         return 0
@@ -373,12 +390,12 @@ define emit_int(node) as:
     if t == "num":
         return str of n[1]
     if t == "ident":
-        return n[1]
+        return cn of n[1]
     if t == "unary":
         return "(-(" + (emit_int of n[2]) + "))"
     if t == "call":
         local a is unwrap of n[2]
-        return "((long)aot_buf_len(" + a[1] + "))"
+        return "((long)aot_buf_len(" + (cn of a[1]) + "))"
     local op is n[1]
     return "(" + (emit_int of n[2]) + " " + op + " " + (emit_int of n[3]) + ")"
 
@@ -714,11 +731,11 @@ define slice_arg_parts(argnode, nm, bt) as:
         local lo is "0"
         if n[2] != null:
             lo is emit_num of [n[2], nm, bt, 0]
-        local hi is "aot_buf_len(" + bnm + ")"
+        local hi is "aot_buf_len(" + (cn of bnm) + ")"
         if n[3] != null:
             hi is emit_num of [n[3], nm, bt, 0]
         return [bnm, lo, hi]
-    return [n[1], "0", "aot_buf_len(" + n[1] + ")"]
+    return [n[1], "0", "aot_buf_len(" + (cn of n[1]) + ")"]
 
 define emit_num(node, nm, bt, raw) as:
     local t is node[0]
@@ -732,7 +749,7 @@ define emit_num(node, nm, bt, raw) as:
         # in an observed program numeric vars live in the env (boxed)
         if g_observed == 1:
             return "aot_num(aot_get(__eigs_g, \"" + node[1] + "\"))"
-        return node[1]
+        return cn of node[1]
     if t == "unary":
         local uop is node[1]
         local uv is emit_num of [node[2], nm, bt, raw]
@@ -747,14 +764,14 @@ define emit_num(node, nm, bt, raw) as:
         if (tgt[0] == "ident") and (bt[tgt[1]] != 1):
             return "aot_num(aot_index_get(" + (emit_val of [node[1], nm, bt]) + ", make_num(" + (emit_num of [node[2], nm, bt, 0]) + ")))"
         if (is_int_expr of node[2]) == 1:
-            return "aot_buf_get_i(" + tgt[1] + ", " + (emit_int of node[2]) + ")"
-        return "aot_buf_get(" + tgt[1] + ", " + (emit_num of [node[2], nm, bt, 0]) + ")"
+            return "aot_buf_get_i(" + (cn of tgt[1]) + ", " + (emit_int of node[2]) + ")"
+        return "aot_buf_get(" + (cn of tgt[1]) + ", " + (emit_num of [node[2], nm, bt, 0]) + ")"
     if t == "call":
         local callee is unwrap of node[1]
         if callee[0] == "ident":
             if callee[1] == "len":
                 local a is unwrap of node[2]
-                return "aot_buf_len(" + a[1] + ")"
+                return "aot_buf_len(" + (cn of a[1]) + ")"
             if callee[1] == "dot":
                 # dot of [a, b] -> reassociated SIMD reduction (association-
                 # unspecified by spec). Args are buffer idents or slices; a
@@ -906,7 +923,7 @@ define emit_tensor(node, nm, bt) as:
     local n is unwrap of node
     local t is n[0]
     if t == "ident":
-        return n[1]
+        return cn of n[1]
     if t == "dot":
         local tgt is unwrap of n[1]
         local dval is ""
@@ -954,19 +971,19 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
     if t == "assign":
         local name is node[1]
         if g_tensor[name] == 1:
-            return ind + name + " = " + (emit_tensor of [node[2], nm, bt]) + ";\n"
+            return ind + (cn of name) + " = " + (emit_tensor of [node[2], nm, bt]) + ";\n"
         if bt[name] == 1:
             local cc is unwrap of node[2]
             if (is_buf_create of node[2]) == 1:
                 # `buffer of [r, c]` -> a shaped 2-D buffer; pass the list Value.
                 local barg is unwrap of cc[2]
                 if barg[0] == "list":
-                    return ind + name + " = aot_call_name(__eigs_g, \"buffer\", " + (emit_val of [cc[2], nm, bt]) + ");\n"
+                    return ind + (cn of name) + " = aot_call_name(__eigs_g, \"buffer\", " + (emit_val of [cc[2], nm, bt]) + ");\n"
                 # Always create via the heap-zeroed `buffer` builtin: `zeros` is
                 # arena-allocated and the AOT's flat arena clobbers it.
-                return ind + name + " = aot_call_name(__eigs_g, \"buffer\", make_num(" + (emit_num of [cc[2], nm, bt, 0]) + "));\n"
+                return ind + (cn of name) + " = aot_call_name(__eigs_g, \"buffer\", make_num(" + (emit_num of [cc[2], nm, bt, 0]) + "));\n"
             # buffer var assigned from a buffer-returning function call
-            return ind + name + " = " + (emit_call_num of [node[2], nm, bt]) + ";\n"
+            return ind + (cn of name) + " = " + (emit_call_num of [node[2], nm, bt]) + ";\n"
         if nm[name] == 1:
             # observed program: numeric assign goes through the runtime observer
             # (store in env + update the slot's entropy/dH + set last-observer).
@@ -983,10 +1000,10 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
             local raw is 0
             if gf[name] == 1:
                 raw is 1
-            local asn is ind + name + " = " + (emit_num of [node[2], nm, bt, raw]) + ";\n"
+            local asn is ind + (cn of name) + " = " + (emit_num of [node[2], nm, bt, raw]) + ";\n"
             # temporal: record the new value on the trace tape (prev / at-line)
             if g_traced == 1:
-                asn is asn + ind + "aot_trace_assign(\"" + name + "\", " + name + ");\n"
+                asn is asn + ind + "aot_trace_assign(\"" + name + "\", " + (cn of name) + ");\n"
             return asn
         return ind + "aot_set(__eigs_g, \"" + name + "\", " + (emit_val of [node[2], nm, bt]) + ");\n"
     if t == "index_assign":
@@ -999,8 +1016,8 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
         if tgt[0] == "ident":
             if bt[tgt[1]] == 1:
                 if (is_int_expr of node[2]) == 1:
-                    return ind + "aot_buf_set_i(" + tgt[1] + ", " + (emit_int of node[2]) + ", " + (emit_num of [node[3], nm, bt, 0]) + ");\n"
-                return ind + "aot_buf_set(" + tgt[1] + ", " + (emit_num of [node[2], nm, bt, 0]) + ", " + (emit_num of [node[3], nm, bt, 0]) + ");\n"
+                    return ind + "aot_buf_set_i(" + (cn of tgt[1]) + ", " + (emit_int of node[2]) + ", " + (emit_num of [node[3], nm, bt, 0]) + ");\n"
+                return ind + "aot_buf_set(" + (cn of tgt[1]) + ", " + (emit_num of [node[2], nm, bt, 0]) + ", " + (emit_num of [node[3], nm, bt, 0]) + ");\n"
         throw of "AOT: index_assign only on numeric buffers (this slice)"
     if t == "call":
         local callee is unwrap of node[1]
@@ -1092,7 +1109,7 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
         local itexpr is ""
         local fowned is 1
         if (fiu[0] == "ident") and (bt[fiu[1]] == 1):
-            itexpr is fiu[1]
+            itexpr is cn of fiu[1]
             fowned is 0
         else:
             itexpr is emit_val of [fiter, nm, bt]
@@ -1426,7 +1443,7 @@ define emit_vec(node, ctr, raw) as:
         return "aot_vset(" + (str of n[1]) + ")"
     if t == "index":
         local tgt is unwrap of n[1]
-        return "aot_vload(_p_" + tgt[1] + " + _vi" + (off_suffix of [n[2], ctr]) + ")"
+        return "aot_vload(_p_" + (cn of tgt[1]) + " + _vi" + (off_suffix of [n[2], ctr]) + ")"
     if t == "ident":
         if n[1] == ctr:
             return "aot_viota(_vi)"
@@ -1454,11 +1471,11 @@ define emit_vscalar(node, ctr, raw) as:
         return str of n[1]
     if t == "index":
         local tgt is unwrap of n[1]
-        return "_p_" + tgt[1] + "[_vi" + (off_suffix of [n[2], ctr]) + "]"
+        return "_p_" + (cn of tgt[1]) + "[_vi" + (off_suffix of [n[2], ctr]) + "]"
     if t == "ident":
         if n[1] == ctr:
             return "(double)_vi"
-        return n[1]
+        return cn of n[1]
     local op is n[1]
     local a is emit_vscalar of [n[2], ctr, raw]
     local b is emit_vscalar of [n[3], ctr, raw]
@@ -1485,10 +1502,10 @@ define emit_vcheck(node, ctr) as:
     if t == "ident":
         if n[1] == ctr:
             return "(double)_vi"
-        return n[1]
+        return cn of n[1]
     if t == "index":
         local tgt is unwrap of n[1]
-        return "aot_buf_get(" + tgt[1] + ", (double)(_vi" + (off_suffix of [n[2], ctr]) + "))"
+        return "aot_buf_get(" + (cn of tgt[1]) + ", (double)(_vi" + (off_suffix of [n[2], ctr]) + "))"
     local op is n[1]
     local a is emit_vcheck of [n[2], ctr]
     local b is emit_vcheck of [n[3], ctr]
@@ -1522,10 +1539,10 @@ define emit_vectorized(node, vinfo, ind, nm, bt, minits) as:
     local s is ind + "{\n"
     s is s + i2 + "long _n = (long)(" + boundc + ");\n"
     for k in range of (len of bufs):
-        s is s + i2 + "double* _p_" + bufs[k] + " = aot_buf_data(" + bufs[k] + ");\n"
-    local guard is "(long)" + ctr + " == 0"
+        s is s + i2 + "double* _p_" + (cn of bufs[k]) + " = aot_buf_data(" + (cn of bufs[k]) + ");\n"
+    local guard is "(long)" + (cn of ctr) + " == 0"
     for k in range of (len of bufs):
-        guard is guard + " && _n <= (long)aot_buf_len(" + bufs[k] + ")"
+        guard is guard + " && _n <= (long)aot_buf_len(" + (cn of bufs[k]) + ")"
     s is s + i2 + "if (" + guard + ") {\n"
     # safe interior [_lo, _hi): all neighbor offsets land in [0, _n)
     s is s + i3 + "long _lo = " + (str of (0 - minoff)) + "; if (_lo > _n) _lo = _n;\n"
@@ -1534,26 +1551,26 @@ define emit_vectorized(node, vinfo, ind, nm, bt, minits) as:
     # head boundary: checked (matches VM wrap/error)
     s is s + i3 + "for (; _vi < _lo; _vi++) {\n"
     for a in range of (len of assigns):
-        s is s + i4 + "aot_buf_set(" + (assigns[a])["buf"] + ", (double)_vi, " + (emit_vcheck of [(assigns[a])["val"], ctr]) + ");\n"
+        s is s + i4 + "aot_buf_set(" + (cn of (assigns[a])["buf"]) + ", (double)_vi, " + (emit_vcheck of [(assigns[a])["val"], ctr]) + ");\n"
     s is s + i3 + "}\n"
     # interior vector
     s is s + i3 + "for (; _vi + AOT_VW <= _hi; _vi += AOT_VW) {\n"
     for a in range of (len of assigns):
         local rw is map_elidable of (assigns[a])["val"]
-        s is s + i4 + "aot_vstore(_p_" + (assigns[a])["buf"] + " + _vi, " + (emit_vec of [(assigns[a])["val"], ctr, rw]) + ");\n"
+        s is s + i4 + "aot_vstore(_p_" + (cn of (assigns[a])["buf"]) + " + _vi, " + (emit_vec of [(assigns[a])["val"], ctr, rw]) + ");\n"
     s is s + i3 + "}\n"
     # interior scalar remainder: raw (still in-bounds)
     s is s + i3 + "for (; _vi < _hi; _vi++) {\n"
     for a in range of (len of assigns):
         local rw2 is map_elidable of (assigns[a])["val"]
-        s is s + i4 + "_p_" + (assigns[a])["buf"] + "[_vi] = " + (emit_vscalar of [(assigns[a])["val"], ctr, rw2]) + ";\n"
+        s is s + i4 + "_p_" + (cn of (assigns[a])["buf"]) + "[_vi] = " + (emit_vscalar of [(assigns[a])["val"], ctr, rw2]) + ";\n"
     s is s + i3 + "}\n"
     # tail boundary: checked
     s is s + i3 + "for (; _vi < _n; _vi++) {\n"
     for a in range of (len of assigns):
-        s is s + i4 + "aot_buf_set(" + (assigns[a])["buf"] + ", (double)_vi, " + (emit_vcheck of [(assigns[a])["val"], ctr]) + ");\n"
+        s is s + i4 + "aot_buf_set(" + (cn of (assigns[a])["buf"]) + ", (double)_vi, " + (emit_vcheck of [(assigns[a])["val"], ctr]) + ");\n"
     s is s + i3 + "}\n"
-    s is s + i3 + ctr + " = (double)_n;\n"
+    s is s + i3 + (cn of ctr) + " = (double)_n;\n"
     s is s + i2 + "} else {\n"
     local lg is loop_gf of [node, minits]
     s is s + i3 + "while (" + (emit_cond of [node[1], nm, bt]) + ") {\n"
@@ -2284,10 +2301,10 @@ define emit_args(node, fname, nm, bt) as:
 
 define emit_call_num(node, nm, bt) as:
     local fname is (unwrap of node[1])[1]
-    return fname + "(" + (emit_args of [node, fname, nm, bt]) + ")"
+    return (cn of fname) + "(" + (emit_args of [node, fname, nm, bt]) + ")"
 
 define emit_func_proto(fn, finfo) as:
-    local sig is "static " + finfo["ret"] + " " + fn[1] + "("
+    local sig is "static " + finfo["ret"] + " " + (cn of fn[1]) + "("
     local params is fn[2]
     local ptypes is finfo["ptypes"]
     if (len of params) == 0:
@@ -2406,23 +2423,23 @@ define emit_function(fn, finfo, gnm, gbt) as:
     g_int is {}
     if g_observed == 0:
         g_int is infer_int of [body, params, fnm, fbt]
-    local sig is "static " + finfo["ret"] + " " + name + "("
+    local sig is "static " + finfo["ret"] + " " + (cn of name) + "("
     if (len of params) == 0:
         sig is sig + "void"
     for k in range of (len of params):
         if k > 0:
             sig is sig + ", "
         if (ptypes[k]) == "buf":
-            sig is sig + "Value* " + params[k]
+            sig is sig + "Value* " + (cn of params[k])
         elif (ptypes[k]) == "dict":
-            sig is sig + "Value* " + params[k]
+            sig is sig + "Value* " + (cn of params[k])
         elif (ptypes[k]) == "tensor":
             # received boxed; flattened to an AotTensor local at entry (below).
-            sig is sig + "Value* " + params[k] + "_v"
+            sig is sig + "Value* " + (cn of params[k]) + "_v"
         elif g_int[params[k]] == 1:
-            sig is sig + "long " + params[k]
+            sig is sig + "long " + (cn of params[k])
         else:
-            sig is sig + "double " + params[k]
+            sig is sig + "double " + (cn of params[k])
     sig is sig + ")"
     # tensor scope -> a per-call frame pool; flatten tensor params at entry.
     local tkeys is keys of g_tensor
@@ -2432,7 +2449,7 @@ define emit_function(fn, finfo, gnm, gbt) as:
         decls is decls + "    long _tmark = aot_tframe_enter();\n"
         for k in range of (len of params):
             if (ptypes[k]) == "tensor":
-                decls is decls + "    AotTensor " + params[k] + " = aot_treg(aot_tensor_from_value(" + params[k] + "_v));\n"
+                decls is decls + "    AotTensor " + (cn of params[k]) + " = aot_treg(aot_tensor_from_value(" + (cn of params[k]) + "_v));\n"
     # Part 2a — observed function: its numeric params are C vars but the body
     # reads them via the env (g_observed routes idents through aot_get). Seed them
     # into the env at entry. Correct while observed functions don't nest/recurse
@@ -2441,7 +2458,7 @@ define emit_function(fn, finfo, gnm, gbt) as:
     if g_observed == 1:
         for k in range of (len of params):
             if (ptypes[k]) == "num":
-                decls is decls + "    aot_set(__eigs_g, \"" + params[k] + "\", make_num(" + params[k] + "));\n"
+                decls is decls + "    aot_set(__eigs_g, \"" + params[k] + "\", make_num(" + (cn of params[k]) + "));\n"
     # locals: tensors -> AotTensor, buffers -> Value*, integers -> long, other
     # numerics -> double (params + globals excluded; an assign to a global
     # updates the global).
@@ -2459,13 +2476,13 @@ define emit_function(fn, finfo, gnm, gbt) as:
             isglobal is 0
         if (isparam == 0) and (isglobal == 0):
             if g_tensor[v] == 1:
-                decls is decls + "    AotTensor " + v + " = aot_tensor_null();\n"
+                decls is decls + "    AotTensor " + (cn of v) + " = aot_tensor_null();\n"
             elif fbt[v] == 1:
-                decls is decls + "    Value* " + v + " = NULL;\n"
+                decls is decls + "    Value* " + (cn of v) + " = NULL;\n"
             elif g_int[v] == 1:
-                decls is decls + "    long " + v + " = 0;\n"
+                decls is decls + "    long " + (cn of v) + " = 0;\n"
             else:
-                decls is decls + "    double " + v + " = 0;\n"
+                decls is decls + "    double " + (cn of v) + " = 0;\n"
     local fminits is module_inits of body
     local bodyc is emit_stmts of [body, "    ", fnm, fbt, fminits, {}]
     local tailret is ""
@@ -2573,13 +2590,13 @@ define emit_program(ast) as:
         # no file-scope decl; otherwise emit static long/double.
         if (nm[names[i]] == 1) and (g_observed == 0):
             if g_int[names[i]] == 1:
-                gdecls is gdecls + "static long " + names[i] + " = 0;\n"
+                gdecls is gdecls + "static long " + (cn of names[i]) + " = 0;\n"
             else:
-                gdecls is gdecls + "static double " + names[i] + " = 0;\n"
+                gdecls is gdecls + "static double " + (cn of names[i]) + " = 0;\n"
     local bnames is keys of bt
     for i in range of (len of bnames):
         if bt[bnames[i]] == 1:
-            gdecls is gdecls + "static Value* " + bnames[i] + " = NULL;\n"
+            gdecls is gdecls + "static Value* " + (cn of bnames[i]) + " = NULL;\n"
     local body is emit_stmts of [rest, "    ", nm, bt, minits, {}]
     local obshdr is ""
     if g_obs_traced == 1:
