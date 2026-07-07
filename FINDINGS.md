@@ -885,3 +885,52 @@ env-list-element arithmetic, boxed len shapes, numeric and/or operand
 semantics, str+str unaffected). #65's acceptance is complete: tool on
 2+ real programs, top site fixed with an n=5 win, byte-deterministic
 audit.
+
+## F-OURO-30 — for-in loop vars unbox to C doubles; two pre-existing post-loop divergences surfaced by the oracle probes — FIXED (spec_audit follow-on)
+
+The last MISSED class the audit isolated (boxed-env-for) is gone for
+unobserved/untraced programs: when the iterable provably yields numbers
+(the range builtin un-shadowed, a C buffer, or an all-numeric list
+literal), the loop var binds a C double per iteration — the env
+write/read round-trip disappears from the loop. The materialization is
+KEPT (aot_iter_len/aot_iter_get over the built Value), so range's exact
+semantics (fractional/negative args) ride the runtime's own builtin; a
+buffer iterable reads elementwise via aot_buf_get_i; list elements take
+aot_num_ck (never fires in-envelope — the recognizer proved them
+numeric). A name bound by both an eligible and an ineligible loop is
+POISONED and stays boxed everywhere (two loops sharing a name must agree
+on storage); a for-var naming a BOXED module global stays boxed (the VM
+mutates it via SET_NAME — a local C double would silently shadow); and
+observed/traced programs keep the boxed path (slots and history must see
+the bindings — t49's `prev of x` makes its numeric `what` loop var
+correctly stay boxed, and the audit now reports that honestly rather
+than as a missed win).
+
+Scope semantics are ASYMMETRIC in the VM, which the oracle probes pinned
+down (and shipped main got wrong in one case):
+- FUNCTION scope: the var owns a slot; post-loop reads see the last
+  iterate. Unboxed vars get a function-top C decl — byte-exact (t56's
+  last_of/reuse), including a param reused as the loop var.
+- MODULE scope: the VM LOOP-SCOPES the binding — a post-loop read raises
+  'undefined variable' even after a non-empty loop. The boxed emission
+  silently served the stale last value (a pre-existing silent divergence
+  on main, found by probing during this work). Unboxed module vars are
+  declared INSIDE the loop's C block, so a post-loop read is an
+  out-of-scope name — a loud BUILD error where the VM raises at runtime.
+  Unrecognized (still-boxed) module loops keep the old silent behavior —
+  narrower now, noted here rather than silently tolerated.
+- Pre-existing and UNCHANGED: reading a function for-var after a
+  ZERO-iteration loop gives VM null vs AOT 0 (the boxed path already
+  diverged the same way via aot_num(env-miss)). Pathological shape; on
+  the ledger, not worth a Value-typed loop var.
+
+Audit re-run: t42/t47/t52/t53 all report zero missed; the only corpus
+survivor is t49 (traced — correctly boxed). Measured n=5 medians on a
+2M-iteration module for-in accumulator: AOT 0.75s → 0.55s (−27% vs the
+boxed emission, byte-exact both ways), VM 1.09s → the AOT is now ~2.0×
+there. Residual cost is the materialized range list + per-element
+incref/decref — open-coding range iteration is the next lever if a
+consumer needs it. t56 pins the shapes (range/list/buffer iterables,
+the poisoned mixed-name case, post-loop function reads, param reuse,
+nested loops); the module post-loop build-refusal is verified manually
+(no reject tier yet, same note as F-OURO-26).
