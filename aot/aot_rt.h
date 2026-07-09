@@ -581,30 +581,30 @@ static Value *aot_index_get(Value *target, Value *idx) {
     if (target->type == VAL_LIST && idx->type == VAL_NUM) {
         int i;
         if (!aot_idx_is_int(idx->data.num, &i))
-            runtime_error(0, "index must be an integer, got %g", idx->data.num);
+            rt_error(EK_VALUE, 0, "index must be an integer, got %g", idx->data.num);
         else if (aot_idx_resolve(&i, target->data.list.count)) {
             result = target->data.list.items[i]; val_incref(result);
         } else
-            runtime_error(0, "index %d out of range (list length %d)", i, target->data.list.count);
+            rt_error(EK_INDEX, 0, "index %d out of range (list length %d)", i, target->data.list.count);
     } else if (target->type == VAL_DICT && idx->type == VAL_STR) {
         Value *v = dict_get(target, idx->data.str);
         if (v) { result = v; val_incref(result); }
     } else if (target->type == VAL_STR && idx->type == VAL_NUM) {
         int i;
         if (!aot_idx_is_int(idx->data.num, &i))
-            runtime_error(0, "index must be an integer, got %g", idx->data.num);
+            rt_error(EK_VALUE, 0, "index must be an integer, got %g", idx->data.num);
         else if (aot_idx_resolve(&i, (int)strlen(target->data.str))) {
             char b[2] = { target->data.str[i], 0 }; result = make_str(b);
         } else
-            runtime_error(0, "string index %d out of range (length %d)", i, (int)strlen(target->data.str));
+            rt_error(EK_INDEX, 0, "string index %d out of range (length %d)", i, (int)strlen(target->data.str));
     } else if (target->type == VAL_BUFFER && idx->type == VAL_NUM) {
         int i;
         if (!aot_idx_is_int(idx->data.num, &i))
-            runtime_error(0, "index must be an integer, got %g", idx->data.num);
+            rt_error(EK_VALUE, 0, "index must be an integer, got %g", idx->data.num);
         else if (aot_idx_resolve(&i, target->data.buffer.count))
             result = make_num(target->data.buffer.data[i]);
         else
-            runtime_error(0, "buffer index %d out of range (length %d)", i, target->data.buffer.count);
+            rt_error(EK_INDEX, 0, "buffer index %d out of range (length %d)", i, target->data.buffer.count);
     }
     val_decref(target);
     val_decref(idx);
