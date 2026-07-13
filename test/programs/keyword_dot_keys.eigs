@@ -1,0 +1,43 @@
+# Any word keyword works as a dot key (upstream #542, in the v0.30.0 pin):
+# the position after `.` admits nothing but a field name, so keys creatable
+# by literal/dict_set/json_decode ("loop", "in", "when", ...) are reachable
+# by dot — read, write, compound assign, any chain depth. Mirrors the C
+# parser's tok_is_dot_key (TOK_IDENT plus the word-keyword run).
+d is {"loop": 1, "if": 2}
+d.loop is d.loop + 1
+print of d.loop
+d.when is 5
+print of d.when
+d.if += 10
+print of d.if
+d.in is 3
+d.in *= 7
+print of d.in
+# interrogatives, predicates, prev/at, and null as keys
+q is {"what": 1, "how": 2, "stable": 3, "prev": 4, "at": 5, "null": 6}
+print of q.what
+print of q.how
+print of q.stable
+q.prev += q.at
+print of q.prev
+print of q.null
+q.null is q.null - 1
+print of q.null
+# chain depth: keyword keys mid-chain and at the leaf
+n is {"case": {"return": [10, 20]}}
+print of n.case.return[1]
+n.case.return is [30, 40]
+print of n.case.return[0]
+# postfix on parenthesized and dict-literal primaries
+print of ({"try": 9}).try
+print of {"catch": 8}.catch
+# json_decode round-trip: keyword keys arrive from data, dot reads them
+j is json_decode of "{\"while\": 42, \"import\": 7}"
+print of j.while
+print of j.import
+# keyword still a keyword: for-loop `in` iterating a field named "in"
+e is {"in": [1, 2, 3]}
+s is 0
+for x in e.in:
+    s is s + x
+print of s
