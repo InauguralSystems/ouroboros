@@ -628,6 +628,27 @@ define _p_skip_newlines(p) as:
     loop while (_p_peek_type of p) == "newline":
         _p_advance of p
 
+# Dot keys (upstream #542, in the v0.30.0 pin): after `.` nothing but a field
+# name can appear, so the position is unambiguous and ANY word serves as a
+# key — mirrors the C parser's tok_is_dot_key (TOK_IDENT plus the whole
+# contiguous word-keyword run TOK_IS..TOK_LOCAL, all lexed through the
+# identifier path). Frontend-side that is "ident" plus every word-lexed
+# token type: "kw", "interrogative", "predicate", and "null"; the "null"
+# token carries no lexeme, so the word is restored here. Returns the key
+# STRING, covering read, write, compound assign, any chain depth.
+define _p_expect_dot_key(p) as:
+    local tok is _p_cur of p
+    if tok[0] == "ident":
+        _p_advance of p
+        return tok[1]
+    if (tok[0] == "kw") or (tok[0] == "interrogative") or (tok[0] == "predicate"):
+        _p_advance of p
+        return tok[1]
+    if tok[0] == "null":
+        _p_advance of p
+        return "null"
+    throw of f"parse error: expected ident, got {tok[0]} ('{tok[1]}') at line {tok[2]}"
+
 # Statement-terminator enforcement (upstream #326, in the v0.23.0 pin): a
 # SIMPLE statement must be followed by newline / dedent / eof — leftover
 # tokens are a parse error ("one statement per line"). Called at the simple-
@@ -1020,8 +1041,8 @@ define _p_parse_postfix(p) as:
     loop while ((_p_peek_type of p) == "dot") or ((_p_peek_type of p) == "lbracket"):
         if (_p_peek_type of p) == "dot":
             _p_advance of p
-            key_tok is _p_expect of [p, "ident"]
-            node is ["dot", node, key_tok[1]]
+            local dkey is _p_expect_dot_key of p
+            node is ["dot", node, dkey]
         else:
             _p_advance of p
             node is _p_parse_bracket of [p, node]
@@ -1246,8 +1267,8 @@ define _p_postfix_full(p, node) as:
     loop while chaining == 1:
         if (_p_peek_type of p) == "dot":
             _p_advance of p
-            key_tok is _p_expect of [p, "ident"]
-            node is ["dot", node, key_tok[1]]
+            local dkey is _p_expect_dot_key of p
+            node is ["dot", node, dkey]
         elif (_p_peek_type of p) == "lbracket":
             _p_advance of p
             node is _p_parse_bracket of [p, node]
