@@ -65,7 +65,18 @@ python3 aot/fuzzdiff.py             # differential fuzzing
   at build time (F-OURO-23) rather than guessing. Full semantics parity
   is proven at the self-host tier; the AOT proves the subset it claims.
 - **Opcode numbers are an ABI** — new opcodes append at the enum end
-  (hand-built bytecode in upstream tests hardcodes them).
+  (hand-built bytecode in upstream tests hardcodes them). **So is every
+  operand's WIDTH**, and that half has no upstream number-guard. v0.33.0
+  widened `OP_LINE` 16→32 bits (#630) with no opcode renumbering, so nothing
+  upstream failed; our `cg_emit_u16` then left the VM reading the next
+  instruction's first two bytes as the line number's high half and resuming
+  misaligned. Every chunk we produced ran as garbage — empty output, exit 0,
+  all 44 parity programs — while `bootstrap fixed point` still PASSED, because
+  self-host-compiling ourselves compares bytes and never executes the result.
+  **A green bootstrap is not evidence the codegen runs.** At every pin bump,
+  diff `src/vm.h`'s enum comments for operand-width changes, and treat an
+  emitter change as landing WITH the `EIGS_REF` bump (the deferred-mirror
+  pattern above), never before it.
 - **Deep procedure lives in the `aot-differential` skill** (and the
   eigenscript-aot-compiler-engineer skill); this file is the orientation.
 
