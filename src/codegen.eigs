@@ -121,6 +121,17 @@ define cg_emit_u16(c, val) as:
     append of [c.code, val % 256]
     append of [c.code, floor of (val / 256)]
 
+# Little-endian 32-bit operand. OP_LINE's operand widened from 16 to 32 bits
+# upstream in v0.33.0 (#630 — line numbers wrapped at 65536), so a 16-bit
+# emission leaves the VM reading two bytes of the NEXT instruction as the high
+# half of the line number and then resuming misaligned: the chunk runs as
+# garbage, silently, at rc=0.
+define cg_emit_u32(c, val) as:
+    append of [c.code, val % 256]
+    append of [c.code, (floor of (val / 256)) % 256]
+    append of [c.code, (floor of (val / 65536)) % 256]
+    append of [c.code, (floor of (val / 16777216)) % 256]
+
 define cg_const(c, val) as:
     for i in range of (len of c.consts):
         if c.consts[i] == val:
@@ -605,7 +616,7 @@ define cg_func(c, node) as:
 define cg_stmt_line(c, s) as:
     if s[0] == "_line":
         cg_emit of [c, OP_LINE]
-        cg_emit_u16 of [c, s[1]]
+        cg_emit_u32 of [c, s[1]]
 
 # A statement list leaving its LAST value (null if empty).
 define cg_block_value(c, stmts) as:
