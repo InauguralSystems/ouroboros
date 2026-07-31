@@ -3085,6 +3085,22 @@ define arg_class(node, caller_pt, caller_params, caller_locals) as:
 # a boxed value — the other half of the call-site evidence (EigenMiniSat's
 # `out is []` / `asg is copy_assignment of ...` shapes). Numeric-used
 # names are excluded: a name doing arithmetic is not widened on our say-so.
+# Memoized per FUNCTION NAME (#86). local_gen_map walks the whole body,
+# runs collect_assigns, and does a find_numeric_use_direct per name; the
+# param-field propagation calls it once per function per round, which on a
+# 218-function consumer pushed compile time past 10 minutes. Bodies do not
+# change during inference, so one computation per function is sound.
+G_LGM_CACHE is [{}]
+
+define local_gen_map_for(fname, body) as:
+    local c is (G_LGM_CACHE[0])[fname]
+    if c != null:
+        return c
+    local m is local_gen_map_seeded of [body, {}]
+    local cache is G_LGM_CACHE[0]
+    cache[fname] is m
+    return m
+
 define local_gen_map(body) as:
     return local_gen_map_seeded of [body, {}]
 
@@ -3262,12 +3278,57 @@ define dict_literal_fields(dictnode, lm) as:
                     fmap[kn] is "gen"
     return fmap
 
+# Record, on each callee, the field map of any dict argument we can type
+# (#86). Memoized caller maps make this affordable now.
+define pf_scan(node, caller_locals) as:
+    if (type of node) != "list":
+        return 0
+    if (len of node) == 0:
+        return 0
+    if node[0] == "call":
+        local callee is unwrap of node[1]
+        if (callee[0] == "ident") and (g_funcs[callee[1]] != null):
+            local arg is unwrap of node[2]
+            local elems is []
+            if (arg[0] == "list") and ((len of arg) == 2):
+                elems is arg[1]
+            elif arg[0] != "null":
+                elems is [arg]
+            local ce is g_funcs[callee[1]]
+            local cpf is ce["pfields"]
+            if cpf == null:
+                cpf is []
+                for z in range of (len of (ce["ptypes"])):
+                    append of [cpf, null]
+                ce["pfields"] is cpf
+            for k in range of (len of elems):
+                if k < (len of cpf):
+                    local e is unwrap of elems[k]
+                    if e[0] == "ident":
+                        local m is caller_locals[e[1] + ".#fields"]
+                        if (m != null) and ((len of (keys of m)) > 0):
+                            cpf[k] is m
+    for k2 in range of (len of node):
+        pf_scan of [node[k2], caller_locals]
+    return 0
+
 define func_retfields(fn) as:
     local rets is []
     collect_return_nodes of [fn[3], rets]
     if (len of rets) != 1:
         return null
-    local lmap is local_gen_map of fn[3]
+    local pseed is {}
+    local pf is (g_funcs[fn[1]])["pfields"]
+    if pf != null:
+        for pi in range of (len of fn[2]):
+            if pi < (len of pf):
+                if (pf[pi]) != null:
+                    pseed[((fn[2])[pi]) + ".#fields"] is pf[pi]
+    local lmap is local_gen_map_for of [fn[1], fn[3]]
+    if (len of (keys of pseed)) > 0:
+        # a param map exists: recompute unmemoized WITH the seed (rare —
+        # only functions that receive a typed record)
+        lmap is local_gen_map_seeded of [fn[3], pseed]
     local r is unwrap of rets[0]
     if r[0] == "dict":
         # returned DIRECTLY as a literal (EigenMiniSat's
@@ -3308,9 +3369,9 @@ define widen_ptypes(funcs, rest) as:
         # snapshot pinned classes so a widening cannot violate them
         for k in range of (len of funcs):
             local fn2 is funcs[k]
-            if (widen_scan of [fn2[3], (g_funcs[fn2[1]])["ptypes"], fn2[2], local_gen_map of fn2[3]]) == 1:
+            if (widen_scan of [fn2[3], (g_funcs[fn2[1]])["ptypes"], fn2[2], local_gen_map_for of [fn2[1], fn2[3]]]) == 1:
                 changed is 1
-        if (widen_scan of [rest, [], [], local_gen_map of rest]) == 1:
+        if (widen_scan of [rest, [], [], local_gen_map_for of ["<module>", rest]]) == 1:
             changed is 1
         # restore any param the body proves numeric (pin wins over widening)
         for k in range of (len of funcs):
@@ -3953,11 +4014,25 @@ define emit_program(ast) as:
     # them to type `cfg.path` style arguments (#86)
     local rfr is 0
     loop while rfr < 2:
+        # same staleness rule as the phase boundary below: each round
+        # learns new retfields, so maps cached in the previous round are
+        # out of date.
+        G_LGM_CACHE[0] is {}
+        for kp in range of (len of funcs):
+            local pfn is funcs[kp]
+            pf_scan of [pfn[3], local_gen_map_for of [pfn[1], pfn[3]]]
+        pf_scan of [rest, local_gen_map_for of ["<module>", rest]]
         for k in range of (len of funcs):
             local rff is funcs[k]
             local rffe is g_funcs[rff[1]]
             rffe["retfields"] is func_retfields of rff
         rfr is rfr + 1
+    # The cache holds maps computed while retfields were still settling —
+    # a module map cached before `parse_args` had its return fields has no
+    # `cfg.#fields` entry, and widening would then read the stale copy.
+    # Bodies are immutable but the DERIVED state is not, so drop the cache
+    # at the phase boundary.
+    G_LGM_CACHE[0] is {}
     widen_ptypes of [funcs, rest]
     # Return-type inference reads the param classes (a function returning a
     # param returns ITS type), so it must be re-derived after widening —
