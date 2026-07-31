@@ -2933,13 +2933,45 @@ define arg_class(node, caller_pt, caller_params, caller_locals) as:
         # already-unpacked elements, so a list node in this position is a
         # genuine nested list literal, not the #405 argument list.
         return "gen"
+    if t == "null":
+        # Likewise safe: the zero-arg `f of null` idiom is the whole
+        # ARGUMENT node and is skipped before elements are built, so a
+        # null reaching here is a real null VALUE in a multi-arg call
+        # (EigenMiniSat's `cdcl_result of [status, null, stats, state]`).
+        return "gen"
+    if t == "dot":
+        # `x.f` where x is a local built from a dict LITERAL: the field's
+        # type is statically known (EigenMiniSat's CLI config dict —
+        # `cfg is {"mode": "solve", "path": "", ...}` then
+        # `parse_dimacs_file of cfg.path`, a string reaching a numeric
+        # param). Unknown fields stay unknown, contributing no constraint.
+        local dtgt is unwrap of e[1]
+        if dtgt[0] == "ident":
+            local flds is caller_locals[dtgt[1] + ".#fields"]
+            if flds != null:
+                local fc is flds[e[2]]
+                if fc != null:
+                    return fc
+        return "unknown"
+    if (t == "binop") and (e[1] == "+"):
+        # an f-string argument: the lexer desugars f"..{x}.." into a
+        # parenthesized `+` chain, so a chain carrying a string literal is
+        # a string-valued argument (EigenMiniSat's
+        # `assert_clauses_match of [f"storage rebuild {c.name}", ...]`).
+        if (chain_has_str of e) == 1:
+            return "gen"
     if t == "num":
         return "num"
     if t == "ident":
         for k in range of (len of caller_params):
             if (caller_params[k]) == e[1]:
                 local c is caller_pt[k]
-                if (c == "dict") or (c == "gen"):
+                # EVERY Value*-class param is boxed evidence — buf and
+                # tensor are C Value*s exactly like dict/gen, and passing
+                # one into a callee's numeric param is the same silent
+                # wrong emission (EigenMiniSat's `copy_assignment of asg`,
+                # where asg is a buf param of dpll_rec).
+                if (c == "dict") or (c == "gen") or (c == "buf") or (c == "tensor"):
                     return "gen"
                 if c == "num":
                     return "num"
@@ -2978,6 +3010,35 @@ define local_gen_map(body) as:
         # evidence is meant to decide, so neither ever moves.
         if (isgen == 1) and ((find_numeric_use_direct of [body, v]) == 0):
             out[v] is "gen"
+        # Field types of a name built from a dict LITERAL, stored under a
+        # side key so arg_class can resolve `name.field` statically.
+        for j2 in range of (len of rhss):
+            local r2 is unwrap of rhss[j2]
+            if (len of r2) > 0:
+                if r2[0] == "dict":
+                    local fmap is {}
+                    local prs is r2[1]
+                    for pk in range of (len of prs):
+                        local pr is prs[pk]
+                        local kn is pr[0]
+                        if (type of kn) == "list":
+                            kn is kn[1]
+                        local pv is unwrap of (pr[1])
+                        if (len of pv) > 0:
+                            if (pv[0] == "str") or (pv[0] == "list") or (pv[0] == "dict") or (pv[0] == "null"):
+                                fmap[kn] is "gen"
+                            elif pv[0] == "num":
+                                fmap[kn] is "num"
+                    out[v + ".#fields"] is fmap
+            # ...or from a call to a function that RETURNS a dict literal
+            # (EigenMiniSat's `cfg is parse_args of null`): adopt the
+            # callee's recorded field map.
+            if r2[0] == "call":
+                local rc2 is unwrap of r2[1]
+                if (rc2[0] == "ident") and (g_funcs[rc2[1]] != null):
+                    local rf is (g_funcs[rc2[1]])["retfields"]
+                    if rf != null:
+                        out[v + ".#fields"] is rf
     return out
 
 # Scan one function body for calls, widening callee params. Returns 1 if
@@ -3018,10 +3079,27 @@ define widen_scan(node, caller_pt, caller_params, caller_locals) as:
             changed is 1
     return changed
 
+# The field map of a function's returned dict, when every return is an
+# ident built from a dict literal in its body. Recorded on g_funcs so a
+# caller's `cfg is parse_args of null` inherits the field types.
+define func_retfields(fn) as:
+    local rets is []
+    collect_return_nodes of [fn[3], rets]
+    if (len of rets) != 1:
+        return null
+    local r is unwrap of rets[0]
+    if r[0] != "ident":
+        return null
+    local lm is local_gen_map of fn[3]
+    return lm[r[1] + ".#fields"]
+
 # Fixpoint over all user functions plus the module body.
 define widen_ptypes(funcs, rest) as:
+    # 40 rounds: each round can advance a chain by only one hop in the
+    # worst (reverse definition) order, and consumer call graphs are deep
+    # (EigenMiniSat's is ~200 functions).
     local round is 0
-    loop while round < 8:
+    loop while round < 40:
         local changed is 0
         # Pins are recomputed EVERY round from the CURRENT classes: a
         # param passed into a callee's num param counts as a numeric use,
@@ -3052,7 +3130,7 @@ define widen_ptypes(funcs, rest) as:
                 if (pins3[(str of p)] == 1) and ((pt3[p]) == "gen"):
                     pt3[p] is "num"
         if changed == 0:
-            round is 8
+            round is 40
         round is round + 1
     return 0
 
@@ -3677,6 +3755,12 @@ define emit_program(ast) as:
     # (#86) call-site widening: add the evidence body-only inference cannot
     # see, monotonically (num -> gen), to a fixpoint. No-op on programs that
     # never pass a boxed value into a num-defaulted param.
+    # record returned-dict field maps first — call-site widening consults
+    # them to type `cfg.path` style arguments (#86)
+    for k in range of (len of funcs):
+        local rff is funcs[k]
+        local rffe is g_funcs[rff[1]]
+        rffe["retfields"] is func_retfields of rff
     widen_ptypes of [funcs, rest]
     # Return-type inference reads the param classes (a function returning a
     # param returns ITS type), so it must be re-derived after widening —

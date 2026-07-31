@@ -34,3 +34,33 @@ define numeric_stays_numeric(k) as:
     return total
 
 print of (numeric_stays_numeric of 5)
+
+# buf-class arguments are boxed evidence too (a buffer param passed into
+# a callee's untyped param must widen it, not emit a numeric read).
+define sum_via(xs) as:
+    total is 0
+    for v in xs:
+        total is total + v
+    return total
+
+define forward_buf(b) as:
+    return sum_via of b
+
+buf3 is [10, 20, 30]
+print of (forward_buf of buf3)
+
+# a null ELEMENT of a multi-arg call is a real null value (distinct from
+# the whole-argument zero-arg idiom)
+define pick(a, b) as:
+    if b == null:
+        return a
+    return b
+
+print of (pick of [5, null])
+
+# an f-string argument is a string argument (lexer desugars to a + chain)
+define label_len(s) as:
+    return len of s
+
+tag is 7
+print of (label_len of f"tag-{tag}")
