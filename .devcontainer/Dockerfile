@@ -31,7 +31,7 @@ RUN apt-get update \
 # prev/at + question-word fallbacks (#328), out-of-range OP_SET_LOCAL raises
 # (#348), and integer-only hex lexed-not-strtod (v0.25.0). Bump this ARG and
 # the frontend/codegen together (the deferred-mirror rule).
-ARG EIGS_REF=v0.33.0
+ARG EIGS_REF=v0.34.0
 RUN mkdir -p /opt/eigenscript-src && cd /opt/eigenscript-src && git init -q \
  && git remote add origin https://github.com/InauguralSystems/EigenScript.git \
  && git fetch -q --depth 1 origin "${EIGS_REF}" && git checkout -q FETCH_HEAD \
