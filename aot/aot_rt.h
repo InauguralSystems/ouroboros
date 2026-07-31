@@ -204,7 +204,13 @@ static double aot_buf_maxabs(Value *b) {
     for (i = 0; i < n; i++) { double a = d[i] < 0 ? -d[i] : d[i]; if (a > m) m = a; }
     return m;
 }
-static double aot_buf_len(Value *b) { aot_buf_expect(b); return (double)b->data.buffer.count; }
+static double aot_buf_len(Value *b) {
+    /* the buf class is a string/buffer union (checksum's `_blen of "abc"`,
+     * EigenMiniSat's `_is_int_token`, #86): mirror the VM's `len` on both. */
+    if (b && b->type == VAL_STR) return (double)strlen(b->data.str);
+    aot_buf_expect(b);
+    return (double)b->data.buffer.count;
+}
 /* Raw element pointer for the proven-safe (in-bounds, non-negative) loop path. */
 static double *aot_buf_data(Value *b) { aot_buf_expect(b); return b->data.buffer.data; }
 
@@ -397,6 +403,17 @@ static double aot_num(Value *v) {
  * context must be a number — the VM raises there ("cannot apply ... to ..."),
  * so a silent 0.0 would be the worst-outcome class (compiles, prints
  * garbage). Cold, predictable branch: in-envelope programs never take it. */
+static double aot_num_ck_at(Value *v, const char *site) {
+    if (!v || v->type != VAL_NUM) {
+        fprintf(stderr, "non-numeric value in a numeric context at %s (type %s)\n",
+                site, v ? val_type_name(v->type) : "null");
+        exit(1);
+    }
+    double d = v->data.num;
+    val_decref(v);
+    return d;
+}
+
 static double aot_num_ck(Value *v) {
     if (!v || v->type != VAL_NUM) {
         fprintf(stderr, "non-numeric value in a numeric context (type %d; the VM raises here)\n",
@@ -609,6 +626,86 @@ static Value *aot_index_get(Value *target, Value *idx) {
     val_decref(target);
     val_decref(idx);
     return result ? result : make_null();
+}
+
+/* (#86) native argv -> the VM's args convention: builtin_args reads
+ * g_argv[2..] (slot 0 = runtime, 1 = script). The native binary's user
+ * args start at argv[1], so shift by one synthetic slot. */
+static void aot_args(int argc, char **argv) {
+    char **shifted = (char**)malloc(((size_t)argc + 1) * sizeof(char*));
+    shifted[0] = argv[0];
+    shifted[1] = argv[0];
+    for (int i = 1; i < argc; i++) shifted[i + 1] = argv[i];
+    eigenscript_set_args(argc + 1, shifted);
+}
+
+/* general index-assign (#86): `target[idx] is val` on a boxed value.
+ * Mirrors OP_INDEX_SET: list (integer index, in range -> replace, old ref
+ * dropped), dict (string key -> set), buffer (numeric value). Consumes
+ * target and idx; adopts val. */
+static void aot_index_set(Value *target, Value *idx, Value *val) {
+    if (target && target->type == VAL_LIST && idx && idx->type == VAL_NUM) {
+        int i;
+        if (!aot_idx_is_int(idx->data.num, &i))
+            rt_error(EK_VALUE, 0, "index must be an integer, got %g", idx->data.num);
+        else if (aot_idx_resolve(&i, target->data.list.count)) {
+            Value *old = target->data.list.items[i];
+            target->data.list.items[i] = val; val = NULL;   /* adopt */
+            if (old) val_decref(old);
+        } else
+            rt_error(EK_INDEX, 0, "index %d out of range (list length %d)", i, target->data.list.count);
+    } else if (target && target->type == VAL_DICT && idx && idx->type == VAL_STR) {
+        dict_set_owned(target, idx->data.str, val); val = NULL;
+    } else if (target && target->type == VAL_BUFFER && idx && idx->type == VAL_NUM) {
+        if (val && val->type == VAL_NUM) {
+            int i;
+            if (!aot_idx_is_int(idx->data.num, &i))
+                rt_error(EK_VALUE, 0, "index must be an integer, got %g", idx->data.num);
+            else if (aot_idx_resolve(&i, target->data.buffer.count))
+                target->data.buffer.data[i] = val->data.num;
+            else
+                rt_error(EK_INDEX, 0, "buffer index %d out of range (length %d)", i, target->data.buffer.count);
+        } else
+            rt_error(EK_TYPE, 0, "buffer elements must be numbers");
+    } else {
+        rt_error(EK_TYPE, 0, "cannot index-assign into %s",
+                 target ? val_type_name(target->type) : "null");
+    }
+    if (val) val_decref(val);
+    if (target) val_decref(target);
+    if (idx) val_decref(idx);
+}
+
+/* ---- dot field access (#86) — mirrors the VM's field opcodes exactly ----
+ * READ (OP-get-field, vm.c ~1020): dict -> the field's value (missing ->
+ * null); a NULL-typed target yields null SILENTLY; any other type raises
+ * EK_TYPE "cannot access field". SET (vm.c ~1127): dict -> set; a
+ * NULL-typed target is a silent NO-OP; any other type raises EK_TYPE
+ * "cannot set field". Both consume the owned target (emit_val results are
+ * owned, same convention as aot_index_get); dot_get returns owned. */
+static Value *aot_dot_get(Value *target, const char *key) {
+    Value *result = NULL;
+    if (target && target->type == VAL_DICT) {
+        Value *v = dict_get(target, key);
+        if (v) { result = v; val_incref(v); }
+    } else if (target && target->type != VAL_NULL) {
+        rt_error(EK_TYPE, 0, "cannot access field '%s' on %s",
+                 key, val_type_name(target->type));
+    }
+    if (target) val_decref(target);
+    return result ? result : make_null();
+}
+
+static void aot_dot_set(Value *target, const char *key, Value *val) {
+    if (target && target->type == VAL_DICT) {
+        dict_set_owned(target, key, val);   /* adopts val's ref */
+    } else {
+        if (target && target->type != VAL_NULL)
+            rt_error(EK_TYPE, 0, "cannot set field '%s' on %s",
+                     key, val_type_name(target->type));
+        if (val) val_decref(val);
+    }
+    if (target) val_decref(target);
 }
 
 /* ---- for-loop iteration over a list/buffer (range materializes to a list) --- */

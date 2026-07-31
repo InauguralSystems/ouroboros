@@ -1,0 +1,49 @@
+# #86: dot_assign + general dot reads. Field create, overwrite, compound
+# (frontend-desugared), numeric arithmetic on fields (the LCG state
+# pattern every consumer uses), nested containers in fields, and a helper
+# mutating its caller's dict (the _ui shared-state pattern).
+st is {"s": 7, "label": "start"}
+st.s is (st.s * 48271) % 2147483647
+print of st.s
+st.count is 0
+i is 0
+loop while i < 1000:
+    st.s is (st.s * 48271) % 2147483647
+    st.count is st.count + 1
+    i is i + 1
+print of st.s
+print of st.count
+st.label is "end"
+print of st.label
+st.count += 5
+print of st.count
+st.count *= 2
+print of st.count
+
+define bump(d) as:
+    d.hits is d.hits + 1
+    d.log is "bumped"
+
+shared is {"hits": 0, "log": ""}
+bump of shared
+bump of shared
+bump of shared
+print of shared.hits
+print of shared.log
+
+nest is {"inner": {"v": 10}}
+tmp is nest.inner
+tmp.v is tmp.v + 32
+print of (nest.inner).v
+
+holder is {"xs": [1, 2, 3]}
+lst is holder.xs
+append of [lst, 4]
+print of len of holder.xs
+
+d is {"a": 1}
+print of d.missing
+n is null
+print of n.f
+n.f is 3
+print of "null-set is a no-op"

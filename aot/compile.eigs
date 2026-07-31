@@ -138,6 +138,8 @@ g_traced is 0
 g_c_kw is {"auto": 1, "char": 1, "const": 1, "default": 1, "do": 1, "double": 1, "enum": 1, "extern": 1, "float": 1, "goto": 1, "inline": 1, "int": 1, "long": 1, "register": 1, "restrict": 1, "short": 1, "signed": 1, "sizeof": 1, "static": 1, "struct": 1, "switch": 1, "typedef": 1, "union": 1, "unsigned": 1, "void": 1, "volatile": 1, "main": 1}
 
 define cn(name) as:
+    if (type of name) != "str":
+        throw of ("AOT: cn on a non-string name: " + (str of name))
     if (has_key of [g_c_kw, name]) == 1:
         # uu_ not u_: glibc <sys/types.h> typedefs the BSD u_int/u_char/...
         return "uu_" + name
@@ -218,13 +220,14 @@ define is_tensor_call(node) as:
         return 1
     return 0
 
-# A tensor-producing RHS: a tensor builtin call, a dict-field access, or a
-# tensor ident.
+# A tensor-producing RHS: a tensor builtin call or a tensor ident. (A bare
+# dict-field access is NOT claimed: since #86 dot reads are general Value
+# reads — a field can hold a number, string, list, or dict. The tensor
+# slice's dict-field reads live inside tensor-call args, where emit_tensor
+# keeps its own dot path; t37 pins that.)
 define is_tensor_rhs(node) as:
     local n is unwrap of node
     if (is_tensor_call of n) == 1:
-        return 1
-    if n[0] == "dot":
         return 1
     if n[0] == "ident":
         if g_tensor[n[1]] == 1:
@@ -289,6 +292,12 @@ define uses_as_dot(node, name) as:
     if node[0] == "dot":
         local tgt is unwrap of node[1]
         if (tgt[0] == "ident") and (tgt[1] == name):
+            return 1
+    if node[0] == "dot_assign":
+        # a field WRITE is a dict use too (#86: params only ever written,
+        # like EigenMiniSat's `stats.compact_runs is ...`, predate no signal)
+        local tga is unwrap of node[1]
+        if (tga[0] == "ident") and (tga[1] == name):
             return 1
     for k in range of (len of node):
         if (uses_as_dot of [node[k], name]) == 1:
@@ -871,7 +880,14 @@ define emit_num(node, nm, bt, raw) as:
         # it is NOT in the env, so the boxed fallback below would silently read
         # null (aot_num -> 0.0, a wrong number). Fail loudly instead.
         if (bt[node[1]] == 1) or (g_dict[node[1]] == 1) or (g_tensor[node[1]] == 1) or (g_genp[node[1]] == 1):
-            throw of ("AOT: Value-typed name '" + node[1] + "' read in a numeric context (the VM raises here)")
+            local why is "genp"
+            if bt[node[1]] == 1:
+                why is "buf"
+            if g_dict[node[1]] == 1:
+                why is "dict"
+            if g_tensor[node[1]] == 1:
+                why is "tensor"
+            throw of ("AOT: Value-typed name '" + node[1] + "' (" + why + ", in " + (G_CUR_FN[0]) + ") read in a numeric context (the VM raises here)")
         # not a declared C numeric: an env-boxed name in a numeric context
         # (e.g. a for-in loop var indexing a buffer, #70) — read it boxed.
         # CHECKED (#65 inc. 2): the VM raises when a non-number reaches an
@@ -890,12 +906,17 @@ define emit_num(node, nm, bt, raw) as:
         if uop == "not":
             return "((" + uv + " == 0.0) ? 1.0 : 0.0)"
         throw of ("AOT: emit_num unexpected unary '" + uop + "'")
+    if t == "dot":
+        # numeric read of a dict field (#86): box-read then checked unbox.
+        # aot_num_ck consumes the owned aot_dot_get result (same idiom as
+        # the boxed index read below).
+        return "aot_num_ck_at(aot_dot_get(" + (emit_val of [node[1], nm, bt]) + ", \"" + (c_escape of node[2]) + "\"), \"" + (c_escape of (G_CUR_FN[0])) + ": ." + (c_escape of node[2]) + "\")"
     if t == "index":
         local tgt is unwrap of node[1]
-        # a buffer C var -> aot_buf_get; a boxed value (list element used in a
-        # numeric context, e.g. rr[1] where rr is a boxed list) -> index then
-        # extract the number.
-        if (tgt[0] == "ident") and (bt[tgt[1]] != 1):
+        # a buffer C var -> aot_buf_get; anything else (a boxed list local,
+        # or a non-ident target like `store.offsets[ci]`, #86) -> boxed
+        # index then extract the number.
+        if (tgt[0] != "ident") or (bt[tgt[1]] != 1):
             return "aot_num_ck(aot_index_get(" + (emit_val of [node[1], nm, bt]) + ", make_num(" + (emit_num of [node[2], nm, bt, 0]) + ")))"
         if (is_int_expr of node[2]) == 1:
             return "aot_buf_get_i(" + (cn of tgt[1]) + ", " + (emit_int of node[2]) + ")"
@@ -1035,6 +1056,11 @@ define emit_val(node, nm, bt) as:
             return "({ val_incref(" + (cn of node[1]) + "); " + (cn of node[1]) + "; })"
         if g_tensor[node[1]] == 1:
             return "aot_tensor_to_value(" + (cn of node[1]) + ")"
+        if g_funcs[node[1]] != null:
+            # (#86) a user function used as a VALUE (e.g. a sort_by key):
+            # box it as a builtin via a generated Value*->Value* wrapper.
+            g_fn_as_value[node[1]] is 1
+            return "make_builtin(__wrap_" + (cn of node[1]) + ")"
         return "aot_get(__eigs_g, \"" + node[1] + "\")"
     if t == "index":
         # target[idx] on a boxed value (list/dict/string/buffer). A buffer index
@@ -1047,6 +1073,12 @@ define emit_val(node, nm, bt) as:
         if (itgt[0] == "ident") and (bt[itgt[1]] == 1):
             return "make_num(aot_buf_get(" + (cn of itgt[1]) + ", " + (emit_num of [node[2], nm, bt, 0]) + "))"
         return "aot_index_get(" + (emit_val of [node[1], nm, bt]) + ", " + (emit_val of [node[2], nm, bt]) + ")"
+    if t == "dot":
+        # general dict field read (#86) -> owned Value. aot_dot_get consumes
+        # the owned target and mirrors the VM's field-read semantics (null
+        # target -> null silently; non-dict -> EK_TYPE). The tensor slice
+        # keeps its own dot path inside emit_tensor.
+        return "aot_dot_get(" + (emit_val of [node[1], nm, bt]) + ", \"" + (c_escape of node[2]) + "\")"
     if t == "list":
         # nested-list literal -> owned Value built inline (GCC statement-expr).
         local le is node[1]
@@ -1178,10 +1210,14 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
     if t == "assign":
         local name is node[1]
         if g_genp[name] == 1:
-            # A generic param is a C Value* var; the env-set fallback below
-            # would leave every later read of the C name STALE — a silent
-            # divergence. Rebinding a generic param is out of envelope.
-            throw of ("AOT: rebinding generic parameter '" + name + "' is not supported (reads would see the stale incoming value)")
+            # A generic param is a C Value* var. Unobserved: rebind the C var
+            # directly — every read of a genp uses the C name (emit_args,
+            # emit_val), so the update is seen (#86: `line is trim of line`
+            # in EigenMiniSat's DIMACS parser). Observed programs env-box
+            # reads, where a C-var write WOULD go stale — still refused.
+            if g_observed == 1:
+                throw of ("AOT: rebinding generic parameter '" + name + "' in an observed program is not supported (env-boxed reads would see the stale incoming value)")
+            return ind + name + " = " + (emit_val of [node[2], nm, bt]) + ";\n"
         if g_tensor[name] == 1:
             return ind + (cn of name) + " = " + (emit_tensor of [node[2], nm, bt]) + ";\n"
         if bt[name] == 1:
@@ -1194,8 +1230,16 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
                 # Always create via the heap-zeroed `buffer` builtin: `zeros` is
                 # arena-allocated and the AOT's flat arena clobbers it.
                 return ind + (cn of name) + " = aot_call_name(__eigs_g, \"buffer\", make_num(" + (emit_num of [cc[2], nm, bt, 0]) + "));\n"
-            # buffer var assigned from a buffer-returning function call
-            return ind + (cn of name) + " = " + (emit_call_num of [node[2], nm, bt]) + ";\n"
+            # buffer var assigned from a call: a USER function goes through
+            # the typed C call; a BUILTIN callee (e.g. trim/substr on a
+            # string riding the buf class) must NOT — g_funcs[builtin] is
+            # null and null ptypes silently emitted every arg numeric
+            # (found compiling EigenMiniSat's _is_int_token, #86). Builtin
+            # and non-ident callees take the boxed emit_val path instead.
+            local rcallee is unwrap of cc[1]
+            if (rcallee[0] == "ident") and (g_funcs[rcallee[1]] != null):
+                return ind + (cn of name) + " = " + (emit_call_num of [node[2], nm, bt]) + ";\n"
+            return ind + (cn of name) + " = " + (emit_val of [node[2], nm, bt]) + ";\n"
         if nm[name] == 1:
             # observed program: numeric assign goes through the runtime observer
             # (store in env + update the slot's entropy/dH + set last-observer).
@@ -1230,7 +1274,26 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
                 if (is_int_expr of node[2]) == 1:
                     return ind + "aot_buf_set_i(" + (cn of tgt[1]) + ", " + (emit_int of node[2]) + ", " + (emit_num of [node[3], nm, bt, 0]) + ");\n"
                 return ind + "aot_buf_set(" + (cn of tgt[1]) + ", " + (emit_num of [node[2], nm, bt, 0]) + ", " + (emit_num of [node[3], nm, bt, 0]) + ");\n"
-        throw of "AOT: index_assign only on numeric buffers (this slice)"
+        # general boxed index-assign (#86): list / dict / buffer target as a
+        # Value* — aot_index_set mirrors OP_INDEX_SET and consumes/adopts.
+        return ind + "aot_index_set(" + (emit_val of [node[1], nm, bt]) + ", " + (emit_val of [node[2], nm, bt]) + ", " + (emit_val of [node[3], nm, bt]) + ");\n"
+    if t == "capbind":
+        # (#86) bind a lifted nested-define's captures: alias each captured
+        # Value into the env under its mangled name (emit_val increfs; the
+        # lifted body reads it as an env global — same Value, so mutation
+        # through the capture stays live, matching the VM's closure).
+        local cbs is ""
+        local cpairs is node[2]
+        for ck in range of (len of cpairs):
+            cbs is cbs + ind + "aot_set(__eigs_g, \"" + (cpairs[ck])[1] + "\", " + (emit_val of [["ident", (cpairs[ck])[0]], nm, bt]) + ");\n"
+        return cbs
+    if t == "dot_assign":
+        # ["dot_assign", target, field, rhs] (#86). The frontend desugars
+        # compound dot-assigns (d.f += e) into this node with a binop rhs,
+        # so one case covers both. aot_dot_set consumes the owned target and
+        # adopts the owned rhs, mirroring the VM's set-field semantics (null
+        # target -> silent no-op; non-dict -> EK_TYPE).
+        return ind + "aot_dot_set(" + (emit_val of [node[1], nm, bt]) + ", \"" + (c_escape of node[2]) + "\", " + (emit_val of [node[3], nm, bt]) + ");\n"
     if t == "call":
         local callee is unwrap of node[1]
         if callee[0] == "ident":
@@ -2486,6 +2549,264 @@ define uses_type_dispatch(node, name) as:
 # `data` flows to _blen/_byte). Definition order bounds this one-pass
 # propagation, same as find_buf_param_use; a miss stays classified num and
 # fails LOUDLY at the call site, never silently.
+# Builtins whose arguments are strings/values, never numbers: a param fed
+# to one of these is NOT numeric (found compiling EigenMiniSat's DIMACS
+# tokenizer, #86 — `_tokens(line)` uses `line` only via str_replace/split
+# and defaulted to "num", so a string-literal call site threw).
+STR_ARG_BUILTINS is {"split": 1, "trim": 1, "substr": 1, "str_replace": 1, "contains": 1, "index_of": 1, "char_at": 1, "starts_with": 1, "ends_with": 1, "str_lower": 1, "str_upper": 1, "ord": 1, "read_text": 1, "write_text": 1, "file_exists": 1, "read_lines": 1, "scan_ints": 1, "scan_int_tokens": 1}
+
+define find_str_builtin_use(node, name) as:
+    if (type of node) != "list":
+        return 0
+    if (len of node) == 0:
+        return 0
+    if node[0] == "call":
+        local callee is unwrap of node[1]
+        if (callee[0] == "ident") and (STR_ARG_BUILTINS[callee[1]] == 1):
+            local arg is unwrap of node[2]
+            local elems is []
+            if (arg[0] == "list") and ((len of arg) == 2):
+                elems is arg[1]
+            else:
+                elems is [arg]
+            for k in range of (len of elems):
+                local e is unwrap of elems[k]
+                if (e[0] == "ident") and (e[1] == name):
+                    return 1
+    for k2 in range of (len of node):
+        if (find_str_builtin_use of [node[k2], name]) == 1:
+            return 1
+    return 0
+
+# Is `name` read in a genuinely NUMERIC position (arithmetic/comparison
+# operand, index expression, unary minus)? Used to keep the append-arg
+# signal below from demoting numeric params that also get appended.
+define find_numeric_use(node, name) as:
+    if (type of node) != "list":
+        return 0
+    if (len of node) == 0:
+        return 0
+    if node[0] == "binop":
+        if (NUMONLY_OPS[node[1]] == 1) or (node[1] == "<") or (node[1] == ">") or (node[1] == "<=") or (node[1] == ">="):
+            local l is unwrap of node[2]
+            local r is unwrap of node[3]
+            if (l[0] == "ident") and (l[1] == name):
+                return 1
+            if (r[0] == "ident") and (r[1] == name):
+                return 1
+    if node[0] == "index":
+        local ix is unwrap of node[2]
+        if (ix[0] == "ident") and (ix[1] == name):
+            return 1
+    if node[0] == "call":
+        # passed into a user callee's NUMERIC param — a numeric use
+        # (fixpoint rounds re-run this as callee ptypes refine)
+        local ncallee is unwrap of node[1]
+        if (ncallee[0] == "ident") and (g_funcs[ncallee[1]] != null):
+            local narg is unwrap of node[2]
+            local nelems is []
+            if (narg[0] == "list") and ((len of narg) == 2):
+                nelems is narg[1]
+            else:
+                nelems is [narg]
+            local npts is (g_funcs[ncallee[1]])["ptypes"]
+            for nk in range of (len of nelems):
+                if (npts[nk]) == "num":
+                    local ne is unwrap of nelems[nk]
+                    if (ne[0] == "ident") and (ne[1] == name):
+                        return 1
+    for k in range of (len of node):
+        if (find_numeric_use of [node[k], name]) == 1:
+            return 1
+    return 0
+
+# A param used as a for-in ITERABLE is a list/buffer value, not a number
+# (#86: EigenMiniSat's `copy_assignment(asg)` only does `for v in asg`).
+define find_for_iter_use(node, name) as:
+    if (type of node) != "list":
+        return 0
+    if (len of node) == 0:
+        return 0
+    if node[0] == "for":
+        local it is unwrap of node[2]
+        if (it[0] == "ident") and (it[1] == name):
+            return 1
+    for k in range of (len of node):
+        if (find_for_iter_use of [node[k], name]) == 1:
+            return 1
+    return 0
+
+# A param used purely in VALUE positions — a dict/list literal element, a
+# dot_assign RHS, or a bare return — is a boxed value when it is never
+# read numerically (#86: EigenMiniSat's `cdcl_result(status, ...)` stores
+# its string params straight into a result dict).
+define find_value_pos_use(node, name) as:
+    if (type of node) != "list":
+        return 0
+    if (len of node) == 0:
+        return 0
+    if node[0] == "dict":
+        local pairs is node[1]
+        for k in range of (len of pairs):
+            local pv is unwrap of ((pairs[k])[1])
+            if (pv[0] == "ident") and (pv[1] == name):
+                return 1
+    # NOTE: no bare-["list"] arm here — call ARGUMENT lists are "list"
+    # nodes syntactically, so matching idents inside any list node would
+    # claim every numeric call argument (it did — ci in clause_store_*).
+    if node[0] == "dot_assign":
+        local rv is unwrap of node[3]
+        if (rv[0] == "ident") and (rv[1] == name):
+            return 1
+    if node[0] == "return":
+        if ((type of node[1]) == "list") and ((len of node) > 1):
+            local rr is unwrap of node[1]
+            if ((type of rr) == "list") and ((len of rr) > 0):
+                if (rr[0] == "ident") and (rr[1] == name):
+                    return 1
+    for k2 in range of (len of node):
+        if (find_value_pos_use of [node[k2], name]) == 1:
+            return 1
+    return 0
+
+# A param concatenated with a string literal (f-strings desugar to `+`
+# chains) is a boxed value when never read numerically (#86: label params
+# like `assert_clauses_match(label, ...)`).
+define find_str_concat_use(node, name) as:
+    if (type of node) != "list":
+        return 0
+    if (len of node) == 0:
+        return 0
+    if (node[0] == "binop") and (node[1] == "+"):
+        local l is unwrap of node[2]
+        local r is unwrap of node[3]
+        local has_name is 0
+        if (l[0] == "ident") and (l[1] == name):
+            has_name is 1
+        if (r[0] == "ident") and (r[1] == name):
+            has_name is 1
+        if has_name == 1:
+            # only a chain carrying an actual STR literal counts — numeric
+            # sums are `+` chains too (torus_v_edge's `... + col + 1`)
+            if (chain_has_str of node) == 1:
+                return 1
+    for k in range of (len of node):
+        if (find_str_concat_use of [node[k], name]) == 1:
+            return 1
+    return 0
+
+define chain_has_str(node) as:
+    local n is unwrap of node
+    if (type of n) != "list":
+        return 0
+    if (len of n) == 0:
+        return 0
+    if n[0] == "str":
+        return 1
+    if n[0] == "fstring":
+        return 1
+    if (n[0] == "binop") and (n[1] == "+"):
+        if (chain_has_str of n[2]) == 1:
+            return 1
+        return chain_has_str of n[3]
+    return 0
+
+# A param passed to `append` (either position) and never read numerically
+# is a boxed value, not a number (#86: EigenMiniSat's
+# `_add_parse_error(errors, msg)` uses both params only via append).
+define find_append_use(node, name) as:
+    if (type of node) != "list":
+        return 0
+    if (len of node) == 0:
+        return 0
+    if node[0] == "call":
+        local callee is unwrap of node[1]
+        if (callee[0] == "ident") and (callee[1] == "append"):
+            local arg is unwrap of node[2]
+            if arg[0] == "list":
+                local elems is arg[1]
+                for k in range of (len of elems):
+                    local e is unwrap of elems[k]
+                    if (e[0] == "ident") and (e[1] == name):
+                        return 1
+    for k2 in range of (len of node):
+        if (find_append_use of [node[k2], name]) == 1:
+            return 1
+    return 0
+
+# A param passed straight through to another user function's DICT param is
+# a dict (#86: EigenMiniSat's compact passes `stats` through to a callee
+# that dot-writes it). Definition-order blind: resolved by the fixpoint
+# rounds in the g_funcs build loop.
+define find_dict_param_use(node, name) as:
+    if (type of node) != "list":
+        return 0
+    if (len of node) == 0:
+        return 0
+    if node[0] == "call":
+        local callee is unwrap of node[1]
+        if callee[0] == "ident":
+            if g_funcs[callee[1]] != null:
+                local arg is unwrap of node[2]
+                local elems is []
+                if (arg[0] == "list") and ((len of arg) == 2):
+                    elems is arg[1]
+                else:
+                    elems is [arg]
+                local pts is (g_funcs[callee[1]])["ptypes"]
+                for k in range of (len of elems):
+                    if (pts[k]) == "dict":
+                        local e is unwrap of elems[k]
+                        if (e[0] == "ident") and (e[1] == name):
+                            return 1
+    for k2 in range of (len of node):
+        if (find_dict_param_use of [node[k2], name]) == 1:
+            return 1
+    return 0
+
+# Call-site ground truth (#86): a user fn param that RECEIVES a non-numeric
+# LITERAL (str/null/dict/nested list) at any call site cannot be "num".
+# Collected once over the whole program into g_pt_overrides
+# (fname -> slot-index-string -> 1) and applied after func_ptypes.
+g_pt_overrides is {}
+
+define scan_arg_overrides(node) as:
+    if (type of node) != "list":
+        return 0
+    if (len of node) == 0:
+        return 0
+    if node[0] == "call":
+        local callee is unwrap of node[1]
+        if (callee[0] == "ident") and (g_func_names[callee[1]] == 1):
+            local arg is unwrap of node[2]
+            local elems is []
+            if (arg[0] == "list") and ((len of arg) == 2):
+                elems is arg[1]
+            else:
+                elems is [arg]
+            for k in range of (len of elems):
+                local e is unwrap of elems[k]
+                # ONLY genuine value literals. NOT "null" (that is the
+                # zero-arg `f of null` idiom, #69) and NOT a bare "list"
+                # (that is the argument list itself, #405) — claiming
+                # either broke t51_nullcall / t54 / t56.
+                local nonnum is 0
+                if (e[0] == "str") or (e[0] == "dict"):
+                    nonnum is 1
+                if (e[0] == "binop") and (e[1] == "+") and ((chain_has_str of e) == 1):
+                    # a desugared f-string argument (lex-level desugar: a
+                    # parenthesized `+` chain carrying string literals)
+                    nonnum is 1
+                if nonnum == 1:
+                    local ov is g_pt_overrides[callee[1]]
+                    if ov == null:
+                        ov is {}
+                        g_pt_overrides[callee[1]] is ov
+                    ov[(str of k)] is 1
+    for k2 in range of (len of node):
+        scan_arg_overrides of node[k2]
+    return 0
+
 define find_gen_param_use(node, name) as:
     if (type of node) != "list":
         return 0
@@ -2536,6 +2857,10 @@ define func_ptypes(fn) as:
 # args for a call, each emitted per its param type (buffer var name | numeric)
 define emit_args(node, fname, nm, bt) as:
     local arg is unwrap of node[2]
+    if g_funcs[fname] == null:
+        # null["ptypes"] is silently null and null ptypes emit every arg
+        # numeric — a silent wrong-emission generator. Loud beats silent.
+        throw of ("AOT: emit_args on non-user function '" + fname + "' (builtin calls take the boxed path)")
     local ptypes is (g_funcs[fname])["ptypes"]
     local elems is []
     if arg[0] == "null":
@@ -2580,11 +2905,16 @@ define emit_args(node, fname, nm, bt) as:
                     s is s + "env_get(__eigs_g, \"" + be[1] + "\")"
             elif be[0] == "call":
                 s is s + (emit_call_num of [be, nm, bt])
-            elif (be[0] == "str") or (be[0] == "num"):
-                # a literal can never satisfy a buffer param — the buf class is
-                # not polymorphic (strings route through it in VM programs like
-                # checksum's `_blen of "abc"`); loud beats a union misread.
-                throw of ("AOT: '" + fname + "' expects a buffer argument, got a " + be[0] + " literal (buffer params are not polymorphic yet)")
+            elif be[0] == "str":
+                # a string literal to a buf-class param is the checksum
+                # `_blen of "abc"` shape — the class is a string/buffer
+                # union of C Value*s, and a boxed literal satisfies it.
+                # Owned-and-leaked like the gen-param literal case below
+                # (the callee can't tell owned from borrowed; one-shot).
+                s is s + (emit_val of [elems[k], nm, bt])
+            elif be[0] == "num":
+                # a NUMBER to a buf param is a genuine misread — loud.
+                throw of ("AOT: '" + fname + "' expects a buffer/string argument, got a num literal")
             else:
                 s is s + (emit_val of [elems[k], nm, bt])
         elif ((ptypes[k]) == "tensor") or ((ptypes[k]) == "dict") or ((ptypes[k]) == "gen"):
@@ -2605,11 +2935,17 @@ define emit_args(node, fname, nm, bt) as:
             else:
                 s is s + (emit_val of [elems[k], nm, bt])
         else:
-            s is s + (emit_num of [elems[k], nm, bt, 0])
+            try:
+                s is s + (emit_num of [elems[k], nm, bt, 0])
+            catch e:
+                throw of ("in call to '" + fname + "' arg " + (str of k) + ": " + e)
     return s
 
 define emit_call_num(node, nm, bt) as:
-    local fname is (unwrap of node[1])[1]
+    local fcallee is unwrap of node[1]
+    if fcallee[0] != "ident":
+        throw of ("AOT: emit_call_num on a non-ident callee: " + (str of fcallee))
+    local fname is fcallee[1]
     return (cn of fname) + "(" + (emit_args of [node, fname, nm, bt]) + ")"
 
 # ---- --dump-inference support (#65 spec_audit) ----
@@ -2700,6 +3036,7 @@ define dump_rec(scope, role, name, kind, ln) as:
 
 define emit_function(fn, finfo, gnm, gbt) as:
     local name is fn[1]
+    G_CUR_FN[0] is name
     local params is fn[2]
     local body is fn[3]
     # Per-function observation: a function is observed/traced by ITS OWN body, so
@@ -2960,6 +3297,84 @@ define emit_function(fn, finfo, gnm, gbt) as:
     g_ret_type is _save_ret
     return _result
 
+# ---- nested `define` lifting (#86) ----
+# The VM makes a closure; the AOT lambda-lifts: the nested fn becomes a
+# top-level function whose captured names are rewritten to mangled ENV
+# globals, bound at the definition site (["capbind", ...] statement). A
+# Value-class capture aliases the same Value, so mutation stays live —
+# matching the VM. Numeric captures would SNAPSHOT (env copy of a double),
+# so they throw. The nested fn's name stays callable (g_funcs) and usable
+# as a VALUE argument (emit_val emits make_builtin of a boxed wrapper).
+G_LIFT_N is [0]
+G_CUR_FN is ["<module>"]
+g_fn_as_value is {}
+
+define rename_idents(node, rmap) as:
+    if (type of node) != "list":
+        return 0
+    if (len of node) == 0:
+        return 0
+    if node[0] == "ident":
+        if rmap[node[1]] != null:
+            node[1] is rmap[node[1]]
+        return 0
+    for k in range of (len of node):
+        rename_idents of [node[k], rmap]
+    return 0
+
+# Lift every nested func in `node` (a stmt list or block), given the
+# ENCLOSING function's bound-name dict. Appends lifted fns to out_funcs
+# and replaces each define stmt with a capbind, in place.
+define lift_nested(node, bound, out_funcs) as:
+    if (type of node) != "list":
+        return 0
+    if (len of node) == 0:
+        return 0
+    for k in range of (len of node):
+        local st is node[k]
+        local inner is st
+        local wrapped is 0
+        if ((type of st) == "list") and ((len of st) > 0):
+            if st[0] == "_line":
+                inner is st[2]
+                wrapped is 1
+        if ((type of inner) == "list") and ((len of inner) > 0):
+            if inner[0] == "func":
+                local fname is inner[1]
+                local fparams is inner[2]
+                local fbody is inner[3]
+                if g_func_names[fname] == 1:
+                    throw of ("AOT: nested define '" + fname + "' collides with a top-level function")
+                local own is {}
+                for p in range of (len of fparams):
+                    own[(fparams[p])] is 1
+                local nested_assigns is collect_assigns of [fbody, {}]
+                local caps is []
+                local rmap is {}
+                local bnames is keys of bound
+                for b in range of (len of bnames):
+                    local cand is bnames[b]
+                    if (own[cand] != 1) and ((uses_ident of [fbody, cand]) == 1):
+                        if nested_assigns[cand] != null:
+                            throw of ("AOT: nested define '" + fname + "' assigns enclosing name '" + cand + "' (outward mutation is out of envelope)")
+                        local mangled is "__cap" + (str of (G_LIFT_N[0])) + "_" + cand
+                        G_LIFT_N[0] is G_LIFT_N[0] + 1
+                        append of [caps, [cand, mangled]]
+                        rmap[cand] is mangled
+                rename_idents of [fbody, rmap]
+                append of [out_funcs, ["func", fname, fparams, fbody]]
+                g_func_names[fname] is 1
+                local cb is ["capbind", fname, caps]
+                if wrapped == 1:
+                    st[2] is cb
+                else:
+                    node[k] is cb
+        # recurse into sub-blocks (if/loop/for/try bodies, nested lists)
+        if ((type of st) == "list") and ((len of st) > 0):
+            if st[0] != "func":
+                lift_nested of [st, bound, out_funcs]
+    return 0
+
 define emit_program(ast) as:
     local stmts is ast
     if ast[0] == "block":
@@ -2999,6 +3414,18 @@ define emit_program(ast) as:
     g_func_names is {}
     for k in range of (len of funcs):
         g_func_names[(funcs[k])[1]] is 1
+    # (#86) lift nested defines into ordinary top-level fns BEFORE the
+    # ptypes build (the loop below re-reads len(funcs) after appends).
+    for k in range of (len of funcs):
+        local lf is funcs[k]
+        local lbound is {}
+        for p in range of (len of lf[2]):
+            lbound[((lf[2])[p])] is 1
+        local lassigns is collect_assigns of [lf[3], {}]
+        local lan is keys of lassigns
+        for j in range of (len of lan):
+            lbound[(lan[j])] is 1
+        lift_nested of [lf[3], lbound, funcs]
     for k in range of (len of funcs):
         local fn is funcs[k]
         local pt is func_ptypes of fn
@@ -3022,6 +3449,24 @@ define emit_program(ast) as:
             if (param_unread of [fn[3], (fn[2])[0]]) == 1:
                 nullok is 1
         g_funcs[fn[1]] is {"ptypes": pt, "ret": (func_ret_type of [fn, ffbt, ffgen]), "rettensor": (func_ret_tensor of fn), "retbuf": (func_ret_buf of [fn, ffbt]), "observed": (func_observed of fn), "nullok": nullok}
+    # Fixpoint rounds (#86): the pass-through signals (find_gen_param_use /
+    # find_dict_param_use) read CALLEES' ptypes, which are definition-order
+    # dependent on the first pass. Re-derive ptypes until stable (chains are
+    # shallow; 4 rounds bounds it) so `f(x)` passing x into g's dict param
+    # classifies x dict regardless of which of f/g is defined first.
+    local fp_round is 0
+    loop while fp_round < 4:
+        local fp_changed is 0
+        for k in range of (len of funcs):
+            local fn2 is funcs[k]
+            local pt2 is func_ptypes of fn2
+            local fe is g_funcs[fn2[1]]
+            if (str of pt2) != (str of fe["ptypes"]):
+                fp_changed is 1
+                fe["ptypes"] is pt2
+        if fp_changed == 0:
+            fp_round is 4
+        fp_round is fp_round + 1
     # Module globals are computed first so functions can READ them (they become
     # file-scope vars in C; a function's params/locals shadow same-named globals).
     local bt is infer_buffers of rest
@@ -3119,7 +3564,29 @@ define emit_program(ast) as:
     local obshdr is ""
     if g_obs_traced == 1:
         obshdr is "    g_trace_obs_hist = 1;\n"
-    local hdr is "#include \"aot_rt.h\"\n\nstatic Env* __eigs_g = NULL;\n" + gdecls + "\n" + fc + "\nint main(void) {\n    __eigs_g = aot_boot(); (void)__eigs_g;\n" + obshdr
+    # (#86) boxed wrappers for user functions used as VALUES (sort_by keys
+    # etc.): Value* -> Value*, arg borrowed per the builtin convention.
+    local wraps is ""
+    local wprotos is ""
+    local wnames is keys of g_fn_as_value
+    for i in range of (len of wnames):
+        local wn is wnames[i]
+        local wi is g_funcs[wn]
+        local wpt is wi["ptypes"]
+        if (len of wpt) != 1:
+            throw of ("AOT: function '" + wn + "' used as a value must take exactly one parameter")
+        local warg is "__a"
+        if (wpt[0]) == "num":
+            warg is "((__a && __a->type == VAL_NUM) ? __a->data.num : 0.0)"
+        local wcall is (cn of wn) + "(" + warg + ")"
+        wprotos is wprotos + "static Value* __wrap_" + (cn of wn) + "(Value* __a);\n"
+        if (wi["ret"]) == "double":
+            wraps is wraps + "static Value* __wrap_" + (cn of wn) + "(Value* __a) { return make_num(" + wcall + "); }\n"
+        elif (wi["ret"]) == "Value*":
+            wraps is wraps + "static Value* __wrap_" + (cn of wn) + "(Value* __a) { return " + wcall + "; }\n"
+        else:
+            wraps is wraps + "static Value* __wrap_" + (cn of wn) + "(Value* __a) { " + wcall + "; return make_null(); }\n"
+    local hdr is "#include \"aot_rt.h\"\n\nstatic Env* __eigs_g = NULL;\n" + gdecls + "\n" + wprotos + fc + "\n" + wraps + "\nint main(int argc, char **argv) {\n    __eigs_g = aot_boot(); (void)__eigs_g;\n    aot_args(argc, argv);\n" + obshdr
     local ftr is "    aot_shutdown(__eigs_g);\n    return 0;\n}\n"
     return hdr + body + ftr
 
