@@ -1,0 +1,23 @@
+# #86: the buf class is INDEXABLE VALUE, not just VAL_BUFFER — a list of
+# numbers must work through the same ops (parity with the VM's indexing).
+define sum_idx(xs) as:
+    total is 0
+    i is 0
+    loop while i < (len of xs):
+        total is total + xs[i]
+        i is i + 1
+    return total
+
+define bump_first(xs) as:
+    xs[0] is xs[0] + 100
+    return xs[0]
+
+nums is [3, 4, 5]
+print of (sum_idx of nums)
+print of (bump_first of nums)
+print of (sum_idx of nums)
+
+# strings ride the same class via len
+define slen(s) as:
+    return len of s
+print of (slen of "abcdef")

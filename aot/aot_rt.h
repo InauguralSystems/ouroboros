@@ -172,9 +172,19 @@ static Value *aot_ne(Value *a, Value *b) {
    out-of-envelope input (a string or list reaching a buf-classified param)
    would otherwise misread the value union — a silent wrong number. Loud beats
    silent; in-envelope programs never take the branch (predictable, cold). */
-static void aot_buf_expect(Value *b) {
-    if (!b || b->type != VAL_BUFFER) { fprintf(stderr, "buffer op on a non-buffer value\n"); exit(1); }
+/* (#86) Buffer ops name the offending VALUE. The wrapper macros at the end
+ * of this block stringify the first argument's token text, so a failure
+ * reports the C variable (which is the .eigs name) with no emitter change:
+ *     buffer op on a non-buffer value: `asg` is str
+ */
+static void aot_buf_expect_at(Value *b, const char *site) {
+    if (!b || b->type != VAL_BUFFER) {
+        fprintf(stderr, "buffer op on a non-buffer value: `%s` is %s\n",
+                site, b ? val_type_name(b->type) : "null");
+        exit(1);
+    }
 }
+static void aot_buf_expect(Value *b) { aot_buf_expect_at(b, "?"); }
 static long aot_idx(double d, int count) {
     long i = (long)d;
     if ((double)i != d) { fprintf(stderr, "index must be an integer, got %g\n", d); exit(1); }
@@ -182,8 +192,34 @@ static long aot_idx(double d, int count) {
     if (i < 0 || i >= count) { fprintf(stderr, "buffer index %ld out of range (length %d)\n", (long)d, count); exit(1); }
     return i;
 }
-static double aot_buf_get(Value *b, double idx) { aot_buf_expect(b); return b->data.buffer.data[aot_idx(idx, b->data.buffer.count)]; }
-static void   aot_buf_set(Value *b, double idx, double v) { aot_buf_expect(b); b->data.buffer.data[aot_idx(idx, b->data.buffer.count)] = v; }
+/* The "buf" class is really INDEXABLE VALUE: inference assigns it from
+ * `x[i]` / `len of x` usage, and in consumer code the runtime value is as
+ * often a VAL_LIST of numbers as a VAL_BUFFER (EigenMiniSat's DIMACS
+ * `parts[i]`). Mirror the VM's polymorphic indexing rather than asserting
+ * one representation — same rule aot_buf_len already follows for strings. */
+static double aot_list_num_at(Value *b, long i, const char *site) {
+    Value *e = b->data.list.items[i];
+    if (!e || e->type != VAL_NUM) {
+        fprintf(stderr, "non-numeric element in `%s`[%ld] (%s)\n",
+                site, i, e ? val_type_name(e->type) : "null");
+        exit(1);
+    }
+    return e->data.num;
+}
+static double aot_buf_get_at(Value *b, double idx, const char *site) {
+    if (b && b->type == VAL_LIST) return aot_list_num_at(b, aot_idx(idx, b->data.list.count), site);
+    aot_buf_expect_at(b, site); return b->data.buffer.data[aot_idx(idx, b->data.buffer.count)];
+}
+static void   aot_buf_set_at(Value *b, double idx, double v, const char *site) {
+    if (b && b->type == VAL_LIST) {
+        long i = aot_idx(idx, b->data.list.count);
+        Value *old = b->data.list.items[i];
+        b->data.list.items[i] = make_num(v);
+        if (old) val_decref(old);
+        return;
+    }
+    aot_buf_expect_at(b, site); b->data.buffer.data[aot_idx(idx, b->data.buffer.count)] = v;
+}
 /* Integer-index fast path: the index was computed in native `long` arithmetic
    (provably-integer induction vars + dimensions), so skip the float integer
    check. Negative-resolve + bounds-check still mirror the VM. */
@@ -192,8 +228,20 @@ static long aot_idx_i(long i, int count) {
     if (i < 0 || i >= count) { fprintf(stderr, "buffer index %ld out of range (length %d)\n", i, count); exit(1); }
     return i;
 }
-static double aot_buf_get_i(Value *b, long idx) { aot_buf_expect(b); return b->data.buffer.data[aot_idx_i(idx, b->data.buffer.count)]; }
-static void   aot_buf_set_i(Value *b, long idx, double v) { aot_buf_expect(b); b->data.buffer.data[aot_idx_i(idx, b->data.buffer.count)] = v; }
+static double aot_buf_get_i_at(Value *b, long idx, const char *site) {
+    if (b && b->type == VAL_LIST) return aot_list_num_at(b, aot_idx_i(idx, b->data.list.count), site);
+    aot_buf_expect_at(b, site); return b->data.buffer.data[aot_idx_i(idx, b->data.buffer.count)];
+}
+static void   aot_buf_set_i_at(Value *b, long idx, double v, const char *site) {
+    if (b && b->type == VAL_LIST) {
+        long i = aot_idx_i(idx, b->data.list.count);
+        Value *old = b->data.list.items[i];
+        b->data.list.items[i] = make_num(v);
+        if (old) val_decref(old);
+        return;
+    }
+    aot_buf_expect_at(b, site); b->data.buffer.data[aot_idx_i(idx, b->data.buffer.count)] = v;
+}
 /* max |element|, for the matmul's once-per-call overflow precheck: if
    reduction_len * maxabs(A) * maxabs(B) <= 1e308, no product or partial sum can
    exceed 1e308, so num_guard is identity over the whole reduction and the
@@ -204,15 +252,24 @@ static double aot_buf_maxabs(Value *b) {
     for (i = 0; i < n; i++) { double a = d[i] < 0 ? -d[i] : d[i]; if (a > m) m = a; }
     return m;
 }
-static double aot_buf_len(Value *b) {
+static double aot_buf_len_at(Value *b, const char *site) {
     /* the buf class is a string/buffer union (checksum's `_blen of "abc"`,
      * EigenMiniSat's `_is_int_token`, #86): mirror the VM's `len` on both. */
     if (b && b->type == VAL_STR) return (double)strlen(b->data.str);
-    aot_buf_expect(b);
+    if (b && b->type == VAL_LIST) return (double)b->data.list.count;
+    aot_buf_expect_at(b, site);
     return (double)b->data.buffer.count;
 }
 /* Raw element pointer for the proven-safe (in-bounds, non-negative) loop path. */
-static double *aot_buf_data(Value *b) { aot_buf_expect(b); return b->data.buffer.data; }
+static double *aot_buf_data_at(Value *b, const char *site) { aot_buf_expect_at(b, site); return b->data.buffer.data; }
+
+/* Token-stringifying wrappers: `aot_buf_get(asg, i)` reports `asg`. */
+#define aot_buf_get(b, i)        aot_buf_get_at((b), (i), #b)
+#define aot_buf_set(b, i, v)     aot_buf_set_at((b), (i), (v), #b)
+#define aot_buf_get_i(b, i)      aot_buf_get_i_at((b), (i), #b)
+#define aot_buf_set_i(b, i, v)   aot_buf_set_i_at((b), (i), (v), #b)
+#define aot_buf_len(b)           aot_buf_len_at((b), #b)
+#define aot_buf_data(b)          aot_buf_data_at((b), #b)
 
 /* dot of [a,b] = sum_i a[i]*b[i]. The `dot` builtin's spec leaves the summation
  * ASSOCIATION unspecified, which licenses this REASSOCIATED SIMD reduction:

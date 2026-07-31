@@ -893,7 +893,7 @@ define emit_num(node, nm, bt, raw) as:
         # CHECKED (#65 inc. 2): the VM raises when a non-number reaches an
         # arithmetic context; aot_num's silent 0.0 was the worst-outcome
         # class.
-        return "aot_num_ck(aot_get(__eigs_g, \"" + node[1] + "\"))"
+        return "aot_num_ck_at(aot_get(__eigs_g, \"" + node[1] + "\"), \"" + (c_escape of (G_CUR_FN[0])) + ": name " + (c_escape of node[1]) + "\")"
     if t == "unary":
         local uop is node[1]
         local uv is emit_num of [node[2], nm, bt, raw]
@@ -917,7 +917,7 @@ define emit_num(node, nm, bt, raw) as:
         # or a non-ident target like `store.offsets[ci]`, #86) -> boxed
         # index then extract the number.
         if (tgt[0] != "ident") or (bt[tgt[1]] != 1):
-            return "aot_num_ck(aot_index_get(" + (emit_val of [node[1], nm, bt]) + ", make_num(" + (emit_num of [node[2], nm, bt, 0]) + ")))"
+            return "aot_num_ck_at(aot_index_get(" + (emit_val of [node[1], nm, bt]) + ", make_num(" + (emit_num of [node[2], nm, bt, 0]) + ")), \"" + (c_escape of (G_CUR_FN[0])) + ": index read\")"
         if (is_int_expr of node[2]) == 1:
             return "aot_buf_get_i(" + (cn of tgt[1]) + ", " + (emit_int of node[2]) + ")"
         return "aot_buf_get(" + (cn of tgt[1]) + ", " + (emit_num of [node[2], nm, bt, 0]) + ")"
@@ -972,7 +972,7 @@ define emit_num(node, nm, bt, raw) as:
             # otherwise. The fast paths above intercept every call shape
             # is_num_expr claims, so this can't recurse through emit_val's
             # is_num_expr head.
-            return "aot_num_ck(" + (emit_val of [node, nm, bt]) + ")"
+            return "aot_num_ck_at(" + (emit_val of [node, nm, bt]) + ", \"" + (c_escape of (G_CUR_FN[0])) + ": builtin " + (c_escape of callee[1]) + "\")"
         throw of "AOT: emit_num unexpected call"
     if t == "binop":
         # whole expression proven integer -> native long arithmetic, no guard
@@ -1406,7 +1406,7 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
             if fowned == 0:
                 fo is fo + ind + "    " + (cn of fvar) + " = aot_buf_get_i(" + itv + ", " + kv + ");\n"
             else:
-                fo is fo + ind + "    " + (cn of fvar) + " = aot_num_ck(aot_iter_get(" + itv + ", " + kv + "));\n"
+                fo is fo + ind + "    " + (cn of fvar) + " = aot_num_ck_at(aot_iter_get(" + itv + ", " + kv + "), \"" + (c_escape of (G_CUR_FN[0])) + ": for-in " + (c_escape of fvar) + "\");\n"
         else:
             fo is fo + ind + "    aot_set(__eigs_g, \"" + fvar + "\", aot_iter_get(" + itv + ", " + kv + "));\n"
         fo is fo + (emit_stmts of [fbody, ind + "    ", nm, bt, minits, gf])
@@ -2562,6 +2562,10 @@ define uses_type_dispatch(node, name) as:
 # to one of these is NOT numeric (found compiling EigenMiniSat's DIMACS
 # tokenizer, #86 — `_tokens(line)` uses `line` only via str_replace/split
 # and defaulted to "num", so a string-literal call site threw).
+# Builtins whose return is never a number: a local assigned from one is a
+# boxed value, which call-site widening needs to know (#86).
+BOXED_RET_BUILTINS is {"read_text": 1, "read_lines": 1, "split": 1, "trim": 1, "substr": 1, "str_replace": 1, "str_lower": 1, "str_upper": 1, "char_at": 1, "join": 1, "str": 1, "keys": 1, "values": 1, "sort": 1, "sort_by": 1, "scan_ints": 1, "scan_int_tokens": 1, "range": 1, "hex": 1, "chr": 1, "json_decode": 1, "json_encode": 1, "args": 1}
+
 STR_ARG_BUILTINS is {"split": 1, "trim": 1, "substr": 1, "str_replace": 1, "contains": 1, "index_of": 1, "char_at": 1, "starts_with": 1, "ends_with": 1, "str_lower": 1, "str_upper": 1, "ord": 1, "read_text": 1, "write_text": 1, "file_exists": 1, "read_lines": 1, "scan_ints": 1, "scan_int_tokens": 1}
 
 define find_str_builtin_use(node, name) as:
@@ -3001,8 +3005,14 @@ define local_gen_map(body) as:
                     isgen is 1
                 if r[0] == "call":
                     local rc is unwrap of r[1]
-                    if (rc[0] == "ident") and (g_funcs[rc[1]] != null):
-                        if ((g_funcs[rc[1]])["ret"]) == "Value*":
+                    if rc[0] == "ident":
+                        if g_funcs[rc[1]] != null:
+                            if ((g_funcs[rc[1]])["ret"]) == "Value*":
+                                isgen is 1
+                        elif BOXED_RET_BUILTINS[rc[1]] == 1:
+                            # a BUILTIN with a known non-numeric return
+                            # (EigenMiniSat's `text is read_text of path`,
+                            # then `parse_dimacs_text of text`)
                             isgen is 1
         # DIRECT numeric evidence only (arithmetic / index position). Using
         # the full find_numeric_use here deadlocks: "passed to a num param"
@@ -3039,7 +3049,36 @@ define local_gen_map(body) as:
                     local rf is (g_funcs[rc2[1]])["retfields"]
                     if rf != null:
                         out[v + ".#fields"] is rf
+    # for-in loop VARIABLES: iterating a boxed collection yields boxed
+    # elements (`for line in lines` where lines came from split/read_lines
+    # — EigenMiniSat's DIMACS parser). Two rounds settle the common
+    # split-then-iterate chain.
+    local fr is 0
+    loop while fr < 2:
+        for_var_gen_scan of [body, out]
+        fr is fr + 1
     return out
+
+# Mark for-in loop variables whose iterable is a boxed value.
+define for_var_gen_scan(node, out) as:
+    if (type of node) != "list":
+        return 0
+    if (len of node) == 0:
+        return 0
+    if node[0] == "for":
+        local it is unwrap of node[2]
+        local boxed is 0
+        if (it[0] == "ident") and (out[it[1]] == "gen"):
+            boxed is 1
+        if it[0] == "call":
+            local ic is unwrap of it[1]
+            if (ic[0] == "ident") and (BOXED_RET_BUILTINS[ic[1]] == 1) and (ic[1] != "range"):
+                boxed is 1
+        if (boxed == 1) and ((find_numeric_use_direct of [node[3], node[1]]) == 0):
+            out[node[1]] is "gen"
+    for k in range of (len of node):
+        for_var_gen_scan of [node[k], out]
+    return 0
 
 # Scan one function body for calls, widening callee params. Returns 1 if
 # anything changed.
@@ -3891,6 +3930,11 @@ define emit_program(ast) as:
     for i in range of (len of bnames):
         if bt[bnames[i]] == 1:
             gdecls is gdecls + "static Value* " + (cn of bnames[i]) + " = NULL;\n"
+    # emit_function sets G_CUR_FN; the module body has no emit_function, so
+    # reset it or every site label in main() inherits the LAST function's
+    # name (that stale label sent an earlier debugging session chasing
+    # `lbd_activity_key` for a failure that was in main).
+    G_CUR_FN[0] is "<module>"
     local body is emit_stmts of [rest, "    ", nm, bt, minits, {}]
     local obshdr is ""
     if g_obs_traced == 1:
