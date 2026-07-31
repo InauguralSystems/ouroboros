@@ -672,7 +672,15 @@ define cg_scan_module_names(stmts) as:
             cg_scan_module_names of s[1]
             cg_scan_module_names of s[3]
 
-# Compile source to a chunk descriptor: [code, constants, functions, 0, name, []].
+# Compile source to a chunk descriptor:
+#   [ABI_REV, code, constants, functions, 0, name, []].
+# Element 0 is the bytecode ABI revision stamp (upstream #704/#748): the
+# runtime refuses a top-level descriptor whose stamp doesn't match its
+# EIGS_BYTECODE_ABI, so a stale producer fails loudly instead of running
+# with unverifiable operand widths. Nested function descriptors carry no
+# stamp. Bump OURO_BYTECODE_ABI only together with an upstream revision.
+OURO_BYTECODE_ABI is 1
+
 define ouro_compile(source) as:
     local tokens is eigen_tokenize of source
     local ast is eigen_parse of tokens
@@ -682,7 +690,7 @@ define ouro_compile(source) as:
     local c is cg_new of 0
     cg_block_value of [c, ast[1]]
     cg_emit of [c, OP_RETURN]
-    return [c.code, c.consts, c.functions, 0, "<module>", []]
+    return [OURO_BYTECODE_ABI, c.code, c.consts, c.functions, 0, "<module>", []]
 
 define ouro_run(source) as:
     local compiled is ouro_compile of source
