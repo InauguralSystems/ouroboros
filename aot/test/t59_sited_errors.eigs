@@ -21,3 +21,24 @@ print of (sum_idx of nums)
 define slen(s) as:
     return len of s
 print of (slen of "abcdef")
+
+# a function returning its DICT parameter is Value*-returning (declaring
+# it double handed the caller a number, and the next field read failed)
+define tag_record(rec) as:
+    rec.tag is "seen"
+    return rec
+
+r is {"tag": "", "n": 3}
+r2 is tag_record of r
+print of r2.tag
+print of r2.n
+
+# elements of an indexed value can be strings: `x[i]` proves indexable,
+# never numeric-element
+define first_is_p(parts) as:
+    if parts[0] == "p":
+        return 1
+    return 0
+
+print of (first_is_p of (["p", "cnf"]))
+print of (first_is_p of (["c", "note"]))

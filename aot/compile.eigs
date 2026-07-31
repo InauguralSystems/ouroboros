@@ -2374,10 +2374,16 @@ define collect_return_nodes(node, out) as:
 # Is a single return expression a boxed (non-numeric) Value? Mirrors the
 # classification the return-statement emitter uses, so the declared type and the
 # emission agree.
-define return_node_is_boxed(rnode, fbt, ftt, rba, fgen) as:
+define return_node_is_boxed(rnode, fbt, ftt, rba, fgen, fdict) as:
     local re is unwrap of rnode
     if re[0] == "ident":
         if fbt[re[1]] == 1:
+            return 1
+        # a DICT param returned whole is a boxed Value (#86): omitting this
+        # declared `_process_dimacs_parts` (which returns its state dict)
+        # as double, so the caller received a number and the next field
+        # read failed with "cannot access field 'current' on num".
+        if fdict[re[1]] == 1:
             return 1
         # a generic param returned whole is whatever the caller passed — boxed.
         if fgen[re[1]] == 1:
@@ -2397,7 +2403,7 @@ define return_node_is_boxed(rnode, fbt, ftt, rba, fgen) as:
         return 1
     return 0
 
-define func_ret_type(fn, fbt, fgen) as:
+define func_ret_type(fn, fbt, fgen, fdict) as:
     local rets is []
     collect_return_nodes of [fn[3], rets]
     if (len of rets) == 0:
@@ -2410,7 +2416,7 @@ define func_ret_type(fn, fbt, fgen) as:
     local ftt is infer_tensors of fn[3]
     local rba is collect_assigns of [fn[3], {}]
     for i in range of (len of rets):
-        if (return_node_is_boxed of [rets[i], fbt, ftt, rba, fgen]) == 1:
+        if (return_node_is_boxed of [rets[i], fbt, ftt, rba, fgen, fdict]) == 1:
             return "Value*"
     return "double"
 
@@ -2845,6 +2851,89 @@ define scan_arg_overrides(node) as:
         scan_arg_overrides of node[k2]
     return 0
 
+# Positive evidence that `name`'s ELEMENTS are boxed, not numbers (#86).
+# `x[i]` proves x is INDEXABLE, never that it holds numbers — the DIMACS
+# tokenizer's `parts[0] == "p"` is a list of strings. Demoting only on
+# this evidence keeps every numeric program on the unboxed fast path, so
+# the change cannot regress the numeric benchmarks.
+define elem_is_boxed_use(node, name) as:
+    if (type of node) != "list":
+        return 0
+    if (len of node) == 0:
+        return 0
+    # x[i] compared against a string literal
+    if node[0] == "binop":
+        if (node[1] == "==") or (node[1] == "!="):
+            local l is unwrap of node[2]
+            local r is unwrap of node[3]
+            if (is_index_of of [l, name]) == 1:
+                if r[0] == "str":
+                    return 1
+            if (is_index_of of [r, name]) == 1:
+                if l[0] == "str":
+                    return 1
+        # x[i] inside a string concatenation (incl. desugared f-strings)
+        if node[1] == "+":
+            if (chain_has_str of node) == 1:
+                if (contains_index_of of [node, name]) == 1:
+                    return 1
+    # x[i] passed to a string-only builtin
+    if node[0] == "call":
+        local callee is unwrap of node[1]
+        if (callee[0] == "ident") and (STR_ARG_BUILTINS[callee[1]] == 1):
+            local arg is unwrap of node[2]
+            local elems is []
+            if (arg[0] == "list") and ((len of arg) == 2):
+                elems is arg[1]
+            else:
+                elems is [arg]
+            for k in range of (len of elems):
+                if (is_index_of of [elems[k], name]) == 1:
+                    return 1
+        # ...or to a user function's non-numeric param
+        if (callee[0] == "ident") and (g_funcs[callee[1]] != null):
+            local arg2 is unwrap of node[2]
+            local el2 is []
+            if (arg2[0] == "list") and ((len of arg2) == 2):
+                el2 is arg2[1]
+            else:
+                el2 is [arg2]
+            local pts2 is (g_funcs[callee[1]])["ptypes"]
+            for k2 in range of (len of el2):
+                if k2 < (len of pts2):
+                    if ((pts2[k2]) == "gen") and ((is_index_of of [el2[k2], name]) == 1):
+                        return 1
+    for k3 in range of (len of node):
+        if (elem_is_boxed_use of [node[k3], name]) == 1:
+            return 1
+    return 0
+
+# is this node exactly `name[...]`?
+define is_index_of(node, name) as:
+    local n is unwrap of node
+    if (type of n) != "list":
+        return 0
+    if (len of n) == 0:
+        return 0
+    if n[0] != "index":
+        return 0
+    local tgt is unwrap of n[1]
+    if (tgt[0] == "ident") and (tgt[1] == name):
+        return 1
+    return 0
+
+define contains_index_of(node, name) as:
+    if (type of node) != "list":
+        return 0
+    if (len of node) == 0:
+        return 0
+    if (is_index_of of [node, name]) == 1:
+        return 1
+    for k in range of (len of node):
+        if (contains_index_of of [node[k], name]) == 1:
+            return 1
+    return 0
+
 define find_gen_param_use(node, name) as:
     if (type of node) != "list":
         return 0
@@ -2885,6 +2974,12 @@ define func_ptypes(fn) as:
             cls is "gen"
         elif (find_buffer_use of [body, params[p]]) == 1:
             cls is "buf"
+            # indexable, but the ELEMENTS are provably boxed (#86): route
+            # reads through aot_index_get instead of the unboxed buffer
+            # path. Demotion needs positive evidence, so numeric code is
+            # untouched.
+            if (elem_is_boxed_use of [body, params[p]]) == 1:
+                cls is "gen"
         elif (find_buf_param_use of [body, params[p]]) == 1:
             cls is "buf"
         elif (find_gen_param_use of [body, params[p]]) == 1:
@@ -2991,7 +3086,19 @@ define arg_class(node, caller_pt, caller_params, caller_locals) as:
 # `out is []` / `asg is copy_assignment of ...` shapes). Numeric-used
 # names are excluded: a name doing arithmetic is not widened on our say-so.
 define local_gen_map(body) as:
+    return local_gen_map_seeded of [body, {}]
+
+# `seed` pre-populates "<name>.#fields" entries. Currently always empty:
+# the call-site propagation that would fill it (typing a dict PARAM from
+# its callers, so `_finish_parse_state(state)` can resolve
+# `state.clauses`) needs local_gen_map memoized per function first — the
+# unmemoized version pushed compile time past 10 minutes on a
+# 218-function consumer. The seam is kept because that is the next step.
+define local_gen_map_seeded(body, seed) as:
     local out is {}
+    local sk is keys of seed
+    for si in range of (len of sk):
+        out[sk[si]] is seed[sk[si]]
     local assigns is collect_assigns of [body, {}]
     local names is keys of assigns
     for i in range of (len of names):
@@ -3047,7 +3154,11 @@ define local_gen_map(body) as:
                 local rc2 is unwrap of r2[1]
                 if (rc2[0] == "ident") and (g_funcs[rc2[1]] != null):
                     local rf is (g_funcs[rc2[1]])["retfields"]
-                    if rf != null:
+                    # keep the INFORMATIVE map: `state` is assigned first
+                    # from the constructor (known fields) and then from a
+                    # pass-through function whose fields aren't derivable;
+                    # last-write-wins would clobber the real map with {}.
+                    if (rf != null) and ((len of (keys of rf)) > 0):
                         out[v + ".#fields"] is rf
     # for-in loop VARIABLES: iterating a boxed collection yields boxed
     # elements (`for line in lines` where lines came from split/read_lines
@@ -3121,16 +3232,57 @@ define widen_scan(node, caller_pt, caller_params, caller_locals) as:
 # The field map of a function's returned dict, when every return is an
 # ident built from a dict literal in its body. Recorded on g_funcs so a
 # caller's `cfg is parse_args of null` inherits the field types.
+define dict_literal_fields(dictnode, lm) as:
+    local fmap is {}
+    local prs is dictnode[1]
+    for pk in range of (len of prs):
+        local pr is prs[pk]
+        local kn is pr[0]
+        if (type of kn) == "list":
+            kn is kn[1]
+        local pv is unwrap of (pr[1])
+        if (len of pv) > 0:
+            if (pv[0] == "str") or (pv[0] == "list") or (pv[0] == "dict") or (pv[0] == "null"):
+                fmap[kn] is "gen"
+            elif pv[0] == "num":
+                fmap[kn] is "num"
+            elif pv[0] == "dot":
+                # `"clauses": state.clauses` — inherit from the source
+                # record's field map when we know it (#86)
+                local dt is unwrap of pv[1]
+                if dt[0] == "ident":
+                    local srcmap is lm[dt[1] + ".#fields"]
+                    if srcmap != null:
+                        local fc is srcmap[pv[2]]
+                        if fc != null:
+                            fmap[kn] is fc
+            elif pv[0] == "ident":
+                local ic is lm[pv[1]]
+                if ic == "gen":
+                    fmap[kn] is "gen"
+    return fmap
+
 define func_retfields(fn) as:
     local rets is []
     collect_return_nodes of [fn[3], rets]
     if (len of rets) != 1:
         return null
+    local lmap is local_gen_map of fn[3]
     local r is unwrap of rets[0]
+    if r[0] == "dict":
+        # returned DIRECTLY as a literal (EigenMiniSat's
+        # `_empty_parse_state`, and `_finish_parse_state` whose fields are
+        # `state.X` reads resolved through the param seed above)
+        return dict_literal_fields of [r, lmap]
+    if r[0] == "call":
+        # `return parse_dimacs_text of text` — inherit the callee's map
+        local rc is unwrap of r[1]
+        if (rc[0] == "ident") and (g_funcs[rc[1]] != null):
+            return (g_funcs[rc[1]])["retfields"]
+        return null
     if r[0] != "ident":
         return null
-    local lm is local_gen_map of fn[3]
-    return lm[r[1] + ".#fields"]
+    return lmap[r[1] + ".#fields"]
 
 # Fixpoint over all user functions plus the module body.
 define widen_ptypes(funcs, rest) as:
@@ -3755,11 +3907,14 @@ define emit_program(ast) as:
         local pt is func_ptypes of fn
         local ffbt is {}
         local ffgen is {}
+        local ffdict is {}
         for p in range of (len of fn[2]):
             if (pt[p]) == "buf":
                 ffbt[(fn[2])[p]] is 1
             if (pt[p]) == "gen":
                 ffgen[(fn[2])[p]] is 1
+            if (pt[p]) == "dict":
+                ffdict[(fn[2])[p]] is 1
         local flb is infer_buffers of fn[3]
         local flbn is keys of flb
         for j in range of (len of flbn):
@@ -3772,7 +3927,7 @@ define emit_program(ast) as:
         if (len of fn[2]) == 1:
             if (param_unread of [fn[3], (fn[2])[0]]) == 1:
                 nullok is 1
-        g_funcs[fn[1]] is {"ptypes": pt, "ret": (func_ret_type of [fn, ffbt, ffgen]), "rettensor": (func_ret_tensor of fn), "retbuf": (func_ret_buf of [fn, ffbt]), "observed": (func_observed of fn), "nullok": nullok}
+        g_funcs[fn[1]] is {"ptypes": pt, "ret": (func_ret_type of [fn, ffbt, ffgen, ffdict]), "rettensor": (func_ret_tensor of fn), "retbuf": (func_ret_buf of [fn, ffbt]), "observed": (func_observed of fn), "nullok": nullok}
     # Fixpoint rounds (#86): the pass-through signals (find_gen_param_use /
     # find_dict_param_use) read CALLEES' ptypes, which are definition-order
     # dependent on the first pass. Re-derive ptypes until stable (chains are
@@ -3796,10 +3951,13 @@ define emit_program(ast) as:
     # never pass a boxed value into a num-defaulted param.
     # record returned-dict field maps first — call-site widening consults
     # them to type `cfg.path` style arguments (#86)
-    for k in range of (len of funcs):
-        local rff is funcs[k]
-        local rffe is g_funcs[rff[1]]
-        rffe["retfields"] is func_retfields of rff
+    local rfr is 0
+    loop while rfr < 2:
+        for k in range of (len of funcs):
+            local rff is funcs[k]
+            local rffe is g_funcs[rff[1]]
+            rffe["retfields"] is func_retfields of rff
+        rfr is rfr + 1
     widen_ptypes of [funcs, rest]
     # Return-type inference reads the param classes (a function returning a
     # param returns ITS type), so it must be re-derived after widening —
@@ -3815,11 +3973,14 @@ define emit_program(ast) as:
             local rpt is (g_funcs[rfn[1]])["ptypes"]
             local rbt is {}
             local rgen is {}
+            local rdict is {}
             for p in range of (len of rfn[2]):
                 if (rpt[p]) == "buf":
                     rbt[((rfn[2])[p])] is 1
                 if (rpt[p]) == "gen":
                     rgen[((rfn[2])[p])] is 1
+                if (rpt[p]) == "dict":
+                    rdict[((rfn[2])[p])] is 1
             # local buffers count too — the original build merges
             # `infer_buffers of body` into ffbt, and omitting it here made a
             # buffer-returning function re-derive as `double` while the
@@ -3829,7 +3990,7 @@ define emit_program(ast) as:
             for j in range of (len of rlbn):
                 rbt[(rlbn[j])] is 1
             local rentry is g_funcs[rfn[1]]
-            local newret is func_ret_type of [rfn, rbt, rgen]
+            local newret is func_ret_type of [rfn, rbt, rgen, rdict]
             if newret != rentry["ret"]:
                 rchanged is 1
                 rentry["ret"] is newret
