@@ -1,0 +1,36 @@
+# #86: call-site widening of parameter classes. Each callee's param has NO
+# body evidence of its type — inference defaults to numeric and only the
+# CALL SITE proves otherwise. Pre-widening these emitted numeric reads of
+# boxed values (hard error or garbage).
+define takes_list(xs) as:
+    out is []
+    for v in xs:
+        append of [out, v]
+    return len of out
+
+define takes_str(s) as:
+    return s
+
+define passthru(v) as:
+    return takes_str of v
+
+define zero_arg_idiom(n) as:
+    n is 7
+    return n * 2
+
+lst is [1, 2, 3, 4]
+print of (takes_list of lst)
+print of (takes_list of ([5, 6]))
+print of (takes_str of "hello")
+print of (passthru of "chained")
+print of (zero_arg_idiom of null)
+
+define numeric_stays_numeric(k) as:
+    total is 0
+    i is 0
+    loop while i < k:
+        total is total + i
+        i is i + 1
+    return total
+
+print of (numeric_stays_numeric of 5)

@@ -2345,6 +2345,15 @@ define is_boxed_node(node) as:
     local t is n[0]
     if (t == "list") or (t == "str") or (t == "dict") or (t == "null"):
         return 1
+    if t == "call":
+        # returning ANOTHER function's result: boxed iff that function is
+        # (#86 — `return takes_str of v` must not be declared double, which
+        # coerced the string through aot_num and returned 0). The g_funcs
+        # ret fixpoint in emit_program re-derives this until stable.
+        local c is unwrap of n[1]
+        if (c[0] == "ident") and (g_funcs[c[1]] != null):
+            if ((g_funcs[c[1]])["ret"]) == "Value*":
+                return 1
     return 0
 
 # Collect EVERY return expression in a body (not just the first), recursing the
@@ -2581,6 +2590,31 @@ define find_str_builtin_use(node, name) as:
 # Is `name` read in a genuinely NUMERIC position (arithmetic/comparison
 # operand, index expression, unary minus)? Used to keep the append-arg
 # signal below from demoting numeric params that also get appended.
+# Direct numeric evidence: arithmetic/comparison operand or index
+# expression. Deliberately does NOT count "passed to a numeric param"
+# (see local_gen_map).
+define find_numeric_use_direct(node, name) as:
+    if (type of node) != "list":
+        return 0
+    if (len of node) == 0:
+        return 0
+    if node[0] == "binop":
+        if (NUMONLY_OPS[node[1]] == 1) or (node[1] == "<") or (node[1] == ">") or (node[1] == "<=") or (node[1] == ">="):
+            local l is unwrap of node[2]
+            local r is unwrap of node[3]
+            if (l[0] == "ident") and (l[1] == name):
+                return 1
+            if (r[0] == "ident") and (r[1] == name):
+                return 1
+    if node[0] == "index":
+        local ix is unwrap of node[2]
+        if (ix[0] == "ident") and (ix[1] == name):
+            return 1
+    for k in range of (len of node):
+        if (find_numeric_use_direct of [node[k], name]) == 1:
+            return 1
+    return 0
+
 define find_numeric_use(node, name) as:
     if (type of node) != "list":
         return 0
@@ -2854,6 +2888,174 @@ define func_ptypes(fn) as:
         pt is (append of [pt, cls])
     return pt
 
+# ---- call-site widening of parameter classes (#86) ----
+#
+# func_ptypes infers each param's class from its OWN BODY and defaults to
+# "num" when the body shows no evidence. That default is a silent wrong
+# emission when a caller actually passes a string/list/dict: a numeric
+# read of a boxed value is either a hard runtime error or garbage.
+#
+# This post-pass adds the missing half — evidence from CALL SITES — as a
+# monotone widening (num -> gen only, never the reverse), iterated to a
+# fixpoint so a value flowing through a chain of pass-through functions
+# widens every param on the path. Two conditions keep it sound:
+#
+#   1. the body must show NO numeric use of the param (arithmetic,
+#      comparison, index expression, or a numeric-param call arg) —
+#      widening a genuinely numeric param would emit pointer arithmetic;
+#   2. the argument must be PROVABLY non-numeric.
+#
+# Provably non-numeric means: a str or dict LITERAL, or an ident that the
+# caller already classifies dict/gen. Deliberately NOT: `null` (that is
+# the zero-arg `f of null` idiom, #69 — it means "no argument", not "a
+# null value") and NOT a bare `list` argument node (that is the argument
+# list itself under the #405 one-call rule). Misreading those two broke
+# t51_nullcall / t54_generic_params / t56_forvar_unbox on the first
+# attempt; they are the reason this pass is conservative by construction.
+#
+# Anything not provably non-numeric contributes NO constraint, so a
+# program that never passes a boxed value into a num-defaulted param
+# compiles exactly as it did before this pass existed.
+
+# The class of an argument expression as seen from `caller_pt` (the
+# caller's param classes): "num" | "gen" | "unknown".
+define arg_class(node, caller_pt, caller_params, caller_locals) as:
+    local e is unwrap of node
+    if (len of e) == 0:
+        return "unknown"
+    local t is e[0]
+    if t == "str":
+        return "gen"
+    if t == "dict":
+        return "gen"
+    if t == "list":
+        # Safe HERE (unlike a raw argument node): widen_scan passes only
+        # already-unpacked elements, so a list node in this position is a
+        # genuine nested list literal, not the #405 argument list.
+        return "gen"
+    if t == "num":
+        return "num"
+    if t == "ident":
+        for k in range of (len of caller_params):
+            if (caller_params[k]) == e[1]:
+                local c is caller_pt[k]
+                if (c == "dict") or (c == "gen"):
+                    return "gen"
+                if c == "num":
+                    return "num"
+                return "unknown"
+        if caller_locals[e[1]] == "gen":
+            return "gen"
+        return "unknown"
+    return "unknown"
+
+# Boxed LOCALS of a function body: a name whose assignments include a
+# list/dict/str literal, or a call to a Value*-returning user function, is
+# a boxed value — the other half of the call-site evidence (EigenMiniSat's
+# `out is []` / `asg is copy_assignment of ...` shapes). Numeric-used
+# names are excluded: a name doing arithmetic is not widened on our say-so.
+define local_gen_map(body) as:
+    local out is {}
+    local assigns is collect_assigns of [body, {}]
+    local names is keys of assigns
+    for i in range of (len of names):
+        local v is names[i]
+        local rhss is assigns[v]
+        local isgen is 0
+        for j in range of (len of rhss):
+            local r is unwrap of rhss[j]
+            if (len of r) > 0:
+                if (r[0] == "str") or (r[0] == "dict") or (r[0] == "list"):
+                    isgen is 1
+                if r[0] == "call":
+                    local rc is unwrap of r[1]
+                    if (rc[0] == "ident") and (g_funcs[rc[1]] != null):
+                        if ((g_funcs[rc[1]])["ret"]) == "Value*":
+                            isgen is 1
+        # DIRECT numeric evidence only (arithmetic / index position). Using
+        # the full find_numeric_use here deadlocks: "passed to a num param"
+        # counts as numeric, but that param's class is exactly what this
+        # evidence is meant to decide, so neither ever moves.
+        if (isgen == 1) and ((find_numeric_use_direct of [body, v]) == 0):
+            out[v] is "gen"
+    return out
+
+# Scan one function body for calls, widening callee params. Returns 1 if
+# anything changed.
+define widen_scan(node, caller_pt, caller_params, caller_locals) as:
+    if (type of node) != "list":
+        return 0
+    if (len of node) == 0:
+        return 0
+    local changed is 0
+    if node[0] == "call":
+        local callee is unwrap of node[1]
+        if callee[0] == "ident":
+            local cf is g_funcs[callee[1]]
+            if cf != null:
+                local arg is unwrap of node[2]
+                local elems is []
+                local skip is 0
+                if arg[0] == "null":
+                    # the zero-arg idiom: no constraint at all
+                    skip is 1
+                elif (arg[0] == "list") and ((len of arg) == 3):
+                    elems is [arg]
+                elif arg[0] == "list":
+                    elems is arg[1]
+                else:
+                    elems is [arg]
+                if skip == 0:
+                    local cpt is cf["ptypes"]
+                    for k in range of (len of elems):
+                        if k < (len of cpt):
+                            if (cpt[k]) == "num":
+                                if (arg_class of [elems[k], caller_pt, caller_params, caller_locals]) == "gen":
+                                    cpt[k] is "gen"
+                                    changed is 1
+    for k2 in range of (len of node):
+        if (widen_scan of [node[k2], caller_pt, caller_params, caller_locals]) == 1:
+            changed is 1
+    return changed
+
+# Fixpoint over all user functions plus the module body.
+define widen_ptypes(funcs, rest) as:
+    local round is 0
+    loop while round < 8:
+        local changed is 0
+        # Pins are recomputed EVERY round from the CURRENT classes: a
+        # param passed into a callee's num param counts as a numeric use,
+        # so pins must dissolve as that callee widens. Computing them once
+        # up front froze pass-through params numeric forever (t58's
+        # `passthru`).
+        local pinned is {}
+        for k0 in range of (len of funcs):
+            local fn0 is funcs[k0]
+            local pins is {}
+            for p0 in range of (len of fn0[2]):
+                if (find_numeric_use_direct of [fn0[3], (fn0[2])[p0]]) == 1:
+                    pins[(str of p0)] is 1
+            pinned[fn0[1]] is pins
+        # snapshot pinned classes so a widening cannot violate them
+        for k in range of (len of funcs):
+            local fn2 is funcs[k]
+            if (widen_scan of [fn2[3], (g_funcs[fn2[1]])["ptypes"], fn2[2], local_gen_map of fn2[3]]) == 1:
+                changed is 1
+        if (widen_scan of [rest, [], [], local_gen_map of rest]) == 1:
+            changed is 1
+        # restore any param the body proves numeric (pin wins over widening)
+        for k in range of (len of funcs):
+            local fn3 is funcs[k]
+            local pt3 is (g_funcs[fn3[1]])["ptypes"]
+            local pins3 is pinned[fn3[1]]
+            for p in range of (len of pt3):
+                if (pins3[(str of p)] == 1) and ((pt3[p]) == "gen"):
+                    pt3[p] is "num"
+        if changed == 0:
+            round is 8
+        round is round + 1
+    return 0
+
 # args for a call, each emitted per its param type (buffer var name | numeric)
 define emit_args(node, fname, nm, bt) as:
     local arg is unwrap of node[2]
@@ -2885,6 +3087,11 @@ define emit_args(node, fname, nm, bt) as:
         if ((g_funcs[fname])["nullok"]) == 1:
             return "0"
         throw of ("AOT: zero-arg call to '" + fname + "' — the callee reads its parameter's incoming value (the VM binds null, no C equivalent); only a dead single param (the zero-param define idiom) is supported")
+    if (len of elems) > (len of ptypes):
+        # more args than params: the VM drops extras, but emitting a C call
+        # with extra arguments is a hard compile error and indexing ptypes
+        # past its end used to crash the emitter with an index error.
+        throw of ("AOT: call to '" + fname + "' passes " + (str of (len of elems)) + " arguments to " + (str of (len of ptypes)) + " parameters (the VM drops extras; parenthesize a literal list to pass it whole)")
     local s is ""
     for k in range of (len of elems):
         if k > 0:
@@ -3467,6 +3674,46 @@ define emit_program(ast) as:
         if fp_changed == 0:
             fp_round is 4
         fp_round is fp_round + 1
+    # (#86) call-site widening: add the evidence body-only inference cannot
+    # see, monotonically (num -> gen), to a fixpoint. No-op on programs that
+    # never pass a boxed value into a num-defaulted param.
+    widen_ptypes of [funcs, rest]
+    # Return-type inference reads the param classes (a function returning a
+    # param returns ITS type), so it must be re-derived after widening —
+    # otherwise a widened param returned as `double` yields 0 (t58's
+    # `takes_str`).
+    # (a function returning another function's result depends on THAT
+    # function's recomputed return type, so iterate to a fixpoint)
+    local rr is 0
+    loop while rr < 6:
+        local rchanged is 0
+        for k in range of (len of funcs):
+            local rfn is funcs[k]
+            local rpt is (g_funcs[rfn[1]])["ptypes"]
+            local rbt is {}
+            local rgen is {}
+            for p in range of (len of rfn[2]):
+                if (rpt[p]) == "buf":
+                    rbt[((rfn[2])[p])] is 1
+                if (rpt[p]) == "gen":
+                    rgen[((rfn[2])[p])] is 1
+            # local buffers count too — the original build merges
+            # `infer_buffers of body` into ffbt, and omitting it here made a
+            # buffer-returning function re-derive as `double` while the
+            # emitter still returned a Value* (t16_bufret).
+            local rlb is infer_buffers of rfn[3]
+            local rlbn is keys of rlb
+            for j in range of (len of rlbn):
+                rbt[(rlbn[j])] is 1
+            local rentry is g_funcs[rfn[1]]
+            local newret is func_ret_type of [rfn, rbt, rgen]
+            if newret != rentry["ret"]:
+                rchanged is 1
+                rentry["ret"] is newret
+            rentry["retbuf"] is func_ret_buf of [rfn, rbt]
+        if rchanged == 0:
+            rr is 6
+        rr is rr + 1
     # Module globals are computed first so functions can READ them (they become
     # file-scope vars in C; a function's params/locals shadow same-named globals).
     local bt is infer_buffers of rest
