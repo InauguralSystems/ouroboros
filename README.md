@@ -100,7 +100,17 @@ performance arc.
 
 ## Running
 
-    ./eigs ouroboros.eigs path/to/program.eigs    # compile + run
-    ./test/run.sh                                  # parity suite
+`eigs` is an untracked symlink to the [EigenScript](https://github.com/InauguralSystems/EigenScript)
+interpreter — clone and build it as a sibling first (the CI pin in
+`.github/workflows/tests.yml` records the exact ref both suites run against):
 
-Private until EigenScript clears the GitHub Linguist threshold.
+    git clone https://github.com/InauguralSystems/EigenScript ../EigenScript
+    make -C ../EigenScript
+    ln -s ../EigenScript/src/eigenscript eigs
+
+    ./eigs ouroboros.eigs path/to/program.eigs    # compile + run
+    ./test/run.sh                                  # parity suite (vs the C evaluator)
+
+## License
+
+MIT — see [LICENSE](LICENSE).
