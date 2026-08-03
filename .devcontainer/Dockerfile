@@ -24,14 +24,22 @@ RUN apt-get update \
 # Build + install EigenScript at the pinned ref onto /usr/local (binary on
 # PATH, stdlib at /usr/local/lib/eigenscript — found relative to the binary).
 # EIGS_REF may be a tag, branch, or commit SHA (fetched directly, so an
-# immutable tag/SHA stays reproducible). Pinned to v0.27.0 — the compilers
-# mirror this release's call rule: a bare literal list after 'of' is always
-# an argument list at every count (#405, v0.27.0), parens still pass one
-# argument (#355, v0.24.0); plus statement terminator (#326), full-postfix
-# prev/at + question-word fallbacks (#328), out-of-range OP_SET_LOCAL raises
-# (#348), and integer-only hex lexed-not-strtod (v0.25.0). Bump this ARG and
-# the frontend/codegen together (the deferred-mirror rule).
-ARG EIGS_REF=v0.34.0
+# immutable tag/SHA stays reproducible). The compilers mirror this release's
+# call rule: a bare literal list after 'of' is always an argument list at every
+# count (#405, v0.27.0), parens still pass one argument (#355, v0.24.0); plus
+# statement terminator (#326), full-postfix prev/at + question-word fallbacks
+# (#328), out-of-range OP_SET_LOCAL raises (#348), and integer-only hex
+# lexed-not-strtod (v0.25.0). Bump this ARG and the frontend/codegen together
+# (the deferred-mirror rule).
+#
+# v0.35.2: the release that fixes upstream #830 — #827 had narrowed assignment
+# history to an armed-name set only src/compiler.c could populate, so the AOT
+# (which emits C and never runs the bytecode compiler) got null from every
+# `prev of` / `at`-qualified read. #832 re-based the filter on chunk
+# provenance (EigsChunk.compiler_scanned) and made trace_assign the
+# unconditional producer-facing entry point, which is what aot_rt.h already
+# calls — so there is nothing to mirror on this side.
+ARG EIGS_REF=v0.35.2
 RUN mkdir -p /opt/eigenscript-src && cd /opt/eigenscript-src && git init -q \
  && git remote add origin https://github.com/InauguralSystems/EigenScript.git \
  && git fetch -q --depth 1 origin "${EIGS_REF}" && git checkout -q FETCH_HEAD \
