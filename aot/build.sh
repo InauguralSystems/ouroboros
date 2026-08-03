@@ -25,7 +25,13 @@ DEFS="-DEIGENSCRIPT_EXT_HTTP=0 -DEIGENSCRIPT_EXT_MODEL=0 -DEIGENSCRIPT_EXT_DB=0 
 # guarded path's vguard already blocks fusion; this makes the elided path match.
 CFLAGS="-O3 -ffp-contract=off ${AOT_ARCH:--march=native}"   # widest host SIMD; AOT_ARCH overrides (e.g. -msse2 to force 2-wide)
 LIB="build/libeigsrt.a"
-CORE="eigenscript lexer parser builtins builtins_tensor hash arena state strbuf \
+# CORE must stay exactly upstream's `SOURCES` minus `CLI_ONLY` (Makefile). It
+# has now drifted twice (ext_http.c after a VM refactor; builtins_host.c when
+# upstream #741/#812 split the host-only builtins — including read_file_util,
+# which eigs_embed.c calls — into their own TU at v0.35.0). The symptom is a
+# link error at pin-bump time, which is loud but burns a sweep: re-diff this
+# list against the Makefile at every EIGS_REF bump.
+CORE="eigenscript lexer parser builtins builtins_host builtins_tensor hash arena state strbuf \
       ext_store fmt lint chunk compiler vm jit trace eigs_embed"
 
 # (Re)build the runtime static lib if missing or any runtime .c is newer.
