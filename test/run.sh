@@ -8,6 +8,21 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 EIGS="${EIGS:-./eigs}"
+
+# The oracle compares two stdouts. If the interpreter is missing, both are
+# EMPTY and every comparison passes — 57 PASS lines on a fresh clone, because
+# `./eigs` is a gitignored dev symlink. A parity suite that proves self-hosting
+# by diffing silence against silence is the one failure mode that discredits
+# every other number here, so make a missing interpreter a hard stop rather
+# than a green run. (EigenScript has the upstream twin of this guard: test
+# [99d], the #681 binary-fingerprint check.)
+if ! command -v "$EIGS" >/dev/null 2>&1 && ! [ -x "$EIGS" ]; then
+    echo "FATAL: EIGS is not executable: $EIGS" >&2
+    echo "  ./eigs is a gitignored dev symlink; on a fresh clone either create it" >&2
+    echo "  (ln -s ../EigenScript/src/eigenscript eigs) or run: EIGS=eigenscript $0" >&2
+    exit 2
+fi
+
 fail=0
 n=0
 
