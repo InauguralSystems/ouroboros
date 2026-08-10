@@ -29,6 +29,33 @@ for x, y in zip(a, b):
 sys.exit(0)
 PY
       ;;
+    *_err*)
+      # Programs that RAISE. The AOT cannot reproduce the VM's uncaught-error
+      # diagnostic: the source excerpt + column caret are added by the VM's
+      # CHECK_ERROR from the failing instruction's bytecode offset (#407), and
+      # the `at <frame>` trace comes from vm_print_stack_trace walking VM
+      # frames — neither exists in a native binary. The AOT also has no line
+      # info unless the program is traced (the emitter stamps
+      # g_trace_current_line only under g_traced), so it reports line 0.
+      #
+      # What must still match EXACTLY is the part that is semantics rather
+      # than presentation: everything the program printed before it died, and
+      # the error's kind and message text. That is the property this class
+      # exists to defend — an AOT that RUNS PAST a line the VM stops at is the
+      # silent-wrong-answer bug (ouroboros#96), and it is caught here.
+      #
+      # Normalization: drop the VM-only excerpt/caret/`at ...` lines and blank
+      # the line number in the `Error line N:` frame. Nothing else is touched,
+      # so a divergence in message text, error kind, ordering, or any stdout
+      # line still fails. Diagnostic parity itself is tracked separately —
+      # when the AOT can site its errors, delete this class and re-diff.
+      norm() {
+        printf '%s\n' "$1" \
+          | grep -vE '^\s+[0-9]+ \||^\s+\|.*\^|^  at ' \
+          | sed -E 's/^Error line [0-9]+:/Error line:/'
+      }
+      [ "$(norm "$ref")" = "$(norm "$got")" ] && match=1
+      ;;
     *) [ "$ref" = "$got" ] && match=1 ;;
   esac
   if [ "$match" -eq 1 ]; then
