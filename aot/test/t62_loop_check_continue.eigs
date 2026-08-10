@@ -1,0 +1,33 @@
+# ouroboros#96: the per-iteration loop check (stall / cap) sits on the
+# BACK-EDGE, after the body — compiler.c emits
+#   loop_start: cond; JUMP_IF_FALSE exit; body; POP; CHECK exit; JUMP loop_start
+# Emitting it before the body instead cost exactly one body execution
+# (t31: steps=99 vs the VM's 100).
+#
+# `continue` is the second half of that contract and the reason placement
+# cannot simply be "somewhere in the loop": the VM's continue_target is
+# loop_start, which is AHEAD of the check, so a continued iteration skips
+# it. Emitting the check last makes C's `continue` do the same thing for
+# free — this program fails if the AOT ever hoists it back to the top.
+
+# x is observed EVERY iteration and never moves, so the trajectory stays quiet
+# and the loop ends through the STALL CHECK rather than through the condition —
+# which is what makes the check's position observable at all. A third of the
+# iterations then `continue` past it.
+#
+# The skips counter increments under `unobserved:` deliberately: a bare
+# predicate reads the LAST-OBSERVED binding, so an observed `skips is skips + 1`
+# would re-point `diverging` at a growing counter and the loop would exit
+# through the condition instead — which is exactly how the first draft of this
+# test managed to pass with the bug still in.
+steps is 0
+skips is 0
+loop while not diverging:
+    steps is steps + 1
+    x is 5.0
+    if (steps % 3) == 0:
+        unobserved:
+            skips is skips + 1
+        continue
+print of ("steps=" + (str of steps))
+print of ("skips=" + (str of skips))

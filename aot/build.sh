@@ -34,15 +34,33 @@ LIB="build/libeigsrt.a"
 CORE="eigenscript lexer parser builtins builtins_host builtins_tensor hash arena state strbuf \
       ext_store fmt lint chunk compiler vm jit trace eigs_embed"
 
-# (Re)build the runtime static lib if missing or any runtime .c is newer.
+# (Re)build the runtime static lib if missing, or if the runtime it was built
+# FROM has changed at all.
+#
+# "Any .c newer than the lib" alone is not sufficient, and the gap is silent
+# and expensive (ouroboros#96): building once with EIGS_DIR=<old-tag worktree>
+# leaves a lib from that tag, and switching EIGS_DIR back to a checkout whose
+# sources are OLDER than the lib satisfies the newer-check trivially, so every
+# subsequent binary links the wrong runtime while the harness diffs it against
+# the current VM. That mismatch shows up as a scatter of unrelated semantic
+# failures — four observer tests, in the case that caught this — pointing
+# nowhere near the actual cause.
+#
+# The stamp is identity, not recency: the resolved source path plus a signature
+# over the runtime's file sizes and mtimes. Any EIGS_DIR switch, in either
+# direction, invalidates it.
 mkdir -p build
-if [ ! -f "$LIB" ] || [ -n "$(find "$SRC" -name '*.c' -newer "$LIB" 2>/dev/null)" ]; then
+STAMP="build/.libsrc"
+SIG="$(cd "$SRC" && printf '%s\n' "$(pwd -P)" && ls -l *.c *.h 2>/dev/null | awk '{print $5, $9}')"
+if [ ! -f "$LIB" ] || [ ! -f "$STAMP" ] || [ "$SIG" != "$(cat "$STAMP" 2>/dev/null)" ] \
+   || [ -n "$(find "$SRC" -name '*.c' -newer "$LIB" 2>/dev/null)" ]; then
     objs=""
     for f in $CORE; do
         eval gcc $CFLAGS $DEFS -I"$SRC" -c "$SRC/$f.c" -o "build/$f.o"
         objs="$objs build/$f.o"
     done
     ar rcs "$LIB" $objs
+    printf '%s' "$SIG" > "$STAMP"
 fi
 
 # Transpile + link against the cached lib.
