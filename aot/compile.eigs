@@ -1310,18 +1310,28 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
         return s + "\n"
     if t == "loop":
         # Observed programs: every loop carries the VM's per-iteration halting
-        # (mirrors OP_LOOP_STALL_CHECK / OP_LOOP_CAP_CHECK, between cond and body).
-        # An observer-based condition (contains a predicate) gets the stall check
-        # (can halt while the predicate still holds); a plain condition gets the
-        # cap only. No vectorization here — observed numerics are env-boxed.
+        # (mirrors OP_LOOP_STALL_CHECK / OP_LOOP_CAP_CHECK). An observer-based
+        # condition (contains a predicate) gets the stall check (can halt while
+        # the predicate still holds); a plain condition gets the cap only. No
+        # vectorization here — observed numerics are env-boxed.
+        #
+        # PLACEMENT IS LOAD-BEARING: the check goes AFTER the body, on the
+        # back-edge, not between cond and body. compiler.c emits
+        #     loop_start: cond; JUMP_IF_FALSE exit; body; POP;
+        #                 LOOP_STALL_CHECK exit; JUMP loop_start
+        # so the body runs one more time than a before-the-body check allows —
+        # that was exactly the ouroboros#96 off-by-one (steps=99 vs the VM's
+        # 100). Emitting it last also makes C's `continue` skip the check, which
+        # is what the VM does too: its continue_target is loop_start, ahead of
+        # the check.
         if g_observed == 1:
             local chk is "eigs_loop_cap_step(__eigs_g)"
             if (has_predicate of node[1]) == 1:
                 chk is "eigs_loop_stall_step(__eigs_g)"
             local olg is loop_gf of [node, minits]
             local os is ind + "while (" + (emit_cond of [node[1], nm, bt]) + ") {\n"
-            os is os + ind + "    if (" + chk + ") break;\n"
             os is os + (emit_stmts of [node[2], ind + "    ", nm, bt, minits, olg])
+            os is os + ind + "    if (" + chk + ") break;\n"
             return os + ind + "}\n"
         local vinfo is vec_loop of [node, nm, bt]
         if vinfo != null:
