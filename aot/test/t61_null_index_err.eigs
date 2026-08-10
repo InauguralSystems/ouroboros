@@ -1,0 +1,15 @@
+# The index-side twin of t60. `aot_index_get` mirrored the VM's four
+# (target, index) branches but omitted its final else, so ANY unindexable
+# target answered null instead of raising "cannot index <type>" — null
+# above all. Found while fixing the #898 dot read (ouroboros#96); the two
+# need separate files because the first raise ends the program.
+
+xs is [10, 20, 30]
+print of xs[1]
+d is {"k": "v"}
+print of d["k"]
+print of d["missing"]
+
+n is null
+print of n["k"]
+print of "UNREACHABLE — the VM stops above; an AOT that prints this is the bug"

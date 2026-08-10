@@ -43,7 +43,11 @@ print of len of holder.xs
 
 d is {"a": 1}
 print of d.missing
+
+# A null-typed target is NOT a dict: reading a field off it raises
+# (EigenScript #898), so those cases moved to t60_null_access_err.eigs —
+# everything after the raise was dead code here. Setting through null is
+# still a silent no-op, which is why it stays reachable:
 n is null
-print of n.f
 n.f is 3
 print of "null-set is a no-op"

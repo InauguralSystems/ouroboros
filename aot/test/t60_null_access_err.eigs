@@ -1,0 +1,29 @@
+# EigenScript #898: null is not a dict. Reading a field off a null-typed
+# target used to answer null silently (optional-chaining through a miss);
+# it now raises, and the AOT must raise in the same place with the same
+# kind and message rather than answering and running on.
+#
+# The `_err` in the filename selects the harness's raising class: stdout
+# before the death and the error message must match the VM exactly, while
+# the VM-only source excerpt / caret / stack-trace lines are normalized
+# away (see aot/test/run.sh — the AOT has no bytecode offset to site from).
+#
+# The index-side twin (`null["k"]` -> "cannot index null") is the same bug
+# one layer over: aot_index_get was missing the oracle's final else, so it
+# answered null for every unindexable target, not just this one. It cannot
+# share this file — the first raise ends the program — so it lives in
+# t61_null_index_err.eigs.
+
+d is {"a": 1}
+print of d.a
+print of d.missing
+
+# reachable: setting a field through null stays a silent no-op (#898
+# changed the READ only — the AOT must not "symmetrize" this)
+n is null
+n.f is 3
+print of "null-set is a no-op"
+
+# and here the program dies
+print of n.f
+print of "UNREACHABLE — the VM stops above; an AOT that prints this is the bug"

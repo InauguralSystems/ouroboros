@@ -679,6 +679,11 @@ static Value *aot_index_get(Value *target, Value *idx) {
             result = make_num(target->data.buffer.data[i]);
         else
             rt_error(EK_INDEX, 0, "buffer index %d out of range (length %d)", i, target->data.buffer.count);
+    } else {
+        /* The oracle's final else (vm.c ~2018). Missing here, an unindexable
+         * target — `null["k"]` above all, the index-side twin of the #898 dot
+         * read — answered null instead of raising. */
+        rt_error(EK_TYPE, 0, "cannot index %s", val_type_name(target->type));
     }
     val_decref(target);
     val_decref(idx);
@@ -734,18 +739,22 @@ static void aot_index_set(Value *target, Value *idx, Value *val) {
 }
 
 /* ---- dot field access (#86) — mirrors the VM's field opcodes exactly ----
- * READ (OP-get-field, vm.c ~1020): dict -> the field's value (missing ->
- * null); a NULL-typed target yields null SILENTLY; any other type raises
- * EK_TYPE "cannot access field". SET (vm.c ~1127): dict -> set; a
- * NULL-typed target is a silent NO-OP; any other type raises EK_TYPE
- * "cannot set field". Both consume the owned target (emit_val results are
- * owned, same convention as aot_index_get); dot_get returns owned. */
+ * READ (vm.c ~1178): dict -> the field's value (missing -> null); ANY other
+ * type, null included, raises EK_TYPE "cannot access field". The null
+ * exemption was removed upstream by EigenScript #898 ("null is not a dict")
+ * — optional-chaining through a miss is now an error rather than a quiet
+ * null, so the AOT must raise where it used to answer. SET (vm.c ~1285):
+ * dict -> set; a NULL-typed target is STILL a silent no-op (#898 changed the
+ * read only — do not "symmetrize" this, it would diverge from the oracle);
+ * any other type raises EK_TYPE "cannot set field". Both consume the owned
+ * target (emit_val results are owned, same convention as aot_index_get);
+ * dot_get returns owned. */
 static Value *aot_dot_get(Value *target, const char *key) {
     Value *result = NULL;
     if (target && target->type == VAL_DICT) {
         Value *v = dict_get(target, key);
         if (v) { result = v; val_incref(v); }
-    } else if (target && target->type != VAL_NULL) {
+    } else if (target) {
         rt_error(EK_TYPE, 0, "cannot access field '%s' on %s",
                  key, val_type_name(target->type));
     }
