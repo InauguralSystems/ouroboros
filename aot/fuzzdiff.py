@@ -235,9 +235,28 @@ def gen_recursion_str(r):
             f"print of (f of {depth})\n"
             "print of (f of 0)\n")
 
+def gen_null_death(r):
+    # The t60 shape: print real work, then die on a null field/index access.
+    # BOTH sides must die -- the AOT's death is currently a SIGSEGV after the
+    # message (#103), which still counts as nonzero -- with byte-exact
+    # pre-death stdout and the same normalized error. This is the generator
+    # that exercises the error-class BOTH-DIE comparison path (the other
+    # error-class shapes all build-reject or run past).
+    lines = [f"x is {_pint(r)}",
+             f"print of (x {_addop(r)} {_pint(r)})"]
+    if r.random() < 0.3:
+        # Pre-death stdout that DIVERGES today (#100 item 1): the deaths
+        # match but the printed work does not -- expected red until #100.
+        lines.append(f'print of ("{_word(r)}" < "{_word(r)}")')
+    lines += ["n is null",
+              r.choice(['print of n.f', 'print of n["k"]']),
+              'print of "UNREACHABLE — the VM stops above"']
+    return "\n".join(lines) + "\n"
+
 GENERATORS = [gen_precedence, gen_sci_literals, gen_arith, gen_function_returns,
               gen_loop_accum, gen_fstring, gen_soft_keyword_idents, gen_list_ops,
-              gen_str_compare, gen_dict_ops, gen_loop_while, gen_recursion_str]
+              gen_str_compare, gen_dict_ops, gen_loop_while, gen_recursion_str,
+              gen_null_death]
 
 
 # ---- harness ---------------------------------------------------------------
@@ -250,7 +269,17 @@ def run_aot(prog_path, out_path):
     b = subprocess.run(["bash", os.path.join(HERE, "build.sh"), prog_path, out_path],
                        cwd=HERE, capture_output=True, text=True, timeout=120)
     if b.returncode != 0 or not os.path.exists(out_path):
-        return None, None, None, (b.stderr or b.stdout).strip().splitlines()[-1:] or [""]
+        # Surface the THROW message, not the last stack frame: the transpiler
+        # dies with the message followed by excerpt/caret/`at ...` lines, and
+        # the old [-1:] reported "  at <module> (line 4222)" for every gap.
+        # Filter with the same discipline as norm_err, keep the first
+        # substantive line (an Error/AOT: line when present).
+        txt = norm_err((b.stderr or "") + "\n" + (b.stdout or ""))
+        lines = [ln for ln in txt.splitlines() if ln.strip()]
+        msg = next((ln for ln in lines
+                    if "rror" in ln or ln.lstrip().startswith("AOT:")),
+                   lines[0] if lines else "")
+        return None, None, None, [msg]
     rp = subprocess.run([out_path], capture_output=True, text=True, timeout=20)
     return rp.stdout, rp.stderr, rp.returncode, None
 
@@ -285,7 +314,7 @@ def main():
           "ahead of the pin yields non-actionable main-vs-pin 'drift')")
 
     divergences, run_pasts, gaps = [], [], []
-    tested, err_tested, err_rejected = 0, 0, 0
+    tested, err_tested, err_rejected, err_both_die = 0, 0, 0, 0
     tmp = tempfile.mkdtemp(prefix="fuzzdiff.")
     prog_path = os.path.join(tmp, "p.eigs")
     out_path = os.path.join(tmp, "p.bin")
@@ -313,6 +342,8 @@ def main():
                 divergences.append((gen.__name__, prog,
                                     vm_out + vm_err, aot_out + aot_err))
                 mark = "D"
+            else:
+                err_both_die += 1      # both died, stdout + normalized error match
         else:
             tested += 1
             aot_out, aot_err, aot_rc, err = run_aot(prog_path, out_path)
@@ -341,7 +372,8 @@ def main():
 
     print(f"\n=== fuzzdiff results (seed {seed}) ===")
     print(f"  generated {args.count} | VM-clean tested {tested} | "
-          f"error-class tested {err_tested} (both-reject {err_rejected})")
+          f"error-class tested {err_tested} "
+          f"(both-reject {err_rejected}, both-die matched {err_both_die})")
     print(f"  DIVERGENCES (outputs/deaths differ):    {len(divergences)}")
     print(f"  RUN_PASTS   (VM rejects, AOT exits 0):  {len(run_pasts)}")
     print(f"  AOT_GAPS    (VM ok, AOT build failed):  {len(gaps)}")
