@@ -323,18 +323,27 @@ param, the table a buffer, no type dispatch):
 
 | CRC-32, 64 KiB × 50 | VM | AOT | speedup |
 |---|---|---|---|
-| `checksum.eigs` verbatim (generic, boxed) | 5.34s | 2.70s | **~2.0×**, byte-identical |
-| verbatim, after the spec_audit-driven fix (#65) | 5.34s | 2.14s | **~2.5×**, byte-identical |
-| monomorphic buffer variant | 1.37s | 0.08s | **~17×**, byte-identical |
+| `checksum.eigs` verbatim (generic, boxed) | 6.01s | 2.07s | **~2.9×**, byte-identical |
+| monomorphic buffer variant | 1.36s | 0.092s | **~14.9×**, byte-identical |
+
+Re-measured 2026-08-16 at the **v0.39.0 pin** (n=5 medians, same dev box,
+same workload) after the #100/#103/#107 correctness train and #109's C
+block-scope `local` shadows. The earlier table (v0.2x-era pin) read
+2.0–2.5× generic / 17× mono from VM 5.34s / AOT 2.14s and 1.37s / 0.08s:
+the VM side of the generic workload is ~13% slower at this pin while the
+AOT side held, so the generic ratio ROSE to ~2.9×; the mono binary is
+~15% slower than the old 0.08s (the #107 seams — per-call env plumbing
+and the loud `aot_num_ck`/error-check paths replacing silent coercions —
+are the plausible cost), so the mono ratio eased to ~14.9×.
 
 The honest reading: **genericity is where the VM's overhead lives, so keeping
 it boxed keeps most of that overhead.** In the verbatim module every byte goes
 through `aot_call_name` (env lookup by name → builtin dispatch) for
 `buf_get`/`char_at`/`ord`, and the CRC table is an env-stored list indexed
 through boxed `aot_index_get` — the AOT wins only the bytecode dispatch,
-hence ~2×. The monomorphic variant is the same algorithm with types the
+hence ~3×. The monomorphic variant is the same algorithm with types the
 specializer can see (buffer param, buffer table, integer counters) and lands
-at ~17× — the specialization ladder above is the multiplier, the generic
+at ~15× — the specialization ladder above is the multiplier, the generic
 class is the **coverage**: real polymorphic library code now compiles at all
 (it used to throw at build time), and byte-exactness is preserved either way.
 The next envelope lever, when a consumer needs it, is monomorphization by

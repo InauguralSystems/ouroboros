@@ -1,0 +1,69 @@
+# #109: numeric `local` shadows of module globals get true C block-scope
+# storage (declared at the `local` statement's site). Pins every
+# oracle-probed corner the emission mirrors:
+#   - read AND plain write of the module name BEFORE the `local` line hit
+#     the module binding (the VM chain walk finds the module env — the
+#     frame binding does not exist yet);
+#   - from the `local` line on, reads and follow-up plain writes hit the
+#     shadow; the module binding is untouched;
+#   - a self-referencing decl RHS (`local n is n + 1`) reads the module
+#     value (RHS evaluates before binding);
+#   - a decl nested in a loop body re-binds per iteration, with every use
+#     dominated by the decl;
+#   - recursion gets a fresh shadow per call;
+#   - `local` of a BUILTIN name shadows it without breaking the builtin;
+#   - `local` of a PARAM name rebinds the param (existing slot wins).
+# This program REFUSED to build on pre-#109 main (the #105/#107 blanket
+# module-shadowing-`local` guard), so the parity run is also the proof the
+# envelope actually widened.
+n is 100
+k is 7
+
+define read_before(d) as:
+    print of n
+    n is n - 3
+    local n is 5
+    print of n
+    n is n + 1
+    print of n
+
+define rhs_self(d) as:
+    local n is n + 1
+    print of n
+
+define loop_nested(d) as:
+    local i is 0
+    loop while i < 3:
+        local k is i * 10
+        k is k + d
+        print of k
+        i is i + 1
+
+define recur(d) as:
+    local n is d * 10
+    if d > 0:
+        recur of (d - 1)
+    print of n
+
+define builtin_shadow(d) as:
+    local len is d
+    len is len + 1
+    print of len
+
+define param_rebind(n) as:
+    local n is n + 1
+    print of n
+    n is n * 2
+    print of n
+
+read_before of 0
+print of n
+rhs_self of 0
+print of n
+loop_nested of 4
+print of k
+recur of 2
+builtin_shadow of 41
+print of (len of [1, 2, 3])
+param_rebind of 7
+print of n
