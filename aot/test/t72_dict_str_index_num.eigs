@@ -1,0 +1,9 @@
+# #100 follow-on (fuzz seed 777): a dict read with a STRING index in a
+# numeric context — the boxed-index numeric path used to force the index
+# through emit_num and refused the build.
+d is {"a": 9, "b": 6}
+print of d["b"]
+d["z"] is d["a"] + 5
+print of d["z"]
+for k in ["a", "b"]:
+    print of d[k]

@@ -68,9 +68,11 @@ PY
   # markers are filename SUFFIXES (`*_err.eigs`), not substrings: the old
   # `*_err*` glob silently put t59_sited_errors — a clean rc-0 program — in
   # the raising class, where the normalizer could have eaten a real
-  # divergence. Residual: the _err death codes are not compared for equality —
-  # the VM exits 1 while the AOT dies through its own teardown; code parity
-  # is part of the diagnostic-parity work tracked in the class comment above.
+  # divergence. Since #103 the _err death codes are compared for EQUALITY:
+  # the AOT dies by a clean exit(1) on every uncaught runtime error (the old
+  # SIGSEGV-after-the-message rc-139 teardown was a NULL-VM deref inside
+  # rt_error's stack-trace walk, fixed in aot_rt.h), which is exactly the
+  # VM's uncaught-error exit code.
   if [ "$match" -eq 1 ]; then
     case "$name" in
       *_err.eigs)
@@ -78,6 +80,8 @@ PY
           match=0; why="_err case but the VM exits 0 — stale class, drop the suffix"
         elif [ "$got_rc" -eq 0 ]; then
           match=0; why="VM errors (rc=$ref_rc) but the AOT exits 0 — runs past the error"
+        elif [ "$got_rc" -ne "$ref_rc" ]; then
+          match=0; why="death codes differ (VM $ref_rc, AOT $got_rc) — #103 contract: uncaught errors exit cleanly with the VM's code"
         fi ;;
       *)
         if [ "$ref_rc" -ne 0 ]; then

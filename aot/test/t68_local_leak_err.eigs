@@ -1,0 +1,8 @@
+# #100 item 2 (loud half): a function's boxed local must NOT leak into
+# module scope — the VM raises 'undefined variable' on the post-call read;
+# the old AOT printed the leaked value.
+define g(n) as:
+    msg2 is "leaky"
+    return n + 1
+print of (g of 1)
+print of msg2

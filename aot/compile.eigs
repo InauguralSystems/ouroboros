@@ -203,6 +203,34 @@ g_dict is {}
 # classes. Set per scope.
 g_genp is {}
 
+# ---- per-call local env (#100 item 2) --------------------------------------
+# Boxed FUNCTION locals (string/list/dict/null-valued locals and still-boxed
+# for-in vars) used to live in the ONE global env: recursion clobbered outer
+# frames' locals, and a function's locals leaked into module scope (readable
+# after the call where the VM raises 'undefined variable'). Each function with
+# boxed locals now allocates a fresh `Env* __eigs_l = env_new(NULL)` per CALL
+# (freed on every return path) — the VM's call-frame env, in miniature.
+# g_envloc[name] == 1 routes that name's env traffic to __eigs_l; everything
+# else stays on __eigs_g. Module-bound names (any gnm/gbt key) are deliberately
+# NOT env-local: a plain function-body assign to one is the VM's outward
+# mutation of the module binding. Read tiers mirror the VM's opcodes:
+# __eigs_l reads are GET_LOCAL (miss -> null, an unset slot); __eigs_g reads
+# are GET_NAME (miss -> 'undefined variable', loud).
+g_envloc is {}
+g_envactive is 0
+define envc(name) as:
+    if g_envloc[name] == 1:
+        return "__eigs_l"
+    return "__eigs_g"
+define env_read(name) as:
+    if g_envloc[name] == 1:
+        return "aot_get(__eigs_l, \"" + name + "\")"
+    return "aot_get_named(__eigs_g, \"" + name + "\")"
+define env_readb(name) as:
+    if g_envloc[name] == 1:
+        return "env_get(__eigs_l, \"" + name + "\")"
+    return "aot_getb_named(__eigs_g, \"" + name + "\")"
+
 # A call to a tensor builtin (matmul/add/relu)?
 define is_tensor_call(node) as:
     local n is unwrap of node
@@ -872,9 +900,12 @@ define emit_num(node, nm, bt, raw) as:
     if t == "predicate":
         return "((double)aot_predicate(" + (str of node[1]) + "))"
     if t == "ident":
-        # in an observed program numeric vars live in the env (boxed)
+        # in an observed program numeric vars live in the env (boxed).
+        # CHECKED (#100 item 4): the one branch F-OURO-29 missed — a
+        # non-number read here is a VM raise ("cannot apply ... to str"),
+        # and aot_num's silent 0.0 was the worst-outcome class.
         if g_observed == 1:
-            return "aot_num(aot_get(__eigs_g, \"" + node[1] + "\"))"
+            return "aot_num_ck_at(" + (env_read of node[1]) + ", \"" + (c_escape of (G_CUR_FN[0])) + ": name " + (c_escape of node[1]) + "\")"
         if nm[node[1]] == 1:
             return cn of node[1]
         # A Value-typed C name (buffer/dict/tensor param or local) in a numeric
@@ -895,7 +926,7 @@ define emit_num(node, nm, bt, raw) as:
         # CHECKED (#65 inc. 2): the VM raises when a non-number reaches an
         # arithmetic context; aot_num's silent 0.0 was the worst-outcome
         # class.
-        return "aot_num_ck_at(aot_get(__eigs_g, \"" + node[1] + "\"), \"" + (c_escape of (G_CUR_FN[0])) + ": name " + (c_escape of node[1]) + "\")"
+        return "aot_num_ck_at(" + (env_read of node[1]) + ", \"" + (c_escape of (G_CUR_FN[0])) + ": name " + (c_escape of node[1]) + "\")"
     if t == "unary":
         local uop is node[1]
         local uv is emit_num of [node[2], nm, bt, raw]
@@ -922,7 +953,11 @@ define emit_num(node, nm, bt, raw) as:
         # or a non-ident target like `store.offsets[ci]`, #86) -> boxed
         # index then extract the number.
         if (tgt[0] != "ident") or (bt[tgt[1]] != 1):
-            return "aot_num_ck_at(aot_index_get(" + (emit_val of [node[1], nm, bt]) + ", make_num(" + (emit_num of [node[2], nm, bt, 0]) + ")), \"" + (c_escape of (G_CUR_FN[0])) + ": index read\")"
+            # the index is emitted as a VALUE, not forced numeric: a dict read
+            # in a numeric context (`d["a"] + 5`) has a STRING index —
+            # aot_index_get dispatches on the runtime types exactly like the
+            # VM, and the RESULT is what must be numeric-or-raise here.
+            return "aot_num_ck_at(aot_index_get(" + (emit_val of [node[1], nm, bt]) + ", " + (emit_val of [node[2], nm, bt]) + "), \"" + (c_escape of (G_CUR_FN[0])) + ": index read\")"
         if (is_int_expr of node[2]) == 1:
             return "aot_buf_get_i(" + (cn of tgt[1]) + ", " + (emit_int of node[2]) + ")"
         return "aot_buf_get(" + (cn of tgt[1]) + ", " + (emit_num of [node[2], nm, bt, 0]) + ")"
@@ -1076,7 +1111,7 @@ define emit_val(node, nm, bt) as:
             # box it as a builtin via a generated Value*->Value* wrapper.
             g_fn_as_value[node[1]] is 1
             return "make_builtin(__wrap_" + (cn of node[1]) + ")"
-        return "aot_get(__eigs_g, \"" + node[1] + "\")"
+        return env_read of node[1]
     if t == "index":
         # target[idx] on a boxed value (list/dict/string/buffer). A buffer index
         # with a numeric index is handled by emit_num; this is the boxed path.
@@ -1125,7 +1160,10 @@ define emit_val(node, nm, bt) as:
             # unary-or-tighter, and the emit is position-independent.
             return "make_num(aot_truthy(" + (emit_val of [node[2], nm, bt]) + ") ? 0.0 : 1.0)"
         if uop == "-":
-            return "make_num(-(aot_num(" + (emit_val of [node[2], nm, bt]) + ")))"
+            # OP_NEG exactly (#100 item 5): negate a number, raise the VM's
+            # "cannot negate non-numeric" otherwise — the aot_num coercion
+            # here printed 0 for `-s` on a string where the VM stops.
+            return "aot_neg(" + (emit_val of [node[2], nm, bt]) + ")"
         if uop == "~":
             # numeric at runtime (VM errors otherwise) — emit_num handles boxed
             return "make_num(" + (emit_num of [node, nm, bt, 0]) + ")"
@@ -1212,6 +1250,21 @@ define emit_cond(node, nm, bt) as:
         return "(" + (emit_num of [node, nm, bt, 0]) + " != 0.0)"
     return "aot_truthy(" + (emit_val of [node, nm, bt]) + ")"
 
+# One return statement, honoring the per-call env (#100 item 2): when the
+# function owns an __eigs_l, every return path frees it AFTER the return value
+# is computed into a temp (the value expression may read __eigs_l) and BEFORE
+# control leaves. `pre` carries any extra pre-return cleanup (the tensor
+# frame-pool release).
+define emit_return(ctype, expr, ind, pre) as:
+    if (g_envactive == 0) and (pre == ""):
+        return ind + "return " + expr + ";\n"
+    local s is ind + "{ " + ctype + " _rv = " + expr + ";"
+    if pre != "":
+        s is s + " " + pre
+    if g_envactive == 1:
+        s is s + " env_decref(__eigs_l);"
+    return s + " return _rv; }\n"
+
 define emit_stmts(stmts, ind, nm, bt, minits, gf) as:
     local out is ""
     for i in range of (len of stmts):
@@ -1280,7 +1333,7 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
             if g_traced == 1:
                 asn is asn + ind + "aot_trace_assign(\"" + name + "\", " + (cn of name) + ");\n"
             return asn
-        return ind + "aot_set(__eigs_g, \"" + name + "\", " + (emit_val of [node[2], nm, bt]) + ");\n"
+        return ind + "aot_set(" + (envc of name) + ", \"" + name + "\", " + (emit_val of [node[2], nm, bt]) + ");\n"
     if t == "index_assign":
         # Compound form (`l[i] += e`, 5th elem = base op) is not lowered here
         # yet -- node[3] is the RAW rhs, so emitting it as a plain set would be
@@ -1372,26 +1425,31 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
         local rexpr is unwrap of node[1]
         if rexpr[0] == "ident":
             if bt[rexpr[1]] == 1:
-                return ind + "return " + rexpr[1] + ";\n"
+                return emit_return of ["Value*", rexpr[1], ind, ""]
             # tensor return: serialize to a Value, then free the frame pool.
             if g_tensor[rexpr[1]] == 1:
-                return ind + "{ Value* _r = aot_tensor_to_value(" + rexpr[1] + "); aot_tframe_leave(_tmark); return _r; }\n"
+                return emit_return of ["Value*", "aot_tensor_to_value(" + rexpr[1] + ")", ind, "aot_tframe_leave(_tmark);"]
         # numeric return -> a C double; anything else (list/str/dict/non-numeric)
         # is a boxed Value*. Coerce the emitted value to the function's declared
         # return type (g_ret_type) so the C is type-correct even when the body's
         # per-variable inference disagrees with func_ret_type — e.g. a numeric
-        # local demoted to env-boxed storage by `for` handling is returned from a
-        # `double` function: unbox it with aot_num. Both coercions are
-        # value-preserving, so output stays byte-exact with the VM.
+        # expression returned from a Value* function boxes via make_num
+        # (value-preserving, byte-exact).
         if (is_num_expr of [node[1], nm, bt]) == 1:
             local nv is emit_num of [node[1], nm, bt, 0]
             if g_ret_type == "Value*":
-                return ind + "return make_num(" + nv + ");\n"
-            return ind + "return " + nv + ";\n"
+                return emit_return of ["Value*", "make_num(" + nv + ")", ind, ""]
+            return emit_return of ["double", nv, ind, ""]
         local vv is emit_val of [node[1], nm, bt]
         if g_ret_type == "double":
-            return ind + "return aot_num(" + vv + ");\n"
-        return ind + "return " + vv + ";\n"
+            # The unbox here is CHECKED (#100 item 3): func_ret_type now
+            # consults BOXED_RET_BUILTINS, so builtin-returning functions are
+            # Value* and never reach this coercion — whatever still does while
+            # the VM would return a non-number dies loudly, never aot_num's
+            # silent 0 (`return trim of v` printed 0 where the VM prints the
+            # string).
+            return emit_return of ["double", "aot_num_ck_at(" + vv + ", \"" + (c_escape of (G_CUR_FN[0])) + ": return\")", ind, ""]
+        return emit_return of ["Value*", vv, ind, ""]
     if t == "break":
         return ind + "break;\n"
     if t == "continue":
@@ -1437,7 +1495,7 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
             else:
                 fo is fo + ind + "    " + (cn of fvar) + " = aot_num_ck_at(aot_iter_get(" + itv + ", " + kv + "), \"" + (c_escape of (G_CUR_FN[0])) + ": for-in " + (c_escape of fvar) + "\");\n"
         else:
-            fo is fo + ind + "    aot_set(__eigs_g, \"" + fvar + "\", aot_iter_get(" + itv + ", " + kv + "));\n"
+            fo is fo + ind + "    aot_set(" + (envc of fvar) + ", \"" + fvar + "\", aot_iter_get(" + itv + ", " + kv + "));\n"
         fo is fo + (emit_stmts of [fbody, ind + "    ", nm, bt, minits, gf])
         fo is fo + ind + "  }\n"
         if fowned == 1:
@@ -2374,6 +2432,13 @@ define is_boxed_node(node) as:
     local t is n[0]
     if (t == "list") or (t == "str") or (t == "dict") or (t == "null"):
         return 1
+    if (t == "binop") and (n[1] == "+"):
+        # a `+` chain carrying a string LITERAL is concatenation (f-strings
+        # desugar to these): `return "a" + (str of n)` was invisible here, so
+        # func_ret_type declared double and the return coerced the string —
+        # the same #100 item-3 silent 0 as the bare-builtin shape.
+        if (chain_has_str of n) == 1:
+            return 1
     if t == "call":
         # returning ANOTHER function's result: boxed iff that function is
         # (#86 — `return takes_str of v` must not be declared double, which
@@ -2383,6 +2448,13 @@ define is_boxed_node(node) as:
         if (c[0] == "ident") and (g_funcs[c[1]] != null):
             if ((g_funcs[c[1]])["ret"]) == "Value*":
                 return 1
+        # a BUILTIN with a known non-numeric return (#100 item 3): `return
+        # trim of v` was invisible here, so func_ret_type declared double and
+        # the return coerced the string through aot_num — a silent 0 where
+        # the VM returns the string. (An un-shadowed builtin only: a user fn
+        # of the same name resolved above.)
+        if (c[0] == "ident") and (g_funcs[c[1]] == null) and (BOXED_RET_BUILTINS[c[1]] == 1):
+            return 1
     return 0
 
 # Collect EVERY return expression in a body (not just the first), recursing the
@@ -2603,29 +2675,6 @@ BOXED_RET_BUILTINS is {"read_text": 1, "read_lines": 1, "split": 1, "trim": 1, "
 
 STR_ARG_BUILTINS is {"split": 1, "trim": 1, "substr": 1, "str_replace": 1, "contains": 1, "index_of": 1, "char_at": 1, "starts_with": 1, "ends_with": 1, "str_lower": 1, "str_upper": 1, "ord": 1, "read_text": 1, "write_text": 1, "file_exists": 1, "read_lines": 1, "scan_ints": 1, "scan_int_tokens": 1}
 
-define find_str_builtin_use(node, name) as:
-    if (type of node) != "list":
-        return 0
-    if (len of node) == 0:
-        return 0
-    if node[0] == "call":
-        local callee is unwrap of node[1]
-        if (callee[0] == "ident") and (STR_ARG_BUILTINS[callee[1]] == 1):
-            local arg is unwrap of node[2]
-            local elems is []
-            if (arg[0] == "list") and ((len of arg) == 2):
-                elems is arg[1]
-            else:
-                elems is [arg]
-            for k in range of (len of elems):
-                local e is unwrap of elems[k]
-                if (e[0] == "ident") and (e[1] == name):
-                    return 1
-    for k2 in range of (len of node):
-        if (find_str_builtin_use of [node[k2], name]) == 1:
-            return 1
-    return 0
-
 # Is `name` read in a genuinely NUMERIC position (arithmetic/comparison
 # operand, index expression, unary minus)? Used to keep the append-arg
 # signal below from demoting numeric params that also get appended.
@@ -2654,120 +2703,6 @@ define find_numeric_use_direct(node, name) as:
             return 1
     return 0
 
-define find_numeric_use(node, name) as:
-    if (type of node) != "list":
-        return 0
-    if (len of node) == 0:
-        return 0
-    if node[0] == "binop":
-        if (NUMONLY_OPS[node[1]] == 1) or (node[1] == "<") or (node[1] == ">") or (node[1] == "<=") or (node[1] == ">="):
-            local l is unwrap of node[2]
-            local r is unwrap of node[3]
-            if (l[0] == "ident") and (l[1] == name):
-                return 1
-            if (r[0] == "ident") and (r[1] == name):
-                return 1
-    if node[0] == "index":
-        local ix is unwrap of node[2]
-        if (ix[0] == "ident") and (ix[1] == name):
-            return 1
-    if node[0] == "call":
-        # passed into a user callee's NUMERIC param — a numeric use
-        # (fixpoint rounds re-run this as callee ptypes refine)
-        local ncallee is unwrap of node[1]
-        if (ncallee[0] == "ident") and (g_funcs[ncallee[1]] != null):
-            local narg is unwrap of node[2]
-            local nelems is []
-            if (narg[0] == "list") and ((len of narg) == 2):
-                nelems is narg[1]
-            else:
-                nelems is [narg]
-            local npts is (g_funcs[ncallee[1]])["ptypes"]
-            for nk in range of (len of nelems):
-                if (npts[nk]) == "num":
-                    local ne is unwrap of nelems[nk]
-                    if (ne[0] == "ident") and (ne[1] == name):
-                        return 1
-    for k in range of (len of node):
-        if (find_numeric_use of [node[k], name]) == 1:
-            return 1
-    return 0
-
-# A param used as a for-in ITERABLE is a list/buffer value, not a number
-# (#86: EigenMiniSat's `copy_assignment(asg)` only does `for v in asg`).
-define find_for_iter_use(node, name) as:
-    if (type of node) != "list":
-        return 0
-    if (len of node) == 0:
-        return 0
-    if node[0] == "for":
-        local it is unwrap of node[2]
-        if (it[0] == "ident") and (it[1] == name):
-            return 1
-    for k in range of (len of node):
-        if (find_for_iter_use of [node[k], name]) == 1:
-            return 1
-    return 0
-
-# A param used purely in VALUE positions — a dict/list literal element, a
-# dot_assign RHS, or a bare return — is a boxed value when it is never
-# read numerically (#86: EigenMiniSat's `cdcl_result(status, ...)` stores
-# its string params straight into a result dict).
-define find_value_pos_use(node, name) as:
-    if (type of node) != "list":
-        return 0
-    if (len of node) == 0:
-        return 0
-    if node[0] == "dict":
-        local pairs is node[1]
-        for k in range of (len of pairs):
-            local pv is unwrap of ((pairs[k])[1])
-            if (pv[0] == "ident") and (pv[1] == name):
-                return 1
-    # NOTE: no bare-["list"] arm here — call ARGUMENT lists are "list"
-    # nodes syntactically, so matching idents inside any list node would
-    # claim every numeric call argument (it did — ci in clause_store_*).
-    if node[0] == "dot_assign":
-        local rv is unwrap of node[3]
-        if (rv[0] == "ident") and (rv[1] == name):
-            return 1
-    if node[0] == "return":
-        if ((type of node[1]) == "list") and ((len of node) > 1):
-            local rr is unwrap of node[1]
-            if ((type of rr) == "list") and ((len of rr) > 0):
-                if (rr[0] == "ident") and (rr[1] == name):
-                    return 1
-    for k2 in range of (len of node):
-        if (find_value_pos_use of [node[k2], name]) == 1:
-            return 1
-    return 0
-
-# A param concatenated with a string literal (f-strings desugar to `+`
-# chains) is a boxed value when never read numerically (#86: label params
-# like `assert_clauses_match(label, ...)`).
-define find_str_concat_use(node, name) as:
-    if (type of node) != "list":
-        return 0
-    if (len of node) == 0:
-        return 0
-    if (node[0] == "binop") and (node[1] == "+"):
-        local l is unwrap of node[2]
-        local r is unwrap of node[3]
-        local has_name is 0
-        if (l[0] == "ident") and (l[1] == name):
-            has_name is 1
-        if (r[0] == "ident") and (r[1] == name):
-            has_name is 1
-        if has_name == 1:
-            # only a chain carrying an actual STR literal counts — numeric
-            # sums are `+` chains too (torus_v_edge's `... + col + 1`)
-            if (chain_has_str of node) == 1:
-                return 1
-    for k in range of (len of node):
-        if (find_str_concat_use of [node[k], name]) == 1:
-            return 1
-    return 0
-
 define chain_has_str(node) as:
     local n is unwrap of node
     if (type of n) != "list":
@@ -2782,59 +2717,6 @@ define chain_has_str(node) as:
         if (chain_has_str of n[2]) == 1:
             return 1
         return chain_has_str of n[3]
-    return 0
-
-# A param passed to `append` (either position) and never read numerically
-# is a boxed value, not a number (#86: EigenMiniSat's
-# `_add_parse_error(errors, msg)` uses both params only via append).
-define find_append_use(node, name) as:
-    if (type of node) != "list":
-        return 0
-    if (len of node) == 0:
-        return 0
-    if node[0] == "call":
-        local callee is unwrap of node[1]
-        if (callee[0] == "ident") and (callee[1] == "append"):
-            local arg is unwrap of node[2]
-            if arg[0] == "list":
-                local elems is arg[1]
-                for k in range of (len of elems):
-                    local e is unwrap of elems[k]
-                    if (e[0] == "ident") and (e[1] == name):
-                        return 1
-    for k2 in range of (len of node):
-        if (find_append_use of [node[k2], name]) == 1:
-            return 1
-    return 0
-
-# A param passed straight through to another user function's DICT param is
-# a dict (#86: EigenMiniSat's compact passes `stats` through to a callee
-# that dot-writes it). Definition-order blind: resolved by the fixpoint
-# rounds in the g_funcs build loop.
-define find_dict_param_use(node, name) as:
-    if (type of node) != "list":
-        return 0
-    if (len of node) == 0:
-        return 0
-    if node[0] == "call":
-        local callee is unwrap of node[1]
-        if callee[0] == "ident":
-            if g_funcs[callee[1]] != null:
-                local arg is unwrap of node[2]
-                local elems is []
-                if (arg[0] == "list") and ((len of arg) == 2):
-                    elems is arg[1]
-                else:
-                    elems is [arg]
-                local pts is (g_funcs[callee[1]])["ptypes"]
-                for k in range of (len of elems):
-                    if (pts[k]) == "dict":
-                        local e is unwrap of elems[k]
-                        if (e[0] == "ident") and (e[1] == name):
-                            return 1
-    for k2 in range of (len of node):
-        if (find_dict_param_use of [node[k2], name]) == 1:
-            return 1
     return 0
 
 # Call-site ground truth (#86): a user fn param that RECEIVES a non-numeric
@@ -3166,10 +3048,9 @@ define local_gen_map_seeded(body, seed) as:
                             # (EigenMiniSat's `text is read_text of path`,
                             # then `parse_dimacs_text of text`)
                             isgen is 1
-        # DIRECT numeric evidence only (arithmetic / index position). Using
-        # the full find_numeric_use here deadlocks: "passed to a num param"
-        # counts as numeric, but that param's class is exactly what this
-        # evidence is meant to decide, so neither ever moves.
+        # DIRECT numeric evidence only (arithmetic / index position) — a
+        # "passed to a num param" signal would deadlock: that param's class
+        # is exactly what this evidence is meant to decide.
         if (isgen == 1) and ((find_numeric_use_direct of [body, v]) == 0):
             out[v] is "gen"
         # Field types of a name built from a dict LITERAL, stored under a
@@ -3468,7 +3349,7 @@ define emit_args(node, fname, nm, bt) as:
                 if (bt[be[1]] == 1) or (g_genp[be[1]] == 1):
                     s is s + be[1]
                 else:
-                    s is s + "env_get(__eigs_g, \"" + be[1] + "\")"
+                    s is s + (env_readb of be[1])
             elif be[0] == "call":
                 s is s + (emit_call_num of [be, nm, bt])
             elif be[0] == "str":
@@ -3497,7 +3378,7 @@ define emit_args(node, fname, nm, bt) as:
                 if (bt[te[1]] == 1) or (g_dict[te[1]] == 1) or (g_genp[te[1]] == 1):
                     s is s + te[1]
                 else:
-                    s is s + "env_get(__eigs_g, \"" + te[1] + "\")"
+                    s is s + (env_readb of te[1])
             else:
                 s is s + (emit_val of [elems[k], nm, bt])
         else:
@@ -3697,8 +3578,12 @@ define emit_function(fn, finfo, gnm, gbt) as:
     collect_local_marked of [body, _lmk]
     local _lmn is keys of _lmk
     for k in range of (len of _lmn):
-        if (gnm[_lmn[k]] == 1) or (gbt[_lmn[k]] == 1):
-            throw of ("AOT: `local " + _lmn[k] + "` shadowing a module binding is not supported (would write the file-scope global)")
+        # ANY module binding counts — numeric/buffer globals are file-scope C
+        # vars, and a BOXED module global (gnm key present, value 0) lives in
+        # __eigs_g, which the plain-assign fallback would clobber just the
+        # same (#100: the boxed case was silently accepted before).
+        if (gnm[_lmn[k]] != null) or (gbt[_lmn[k]] == 1):
+            throw of ("AOT: `local " + _lmn[k] + "` shadowing a module binding is not supported (would write the module binding the VM shadows)")
     # Round 6 (#99): a PLAIN function-body write to a BUILTIN name clobbers
     # the runtime's global binding under VM semantics (the in_globals veto in
     # emit_assign_for_tos makes it slot-ineligible -> OP_SET_NAME); the AOT's
@@ -3802,6 +3687,42 @@ define emit_function(fn, finfo, gnm, gbt) as:
             if fuok == 1:
                 g_forunbox[fubn[k]] is 1
                 fnm[fubn[k]] is 1
+    # Per-call local env (#100 item 2): every boxed binding this function owns
+    # — a local whose assignments are non-numeric (the aot_set fallback) or a
+    # still-boxed for-in var — routes to a fresh __eigs_l per invocation, so
+    # recursion cannot clobber outer frames and nothing leaks into module
+    # scope. Module-bound names (any gnm key / gbt buffer) stay on __eigs_g:
+    # a plain function assign to one is the VM's outward mutation. Observed/
+    # temporal functions keep the global-env Part-2a routing (their guard
+    # above rejects the nesting that would clobber).
+    g_envloc is {}
+    g_envactive is 0
+    if (g_observed == 0) and (g_traced == 0):
+        for k in range of (len of banames):
+            local elv is banames[k]
+            local elp is 0
+            for p in range of (len of params):
+                if params[p] == elv:
+                    elp is 1
+            if (elp == 0) and (gnm[elv] == null) and (gbt[elv] != 1):
+                if (g_tensor[elv] != 1) and (fbt[elv] != 1) and (fnm[elv] != 1):
+                    g_envloc[elv] is 1
+                    g_envactive is 1
+        # for-in vars that stayed boxed (not unboxed to C doubles) and are
+        # neither params, module-bound, nor Value-typed C names.
+        local _efv is {}
+        dump_scan of [body, 0 - 1, {}, _efv]
+        local _efvn is keys of _efv
+        for k in range of (len of _efvn):
+            local efv is _efvn[k]
+            local efp is 0
+            for p in range of (len of params):
+                if params[p] == efv:
+                    efp is 1
+            if (efp == 0) and (g_forunbox[efv] == null) and (gnm[efv] == null) and (gbt[efv] != 1):
+                if (g_tensor[efv] != 1) and (fbt[efv] != 1) and (fnm[efv] != 1) and (g_dict[efv] != 1) and (g_genp[efv] != 1):
+                    g_envloc[efv] is 1
+                    g_envactive is 1
     # --dump-inference: report every param + assigned local with the storage
     # kind the ASSIGN path actually uses (mirrors emit_stmt's dispatch), so
     # the audit joins verdicts, not declarations.
@@ -3924,21 +3845,28 @@ define emit_function(fn, finfo, gnm, gbt) as:
                 fudp is 1
         if (fudp == 0) and (ba[fud] == null) and (gnm[fud] != 1) and (gbt[fud] != 1):
             decls is decls + "    double " + (cn of fud) + " = 0;\n"
+    if g_envactive == 1:
+        decls is decls + "    Env* __eigs_l = env_new(NULL);\n"
     local fminits is module_inits of body
     local bodyc is emit_stmts of [body, "    ", fnm, fbt, fminits, {}]
     local tailret is ""
+    if g_envactive == 1:
+        # fallthrough exit (no return statement taken): free the call env.
+        tailret is "    env_decref(__eigs_l);\n"
     if (finfo["ret"]) == "double":
-        tailret is "    return 0;\n"
+        tailret is tailret + "    return 0;\n"
     elif (finfo["ret"]) == "Value*":
         if hasT == 1:
-            tailret is "    aot_tframe_leave(_tmark);\n    return NULL;\n"
+            tailret is tailret + "    aot_tframe_leave(_tmark);\n    return NULL;\n"
         else:
-            tailret is "    return NULL;\n"
+            tailret is tailret + "    return NULL;\n"
     local _result is sig + " {\n" + decls + bodyc + tailret + "}\n"
     g_observed is _save_obs
     g_traced is _save_tr
     g_obs_traced is _save_otr
     g_ret_type is _save_ret
+    g_envloc is {}
+    g_envactive is 0
     return _result
 
 # ---- nested `define` lifting (#86) ----
@@ -4096,8 +4024,8 @@ define emit_program(ast) as:
             if (param_unread of [fn[3], (fn[2])[0]]) == 1:
                 nullok is 1
         g_funcs[fn[1]] is {"ptypes": pt, "ret": (func_ret_type of [fn, ffbt, ffgen, ffdict]), "rettensor": (func_ret_tensor of fn), "retbuf": (func_ret_buf of [fn, ffbt]), "observed": (func_observed of fn), "nullok": nullok}
-    # Fixpoint rounds (#86): the pass-through signals (find_gen_param_use /
-    # find_dict_param_use) read CALLEES' ptypes, which are definition-order
+    # Fixpoint rounds (#86): the pass-through signal (find_gen_param_use)
+    # reads CALLEES' ptypes, which are definition-order
     # dependent on the first pass. Re-derive ptypes until stable (chains are
     # shallow; 4 rounds bounds it) so `f(x)` passing x into g's dict param
     # classifies x dict regardless of which of f/g is defined first.

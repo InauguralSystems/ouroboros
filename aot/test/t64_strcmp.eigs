@@ -1,0 +1,20 @@
+# #100 item 1: string-string ordering is lexicographic strcmp in the VM's
+# NUM_CMP slow path; the old AOT_CMP silently answered 0 for every
+# non-num/num pair.
+print of ("a" < "b")
+print of ("b" < "a")
+print of ("abc" <= "abd")
+print of ("z" > "az")
+print of ("" < "a")
+print of ("apple" >= "apple")
+print of ("apple" > "apple")
+s is "mango"
+t is "mangp"
+print of (s < t)
+print of (s >= t)
+# ==/!= keep cross-type not-equal (only ORDERING raises on mixed types)
+print of (1 == "1")
+print of (1 != "1")
+# sort-key shape: ordering drives a branch
+if "kiwi" < "lime":
+    print of "sorted"

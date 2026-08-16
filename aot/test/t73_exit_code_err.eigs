@@ -1,0 +1,8 @@
+# #103 companion: `exit of N` unwinds via g_has_error + g_exit_requested.
+# The old aot_call_name ignored both flags — the program RAN PAST the exit
+# (printed "never", exited 0). Now the AOT honors the requested code, so
+# both sides die with rc 3 and identical prior stdout. Rides the _err class
+# for its both-die + death-code-equality contract (nothing raises here).
+print of "one"
+exit of 3
+print of "never"

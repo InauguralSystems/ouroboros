@@ -1,0 +1,7 @@
+# #100 item 5: unary minus on a non-number is the VM's OP_NEG raise
+# ("cannot negate non-numeric"); the old emit_val coerced through aot_num
+# and printed 0.
+s is "hi"
+print of "pre"
+y is -s
+print of y

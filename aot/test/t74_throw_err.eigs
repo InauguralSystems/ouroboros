@@ -1,0 +1,6 @@
+# #103: an uncaught user `throw of` — builtin_throw records the message and
+# the AOT dies cleanly with the VM's uncaught-error code (1). On pre-#103
+# main this death was a SIGSEGV (rc 139) inside the NULL-VM stack-trace walk.
+print of "pre"
+throw of "boom"
+print of "never"
