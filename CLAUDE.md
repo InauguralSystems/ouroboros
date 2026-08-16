@@ -64,7 +64,9 @@ python3 aot/fuzzdiff.py             # differential fuzzing
   under-arity calls, and whole-list args to user fns all **throw loudly**
   at build time (F-OURO-23) rather than guessing. Since the 2026-08-16
   train, also loud at build time: the `when` qualifier, module-shadowing
-  `local`, and plain fn-body writes to builtin names (F-OURO-31/32);
+  `local` on BOXED/buffer globals (numeric shadows compile to C
+  block-scope locals since #109 — F-OURO-33), and plain fn-body writes
+  to builtin names (F-OURO-31/32);
   tensor-add broadcast/mixed-shape refuses at *runtime*. Full semantics
   parity is proven at the self-host tier; the AOT proves the subset it
   claims.

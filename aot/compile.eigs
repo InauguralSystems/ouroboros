@@ -218,6 +218,10 @@ g_genp is {}
 # are GET_NAME (miss -> 'undefined variable', loud).
 g_envloc is {}
 g_envactive is 0
+# numeric `local` shadows of module globals in the CURRENT function (#109):
+# emit_stmt declares these at the `local` statement's site (C block scope).
+g_locshadow is {}
+G_SH_N is [0]
 define envc(name) as:
     if g_envloc[name] == 1:
         return "__eigs_l"
@@ -1328,6 +1332,25 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
             local raw is 0
             if gf[name] == 1:
                 raw is 1
+            if ((len of node) >= 4) and (g_locshadow[name] == 1):
+                # #109: a validated numeric module-shadow `local` declares a
+                # fresh C local HERE — C block scoping from this point on is
+                # exactly the VM's chain-walk shadow (reads/writes before
+                # this line resolved to the file-scope global above).
+                local sty is "double"
+                if g_int[name] == 1:
+                    sty is "long"
+                local srhs is emit_num of [node[2], nm, bt, raw]
+                if (uses_ident of [node[2], name]) == 1:
+                    # self-referencing RHS (`local n is n + 1`): in C the
+                    # declared name is in scope in its own initializer, but
+                    # the VM evaluates the RHS BEFORE binding (it reads the
+                    # module global) — stage through a temp declared first,
+                    # so the RHS still resolves to the file-scope var.
+                    G_SH_N[0] is G_SH_N[0] + 1
+                    local stn is "__aot_sh" + (str of (G_SH_N[0]))
+                    return ind + sty + " " + stn + " = " + srhs + ";\n" + ind + sty + " " + (cn of name) + " = " + stn + ";\n"
+                return ind + sty + " " + (cn of name) + " = " + srhs + ";\n"
             local asn is ind + (cn of name) + " = " + (emit_num of [node[2], nm, bt, raw]) + ";\n"
             # temporal: record the new value on the trace tape (prev / at-line)
             if g_traced == 1:
@@ -3511,6 +3534,217 @@ define collect_plain_assigns(node, acc) as:
         collect_plain_assigns of [node[k], acc]
     return 0
 
+# ---- numeric `local` shadows of module globals (#109) ------------------
+# A `local NAME` shadowing a NUMERIC module global compiles to a C local
+# declared AT THE `local` STATEMENT'S SITE, so C block scoping reproduces
+# the VM's chain-walk shadow semantics (oracle-probed at v0.39.0):
+#   - reads/writes BEFORE the `local` line hit the module binding
+#     (GET_NAME/SET_NAME find the module env — the frame binding does not
+#     exist yet);
+#   - from the `local` line on, every read/write in its scope hits the
+#     shadow; the module binding is untouched;
+#   - recursion gets a fresh shadow per call (C stack locals for free).
+# What C block scope CANNOT reproduce, and sh_validate_block refuses:
+#   - the VM shadow outliving its block (a `local` inside a loop/if is
+#     still visible for the REST OF THE FUNCTION — probe: nested-in-loop
+#     `local k`, read after the loop, VM answers the shadow, a C local
+#     would answer the global);
+#   - iteration carry (an occurrence before the decl inside the decl's
+#     own loop reads the PREVIOUS iteration's shadow in the VM, the
+#     global in C) — hence a nested decl must dominate every occurrence;
+#   - a nested define/lambda reading the name (VM probe: the nested fn
+#     sees the encloser's LIVE shadow; a lifted C fn would read the
+#     file-scope global, and a capbind capture is a stale snapshot).
+
+# Does `name` occur in `node` in ANY role — ident read, assign target,
+# for-var, catch-var, or a capbind capture (a lifted nested define that
+# referenced it)? Over-counting is safe (refusal); under-counting is the
+# silent-wrong class.
+define sh_touches(node, name) as:
+    if (type of node) != "list":
+        return 0
+    if (len of node) == 0:
+        return 0
+    if (node[0] == "ident") and (node[1] == name):
+        return 1
+    if (node[0] == "assign") and (node[1] == name):
+        return 1
+    if (node[0] == "for") and (node[1] == name):
+        return 1
+    if (node[0] == "try") and (node[2] == name):
+        return 1
+    if node[0] == "capbind":
+        local cps is node[2]
+        for c in range of (len of cps):
+            if (cps[c])[0] == name:
+                return 1
+    for k in range of (len of node):
+        if (sh_touches of [node[k], name]) == 1:
+            return 1
+    return 0
+
+# Count `local NAME` decls (4th-element-marked assigns) in a subtree.
+define sh_count_decls(node, name) as:
+    if (type of node) != "list":
+        return 0
+    if (len of node) == 0:
+        return 0
+    local n is 0
+    if (node[0] == "assign") and (node[1] == name):
+        if (len of node) >= 4:
+            n is 1
+    for k in range of (len of node):
+        n is n + (sh_count_decls of [node[k], name])
+    return n
+
+# Does a deferred-execution body (nested define pre-lift, lambda) reference
+# the name? Its C emission cannot see a block-scoped shadow (and a capbind
+# capture is a value snapshot, not the VM's live chain-walk read).
+define sh_deferred_ref(node, name) as:
+    if (type of node) != "list":
+        return 0
+    if (len of node) == 0:
+        return 0
+    if (node[0] == "func") or (node[0] == "lambda") or (node[0] == "capbind"):
+        return sh_touches of [node, name]
+    for k in range of (len of node):
+        if (sh_deferred_ref of [node[k], name]) == 1:
+            return 1
+    return 0
+
+# Does `name` appear as a BINDER — a for-var, catch-var, or comprehension
+# var — anywhere in the subtree? A binder is not a chain-walk write: the VM
+# loop-scopes a for-var over a name-bound shadow (oracle probe: `local n is
+# 55` then `for n in range of 3` prints 0/1/2 then 55 — the shadow keeps
+# 55), while the emitter's C name would be written through. Role-based, not
+# envelope-based: catch/listcomp are checked even where today's AOT refuses
+# them for other reasons, so this guard cannot rot if that envelope grows.
+define sh_binds(node, name) as:
+    if (type of node) != "list":
+        return 0
+    if (len of node) == 0:
+        return 0
+    if (node[0] == "for") and (node[1] == name):
+        return 1
+    if (node[0] == "try") and (node[2] == name):
+        return 1
+    if (node[0] == "listcomp") and (node[2] == name):
+        return 1
+    for k in range of (len of node):
+        if (sh_binds of [node[k], name]) == 1:
+            return 1
+    return 0
+
+# Validate one block for the decl-at-site emission. Returns:
+#   0 — invalid (refuse the shadow);
+#   2 — valid, no occurrence before the decl;
+#   3 — valid, occurrences before the decl exist (depth-0 only: they read
+#       the file-scope global, so the name must NOT be int-typed — the
+#       global's C storage class is the MODULE scope's, not this body's).
+# depth0=1 only for the function body itself: there a pre-decl occurrence
+# runs exactly once, before the binding exists on every path (no enclosing
+# loop can re-enter), so the C global read matches the VM's chain walk.
+define sh_validate_block(stmts, name, depth0) as:
+    local state is 0
+    local had_pre is 0
+    for i in range of (len of stmts):
+        local st is unwrap of stmts[i]
+        if state == 2:
+            # the decl's block closed (nested container) — the VM shadow
+            # would still be visible here, a C block-scope local is not.
+            if (sh_touches of [st, name]) == 1:
+                return 0
+        elif state == 1:
+            # decl live at this level: occurrences fine; a SECOND decl of
+            # the same name is refused by the caller's count==1 check.
+            state is 1
+        elif ((type of st) == "list") and ((len of st) > 0) and (st[0] == "assign") and (st[1] == name) and ((len of st) >= 4):
+            # the decl itself at this level. A self-referencing RHS
+            # (`local n is n + 1`) reads the global — correct only when
+            # this line runs at most once before binding, i.e. depth 0.
+            if depth0 == 0:
+                if (sh_touches of [st[2], name]) == 1:
+                    return 0
+            state is 1
+        elif (sh_count_decls of [st, name]) > 0:
+            # decl nested inside a container statement
+            if (sh_container_ok of [st, name]) == 0:
+                return 0
+            state is 2
+        elif (sh_touches of [st, name]) == 1:
+            if depth0 == 0:
+                return 0
+            had_pre is 1
+    if state == 0:
+        return 0
+    if had_pre == 1:
+        return 3
+    return 2
+
+# The decl sits inside `st` (an if/loop/for/try/unobserved). Its
+# condition/iterable/catch-name must not touch the name (they execute
+# outside the C scope; under iteration the VM would already see the
+# shadow), sibling sub-blocks must not touch it, and the sub-block holding
+# the decl must itself validate (recursively, depth0=0).
+define sh_container_ok(st, name) as:
+    local t is st[0]
+    if t == "if":
+        if (sh_touches of [st[1], name]) == 1:
+            return 0
+        local tc is sh_count_decls of [st[2], name]
+        local ec is sh_count_decls of [st[3], name]
+        if (tc > 0) and (ec > 0):
+            return 0
+        if tc > 0:
+            if (sh_touches of [st[3], name]) == 1:
+                return 0
+            if (sh_validate_block of [st[2], name, 0]) == 0:
+                return 0
+            return 1
+        if (sh_touches of [st[2], name]) == 1:
+            return 0
+        if (sh_validate_block of [st[3], name, 0]) == 0:
+            return 0
+        return 1
+    if t == "loop":
+        if (sh_touches of [st[1], name]) == 1:
+            return 0
+        if (sh_validate_block of [st[2], name, 0]) == 0:
+            return 0
+        return 1
+    if t == "for":
+        if st[1] == name:
+            return 0
+        if (sh_touches of [st[2], name]) == 1:
+            return 0
+        if (sh_validate_block of [st[3], name, 0]) == 0:
+            return 0
+        return 1
+    if t == "try":
+        if st[2] == name:
+            return 0
+        local yc is sh_count_decls of [st[1], name]
+        local cc is sh_count_decls of [st[3], name]
+        if (yc > 0) and (cc > 0):
+            return 0
+        if yc > 0:
+            if (sh_touches of [st[3], name]) == 1:
+                return 0
+            if (sh_validate_block of [st[1], name, 0]) == 0:
+                return 0
+            return 1
+        if (sh_touches of [st[1], name]) == 1:
+            return 0
+        if (sh_validate_block of [st[3], name, 0]) == 0:
+            return 0
+        return 1
+    if t == "unobserved":
+        if (sh_validate_block of [st[1], name, 0]) == 0:
+            return 0
+        return 1
+    # unknown container kind: refuse rather than guess.
+    return 0
+
 # Is `name` bound to a genuine BUILTIN in the runtime's global env? Cached
 # type-of-eval probe (same mechanism as codegen.eigs's cg_is_builtin): only a
 # real builtin answers type "builtin" — this compiler's own module functions
@@ -3568,22 +3802,33 @@ define emit_function(fn, finfo, gnm, gbt) as:
     for k in range of (len of gb):
         if gbt[gb[k]] == 1:
             fbt[gb[k]] is 1
-    # `local NAME is e` (#99 item 2): in a function whose name collides with a
-    # module global, the AOT's plain-assign path writes the file-scope C var —
-    # the exact module mutation `local` exists to prevent. No local-shadow
-    # storage exists here yet, so refuse loudly rather than miscompile
-    # silently. A `local` of a non-global name is a function local either
-    # way and falls through to the ordinary assign path.
+    # `local NAME is e` (#99 item 2, narrowed by #109): a `local` shadowing a
+    # NUMERIC module global compiles to a C local declared at the `local`
+    # statement's site (validated below, after inference — see the sh_*
+    # walkers). Everything else stays a loud refusal: a BOXED module global
+    # (gnm key present, value 0) lives in __eigs_g and a BUFFER global is a
+    # file-scope Value*, and the plain-assign fallback would clobber the
+    # module binding the VM shadows (#100/#107). A `local` of a non-global
+    # name is a function local either way and falls through to the ordinary
+    # assign path; a `local` of a PARAM name rebinds the param (the VM's
+    # existing-slot-wins arbitration — the C param already shadows the
+    # file-scope var, so the plain emission is already exact).
     local _lmk is {}
     collect_local_marked of [body, _lmk]
     local _lmn is keys of _lmk
+    local _shcand is []
     for k in range of (len of _lmn):
-        # ANY module binding counts — numeric/buffer globals are file-scope C
-        # vars, and a BOXED module global (gnm key present, value 0) lives in
-        # __eigs_g, which the plain-assign fallback would clobber just the
-        # same (#100: the boxed case was silently accepted before).
-        if (gnm[_lmn[k]] != null) or (gbt[_lmn[k]] == 1):
-            throw of ("AOT: `local " + _lmn[k] + "` shadowing a module binding is not supported (would write the module binding the VM shadows)")
+        local _shp is 0
+        for p in range of (len of params):
+            if params[p] == _lmn[k]:
+                _shp is 1
+        if _shp == 0:
+            if gbt[_lmn[k]] == 1:
+                throw of ("AOT: `local " + _lmn[k] + "` shadowing a module binding is not supported (would write the module binding the VM shadows)")
+            if gnm[_lmn[k]] != null:
+                if gnm[_lmn[k]] != 1:
+                    throw of ("AOT: `local " + _lmn[k] + "` shadowing a module binding is not supported (would write the module binding the VM shadows)")
+                append of [_shcand, _lmn[k]]
     # Round 6 (#99): a PLAIN function-body write to a BUILTIN name clobbers
     # the runtime's global binding under VM semantics (the in_globals veto in
     # emit_assign_for_tos makes it slot-ineligible -> OP_SET_NAME); the AOT's
@@ -3670,6 +3915,52 @@ define emit_function(fn, finfo, gnm, gbt) as:
     g_btmap is fbt
     if g_observed == 0:
         g_int is infer_int of [body, params, fnm, fbt]
+    # Numeric module-shadow `local` validation (#109). Runs after inference
+    # so it can consult lnm (every assignment to the shadow must stay
+    # numeric — the seeded fnm keeps the name on the numeric emission path
+    # regardless, which would be the silent-wrong class for a boxed RHS).
+    g_locshadow is {}
+    for k in range of (len of _shcand):
+        local shn is _shcand[k]
+        local shwhy is ""
+        if (g_observed == 1) or (g_traced == 1):
+            # observed/temporal programs key history and env state by NAME —
+            # a bare C local is invisible to that machinery.
+            shwhy is "observed/temporal function — history and env state are keyed by NAME, invisible to a bare C local"
+        elif lnm[shn] != 1:
+            shwhy is "non-numeric assignment to the shadow"
+        elif (sh_count_decls of [body, shn]) != 1:
+            # two decls: the second C decl would either collide (same block)
+            # or nest (VM rebinds ONE binding; C would layer two).
+            shwhy is "more than one `local " + shn + "` in the function"
+        elif (sh_deferred_ref of [body, shn]) == 1:
+            # VM probe: a nested fn's chain walk sees the encloser's LIVE
+            # shadow; a lifted C fn reads the file-scope global and a
+            # capbind capture is a stale value snapshot.
+            shwhy is "the name is referenced by a nested define/lambda"
+        elif (sh_binds of [body, shn]) == 1:
+            # a binder is not a chain-walk write — the VM loop-scopes a
+            # for-var over the shadow (post-loop reads see the SHADOW, not
+            # the last iterate); the C emission would write the shadow
+            # through. Refuse anywhere in the body (a pre-decl binder has
+            # its own module-scope twin, see the issue referenced by
+            # F-OURO-33).
+            shwhy is "the name is re-bound as a for/catch/comprehension variable"
+        else:
+            local shv is sh_validate_block of [body, shn, 1]
+            if shv == 0:
+                shwhy is "the shadow's C block scope would not cover every later use (the VM binding lives to end-of-function)"
+            elif shv == 3:
+                # occurrences BEFORE the decl read the file-scope global,
+                # whose C storage class is the MODULE scope's — drop the
+                # int typing so those reads go through double (exact for
+                # a long global; a double global read as long would
+                # truncate).
+                g_int[shn] is 0
+        if shwhy == "":
+            g_locshadow[shn] is 1
+        else:
+            throw of ("AOT: `local " + shn + "` shadowing a module binding is not supported here (" + shwhy + ")")
     # for-in loop-var unboxing: eligible vars become C doubles for the body
     # emission (fnm) and the for emitter binds the C name per iteration.
     g_forunbox is {}
@@ -4206,6 +4497,9 @@ define emit_program(ast) as:
     # name (that stale label sent an earlier debugging session chasing
     # `lbd_activity_key` for a failure that was in main).
     G_CUR_FN[0] is "<module>"
+    # module scope has no shadows (a module-level `local` IS the module
+    # binding) — clear the last function's map before emitting main.
+    g_locshadow is {}
     local body is emit_stmts of [rest, "    ", nm, bt, minits, {}]
     local obshdr is ""
     if g_obs_traced == 1:

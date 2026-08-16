@@ -103,4 +103,33 @@ PY
   fi
   rm -f "$bin"
 done
+# ---- bench transpile-check tier (#109) --------------------------------
+# Every aot/bench/*.eigs must BUILD (rc=0). The benches are the #64/F-OURO-25
+# forcing-function corpus and nothing else covered them: the #105/#107
+# refusal train broke both checksum benches invisibly. Running them is NOT
+# gated here (minutes of wall time on the 50-pass workloads); this tier only
+# proves the envelope still admits them. Population comes from the glob
+# itself — zero matches is a FAIL, not a vacuous pass (a renamed/moved
+# bench dir must go red, never green-by-absence).
+bench_n=0
+for prog in bench/*.eigs; do
+  [ -e "$prog" ] || continue
+  bench_n=$((bench_n + 1))
+  name=$(basename "$prog")
+  bin=$(mktemp /tmp/aot_bench.XXXXXX)
+  if bash build.sh "$prog" "$bin" >/tmp/aot_bench_build.log 2>&1; then
+    echo "PASS: bench build $name"
+  else
+    echo "FAIL: bench build $name (transpile/compile rc!=0 — the AOT envelope no longer admits its own bench corpus)"
+    tail -3 /tmp/aot_bench_build.log
+    fail=1
+  fi
+  rm -f "$bin"
+done
+if [ "$bench_n" -eq 0 ]; then
+  echo "FAIL: bench tier examined ZERO programs (bench/*.eigs matched nothing — the gate is vacuous)"
+  fail=1
+else
+  echo "--- bench tier: $bench_n program(s) build-checked ---"
+fi
 [ "$fail" -eq 0 ] && echo "--- all AOT parity tests passed ---" || exit 1

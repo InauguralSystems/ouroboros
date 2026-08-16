@@ -1179,3 +1179,79 @@ silent divergence, pre-existing and narrower than before: a still-boxed
 MODULE-scope for-var read after its loop serves the stale last value
 where the VM loop-scopes (F-OURO-30's residual); `report of x` answering
 "equilibrium" (#106).
+
+## F-OURO-33 — numeric `local` shadows of module globals compile to C block-scope locals; the bench corpus is gated — FIXED (#109)
+
+The #105/#107 module-shadowing-`local` refusal (correct: the plain-assign
+path wrote the file-scope C global the VM shadows) had swallowed both #64
+checksum benches, and nothing covered `bench/` so the loss was invisible.
+
+**What changed.** A `local NAME` shadowing a NUMERIC module global now
+declares a fresh C local (`double`/`long`) AT THE `local` STATEMENT'S
+SITE — C block scoping from that point on IS the VM's chain-walk shadow,
+oracle-probed at v0.39.0: reads/writes before the `local` line hit the
+module binding (probe: read-before → module value; plain-write-before →
+module mutated); everything after hits the shadow; a self-referencing
+decl RHS reads the module value (staged through a C temp — in C a
+declared name is in scope in its own initializer, in the VM the RHS
+evaluates before binding); recursion gets a fresh shadow per call.
+A `local` of a PARAM name (previously refused when the name was also
+module-bound) is the VM's existing-slot-wins rebind — the C param
+already shadows the file-scope var, so plain emission is exact.
+aot/test/t75_module_local_shadow.eigs pins all of it (refused-to-build
+on pre-#109 main). Both checksum benches build and run byte-exact again.
+
+**What C block scope canNOT reproduce — validated and refused loudly**
+(sh_validate_block/sh_container_ok in compile.eigs): the VM shadow
+OUTLIVES its block (probe: nested-in-loop `local k`, read after the
+loop — VM answers the shadow's last value, a C local would answer the
+global), and iteration carry (an occurrence before the decl inside the
+decl's own loop reads the previous iteration's shadow). So a nested decl
+must DOMINATE every occurrence of the name; a depth-0 (function-body
+top-level) decl additionally admits occurrences before it (they run
+exactly once, pre-binding — and the name's int typing is dropped so the
+pre-decl global reads go through double). Also refused: a nested
+define/lambda referencing the name (probe: the VM's nested fn sees the
+encloser's LIVE shadow; a lifted C fn reads the file-scope global and a
+capbind capture is a stale snapshot), more than one `local NAME` per
+function (C would collide or layer where the VM rebinds one binding),
+observed/temporal functions (history/env state is keyed by NAME), and
+any non-numeric assignment to the shadow (the seeded fnm would keep it
+on the numeric path — the silent-wrong class).
+
+ROUND 2 (blind-critic review of PR #110) — a BINDER occurrence of the
+shadow name is not a chain-walk write, and the first cut treated it as a
+benign post-decl touch: `local n is 55` then `for n in range of 3` —
+VM prints 0/1/2 then 55 (the for-var is a fresh LOOP-SCOPED binding,
+the shadow keeps 55), the round-1 emitter wrote the loop var through
+the shadow's C name and printed 2 (silent wrong; pre-train this shape
+was loud-refused). sh_binds now refuses for-var, catch-var and
+comprehension-var re-bindings of the shadow name anywhere in the body —
+role-based, so the guard holds even where today's envelope refuses
+catch/listcomp for other reasons (probe: the comprehension var LEAKS in
+the VM — `[n * 2 for n in [1, 2]]` after `local n is 5` leaves n == 2 —
+a third distinct role semantics, confirming refusal over per-role
+emission). The critic also found the PRE-EXISTING module-scope twin —
+module-level `for n` over an EXISTING module global serves the global
+all four prints where the VM loop-scopes (0/1/2 then 100) — filed as
+#111 (reproduces at cef9522; not part of this train).
+
+**STILL LOUD-REFUSED (unchanged from #107):** `local` shadows of BOXED
+(string/list/dict) and BUFFER module globals, and everything else in
+F-OURO-31/32's envelope list.
+
+**Bench gate (part 2).** aot/test/run.sh grew a transpile-check tier:
+every `bench/*.eigs` must build rc=0 (FAIL names the program); zero glob
+matches is itself a FAIL (no vacuous pass). Planted-fault proven both
+ways: a bench program using `match` → suite rc=1 naming it; `bench/`
+moved aside → "examined ZERO programs" FAIL. Running the benches stays
+out of the gate (minutes of wall time).
+
+**Re-measured #64 numbers** (v0.39.0 pin, n=5 medians): generic
+6.01s VM / 2.07s AOT = ~2.9× (was 2.0–2.5×; the VM side slowed ~13%
+across pins), mono 1.36s / 0.092s = ~14.9× (was 17×). The round-1 guess
+that the #107 seams cost the mono ~15% was REFUTED by measurement
+(round 2): a mono binary built at the pre-train commit 3c4dde8 medians
+0.0923s vs 0.0916s at HEAD — statistically identical — so the delta vs
+the old 0.08s row is the original row's pin/measurement conditions, not
+the correctness train. aot/README.md's table updated accordingly.
