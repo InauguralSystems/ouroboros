@@ -934,3 +934,64 @@ consumer needs it. t56 pins the shapes (range/list/buffer iterables,
 the poisoned mixed-name case, post-loop function reads, param reuse,
 nested loops); the module post-loop build-refusal is verified manually
 (no reject tier yet, same note as F-OURO-26).
+
+## F-OURO-31 — first full adversarial review of the self-host tier: 8 silent-wrong/silent-accept miscompiles vs the v0.39.0 oracle — FIXED (#99); the still-unsupported envelope is now named
+
+External review + differential probes (#99) found eight live divergences,
+all in the repo's named worst-outcome class (silent wrong values or silent
+acceptance, none previously on this ledger). All eight are fixed by
+mirroring the pinned parser.c/lexer.c, each with a case that fails on
+pre-fix main:
+
+1. `not` sat between `and` and comparison; parse_unary_body puts it at
+   UNARY tightness. `not x + 1` was `not (x+1)` — silent wrong values in
+   BOTH compilers (shared frontend). test/programs/not_unary.eigs +
+   aot/test/t63_not_unary.eigs.
+2. The `local` qualifier was dropped to a plain assign, so a `local`
+   shadowing a module name MUTATED the module binding. The assign node now
+   carries a 4th local_only element; cg_store_name mirrors
+   emit_assign_for_tos (existing slot wins; no-slot local takes a fresh
+   slot, never the module SET_NAME path; module scope emits
+   SET_NAME_LOCAL). The AOT refuses a module-shadowing `local` loudly
+   (its plain-assign path writes the file-scope C global); non-shadowing
+   `local` is unchanged-correct. test/programs/local_shadow.eigs.
+3. The catch variable ignored an existing local slot (F-OURO-8's class):
+   catch bound by name while reads went via GET_LOCAL — stale value. Same
+   slot-check as the `for` emitter. test/programs/catch_slot.eigs.
+4. Unterminated string/f-string/brace-expression at EOF lexed silently,
+   swallowing every following line at rc=0; now loud like lexer.c
+   ("unterminated string"). must_reject cases.
+5. A dedent matching no outer indent level was accepted (block structure
+   silently changed); now loud like lexer.c. must_reject case.
+6. Interrogative/temporal drift: operands and at/when qualifiers are full
+   parse_expression (was primary — `who is y + 1` over-rejected); the
+   #868 `when <N>` qualifier is mirrored (OP_INTERROGATE_NAMED_WHEN 93;
+   vm_run_bytecode's chunk_arm_temporal arms the occurrence ring itself,
+   #831); `prev of <literal>` raises "'prev of' requires a variable name"
+   (#634) instead of silent null. test/programs/interrogative_expr_when.eigs
+   + must_reject.
+7. F-string brace bodies with leading whitespace spliced a stray indent
+   token; the sub-lex now drops indent/dedent like the C lexer (#334).
+   test/programs/fstring_brace_ws.eigs.
+8. Token-class drift: `for`/listcomp expected ANY keyword where C expects
+   TOK_IN exactly (`for x of` was accepted — must_reject now), catch
+   expects the `catch` keyword; lambda params take the full
+   tok_is_ident_like set (soft keywords — `(prev) => prev + 1` was
+   over-rejected); `%=` lexes and desugars end to end.
+   test/programs/lambda_soft_params.eigs + compound_mod_assign.eigs.
+
+En route, codegen gained a minimal lambda arm (OP_CLOSURE descriptor,
+expression body) with a LOUD capture guard: a lambda referencing an
+enclosing function's slot-local throws (slots are anonymous — a name-path
+read inside the closure would silently miss); module names and builtins
+resolve through the captured env chain and work.
+
+STILL-UNSUPPORTED envelope at the self-host tier, previously untracked —
+all LOUD (throw at compile), none silent: `match` (OP_MATCH), `import`
+(OP_IMPORT), `unobserved:` (the signature perf lever, EigenScript#915),
+predicate-of / report-of value forms, and the appended observer opcode
+family (PREDICATE_SLOT/NAME 87/88, OBSERVE_VALUE_SLOT/NAME 84/85,
+REPORT_*, TRAJECTORY_*) — of that family only INTERROGATE_NAMED_WHEN 93
+is now emitted. The AOT additionally refuses `when` (no occurrence-ring
+seam) and module-shadowing `local` loudly. Growing any of these is new
+work, not a bug; this entry is the ledger naming them.

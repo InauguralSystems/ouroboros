@@ -1,0 +1,7 @@
+# #99 item 7: leading/trailing whitespace inside an f-string brace body must
+# not leak layout tokens (the C lexer drops NEWLINE/INDENT/DEDENT from the
+# spliced sub-lex).
+print of f"v={ 1 + 2 }"
+a is 5
+print of f"a={ a }!"
+print of f"s={  a * 2  } e={a}"

@@ -1,0 +1,12 @@
+# #99 item 6: interrogative operands are FULL expressions (parse_expression),
+# and the #868 `when <N>` qualifier (Nth recorded assignment) is mirrored.
+y is 4
+print of (who is y + 1)
+print of (what is y * 2)
+x is 1
+x is 2
+x is 3
+print of (what is x when 2)
+print of (what is x when 1)
+print of (prev of x when 3)
+print of (what is x)

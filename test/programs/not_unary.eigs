@@ -1,0 +1,16 @@
+# #99 item 1: `not` binds at UNARY tightness (parser.c parse_unary_body),
+# tighter than every binary operator — NOT between `and` and comparison.
+x is 3
+print of (not x + 1)
+print of (not 2 == 1)
+print of (not 0 * 5)
+print of (not 0 + not 1)
+print of (not not x)
+print of (- not 0)
+print of (not -1)
+print of (not len of [1, 2])
+y is 0
+print of (not x and not y)
+print of (not x or not y)
+if not y:
+    print of "ny"

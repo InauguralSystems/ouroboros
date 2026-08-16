@@ -1,0 +1,33 @@
+# #99 item 3: the catch variable must honor an existing local slot (the
+# F-OURO-8 bug class): a slot-stored `e` read after the catch saw the STALE
+# pre-try value when the catch bound by name.
+define f(x) as:
+    e is 5
+    try:
+        throw of "boom"
+    catch e:
+        return e
+    return 0
+print of (f of 1)
+define g(e) as:
+    try:
+        throw of "boom2"
+    catch e:
+        z is 0
+    return e
+print of (g of 7)
+define h(e) as:
+    try:
+        z is 1
+    catch e:
+        z is 0
+    return e
+print of (h of 7)
+define k(x) as:
+    e is 5
+    try:
+        throw of "boom3"
+    catch e:
+        r is e
+    return [r, e]
+print of (k of 1)

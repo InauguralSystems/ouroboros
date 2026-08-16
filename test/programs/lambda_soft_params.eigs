@@ -1,0 +1,10 @@
+# #99 item 8: lambda parameters accept the C parser's tok_is_ident_like set
+# (soft keywords prev/at and the six question words), not just plain idents.
+f is (prev) => prev + 1
+print of (f of 4)
+g is (what, how) => what * how
+print of (g of [3, 5])
+h is (at) => at - 1
+print of (h of 10)
+sq is (x) => x * x
+print of (sq of 7)

@@ -154,6 +154,28 @@ must_reject 'for q in [1, 2]:
 define show2() as:
     return acc2
 print of (show2 of null)'
+# #99 item 4: a string/f-string still open at end-of-source must die loudly on
+# both sides — the front-end used to emit the buffer at EOF, silently
+# SWALLOWING every following line (the print of 99 here vanished at rc=0).
+must_reject 'x is "abc
+print of 99'
+must_reject 'x is f"abc {1}
+print of 99'
+must_reject 'x is f"abc {1 + 2'
+# #99 item 5: a dedent matching no outer indent level is a lexer error
+# (lexer.c "indentation does not match any outer level"); the front-end used
+# to accept it and silently change block structure.
+must_reject 'if 1:
+        print of 1
+    print of 2
+print of 3'
+# #99 item 6 (#634): `prev of` requires a variable name — a literal operand
+# has no assignment history and used to print null at rc=0.
+must_reject 'print of (prev of 5)'
+# #99 item 8: exact-keyword expects — `for x of` is not `for x in`; the
+# front-end accepted ANY keyword where the C parser expects TOK_IN.
+must_reject 'for x of [1, 2]:
+    print of x'
 
 # Bootstrap: byte-exact fixed point AND the self-compiled program must RUN
 # (#101). The grep-PASS alone was vacuous against the v0.33.0 operand-width

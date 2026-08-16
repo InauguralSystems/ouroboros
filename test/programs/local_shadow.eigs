@@ -1,0 +1,26 @@
+# #99 item 2: `local NAME is e` binds in the CURRENT scope only — shadowing
+# a module binding must NOT mutate the module binding (AST marker honored by
+# cg_store_name like compiler.c's emit_assign_for_tos).
+counter is 10
+define bump() as:
+    local counter is 0
+    counter is counter + 1
+    return counter
+print of (bump of null)
+print of counter
+# local reading the OUTER binding in its own RHS (binds from the declaration
+# onward, so the read sees the module value)
+define peek() as:
+    local counter is counter + 100
+    return counter
+print of (peek of null)
+print of counter
+# module-scope `local` binds in the module scope (SET_NAME_LOCAL)
+local t is 3
+t is t + 1
+print of t
+# `local` on a parameter name writes the existing slot (slot wins, like C)
+define pset(v) as:
+    local v is v * 2
+    return v
+print of (pset of 21)
