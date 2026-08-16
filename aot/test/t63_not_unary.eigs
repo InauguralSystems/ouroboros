@@ -1,0 +1,17 @@
+# #99 items 1/7/8 at the AOT tier: the shared frontend now parses `not` at
+# UNARY tightness (parse_unary_body), lexes `%=`, and drops layout tokens
+# from f-string brace splices — the AOT consumes the same AST shapes.
+x is 3
+print of (not x + 1)
+print of (not 2 == 1)
+print of (not 0 * 5)
+print of (not not x)
+y is 9
+y %= 4
+print of y
+print of f"v={ 1 + 2 }"
+define pick(a, b) as:
+    if not a + b:
+        return 1
+    return 0
+print of (pick of [0, -1])

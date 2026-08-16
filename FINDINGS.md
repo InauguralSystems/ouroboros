@@ -934,3 +934,142 @@ consumer needs it. t56 pins the shapes (range/list/buffer iterables,
 the poisoned mixed-name case, post-loop function reads, param reuse,
 nested loops); the module post-loop build-refusal is verified manually
 (no reject tier yet, same note as F-OURO-26).
+
+## F-OURO-31 — first full adversarial review of the self-host tier: 8 silent-wrong/silent-accept miscompiles vs the v0.39.0 oracle — FIXED (#99); the still-unsupported envelope is now named
+
+External review + differential probes (#99) found eight live divergences,
+all in the repo's named worst-outcome class (silent wrong values or silent
+acceptance, none previously on this ledger). All eight are fixed by
+mirroring the pinned parser.c/lexer.c, each with a case that fails on
+pre-fix main:
+
+1. `not` sat between `and` and comparison; parse_unary_body puts it at
+   UNARY tightness. `not x + 1` was `not (x+1)` — silent wrong values in
+   BOTH compilers (shared frontend). test/programs/not_unary.eigs +
+   aot/test/t63_not_unary.eigs.
+2. The `local` qualifier was dropped to a plain assign, so a `local`
+   shadowing a module name MUTATED the module binding. The assign node now
+   carries a 4th local_only element; cg_store_name mirrors
+   emit_assign_for_tos (existing slot wins; a no-slot `local` on a module
+   name binds by NAME in the frame env via OP_SET_FN_NAME_LOCAL — exactly
+   C's route, so nested closures and `prev of` see the shadow; module
+   scope emits SET_NAME_LOCAL). The AOT refuses a module-shadowing
+   `local` loudly (its plain-assign path writes the file-scope C global);
+   non-shadowing `local` is unchanged-correct.
+   test/programs/local_shadow.eigs.
+3. The catch variable ignored an existing local slot (F-OURO-8's class):
+   catch bound by name while reads went via GET_LOCAL — stale value.
+   Fixed twice over: the slot-check from the `for` emitter for param
+   names, plus the env-bound pre-scan (below) which keeps non-param catch
+   names off the slot path entirely, so `prev of e` reads real history.
+   test/programs/catch_slot.eigs.
+4. Unterminated string/f-string/brace-expression at EOF lexed silently,
+   swallowing every following line at rc=0; now loud like lexer.c
+   ("unterminated string"). must_reject cases.
+5. A dedent matching no outer indent level was accepted (block structure
+   silently changed); now loud like lexer.c. must_reject case.
+6. Interrogative/temporal drift: operands and at/when qualifiers are full
+   parse_expression (was primary — `who is y + 1` over-rejected); the
+   #868 `when <N>` qualifier is mirrored (OP_INTERROGATE_NAMED_WHEN 93;
+   vm_run_bytecode's chunk_arm_temporal arms the occurrence ring itself,
+   #831); `prev of <literal>` raises "'prev of' requires a variable name"
+   (#634) instead of silent null. test/programs/interrogative_expr_when.eigs
+   + must_reject.
+7. F-string brace bodies with leading whitespace spliced a stray indent
+   token; the sub-lex now drops indent/dedent like the C lexer (#334).
+   test/programs/fstring_brace_ws.eigs.
+8. Token-class drift: `for`/listcomp expected ANY keyword where C expects
+   TOK_IN exactly (`for x of` was accepted — must_reject now), catch
+   expects the `catch` keyword; lambda params take the full
+   tok_is_ident_like set (soft keywords — `(prev) => prev + 1` was
+   over-rejected); `%=` lexes and desugars end to end.
+   test/programs/lambda_soft_params.eigs + compound_mod_assign.eigs.
+
+ROUND 2 (blind-critic review of PR #105): the first cut mirrored only the
+SLOT arm of emit_assign_for_tos and missed its escape pre-scan — the C
+compiler keeps three name classes OFF the slot path and binds them via
+OP_SET_FN_NAME_LOCAL (frame env, skipping loop envs), because slot-locals
+are anonymous at runtime: invisible to the name-keyed history/observer
+opcodes (INTERROGATE_NAMED/_AT/_WHEN) and to nested closures' GET_NAME.
+Four oracle-backed divergences fell out (`when` on a fn local → null; a
+nested define reading a `local` shadow → module value; `prev of` a local
+shadow → null; `prev of` a catch name → null). cg_func now runs
+cg_scan_name_bound (the mirror of scan_for_captures +
+scan_for_interrogated + scan_for_env_bound): names referenced by nested
+define/lambda bodies (minus their own params), ident operands of any
+interrogate form (every kind incl. prev), and catch/listcomp names bind
+by name; params keep slots (they ARE name-visible in the VM call env —
+resolve_local wins first in C too); everything else stays slot-fast.
+This also fixed `prev of` on ANY plain function local (round 1 had it
+down as a pre-existing tail). Pinned by
+test/programs/interrogate_fn_scope.eigs, lambda_capture.eigs and the
+round-2 sections of local_shadow.eigs / catch_slot.eigs — each fails on
+the pre-scan-less first cut. The lambda arm (OP_CLOSURE descriptor,
+expression body) now supports captures through the pre-scan; its loud
+guard remains only for the theoretically-unreachable non-param-slot
+escape.
+
+ROUND 3 (blind-critic review of the round-2 cut) finished the mirror —
+two more misses, both critic-confirmed against the pin:
+(a) the in_outer arm was absent: a nested define writing an ENCLOSING
+function's name allocated its own fresh local (silent wrong; on pre-#99
+main the read side was a loud undefined-variable — round 2's pre-scan
+alone had converted loud to silent). cg_new now carries the lexical
+`enclosing` chain and cg_name_in_enclosing mirrors name_in_enclosing
+(each enclosing FUNCTION's slot locals + name-bound set; the walk stops
+at module scope). cg_store_name's function-scope arbitration is now
+emit_assign_for_tos's, in order: (1) existing SLOT wins (C resolves
+locals before every escape check); (2) pre-scanned NAME-BOUND →
+OP_SET_FN_NAME_LOCAL; (3) not in_outer, not in_module AND not in_globals
+→ local-eligible, fresh anonymous slot (`local` included); (4)
+ineligible + `local` → OP_SET_FN_NAME_LOCAL (the explicit shadow); (5)
+ineligible plain assign → OP_SET_NAME (outward mutation of the
+enclosing, module or GLOBAL binding). The in_globals term landed in
+round 5 (critic round 4): C consults the compile-time global env —
+which for a main-program compile is the BUILTIN registry — so
+`define f as: len is 5` really clobbers the global `len` (VM-verified;
+the mirror had fresh-slotted it, a pre-existing silent-wrong on main).
+cg_is_builtin probes the runtime registry via a cached
+type-of-eval check; ouro_compile is never behind a load_file/import
+module boundary, so C's g_compile_module_boundary disable never applies.
+test/programs/builtin_name_write.eigs pins the plain-write, nested-write
+and local-shadow shapes; builtin_name_clobber_err.eigs pins the
+acceptance shape (both sides die "cannot call num" after the clobber) —
+both failing at the round-3 cut.
+test/programs/enclosing_scope.eigs pins read-modify-write,
+write-only, two-level nesting, sibling isolation, param shadow, and
+local-shadow + nested write — all byte-exact, failing at the round-2
+cut.
+(b) the unified pre-scan walker descended into listcomps for the
+interrogated class, but C's scan_for_interrogated has an explicit
+AST_LISTCOMP no-op — an interrogate operand appearing ONLY inside a
+listcomp body must NOT name-bind the outer variable, and the VM really
+answers null there (`[prev of y for v in xs]` on a slot-local y). The
+walker now carries the boundary (captures and env-bound still descend,
+matching scan_for_captures / scan_for_env_bound).
+test/programs/listcomp_interr_boundary.eigs pins the null AND the
+arming-interplay contrast (an outer interrogate name-binds y, after
+which the inside query answers) — oracle-verified, failing at the
+round-2 cut.
+
+STILL-UNSUPPORTED envelope at the self-host tier, previously untracked:
+`match` (OP_MATCH), `import` (OP_IMPORT) and `unobserved:` (the signature
+perf lever, EigenScript#915) throw LOUDLY at compile; predicate-of value
+forms (`converged of x`) die LOUDLY at runtime ("cannot call num" — the
+VM's OP_PREDICATE_NAME path is not emitted); of the appended observer
+opcode family (PREDICATE_SLOT/NAME 87/88, OBSERVE_VALUE_SLOT/NAME 84/85,
+REPORT_*, TRAJECTORY_*) only INTERROGATE_NAMED_WHEN 93 is emitted.
+CAUTION — one form is NOT loud: `report of x` compiles as a plain builtin
+call and SILENTLY answers "equilibrium" where the VM classifies for real
+(pre-existing, reproduces on pre-#99 main) — that, plus bare
+interrogative statements being accepted where C compile-errors, is
+tracked in #106. The AOT additionally refuses, loudly at build time:
+`when` (no occurrence-ring seam), module-shadowing `local`, and — round
+6 — a plain function-body write to a BUILTIN name (the in_globals class:
+VM semantics clobber the global binding, the AOT's plain-assign path
+would make a C local — a silent wrong value on pre-#99 main; `local
+<builtin>` shadows, params named after builtins, and builtin reads keep
+working). aot/test/run.sh still has no reject tier (F-OURO-26's note),
+so the three refusals are verified manually per change; the exact
+refusal lines are recorded in PR #105. Growing any of these is new
+work, not a bug; this entry is the ledger naming them.

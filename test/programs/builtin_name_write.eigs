@@ -1,0 +1,26 @@
+# #99 round 5: C's local-eligibility consults the compile-time global env
+# (the in_globals disjunct, emit_assign_for_tos) — for a main-program
+# compile that env is the BUILTIN registry, so a plain first write to a
+# builtin name inside a function is slot-INELIGIBLE and routes to
+# OP_SET_NAME: it really mutates the global binding (VM-verified).
+define f() as:
+    len is 5
+    return 0
+f of null
+print of len
+# nested write through the in_outer/in_globals walk hits the global too
+define g() as:
+    define h() as:
+        max is 42
+        return 0
+    h of null
+    print of max
+    return 0
+g of null
+# ...but a `local` write to a builtin name is the FN_NAME_LOCAL shadow
+# (ineligible + local_only), leaving the global builtin intact
+define s() as:
+    local abs is 7
+    return abs
+print of (s of null)
+print of (abs of -3)

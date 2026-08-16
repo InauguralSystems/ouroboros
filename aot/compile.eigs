@@ -254,16 +254,18 @@ define infer_tensors(stmts) as:
 
 # Does `name` appear as a dot target (`name.field`)? -> a dict param.
 # Is the INCOMING value of param `name` dead — never read before the body
-# unconditionally rebinds it? Scan top-level stmts in order: a plain assign to
-# `name` whose RHS doesn't read it kills the incoming value (safe; `local n is
-# 0` lowers to a plain assign); any statement that reads `name` first — or a
-# compound assign, which reads its target — is a use. Branch-local first
-# assignments are deliberately NOT credited (conservative: reads after them
-# still count as uses of the incoming value).
+# unconditionally rebinds it? Scan top-level stmts in order: an assign to
+# `name` whose RHS doesn't read it kills the incoming value. This includes
+# the `local n is 0` idiom (since #99 a 4th marker element rides on local
+# assigns; for a PARAM name `local` writes the existing slot — a rebind —
+# so the kill applies identically). Any statement that reads `name` first —
+# or a compound assign, which reads its target — is a use. Branch-local
+# first assignments are deliberately NOT credited (conservative: reads after
+# them still count as uses of the incoming value).
 define param_unread(body, name) as:
     for i in range of (len of body):
         local st is unwrap of body[i]
-        if (st[0] == "assign") and (st[1] == name) and ((len of st) == 3):
+        if (st[0] == "assign") and (st[1] == name) and ((len of st) <= 4):
             return ((uses_ident of [st[2], name]) == 0)
         if (uses_ident of [st, name]) == 1:
             return 0
@@ -904,6 +906,9 @@ define emit_num(node, nm, bt, raw) as:
             # to fall into the `not` arm below, a silent wrong number).
             return "((double)(~(int64_t)(" + uv + ")))"
         if uop == "not":
+            # Unary tightness since #99 item 1 (parse_unary_body): the operand
+            # is unary-or-tighter, so this numeric arm sees e.g. the `not x`
+            # inside `(not x) + 1` — position-independent either way.
             return "((" + uv + " == 0.0) ? 1.0 : 0.0)"
         throw of ("AOT: emit_num unexpected unary '" + uop + "'")
     if t == "dot":
@@ -1031,17 +1036,27 @@ define emit_val(node, nm, bt) as:
     if t == "null":
         return "make_null()"
     if t == "interrogate":
-        # ["interrogate", kind, expr, at]. Routes through slot_to_value, so the
-        # result is polymorphic: a number (what/when/where/why/how/prev), a string
-        # (who -> the binding name), or null on a miss. kinds: 0 what, 1 who,
-        # 2 when, 3/4/5 where/why/how, 6 prev.
+        # ["interrogate", kind, expr, at, when]. Routes through slot_to_value,
+        # so the result is polymorphic: a number (what/when/where/why/how/prev),
+        # a string (who -> the binding name), or null on a miss. kinds: 0 what,
+        # 1 who, 2 when, 3/4/5 where/why/how, 6 prev.
         local ik is node[1]
         local ie is unwrap of node[2]
         local iat is node[3]
+        # #868 `when <n>` qualifier (5th element since #99): the occurrence
+        # ring has no AOT runtime seam yet — refuse loudly, never drop it.
+        if (len of node) >= 5:
+            if node[4] != null:
+                throw of "AOT: the `when <n>` interrogative qualifier is not supported"
         if iat == null:
             if ik == 6:
                 return "aot_prev_val(\"" + ie[1] + "\")"
             throw of "AOT: temporal interrogative without `at` only supports `prev`"
+        # The at-form addresses a NAMED binding; a non-ident operand has no
+        # name to query (the C compiler drops to the value form there) —
+        # refuse rather than emit a garbage name (#99 item 6 hardening).
+        if ie[0] != "ident":
+            throw of "AOT: `at`-qualified interrogative requires a variable name operand"
         return "aot_query_at_val(" + (str of ik) + ", \"" + ie[1] + "\", (int)(" + (emit_num of [iat, nm, bt, 0]) + "))"
     if t == "ident":
         # Value-typed C names are NOT in the env: a buffer/dict local or param
@@ -1104,6 +1119,10 @@ define emit_val(node, nm, bt) as:
         if uop == "not":
             # `not x` -> 1.0 if x is falsy else 0.0 (a number; matches the VM).
             # aot_truthy consumes its operand, so no extra decref is needed.
+            # Since #99 item 1 the frontend parses `not` at UNARY tightness
+            # (parser.c parse_unary_body): `not x + 1` arrives as
+            # binop(+, unary(not, x), 1) — the not node's operand is always
+            # unary-or-tighter, and the emit is position-independent.
             return "make_num(aot_truthy(" + (emit_val of [node[2], nm, bt]) + ") ? 0.0 : 1.0)"
         if uop == "-":
             return "make_num(-(aot_num(" + (emit_val of [node[2], nm, bt]) + ")))"
@@ -3581,6 +3600,53 @@ define dump_rec(scope, role, name, kind, ln) as:
         l is 0 - 1
     g_dump_out is g_dump_out + "D " + scope + " " + role + " " + name + " " + kind + " " + (str of l) + "\n"
 
+# Collect names bound by a `local`-marked assign (4th element on the assign
+# node, #99 item 2) anywhere in a subtree. Generic list walk (same shape as
+# has_interrogate); strings/nums are skipped by the type check.
+define collect_local_marked(node, acc) as:
+    if (type of node) != "list":
+        return 0
+    if (len of node) == 0:
+        return 0
+    if node[0] == "assign":
+        if (len of node) >= 4:
+            acc[node[1]] is 1
+    for k in range of (len of node):
+        collect_local_marked of [node[k], acc]
+    return 0
+
+# Collect names targeted by a PLAIN (unmarked) assign anywhere in a subtree —
+# the round-6 companion of collect_local_marked, feeding the builtin-name
+# clobber refusal in emit_function.
+define collect_plain_assigns(node, acc) as:
+    if (type of node) != "list":
+        return 0
+    if (len of node) == 0:
+        return 0
+    if node[0] == "assign":
+        if (len of node) == 3:
+            acc[node[1]] is 1
+    for k in range of (len of node):
+        collect_plain_assigns of [node[k], acc]
+    return 0
+
+# Is `name` bound to a genuine BUILTIN in the runtime's global env? Cached
+# type-of-eval probe (same mechanism as codegen.eigs's cg_is_builtin): only a
+# real builtin answers type "builtin" — this compiler's own module functions
+# are "function", and an unbound name throws into the catch.
+AOT_BUILTIN_NAMES is {}
+define aot_is_builtin_name(name) as:
+    if has_key of [AOT_BUILTIN_NAMES, name]:
+        return AOT_BUILTIN_NAMES[name]
+    local r is 0
+    try:
+        if (type of (eval of name)) == "builtin":
+            r is 1
+    catch _aot_ib_err:
+        r is 0
+    AOT_BUILTIN_NAMES[name] is r
+    return r
+
 define emit_function(fn, finfo, gnm, gbt) as:
     local name is fn[1]
     G_CUR_FN[0] is name
@@ -3621,6 +3687,37 @@ define emit_function(fn, finfo, gnm, gbt) as:
     for k in range of (len of gb):
         if gbt[gb[k]] == 1:
             fbt[gb[k]] is 1
+    # `local NAME is e` (#99 item 2): in a function whose name collides with a
+    # module global, the AOT's plain-assign path writes the file-scope C var —
+    # the exact module mutation `local` exists to prevent. No local-shadow
+    # storage exists here yet, so refuse loudly rather than miscompile
+    # silently. A `local` of a non-global name is a function local either
+    # way and falls through to the ordinary assign path.
+    local _lmk is {}
+    collect_local_marked of [body, _lmk]
+    local _lmn is keys of _lmk
+    for k in range of (len of _lmn):
+        if (gnm[_lmn[k]] == 1) or (gbt[_lmn[k]] == 1):
+            throw of ("AOT: `local " + _lmn[k] + "` shadowing a module binding is not supported (would write the file-scope global)")
+    # Round 6 (#99): a PLAIN function-body write to a BUILTIN name clobbers
+    # the runtime's global binding under VM semantics (the in_globals veto in
+    # emit_assign_for_tos makes it slot-ineligible -> OP_SET_NAME); the AOT's
+    # plain-assign path would make it a C local instead — a silent wrong
+    # value. Refuse loudly. A `local <builtin>` shadow (marked assign, and
+    # its follow-up plain writes land on the shadow), a PARAM named after a
+    # builtin (slot wins), and builtin READS all keep working.
+    local _pas is {}
+    collect_plain_assigns of [body, _pas]
+    local _pan is keys of _pas
+    for k in range of (len of _pan):
+        if (aot_is_builtin_name of _pan[k]) == 1:
+            if (_lmk[_pan[k]] != 1):
+                local _isp is 0
+                for p in range of (len of params):
+                    if params[p] == _pan[k]:
+                        _isp is 1
+                if _isp == 0:
+                    throw of ("AOT: `" + _pan[k] + " is ...` inside a function writes the GLOBAL builtin binding (VM semantics); the AOT has no global-clobber path — use `local " + _pan[k] + " is ...` for a function-local")
     # tensor (nested-list) layer for this scope: tensor locals (assigned from a
     # tensor RHS) + tensor/dict params.
     g_dict is {}

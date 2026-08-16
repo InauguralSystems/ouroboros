@@ -1,0 +1,11 @@
+# #99 item 8: `%=` end to end — lexed as one token and desugared via the
+# compound family, on plain names, dict fields and list indexes.
+x is 9
+x %= 4
+print of x
+d is {"k": 10}
+d.k %= 3
+print of d.k
+l is [11]
+l[0] %= 4
+print of l[0]

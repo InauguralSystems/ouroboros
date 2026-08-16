@@ -151,6 +151,11 @@ define eigen_tokenize(source) as:
                                 append of [new_stack, indent_stack[si]]
                             indent_stack is new_stack
                             append of [tokens, ["dedent", null, line]]
+                        # C lexer (lexer.c): after popping, the indent must
+                        # land EXACTLY on an outer level — a partial dedent
+                        # silently changed block structure here (#99).
+                        if spaces != (indent_stack[(len of indent_stack) - 1]):
+                            throw of ("ouroboros: indentation does not match any outer level at line " + (str of line))
         # Now handle non-indent characters
         if (at_line_start == 0) and (pos < src_len):
             c is char_at of [source, pos]
@@ -255,18 +260,34 @@ define eigen_tokenize(source) as:
                                 else:
                                     expr_buf is expr_buf + bc
                                     pos is pos + 1
-                            # Recursively tokenize the inner expression
+                            # C lexer: a brace expression still open at
+                            # end-of-source is a loud error (#99).
+                            if depth > 0:
+                                throw of ("ouroboros: unterminated f-string expression at line " + (str of line))
+                            # Recursively tokenize the inner expression.
+                            # Layout tokens from the sub-lex are meaningless
+                            # inside a spliced expression — the C lexer drops
+                            # NEWLINE, INDENT and DEDENT; dropping only
+                            # eof/newline left `f"v={ 1 + 2 }"` with a stray
+                            # indent token (leading space = line-start indent
+                            # in the sub-lex) and broke the parse (#99).
                             inner_tokens is eigen_tokenize of expr_buf
                             for iti in range of (len of inner_tokens):
                                 itok is inner_tokens[iti]
                                 if itok[0] != "eof":
                                     if itok[0] != "newline":
-                                        append of [tokens, itok]
+                                        if itok[0] != "indent":
+                                            if itok[0] != "dedent":
+                                                append of [tokens, itok]
                             append of [tokens, ["rparen", null, line]]
                             append of [tokens, ["rparen", null, line]]
                         else:
                             buf is buf + fc
                             pos is pos + 1
+                    # C lexer: an f-string still open at end-of-source is a
+                    # loud "unterminated f-string" error (#99).
+                    if reading_fstr == 1:
+                        throw of ("ouroboros: unterminated f-string at line " + (str of line))
                     # Emit trailing literal
                     if (len of buf) > 0:
                         if has_segments == 1:
@@ -303,6 +324,11 @@ define eigen_tokenize(source) as:
                     else:
                         buf is buf + ch
                         pos is pos + 1
+                # C lexer: a string still open at end-of-source is a loud
+                # "unterminated string" error — emitting the accumulated
+                # buffer silently swallowed every following line (#99).
+                if reading_str == 1:
+                    throw of ("ouroboros: unterminated string at line " + (str of line))
                 append of [tokens, ["str", buf, line]]
                 handled is 1
             # Numbers (integer, decimal, leading-dot, scientific notation),
@@ -437,7 +463,7 @@ define eigen_tokenize(source) as:
                     append of [tokens, ["pipe", null, line]]
                     pos is pos + 2
                     handled is 1
-                elif (two == "+=") or (two == "-=") or (two == "*=") or (two == "/="):
+                elif (two == "+=") or (two == "-=") or (two == "*=") or (two == "/=") or (two == "%="):
                     append of [tokens, ["op", two, line]]
                     pos is pos + 2
                     handled is 1
@@ -592,6 +618,18 @@ define _p_expect(p, ttype) as:
     _p_advance of p
     return tok
 
+# Expect one SPECIFIC keyword, mirroring the C parser's p_expect(TOK_IN) /
+# p_expect(TOK_CATCH) exact-token checks. A bare kw-class expect accepted ANY
+# keyword (`for x of [1,2]:` parsed, C rejects) — #99 item 8.
+define _p_expect_kw(p, word) as:
+    tok is _p_cur of p
+    if tok[0] != "kw":
+        throw of f"parse error: expected {word}, got {tok[0]} ('{tok[1]}') at line {tok[2]}"
+    if tok[1] != word:
+        throw of f"parse error: expected {word}, got {tok[0]} ('{tok[1]}') at line {tok[2]}"
+    _p_advance of p
+    return tok
+
 # Soft keywords are usable as ordinary identifiers outside their special forms,
 # mirroring the canonical C parser (EigenScript/src/parser.c). prev/at tokenize
 # as "kw", the six question words as "interrogative".
@@ -702,20 +740,27 @@ define _p_parse_statement(p) as:
 
     # define
     if tt == "kw":
-        # local NAME is expr — declare a function-local binding. (Vendored
-        # front-end extension for self-hosting: codegen.eigs uses `local`. We
-        # emit a plain assign; ouroboros already allocates a function-local slot
-        # for any name not bound at module scope, which is what `local` needs
-        # here. A name that shadows a module binding is not exercised.)
+        # local NAME is expr — declare a binding in the CURRENT scope only,
+        # mirroring the C parser's TOK_LOCAL statement (AST_ASSIGN with
+        # local_only=1). The marker rides as a 4th element on the assign
+        # node; codegen honors it like compiler.c's emit_assign_for_tos
+        # (#99 item 2 — dropping it made `local` shadowing a module name
+        # MUTATE the module binding, the exact outward-mutation `local`
+        # exists to prevent). `is` is required, as in C (p_expect TOK_IS).
         if (_p_peek_val of p) == "local":
             _p_advance of p
             local_tok is _p_expect_ident_like of p
+            is_ok is 0
             if (_p_peek_type of p) == "kw":
                 if (_p_peek_val of p) == "is":
                     _p_advance of p
+                    is_ok is 1
+            if is_ok == 0:
+                bad is _p_cur of p
+                throw of f"parse error: expected is, got {bad[0]} ('{bad[1]}') at line {bad[2]}"
             local_expr is _p_parse_expr of p
             _p_end_statement of p
-            return ["_line", _stmt_line, ["assign", local_tok[1], local_expr]]
+            return ["_line", _stmt_line, ["assign", local_tok[1], local_expr, 1]]
         if (_p_peek_val of p) == "define":
             _p_advance of p
             name_tok is _p_expect of [p, "ident"]
@@ -791,7 +836,7 @@ define _p_parse_statement(p) as:
         if (_p_peek_val of p) == "for":
             _p_advance of p
             var_tok is _p_expect_ident_like of p
-            _p_expect of [p, "kw"]
+            _p_expect_kw of [p, "in"]
             iter is _p_parse_expr of p
             _p_expect of [p, "colon"]
             _p_skip_newlines of p
@@ -818,7 +863,7 @@ define _p_parse_statement(p) as:
             _p_skip_newlines of p
             try_body is _p_parse_block of p
             _p_skip_newlines of p
-            _p_expect of [p, "kw"]
+            _p_expect_kw of [p, "catch"]
             err_name is "err"
             if (_tok_ident_like of (_p_cur of p)) == 1:
                 err_name is (_p_cur of p)[1]
@@ -1074,23 +1119,15 @@ define _p_parse_or(p) as:
     return left
 
 define _p_parse_and(p) as:
-    left is _p_parse_not of p
+    left is _p_parse_comparison of p
     loop while (_p_peek_type of p) == "kw":
         if (_p_peek_val of p) == "and":
             _p_advance of p
-            right is _p_parse_not of p
+            right is _p_parse_comparison of p
             left is ["binop", "and", left, right]
         else:
             return left
     return left
-
-define _p_parse_not(p) as:
-    if (_p_peek_type of p) == "kw":
-        if (_p_peek_val of p) == "not":
-            _p_advance of p
-            operand is _p_parse_not of p
-            return ["unary", "not", operand]
-    return _p_parse_comparison of p
 
 define _p_parse_comparison(p) as:
     left is _p_parse_bitor of p
@@ -1127,6 +1164,8 @@ define _compound_base_op(op) as:
         return "*"
     if op == "/=":
         return "/"
+    if op == "%=":
+        return "%"
     if op == "&=":
         return "&"
     if op == "|=":
@@ -1220,6 +1259,13 @@ define _p_parse_mul(p) as:
             return left
     return left
 
+# Prefix unary operators, mirroring the C parser's parse_unary_body: `-`,
+# `not` and `~` all sit at UNARY tightness (tighter than every binary op)
+# and recurse into parse_unary for the operand. `not` used to sit between
+# `and` and comparison (#99 item 1): `not x + 1` parsed as `not (x + 1)`
+# where the C parser reads `(not x) + 1`, and `not 2 == 1` as
+# `not (2 == 1)` where C reads `(not 2) == 1` — silent wrong values in
+# BOTH compilers (shared frontend).
 define _p_parse_unary(p) as:
     if (_p_peek_type of p) == "op":
         if (_p_peek_val of p) == "-":
@@ -1228,6 +1274,10 @@ define _p_parse_unary(p) as:
         if (_p_peek_val of p) == "~":
             _p_advance of p
             return ["unary", "~", _p_parse_unary of p]
+    if (_p_peek_type of p) == "kw":
+        if (_p_peek_val of p) == "not":
+            _p_advance of p
+            return ["unary", "not", _p_parse_unary of p]
     return _p_parse_call of p
 
 define _p_parse_call(p) as:
@@ -1302,10 +1352,11 @@ define _p_parse_primary(p) as:
         _p_advance of p
         return ["null"]
 
-    # Temporal: `prev of x [at <line>]` (kind 6); bare `prev`/`at` are ordinary
-    # identifiers (soft keywords), matching the C grammar.
+    # Temporal: `prev of x [at <e> | when <e>]` (kind 6); bare `prev`/`at` are
+    # ordinary identifiers (soft keywords), matching the C grammar.
     if tt == "kw":
         if (_p_peek_val of p) == "prev":
+            prev_line is (_p_cur of p)[2]
             _p_advance of p
             is_temporal is 0
             if (_p_peek_type of p) == "kw":
@@ -1313,13 +1364,25 @@ define _p_parse_primary(p) as:
                     is_temporal is 1
             if is_temporal == 1:
                 _p_advance of p
-                prev_expr is _p_parse_primary of p
+                # #634 (mirrors parse_primary's TOK_PREV): the operand is
+                # unary-or-tighter like every other `of`, and MUST be a bare
+                # variable name — a literal/index/dot/paren operand has no
+                # assignment history and used to return null silently.
+                prev_expr is _p_parse_unary of p
+                if prev_expr[0] != "ident":
+                    throw of ("ouroboros: parse error: 'prev of' requires a variable name at line " + (str of prev_line))
                 prev_at is null
+                prev_when is null
                 if (_p_peek_type of p) == "kw":
                     if (_p_peek_val of p) == "at":
                         _p_advance of p
-                        prev_at is _p_parse_primary of p
-                return ["interrogate", 6, prev_expr, prev_at]
+                        prev_at is _p_parse_expr of p
+                if prev_at == null:
+                    if (_p_peek_type of p) == "interrogative":
+                        if (_p_peek_val of p) == "when":
+                            _p_advance of p                # #868 qualifier
+                            prev_when is _p_parse_expr of p
+                return ["interrogate", 6, prev_expr, prev_at, prev_when]
             # Identifier fallback: takes the FULL dot+bracket postfix chain
             # like a plain ident (upstream #328, in the v0.23.0 pin).
             return _p_postfix_full of [p, ["ident", "prev"]]
@@ -1327,8 +1390,13 @@ define _p_parse_primary(p) as:
             _p_advance of p
             return _p_postfix_full of [p, ["ident", "at"]]
 
-    # Interrogatives: `<kw> is x [at <line>]` (what/who/when/where/why/how).
-    # Matches the C grammar (not the meta-interpreter's `<kw> of x`).
+    # Interrogatives: `<kw> is x [at <e> | when <e>]` (what/who/when/where/
+    # why/how). Matches the C grammar: the operand and the at/when qualifier
+    # operands are FULL expressions (parse_expression), not primaries —
+    # `who is y + 1` interrogates the value of y + 1 (#99 item 6). The #868
+    # `when <N>` qualifier (Nth recorded assignment) is in the v0.39.0 pin;
+    # arriving at a current `when` token means the operand expression is
+    # already complete, so it is unambiguously the qualifier.
     if tt == "interrogative":
         tok is _p_cur of p
         _p_advance of p
@@ -1336,13 +1404,19 @@ define _p_parse_primary(p) as:
         if (_p_peek_type of p) == "kw":
             if (_p_peek_val of p) == "is":
                 _p_advance of p
-                iexpr is _p_parse_primary of p
+                iexpr is _p_parse_expr of p
                 at_expr is null
+                when_expr is null
                 if (_p_peek_type of p) == "kw":
                     if (_p_peek_val of p) == "at":
                         _p_advance of p
-                        at_expr is _p_parse_primary of p
-                return ["interrogate", kind, iexpr, at_expr]
+                        at_expr is _p_parse_expr of p
+                if at_expr == null:
+                    if (_p_peek_type of p) == "interrogative":
+                        if (_p_peek_val of p) == "when":
+                            _p_advance of p
+                            when_expr is _p_parse_expr of p
+                return ["interrogate", kind, iexpr, at_expr, when_expr]
         # Not `<kw> is ...` — treat as a plain identifier. Since v0.23.0
         # (#328) the C question-word fallback takes the full dot+bracket
         # postfix chain (verified vs the oracle: `how.k` works).
@@ -1373,7 +1447,9 @@ define _p_parse_primary(p) as:
                 scan_ok is 0
             else:
                 stok is p[0][scan_pos]
-                if (stok[0] == "ident") or (stok[0] == "comma"):
+                # C scan: tok_is_ident_like or COMMA — soft keywords (prev/
+                # at/question words) are valid lambda params (#99 item 8).
+                if ((_tok_ident_like of stok) == 1) or (stok[0] == "comma"):
                     scan_pos is scan_pos + 1
                 elif stok[0] == "rparen":
                     # Check if next is arrow
@@ -1385,7 +1461,7 @@ define _p_parse_primary(p) as:
                     scan_ok is 0
         if is_lambda == 1:
             params is []
-            loop while (_p_peek_type of p) == "ident":
+            loop while (_tok_ident_like of (_p_cur of p)) == 1:
                 append of [params, (_p_cur of p)[1]]
                 _p_advance of p
                 if (_p_peek_type of p) == "comma":
@@ -1424,7 +1500,7 @@ define _p_parse_primary(p) as:
             if (_p_peek_val of p) == "for":
                 _p_advance of p
                 var_tok is _p_expect_ident_like of p
-                _p_expect of [p, "kw"]
+                _p_expect_kw of [p, "in"]
                 iter_expr is _p_parse_expr of p
                 filter_expr is null
                 if (_p_peek_type of p) == "kw":
@@ -1639,7 +1715,12 @@ define eigen_eval(node, env) as:
 
     if ntype == "assign":
         val is eigen_eval of [node[2], env]
-        _env_set of [env, node[1], val]
+        # 4th element = local_only marker (`local NAME is e`): bind in the
+        # CURRENT scope only, never walk to an outer binding.
+        if (len of node) >= 4:
+            _env_set_local of [env, node[1], val]
+        else:
+            _env_set of [env, node[1], val]
         _update_observer of [node[1], val]
         return val
 

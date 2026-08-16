@@ -1,0 +1,20 @@
+# #99 round 2: name-keyed history/observer queries on FUNCTION locals. The
+# escape pre-scan (cg_scan_name_bound, mirroring compiler.c's
+# scan_for_interrogated) keeps interrogated names on the NAME path
+# (OP_SET_FN_NAME_LOCAL) — slot-locals are invisible to INTERROGATE_NAMED/
+# _AT/_WHEN, so without it `when` inside a function answered null.
+define f() as:
+    y is 5
+    y is 6
+    return what is y when 1
+print of (f of null)
+define g() as:
+    y is 1
+    y is 2
+    return prev of y
+print of (g of null)
+define h() as:
+    z is 3
+    z is 4
+    return [what is z when 2, prev of z]
+print of (h of null)
