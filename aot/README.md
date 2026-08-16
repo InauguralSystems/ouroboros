@@ -331,10 +331,12 @@ same workload) after the #100/#103/#107 correctness train and #109's C
 block-scope `local` shadows. The earlier table (v0.2x-era pin) read
 2.0–2.5× generic / 17× mono from VM 5.34s / AOT 2.14s and 1.37s / 0.08s:
 the VM side of the generic workload is ~13% slower at this pin while the
-AOT side held, so the generic ratio ROSE to ~2.9×; the mono binary is
-~15% slower than the old 0.08s (the #107 seams — per-call env plumbing
-and the loud `aot_num_ck`/error-check paths replacing silent coercions —
-are the plausible cost), so the mono ratio eased to ~14.9×.
+AOT side held, so the generic ratio ROSE to ~2.9×. The mono delta vs the
+old 0.08s row is NOT the correctness train's cost — measured directly: a
+mono binary built at the pre-train commit (3c4dde8) medians 0.0923s vs
+0.0916s at #109's HEAD (n=5 each, same box, statistically identical) —
+so the difference from 0.08s is the pin/measurement conditions of the
+original row, and the mono ratio at this pin is ~14.9×.
 
 The honest reading: **genericity is where the VM's overhead lives, so keeping
 it boxed keeps most of that overhead.** In the verbatim module every byte goes

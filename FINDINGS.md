@@ -1219,6 +1219,23 @@ observed/temporal functions (history/env state is keyed by NAME), and
 any non-numeric assignment to the shadow (the seeded fnm would keep it
 on the numeric path — the silent-wrong class).
 
+ROUND 2 (blind-critic review of PR #110) — a BINDER occurrence of the
+shadow name is not a chain-walk write, and the first cut treated it as a
+benign post-decl touch: `local n is 55` then `for n in range of 3` —
+VM prints 0/1/2 then 55 (the for-var is a fresh LOOP-SCOPED binding,
+the shadow keeps 55), the round-1 emitter wrote the loop var through
+the shadow's C name and printed 2 (silent wrong; pre-train this shape
+was loud-refused). sh_binds now refuses for-var, catch-var and
+comprehension-var re-bindings of the shadow name anywhere in the body —
+role-based, so the guard holds even where today's envelope refuses
+catch/listcomp for other reasons (probe: the comprehension var LEAKS in
+the VM — `[n * 2 for n in [1, 2]]` after `local n is 5` leaves n == 2 —
+a third distinct role semantics, confirming refusal over per-role
+emission). The critic also found the PRE-EXISTING module-scope twin —
+module-level `for n` over an EXISTING module global serves the global
+all four prints where the VM loop-scopes (0/1/2 then 100) — filed as
+#111 (reproduces at cef9522; not part of this train).
+
 **STILL LOUD-REFUSED (unchanged from #107):** `local` shadows of BOXED
 (string/list/dict) and BUFFER module globals, and everything else in
 F-OURO-31/32's envelope list.
@@ -1232,6 +1249,9 @@ out of the gate (minutes of wall time).
 
 **Re-measured #64 numbers** (v0.39.0 pin, n=5 medians): generic
 6.01s VM / 2.07s AOT = ~2.9× (was 2.0–2.5×; the VM side slowed ~13%
-across pins), mono 1.36s / 0.092s = ~14.9× (was 17×; the #107 per-call
-env + loud error-check seams are the plausible ~15% AOT cost).
-aot/README.md's table updated with the deltas noted.
+across pins), mono 1.36s / 0.092s = ~14.9× (was 17×). The round-1 guess
+that the #107 seams cost the mono ~15% was REFUTED by measurement
+(round 2): a mono binary built at the pre-train commit 3c4dde8 medians
+0.0923s vs 0.0916s at HEAD — statistically identical — so the delta vs
+the old 0.08s row is the original row's pin/measurement conditions, not
+the correctness train. aot/README.md's table updated accordingly.

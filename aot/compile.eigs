@@ -3612,6 +3612,29 @@ define sh_deferred_ref(node, name) as:
             return 1
     return 0
 
+# Does `name` appear as a BINDER — a for-var, catch-var, or comprehension
+# var — anywhere in the subtree? A binder is not a chain-walk write: the VM
+# loop-scopes a for-var over a name-bound shadow (oracle probe: `local n is
+# 55` then `for n in range of 3` prints 0/1/2 then 55 — the shadow keeps
+# 55), while the emitter's C name would be written through. Role-based, not
+# envelope-based: catch/listcomp are checked even where today's AOT refuses
+# them for other reasons, so this guard cannot rot if that envelope grows.
+define sh_binds(node, name) as:
+    if (type of node) != "list":
+        return 0
+    if (len of node) == 0:
+        return 0
+    if (node[0] == "for") and (node[1] == name):
+        return 1
+    if (node[0] == "try") and (node[2] == name):
+        return 1
+    if (node[0] == "listcomp") and (node[2] == name):
+        return 1
+    for k in range of (len of node):
+        if (sh_binds of [node[k], name]) == 1:
+            return 1
+    return 0
+
 # Validate one block for the decl-at-site emission. Returns:
 #   0 — invalid (refuse the shadow);
 #   2 — valid, no occurrence before the decl;
@@ -3915,6 +3938,14 @@ define emit_function(fn, finfo, gnm, gbt) as:
             # shadow; a lifted C fn reads the file-scope global and a
             # capbind capture is a stale value snapshot.
             shwhy is "the name is referenced by a nested define/lambda"
+        elif (sh_binds of [body, shn]) == 1:
+            # a binder is not a chain-walk write — the VM loop-scopes a
+            # for-var over the shadow (post-loop reads see the SHADOW, not
+            # the last iterate); the C emission would write the shadow
+            # through. Refuse anywhere in the body (a pre-decl binder has
+            # its own module-scope twin, see the issue referenced by
+            # F-OURO-33).
+            shwhy is "the name is re-bound as a for/catch/comprehension variable"
         else:
             local shv is sh_validate_block of [body, shn, 1]
             if shv == 0:
