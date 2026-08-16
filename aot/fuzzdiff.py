@@ -12,15 +12,29 @@ accumulators, soft-keyword identifiers -- and asserts:
     eigenscript prog.eigs   ==   (aot-compiled prog).run()    byte for byte.
 
 Generation stays inside the AOT-supported, association-stable subset (scalar
-arithmetic, lists, for-loops; no SIMD-reassociated buffer reductions, no dict
-dot-access), so any difference is a real finding:
+arithmetic, lists, dict indexing, for/while loops, recursion; no
+SIMD-reassociated buffer reductions), so any difference is a real finding:
 
   * DIVERGENCE  -- both run, outputs differ  (the serious class: a silent
                    miscompile, exactly the bug a differential oracle exists for)
+  * RUN_PAST    -- the VM REJECTS the program (nonzero exit) but the AOT binary
+                   exits 0: the AOT ran past an error the oracle stops at --
+                   the silent-wrong-answer class (ouroboros#96/#100 item 1).
   * AOT_GAP     -- the VM accepts the program but the AOT fails to build it
                    (a feature the AOT should support, or a generator that
                    strayed out of the subset)
-  * (VM-invalid programs are skipped -- a generator slip, not an AOT bug.)
+
+A program the VM rejects is a TEST CASE, not a skip (#101 item 4 -- the old
+skip made this class structurally unfindable): the AOT must either refuse to
+build it (a loud build-time reject is a pass) or die too, with byte-exact
+pre-death stdout and the same error kind/message on stderr under the SAME
+normalization contract as aot/test/run.sh's _err class (VM-only source
+excerpt / caret / `at ...` frames dropped, `Error line N:` blanked; death
+CODES are not compared -- see that harness's residual note).
+
+NOTE while ouroboros#100 is open, str-compare / recursion / mixed-compare
+programs are EXPECTED RED (e.g. `"a" < "b"` -> VM 1, AOT 0). fuzzdiff is a
+manual tool, not CI -- rediscovering those live bugs is the point.
 
 Reproducible: every run prints its master seed; re-run with --seed N. Each
 finding's program text is saved under --findings-dir for a minimal repro.
@@ -39,9 +53,10 @@ EigenScript main flagged a "drift" the v0.19.0-pinned AOT shouldn't chase.)
 Usage:
     EIGS=<pinned-vm> python3 fuzzdiff.py [--count N] [--seed N]
                         [--findings-dir DIR] [--strict-gaps] [--quiet]
-Exit status: nonzero if any DIVERGENCE (or any AOT_GAP under --strict-gaps).
+Exit status: nonzero if any DIVERGENCE or RUN_PAST (or any AOT_GAP under
+--strict-gaps).
 """
-import argparse, os, random, subprocess, sys, tempfile
+import argparse, os, random, re, subprocess, sys, tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 # Default oracle = the sibling working tree (dev convenience). For CI-relevant
@@ -150,24 +165,106 @@ def gen_list_ops(r):
             f"print of xs[{i}]\n"
             f"print of (xs[{i}] {_addop(r)} {_pint(r)})\n")
 
+def _word(r):
+    return r.choice(["apple", "banana", "cherry", "kiwi", "mango", "pear"])
+
+def gen_str_compare(r):
+    # Strings as DATA, not just concat: ordering/equality (#100 item 1 --
+    # AOT_CMP silently answers 0 for any non-num/num pair). The occasional
+    # mixed num/str compare is an error-class case: the VM RAISES, so the AOT
+    # must die too (#100's run-past probe).
+    a, b = _word(r), _word(r)
+    cmps = ["<", ">", "<=", ">=", "==", "!="]
+    lines = [f'a is "{a}"', f'b is "{b}"']
+    for _ in range(r.randint(2, 4)):
+        lines.append(f"print of (a {r.choice(cmps)} b)")
+    lines.append(f'print of ((a + "x") {r.choice(cmps)} a)')
+    if r.random() < 0.3:
+        lines.append(f"print of ({_pint(r)} < a)")
+    return "\n".join(lines) + "\n"
+
+def gen_dict_ops(r):
+    # Dict get / set / iteration through [key] indexing (dot-access on module
+    # dicts stays out -- t60's class). Several of these shapes are currently
+    # loud AOT build throws ("emit_num on non-numeric node str" -- e.g.
+    # re-assigning a literal key, and some set-then-iterate combinations),
+    # i.e. AOT_GAPs; they stay generated so the envelope hole stays visible.
+    ks = ["a", "b", "c", "d"][:r.randint(2, 4)]
+    items = ", ".join(f'"{k}": {_int(r)}' for k in ks)
+    lines = [f"d is {{{items}}}",
+             f'print of d["{r.choice(ks)}"]',
+             f'd["z"] is d["{ks[0]}"] {_addop(r)} {_pint(r)}',
+             f'print of d["z"]']
+    if r.random() < 0.4:
+        lines.append(f'd["{ks[-1]}"] is {_int(r)}')
+    keys = "[" + ", ".join(f'"{k}"' for k in ks) + "]"
+    lines += [f"for k in {keys}:", "    print of d[k]"]
+    return "\n".join(lines) + "\n"
+
+def gen_loop_while(r):
+    # `loop while` with a numeric accumulator, sometimes a string one.
+    n = r.randint(2, 7)
+    lines = ["i is 0", f"acc is {_int(r)}"]
+    if r.random() < 0.5:
+        lines += ['s is ""',
+                  f"loop while i < {n}:",
+                  f"    acc is acc + (i {_mulop(r)} {_pint(r)})",
+                  "    s is s + (str of i)",
+                  "    i is i + 1",
+                  "print of acc",
+                  "print of s"]
+    else:
+        lines += [f"loop while i < {n}:",
+                  f"    acc is acc + (i {_addop(r)} {_pint(r)})",
+                  "    i is i + 1",
+                  "print of acc"]
+    return "\n".join(lines) + "\n"
+
+def gen_recursion_str(r):
+    # Recursion with a NON-NUMERIC local (#100 items 2/3): boxed fn locals
+    # live in the one global env, so inner frames clobber outer ones, and the
+    # string local goes through silent aot_num.
+    depth = r.randint(2, 4)
+    ret = r.choice(["tag", "tag", "r2"])   # mostly the outer frame's local
+    return ("define f(n) as:\n"
+            f'    tag is "{_word(r)[0]}" + (str of n)\n'
+            "    if n <= 0:\n"
+            "        return tag\n"
+            "    r2 is f of (n - 1)\n"
+            f"    return {ret}\n"
+            f"print of (f of {depth})\n"
+            "print of (f of 0)\n")
+
 GENERATORS = [gen_precedence, gen_sci_literals, gen_arith, gen_function_returns,
-              gen_loop_accum, gen_fstring, gen_soft_keyword_idents, gen_list_ops]
+              gen_loop_accum, gen_fstring, gen_soft_keyword_idents, gen_list_ops,
+              gen_str_compare, gen_dict_ops, gen_loop_while, gen_recursion_str]
 
 
 # ---- harness ---------------------------------------------------------------
 
 def run_vm(path):
     p = subprocess.run([EIGS, path], capture_output=True, text=True, timeout=20)
-    return p.stdout, (p.returncode == 0 and "Error" not in p.stderr
-                      and "Parse error" not in p.stdout)
+    return p.stdout, p.stderr, p.returncode
 
 def run_aot(prog_path, out_path):
     b = subprocess.run(["bash", os.path.join(HERE, "build.sh"), prog_path, out_path],
                        cwd=HERE, capture_output=True, text=True, timeout=120)
     if b.returncode != 0 or not os.path.exists(out_path):
-        return None, False, (b.stderr or b.stdout).strip().splitlines()[-1:] or [""]
+        return None, None, None, (b.stderr or b.stdout).strip().splitlines()[-1:] or [""]
     rp = subprocess.run([out_path], capture_output=True, text=True, timeout=20)
-    return rp.stdout, True, None
+    return rp.stdout, rp.stderr, rp.returncode, None
+
+def norm_err(s):
+    # The aot/test/run.sh _err normalization, verbatim: drop the VM-only source
+    # excerpt / caret / stack-frame lines, blank the line number the AOT can't
+    # site. Everything else -- error kind, message text, ordering -- must match.
+    out = []
+    for ln in s.splitlines():
+        if re.match(r'^\s+[0-9]+ \|', ln) or re.match(r'^\s+\|.*\^', ln) \
+           or ln.startswith("  at "):
+            continue
+        out.append(re.sub(r'^Error line [0-9]+:', 'Error line:', ln))
+    return "\n".join(out)
 
 def main():
     ap = argparse.ArgumentParser(description="VM<->AOT differential fuzzer")
@@ -187,7 +284,8 @@ def main():
     print("  (oracle must match ouroboros's pinned EIGS_REF; a main checkout "
           "ahead of the pin yields non-actionable main-vs-pin 'drift')")
 
-    divergences, gaps, skipped, tested = [], [], 0, 0
+    divergences, run_pasts, gaps = [], [], []
+    tested, err_tested, err_rejected = 0, 0, 0
     tmp = tempfile.mkdtemp(prefix="fuzzdiff.")
     prog_path = os.path.join(tmp, "p.eigs")
     out_path = os.path.join(tmp, "p.bin")
@@ -198,18 +296,35 @@ def main():
         open(prog_path, "w").write(prog)
         if os.path.exists(out_path):
             os.remove(out_path)
-        vm_out, vm_ok = run_vm(prog_path)
-        if not vm_ok:
-            skipped += 1
-            continue
-        tested += 1
-        aot_out, built, err = run_aot(prog_path, out_path)
-        if not built:
-            gaps.append((gen.__name__, prog, err))
-        elif vm_out != aot_out:
-            divergences.append((gen.__name__, prog, vm_out, aot_out))
+        vm_out, vm_err, vm_rc = run_vm(prog_path)
+        mark = "."
+        if vm_rc != 0:
+            # Error-class case (#101 item 4): the VM rejects/raises. The AOT
+            # must refuse to build it (loud build throw = pass) or die too,
+            # with byte-exact pre-death stdout and _err-normalized stderr.
+            err_tested += 1
+            aot_out, aot_err, aot_rc, _berr = run_aot(prog_path, out_path)
+            if aot_out is None:
+                err_rejected += 1          # loud build-time reject: both sides refuse
+            elif aot_rc == 0:
+                run_pasts.append((gen.__name__, prog, vm_out, vm_err, aot_out))
+                mark = "R"
+            elif vm_out != aot_out or norm_err(vm_err) != norm_err(aot_err):
+                divergences.append((gen.__name__, prog,
+                                    vm_out + vm_err, aot_out + aot_err))
+                mark = "D"
+        else:
+            tested += 1
+            aot_out, aot_err, aot_rc, err = run_aot(prog_path, out_path)
+            if aot_out is None:
+                gaps.append((gen.__name__, prog, err))
+                mark = "G"
+            elif vm_out != aot_out or aot_rc != 0:
+                divergences.append((gen.__name__, prog, vm_out,
+                                    aot_out if aot_rc == 0
+                                    else aot_out + f"<AOT died rc={aot_rc}> " + aot_err))
+                mark = "D"
         if not args.quiet:
-            mark = "." if (built and vm_out == aot_out) else ("D" if built else "G")
             sys.stdout.write(mark); sys.stdout.flush()
     if not args.quiet:
         print()
@@ -225,23 +340,31 @@ def main():
                 f.write(item[1])
 
     print(f"\n=== fuzzdiff results (seed {seed}) ===")
-    print(f"  generated {args.count} | VM-valid tested {tested} | skipped(VM-invalid) {skipped}")
-    print(f"  DIVERGENCES (both run, outputs differ): {len(divergences)}")
+    print(f"  generated {args.count} | VM-clean tested {tested} | "
+          f"error-class tested {err_tested} (both-reject {err_rejected})")
+    print(f"  DIVERGENCES (outputs/deaths differ):    {len(divergences)}")
+    print(f"  RUN_PASTS   (VM rejects, AOT exits 0):  {len(run_pasts)}")
     print(f"  AOT_GAPS    (VM ok, AOT build failed):  {len(gaps)}")
     for name, prog, vm, aot in divergences[:5]:
         print(f"\n  [DIVERGENCE in {name}]")
         for ln in prog.strip().splitlines(): print("    | " + ln)
         print(f"    VM : {vm.strip()!r}")
         print(f"    AOT: {aot.strip()!r}")
+    for name, prog, vm_out, vm_err, aot_out in run_pasts[:5]:
+        print(f"\n  [RUN_PAST in {name}] VM dies, AOT exits 0")
+        for ln in prog.strip().splitlines(): print("    | " + ln)
+        print(f"    VM : {(vm_out + vm_err).strip()!r}")
+        print(f"    AOT: {aot_out.strip()!r}")
     for name, prog, err in gaps[:5]:
         print(f"\n  [AOT_GAP in {name}] {err}")
         for ln in prog.strip().splitlines(): print("    | " + ln)
     save("DIVERGENCE", divergences)
+    save("RUN_PAST", run_pasts)
     save("AOT_GAP", [(g[0], g[1]) for g in gaps])
-    if divergences or gaps:
+    if divergences or run_pasts or gaps:
         print(f"\n  findings saved to {fd}/ (re-run with --seed {seed})")
 
-    sys.exit(1 if divergences or (args.strict_gaps and gaps) else 0)
+    sys.exit(1 if divergences or run_pasts or (args.strict_gaps and gaps) else 0)
 
 
 if __name__ == "__main__":
