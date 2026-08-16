@@ -3,24 +3,42 @@
 # ouroboros compiles its own front-end and codegen, runs them so BOTH halves are
 # self-hosted, then re-compiles its own two source files and a test program. The
 # self-hosted compiler must produce byte-identical bytecode to the C-hosted
-# original for all three — the strongest fixed-point oracle there is: the serpent
-# eats its tail and the bytes don't move.
+# original for all three — the serpent eats its tail and the bytes don't move.
+#
+# Byte-equality alone is NOT enough (#101): when v0.33.0 widened OP_LINE's
+# operand, every chunk we emitted ran as garbage at rc=0, the rebinding below
+# was a no-op, and the "fixed point" compared the C-hosted compiler against
+# itself — trivially green (#630 lesson). So this gate also (a) proves the
+# rebinding took effect via sentinels compiled INTO the self-compiled units,
+# and (b) executes the self-compiled test program; test/run.sh diffs the marked
+# output block against the C evaluator running test/bootstrap_prog.eigs.
 
 load_file of "src/frontend.eigs"
 load_file of "src/codegen.eigs"
 
-FE is read_text of "src/frontend.eigs"
-CG is read_text of "src/codegen.eigs"
-P is "x is 7\nprint of (x * 6 - 1)\nz is [i * i for i in [1, 2, 3, 4, 5] if i > 1]\nprint of z\ndefine fib(n) as:\n    if n < 2:\n        return n\n    return (fib of (n - 1)) + (fib of (n - 2))\nprint of (fib of 10)\nd is {}\nfor k in [\"a\", \"b\", \"a\", \"c\", \"a\"]:\n    local key is k\n    if has_key of [d, key]:\n        d[key] is d[key] + 1\n    else:\n        d[key] is 1\nprint of (d[\"a\"])\ntry:\n    throw of \"x\"\ncatch e:\n    print of (\"caught \" + e)"
+# The sentinels ride inside the compiled units: garbage bytecode that the VM
+# runs as a misaligned no-op never reaches the trailing assignment, so a stale
+# sentinel is a hard FAIL instead of a trivially-equal pass.
+FE is (read_text of "src/frontend.eigs") + "\nouro_fe_rebound is 424242\n"
+CG is (read_text of "src/codegen.eigs") + "\nouro_cg_rebound is 424243\n"
+P is read_text of "test/bootstrap_prog.eigs"
 
 # Compile all three with the C-hosted ouroboros.
 fe_c is ouro_compile of FE
 cg_c is ouro_compile of CG
 p_c is ouro_compile of P
 
-# Self-host BOTH halves (run the self-compiled front-end, then codegen).
+# Self-host BOTH halves (run the self-compiled front-end, then codegen), and
+# require the rebinding to have actually executed.
+ouro_fe_rebound is 0
+ouro_cg_rebound is 0
 vm_run_bytecode of fe_c
 vm_run_bytecode of cg_c
+if (ouro_fe_rebound == 424242) and (ouro_cg_rebound == 424243):
+    print of "bootstrap: rebinding took effect (both halves now self-compiled)"
+else:
+    print of ("bootstrap: FAIL — self-compiled halves did not execute (fe sentinel: " + (str of ouro_fe_rebound) + ", cg sentinel: " + (str of ouro_cg_rebound) + ")")
+    exit of 1
 
 # Re-compile all three with the now fully self-hosted compiler.
 fe_s is ouro_compile of FE
@@ -32,3 +50,9 @@ if (fe_c == fe_s) and ((cg_c == cg_s) and (p_c == p_s)):
 else:
     print of ("bootstrap: FAIL — fe:" + (str of (fe_c == fe_s)) + " cg:" + (str of (cg_c == cg_s)) + " p:" + (str of (p_c == p_s)))
     exit of 1
+
+# Execute the self-compiled compiler's output. A chunk that is byte-exact but
+# runs as garbage goes red HERE, in run.sh's diff against the C evaluator.
+print of "== bootstrap-prog-begin =="
+vm_run_bytecode of p_s
+print of "== bootstrap-prog-end =="

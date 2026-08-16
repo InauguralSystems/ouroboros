@@ -10,11 +10,12 @@ for prog in test/*.eigs; do
   if ! bash build.sh "$prog" "$bin" >/tmp/aot_build.log 2>&1; then
     echo "BUILD FAIL: $name"; tail -3 /tmp/aot_build.log; fail=1; rm -f "$bin"; continue
   fi
-  ref=$("$EIG" "$prog" 2>&1)
-  got=$("$bin" 2>&1)
+  ref=$("$EIG" "$prog" 2>&1); ref_rc=$?
+  got=$("$bin" 2>&1); got_rc=$?
   match=0
+  why=""
   case "$name" in
-    *_tol*)
+    *_tol.eigs)
       # Association-unspecified reductions (dot): the AOT reassociates the sum
       # across SIMD lanes, so it agrees with the VM within tolerance, NOT byte
       # for byte (FP add is non-associative — by design, per the `dot` spec).
@@ -29,7 +30,7 @@ for x, y in zip(a, b):
 sys.exit(0)
 PY
       ;;
-    *_err*)
+    *_err.eigs)
       # Programs that RAISE. The AOT cannot reproduce the VM's uncaught-error
       # diagnostic: the source excerpt + column caret are added by the VM's
       # CHECK_ERROR from the failing instruction's bytecode offset (#407), and
@@ -58,10 +59,40 @@ PY
       ;;
     *) [ "$ref" = "$got" ] && match=1 ;;
   esac
+  # Exit-code contract (#101): text alone is spoofable — a VM-errors/AOT-
+  # exits-0 pair with matching normalized text sailed through here, which is
+  # the run-past-error class this suite exists to catch. Normal and _tol
+  # cases need a CLEAN nonempty reference and equal exit codes; _err cases
+  # need BOTH sides to die (a VM that starts exiting 0 means the class label
+  # is stale — fail loud, don't quietly re-purpose the normalizer). The class
+  # markers are filename SUFFIXES (`*_err.eigs`), not substrings: the old
+  # `*_err*` glob silently put t59_sited_errors — a clean rc-0 program — in
+  # the raising class, where the normalizer could have eaten a real
+  # divergence. Residual: the _err death codes are not compared for equality —
+  # the VM exits 1 while the AOT dies through its own teardown; code parity
+  # is part of the diagnostic-parity work tracked in the class comment above.
+  if [ "$match" -eq 1 ]; then
+    case "$name" in
+      *_err.eigs)
+        if [ "$ref_rc" -eq 0 ]; then
+          match=0; why="_err case but the VM exits 0 — stale class, drop the suffix"
+        elif [ "$got_rc" -eq 0 ]; then
+          match=0; why="VM errors (rc=$ref_rc) but the AOT exits 0 — runs past the error"
+        fi ;;
+      *)
+        if [ "$ref_rc" -ne 0 ]; then
+          match=0; why="VM reference errors (rc=$ref_rc) — declare *_err.eigs or fix the program"
+        elif [ -z "$ref" ]; then
+          match=0; why="VM reference output is empty — a parity claim needs a nonempty reference"
+        elif [ "$got_rc" -ne "$ref_rc" ]; then
+          match=0; why="exit codes differ (VM $ref_rc, AOT $got_rc)"
+        fi ;;
+    esac
+  fi
   if [ "$match" -eq 1 ]; then
     echo "PASS: $name"
   else
-    echo "FAIL: $name"
+    echo "FAIL: $name${why:+ ($why)}"
     echo "  VM:  $(printf '%s' "$ref" | tr '\n' '|')"
     echo "  AOT: $(printf '%s' "$got" | tr '\n' '|')"
     fail=1

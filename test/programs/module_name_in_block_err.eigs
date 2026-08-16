@@ -1,0 +1,24 @@
+# A global first bound inside a top-level if/loop/for/try is still a module
+# binding; an inner function must mutate it, not shadow it. ouroboros's
+# module-name pre-scan only saw direct top-level assigns.
+#
+# `_err` (#101): at the v0.39.0 pin the SECOND half now errors on the C oracle
+# too — `acc2`, first bound in a top-level `for` body, is undefined inside
+# show2 ("undefined variable 'acc2'", rc 1). The program degraded from
+# full-parity to errors-on-both-sides at a pin bump, exactly the vacuity the
+# harness used to hide; the suffix declares it, and the harness asserts both
+# sides still die with identical pre-death stdout. If a future pin makes this
+# run clean again, the stale-opt-out check fires — drop the suffix then.
+if 1 == 1:
+    counter is 0
+define inc() as:
+    counter is counter + 1
+inc of null
+inc of null
+print of counter
+
+for q in [1, 2]:
+    acc2 is q
+define show2() as:
+    return acc2
+print of (show2 of null)

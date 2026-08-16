@@ -46,14 +46,18 @@ CORE="eigenscript lexer parser builtins builtins_host builtins_tensor hash arena
 # failures — four observer tests, in the case that caught this — pointing
 # nowhere near the actual cause.
 #
-# The stamp is identity, not recency: the resolved source path plus a signature
-# over the runtime's file sizes and mtimes. Any EIGS_DIR switch, in either
-# direction, invalidates it.
+# The stamp is identity, not recency: the resolved source path, the effective
+# compile flags/defines/object list, and a content hash over every runtime .c
+# AND .h. The first version kept `ls -l` size+name only and its `-newer`
+# fallback scanned *.c — a same-size HEADER edit rebuilt nothing (#101), the
+# exact stale-lib scatter described above; and a CFLAGS/AOT_ARCH/DEFS change
+# linked objects built under the old flags. Content hashing also drops the
+# recency fallback for good: a bare touch is not a new identity.
 mkdir -p build
 STAMP="build/.libsrc"
-SIG="$(cd "$SRC" && printf '%s\n' "$(pwd -P)" && ls -l *.c *.h 2>/dev/null | awk '{print $5, $9}')"
-if [ ! -f "$LIB" ] || [ ! -f "$STAMP" ] || [ "$SIG" != "$(cat "$STAMP" 2>/dev/null)" ] \
-   || [ -n "$(find "$SRC" -name '*.c' -newer "$LIB" 2>/dev/null)" ]; then
+SHA="sha256sum"; command -v sha256sum >/dev/null 2>&1 || SHA="shasum -a 256"
+SIG="$(cd "$SRC" && printf '%s\n%s\n' "$(pwd -P)" "$CFLAGS $DEFS $CORE" && $SHA *.c *.h 2>/dev/null)"
+if [ ! -f "$LIB" ] || [ "$SIG" != "$(cat "$STAMP" 2>/dev/null)" ]; then
     objs=""
     for f in $CORE; do
         eval gcc $CFLAGS $DEFS -I"$SRC" -c "$SRC/$f.c" -o "build/$f.o"

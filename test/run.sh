@@ -26,12 +26,38 @@ fi
 fail=0
 n=0
 
+# Parity contract (#101): the string compare alone is vacuous when the
+# reference run itself dies — a program that errors on BOTH sides degrades to
+# diffing pre-error stdout (or silence against silence) and stays green across
+# pin bumps that break it. So the reference must exit 0 with nonempty stdout,
+# and ouroboros must exit 0 too. Opt-out: an `_err.eigs` filename suffix
+# declares the program errors at the current pin ON PURPOSE (same convention
+# as aot/test/run.sh); there the contract inverts — both sides must DIE, and a
+# reference that starts exiting 0 fails loudly so the exemption can't go stale.
 echo "--- behavioral parity (self-hosted vs C evaluator) ---"
 for prog in test/programs/*.eigs; do
   n=$((n+1))
   name="$(basename "$prog")"
-  ref="$("$EIGS" "$prog" 2>/dev/null)"
-  got="$("$EIGS" ouroboros.eigs "$prog" 2>/dev/null)"
+  ref="$("$EIGS" "$prog" 2>/dev/null)"; ref_rc=$?
+  got="$("$EIGS" ouroboros.eigs "$prog" 2>/dev/null)"; got_rc=$?
+  case "$name" in
+    *_err.eigs)
+      if [ "$ref_rc" -eq 0 ]; then
+        echo "FAIL: $name (_err program but the C oracle exits 0 — the opt-out is stale; drop the suffix)"; fail=1; continue
+      fi
+      if [ "$got_rc" -eq 0 ]; then
+        echo "FAIL: $name (C oracle errors rc=$ref_rc, ouroboros exits 0 — runs past the error)"; fail=1; continue
+      fi
+      ;;
+    *)
+      if [ "$ref_rc" -ne 0 ] || [ -z "$ref" ]; then
+        echo "FAIL: $name (vacuous reference: rc=$ref_rc, stdout ${#ref} bytes — a parity claim needs a clean, nonempty reference; rename to *_err.eigs if it errors on purpose)"; fail=1; continue
+      fi
+      if [ "$got_rc" -ne 0 ]; then
+        echo "FAIL: $name (reference exits 0, ouroboros rc=$got_rc)"; fail=1; continue
+      fi
+      ;;
+  esac
   if [ "$ref" = "$got" ]; then
     echo "PASS: $name"
   else
@@ -85,11 +111,62 @@ l[0] is 8 9'
 reject_one 'l is [1]
 l[0] += 1 4'
 
+# Inverse-direction rejects (#101): reject_one's population is parse/lex-time
+# errors the FRONT-END must refuse. This tier is the complement — programs the
+# C oracle rejects at RUN time, where a miscompile shows up as ouroboros
+# quietly accepting (running past the error, the silent-wrong-answer class).
+# Both directions are still asserted (a case the C oracle starts accepting is
+# stale), plus pre-death stdout parity, so a partial run-past can't hide.
+# #99's fixes (unterminated strings, orphan dedents, ...) will grow this list —
+# only cases BOTH sides reject today belong here.
+echo "--- must_reject (both sides must die at run time) ---"
+must_reject() {
+  printf '%s\n' "$1" > /tmp/ouro_must_reject.eigs
+  c_out="$("$EIGS" /tmp/ouro_must_reject.eigs 2>/dev/null)"; c_rc=$?
+  o_out="$("$EIGS" ouroboros.eigs /tmp/ouro_must_reject.eigs 2>/dev/null)"; o_rc=$?
+  if [ "$c_rc" -eq 0 ]; then
+    echo "FAIL: must_reject case is stale — C oracle ACCEPTS [$(printf '%s' "$1" | tr '\n' ';')]"; fail=1
+  elif [ "$o_rc" -eq 0 ]; then
+    echo "FAIL: must_reject: ouroboros ACCEPTS [$(printf '%s' "$1" | tr '\n' ';')] (C oracle rejects, rc=$c_rc)"; fail=1
+  elif [ "$c_out" != "$o_out" ]; then
+    echo "FAIL: must_reject: pre-death stdout diverges [$(printf '%s' "$1" | tr '\n' ';')]"
+    echo "  C:         $(printf '%s' "$c_out" | tr '\n' '|')"
+    echo "  ouroboros: $(printf '%s' "$o_out" | tr '\n' '|')"
+    fail=1
+  else
+    echo "PASS: must_reject [$(printf '%s' "$1" | tr '\n' ';')]"
+  fi
+  rm -f /tmp/ouro_must_reject.eigs
+}
+must_reject 'print of undefined_var_xyz'
+# v0.39.0 pin (upstream #898 / ouroboros #98): reading a field off null raises.
+must_reject 'n is null
+print of n.f'
+
+# Bootstrap: byte-exact fixed point AND the self-compiled program must RUN
+# (#101). The grep-PASS alone was vacuous against the v0.33.0 operand-width
+# class: garbage bytecode left the originals bound and the bytes trivially
+# equal. Now bootstrap.eigs proves the rebinding executed (sentinels) and
+# executes the self-compiled test program between markers; here we diff that
+# block against the C evaluator running the same file directly.
 echo "--- bootstrap (full self-host: front-end + codegen, byte-exact fixed point) ---"
-if "$EIGS" test/bootstrap.eigs 2>/dev/null | grep -q "PASS"; then
-  echo "PASS: bootstrap fixed point"
+boot_out="$("$EIGS" test/bootstrap.eigs 2>/dev/null)"; boot_rc=$?
+prog_ref="$("$EIGS" test/bootstrap_prog.eigs 2>/dev/null)"; prog_rc=$?
+prog_got="$(printf '%s\n' "$boot_out" \
+  | sed -n '/^== bootstrap-prog-begin ==$/,/^== bootstrap-prog-end ==$/p' | sed '1d;$d')"
+if [ "$boot_rc" -ne 0 ] || ! printf '%s\n' "$boot_out" | grep -q "PASS"; then
+  echo "FAIL: bootstrap (rc=$boot_rc)"
+  printf '%s\n' "$boot_out" | sed 's/^/  /'
+  fail=1
+elif [ "$prog_rc" -ne 0 ] || [ -z "$prog_ref" ]; then
+  echo "FAIL: bootstrap reference is vacuous (test/bootstrap_prog.eigs: rc=$prog_rc, stdout ${#prog_ref} bytes)"; fail=1
+elif [ "$prog_got" != "$prog_ref" ]; then
+  echo "FAIL: bootstrap — self-compiled program output != C evaluator"
+  echo "  C:         $(printf '%s' "$prog_ref" | tr '\n' '|')"
+  echo "  self-host: $(printf '%s' "$prog_got" | tr '\n' '|')"
+  fail=1
 else
-  echo "FAIL: bootstrap"; fail=1
+  echo "PASS: bootstrap fixed point (and the self-compiled program runs)"
 fi
 
 echo "---"
