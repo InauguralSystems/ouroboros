@@ -1,0 +1,64 @@
+# #99 round 3: the in_outer arm of emit_assign_for_tos (name_in_enclosing) —
+# a nested define writing an ENCLOSING function's name is slot-ineligible
+# and routes to OP_SET_NAME, mutating the enclosing binding (the outward-
+# mutable scope model). Without the arm the nested function allocated its
+# own fresh local: silent wrong value (read-modify-write saw the outer
+# value via GET_NAME, then wrote a private slot).
+define f() as:
+    z is 1
+    define g() as:
+        z is z + 10
+        return 0
+    g of null
+    return z
+print of (f of null)
+# write-only variant (silent-wrong even on pre-#99 main)
+define fw() as:
+    z is 1
+    define gw() as:
+        z is 99
+        return 0
+    gw of null
+    return z
+print of (fw of null)
+# two-level nesting: the innermost write walks to the outermost binding
+define f2() as:
+    z is 1
+    define g2() as:
+        define h2() as:
+            z is z + 5
+            return 0
+        h2 of null
+        return 0
+    g2 of null
+    return z
+print of (f2 of null)
+# sibling isolation: same-named locals in sibling functions stay separate
+define s1() as:
+    w is 1
+    return w
+define s2() as:
+    w is 7
+    return w
+print of (s1 of null)
+print of (s2 of null)
+# a param SHADOWS the enclosing name (slot wins before the escape checks)
+define ps() as:
+    q is 3
+    define pg(q) as:
+        q is q * 2
+        return q
+    return [pg of 10, q]
+print of (ps of null)
+# `local` shadow of a module name + nested write: the write lands on the
+# fn-env shadow (the chain walk finds it before the module binding)
+zm is 100
+define fl() as:
+    local zm is 1
+    define gl() as:
+        zm is zm + 10
+        return 0
+    gl of null
+    return zm
+print of (fl of null)
+print of zm

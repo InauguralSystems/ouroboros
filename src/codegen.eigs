@@ -119,8 +119,12 @@ USES_HISTORY is [0]
 # param_count: slots below it are parameters (params ARE name-visible in the
 # VM's call env, so they may stay slots even when captured/interrogated —
 # same as C, where resolve_local wins before the escape checks).
+# enclosing: the lexically enclosing compile context (null at module scope) —
+# compiler.c's Compiler.enclosing, read by cg_name_in_enclosing (the mirror
+# of name_in_enclosing) so a write to an enclosing function's name routes to
+# SET_NAME (outward mutation) instead of allocating a fresh local.
 define cg_new(is_function) as:
-    return {"code": [], "consts": [], "functions": [], "loops": [], "is_function": is_function, "locals": {}, "local_names": [], "next_slot": 0, "name_bound": {}, "param_count": 0}
+    return {"code": [], "consts": [], "functions": [], "loops": [], "is_function": is_function, "locals": {}, "local_names": [], "next_slot": 0, "name_bound": {}, "param_count": 0, "enclosing": null}
 
 define cg_loop_top(c) as:
     return c.loops[(len of c.loops) - 1]
@@ -295,7 +299,16 @@ define cg_collect_refs(node, acc) as:
 # Nested closures are capture points: their whole subtree lands in the
 # capture set, so the walk does not descend past them (C's interrogated/
 # env_bound scans also stop at function boundaries).
-define cg_scan_name_bound(node, acc) as:
+#
+# Traversal boundaries differ per class, mirroring the three C scans
+# exactly (round 3): scan_for_interrogated does NOT descend into
+# AST_LISTCOMP, while scan_for_captures and scan_for_env_bound DO — so an
+# interrogate operand inside a listcomp body must NOT name-bind the outer
+# variable (the oracle answers null there: `[prev of y for v in xs]` on a
+# slot-local y is a real VM behavior we must match — the oracle wins even
+# when it looks odd). `no_interr` carries that boundary: 1 once the walk
+# has entered a listcomp.
+define cg_scan_name_bound(node, acc, no_interr) as:
     if (type of node) != "list":
         return null
     if (len of node) == 0:
@@ -329,17 +342,47 @@ define cg_scan_name_bound(node, acc) as:
                 acc[lrn[i]] is 1
         return null
     if t == "interrogate":
-        local ie is node[2]
-        if (type of ie) == "list":
-            if ie[0] == "ident":
-                acc[ie[1]] is 1
+        if no_interr == 0:
+            local ie is node[2]
+            if (type of ie) == "list":
+                if ie[0] == "ident":
+                    acc[ie[1]] is 1
     if t == "try":
         acc[node[2]] is 1                              # catch error name
     if t == "listcomp":
-        acc[node[2]] is 1                              # comprehension var
+        # env-bound: the comprehension var; captures and nested listcomp
+        # vars are still collected inside, but interrogate operands are NOT
+        # (scan_for_interrogated's AST_LISTCOMP case is an explicit no-op).
+        acc[node[2]] is 1
+        cg_scan_name_bound of [node[1], acc, 1]
+        cg_scan_name_bound of [node[3], acc, 1]
+        if node[4] != null:
+            cg_scan_name_bound of [node[4], acc, 1]
+        return null
     for k in range of (len of node):
-        cg_scan_name_bound of [node[k], acc]
+        cg_scan_name_bound of [node[k], acc, no_interr]
     return null
+
+# Is `name` visible in an ENCLOSING function's scope? Mirror of compiler.c's
+# name_in_enclosing: walk c->enclosing, checking each enclosing FUNCTION's
+# slot locals (params + slot-allocated body locals) and its name-bound set
+# (C checks e->locals, e->captured and e->interrogated; name_bound is our
+# union of those plus env_bound — a safe superset, since any name a nested
+# scope can reach is captured in the encloser by the pre-scan). The walk
+# stops at the module-level context (C's loop condition `e && e->enclosing`
+# skips the top compiler; module names are MODULE_NAMES' job).
+define cg_name_in_enclosing(c, name) as:
+    local e is c.enclosing
+    loop while e != null:
+        if e.is_function == 1:
+            if has_key of [e.locals, name]:
+                return 1
+            if has_key of [e.name_bound, name]:
+                return 1
+            e is e.enclosing
+        else:
+            return 0
+    return 0
 
 # --- variable resolution -------------------------------------------------
 define cg_load_name(c, name) as:
@@ -356,19 +399,26 @@ define cg_load_name(c, name) as:
 # last observer — the foundation the predicates read. (Slot-based locals use the
 # _LOCAL variants; name-based stores use OBSERVE_ASSIGN with the name index.)
 #
-# Function-scope resolution mirrors compiler.c's emit_assign_for_tos:
-#   1. an existing slot always wins (params, earlier slot-locals);
-#   2. a pre-scanned name-bound name (captured / interrogated / env-bound —
+# Function-scope resolution mirrors compiler.c's emit_assign_for_tos, in its
+# exact arbitration order:
+#   1. an existing SLOT always wins (params, earlier slot-locals) —
+#      resolve_local runs before every escape check in C;
+#   2. a pre-scanned NAME-BOUND name (captured / interrogated / env-bound —
 #      see cg_scan_name_bound) binds by NAME in the frame env via
 #      OP_SET_FN_NAME_LOCAL, so name-keyed consumers (nested closures, the
 #      history/observer opcodes, catch/listcomp bindings) can resolve it;
-#   3. a module name takes SET_NAME (mutate the module binding) — UNLESS
-#      the assign is `local`-marked (#99 item 2), which forces the
-#      FN_NAME_LOCAL shadow (C: in_module makes it slot-ineligible, then
-#      local_only routes it to SET_FN_NAME_LOCAL); a SET_NAME after such a
-#      shadow still lands on the fn-env binding first — the chain walk
-#      finds the shadow before the module binding, same as C;
-#   4. everything else is local-eligible: a fresh anonymous slot.
+#   3. otherwise compute eligibility like C's local_eligible: a name that is
+#      NOT visible in an enclosing function (in_outer, cg_name_in_enclosing)
+#      and NOT a module name (in_module) gets a FRESH anonymous slot — this
+#      covers `local` too (C: an eligible local_only name slot-allocates);
+#   4. ineligible + `local`-marked -> OP_SET_FN_NAME_LOCAL (the explicit
+#      shadow; C's `local_only ||` disjunct);
+#   5. ineligible plain assign -> OP_SET_NAME: the chain walk mutates the
+#      enclosing function's binding (outward-mutable scope model) or the
+#      module binding — never a fresh local. Round 3: the in_outer arm was
+#      missing, so a nested define writing an enclosing name allocated its
+#      own local (silent wrong value; on pre-#99 main the READ side was a
+#      loud undefined-variable — the pre-scan alone converted it to silent).
 # At module scope C emits SET_NAME_LOCAL for `local`: bind in the CURRENT
 # scope, never walk the env chain.
 define cg_store_name(c, name, local_only) as:
@@ -379,7 +429,7 @@ define cg_store_name(c, name, local_only) as:
             cg_emit_u16 of [c, slot]
             cg_emit of [c, OP_SET_LOCAL]
             cg_emit_u16 of [c, slot]
-        elif (has_key of [c.name_bound, name]) or ((local_only == 1) and (has_key of [MODULE_NAMES, name])):
+        elif has_key of [c.name_bound, name]:
             local fidx is cg_const of [c, name]
             cg_emit of [c, OP_OBSERVE_ASSIGN]
             cg_emit_u16 of [c, fidx]
@@ -387,20 +437,33 @@ define cg_store_name(c, name, local_only) as:
             cg_emit_u16 of [c, fidx]
             cg_emit of [c, OP_OBSERVE_NAME_POST]
             cg_emit_u16 of [c, fidx]
-        elif (local_only == 0) and (has_key of [MODULE_NAMES, name]):
-            local idx is cg_const of [c, name]
-            cg_emit of [c, OP_OBSERVE_ASSIGN]
-            cg_emit_u16 of [c, idx]
-            cg_emit of [c, OP_SET_NAME]
-            cg_emit_u16 of [c, idx]
-            cg_emit of [c, OP_OBSERVE_NAME_POST]
-            cg_emit_u16 of [c, idx]
         else:
-            local nslot is cg_add_local of [c, name]
-            cg_emit of [c, OP_OBSERVE_ASSIGN_LOCAL]
-            cg_emit_u16 of [c, nslot]
-            cg_emit of [c, OP_SET_LOCAL]
-            cg_emit_u16 of [c, nslot]
+            local in_outer is cg_name_in_enclosing of [c, name]
+            local in_module is 0
+            if has_key of [MODULE_NAMES, name]:
+                in_module is 1
+            if (in_outer == 0) and (in_module == 0):
+                local nslot is cg_add_local of [c, name]
+                cg_emit of [c, OP_OBSERVE_ASSIGN_LOCAL]
+                cg_emit_u16 of [c, nslot]
+                cg_emit of [c, OP_SET_LOCAL]
+                cg_emit_u16 of [c, nslot]
+            elif local_only == 1:
+                local lfidx is cg_const of [c, name]
+                cg_emit of [c, OP_OBSERVE_ASSIGN]
+                cg_emit_u16 of [c, lfidx]
+                cg_emit of [c, OP_SET_FN_NAME_LOCAL]
+                cg_emit_u16 of [c, lfidx]
+                cg_emit of [c, OP_OBSERVE_NAME_POST]
+                cg_emit_u16 of [c, lfidx]
+            else:
+                local idx is cg_const of [c, name]
+                cg_emit of [c, OP_OBSERVE_ASSIGN]
+                cg_emit_u16 of [c, idx]
+                cg_emit of [c, OP_SET_NAME]
+                cg_emit_u16 of [c, idx]
+                cg_emit of [c, OP_OBSERVE_NAME_POST]
+                cg_emit_u16 of [c, idx]
     elif local_only == 1:
         local lidx is cg_const of [c, name]
         cg_emit of [c, OP_OBSERVE_ASSIGN]
@@ -665,6 +728,8 @@ define cg_node(c, node) as:
         local lc is cg_new of 1
         for i in range of (len of lparams):
             cg_add_local of [lc, lparams[i]]
+        lc.param_count is len of lparams
+        lc.enclosing is c
         cg_node of [lc, node[2]]
         cg_emit of [lc, OP_RETURN]
         local ldesc is [lc.code, lc.consts, lc.functions, len of lparams, "<lambda>", lc.local_names]
@@ -808,10 +873,11 @@ define cg_func(c, node) as:
     # as slots below regardless — the slot check wins first, same as C's
     # resolve_local-before-escape-checks ordering.
     for i in range of (len of body):
-        cg_scan_name_bound of [body[i], fc.name_bound]
+        cg_scan_name_bound of [body[i], fc.name_bound, 0]
     for i in range of (len of params):
         cg_add_local of [fc, params[i]]               # params -> slots 0..P-1
     fc.param_count is len of params
+    fc.enclosing is c                                 # lexical chain for in_outer
     # Default-param prologue (mirrors the C compiler): for each param with a
     # default, OP_DEFAULT_PARAM <slot> <skip>; <default expr>; OP_SET_LOCAL;
     # OP_POP. The opcode compares slot vs frame->call_argc — if the caller

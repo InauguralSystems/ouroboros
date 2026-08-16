@@ -1,0 +1,22 @@
+# #99 round 3: scan_for_interrogated does NOT descend into AST_LISTCOMP
+# (its LISTCOMP case is an explicit no-op), so an interrogate operand that
+# ONLY appears inside a listcomp body does not name-bind the outer
+# variable — it stays a slot-local, and the name-keyed history query
+# answers null. That null IS the pinned oracle's behavior (verified:
+# `eigenscript` prints [null] here) — the oracle wins even when it looks
+# odd; if a future pin changes the scan, this parity program fires.
+define f() as:
+    y is 1
+    y is 2
+    zs is [prev of y for v in [10]]
+    return zs
+print of (f of null)
+# ...but an interrogate OUTSIDE the listcomp name-binds y for the whole
+# function, so the inside query then answers too (arming interplay).
+define g() as:
+    y is 1
+    y is 2
+    zs is [prev of y for v in [10]]
+    p is prev of y
+    return [zs, p]
+print of (g of null)

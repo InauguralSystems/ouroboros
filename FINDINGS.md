@@ -1009,6 +1009,37 @@ expression body) now supports captures through the pre-scan; its loud
 guard remains only for the theoretically-unreachable non-param-slot
 escape.
 
+ROUND 3 (blind-critic review of the round-2 cut) finished the mirror —
+two more misses, both critic-confirmed against the pin:
+(a) the in_outer arm was absent: a nested define writing an ENCLOSING
+function's name allocated its own fresh local (silent wrong; on pre-#99
+main the read side was a loud undefined-variable — round 2's pre-scan
+alone had converted loud to silent). cg_new now carries the lexical
+`enclosing` chain and cg_name_in_enclosing mirrors name_in_enclosing
+(each enclosing FUNCTION's slot locals + name-bound set; the walk stops
+at module scope). cg_store_name's function-scope arbitration is now
+emit_assign_for_tos's, in order: (1) existing SLOT wins (C resolves
+locals before every escape check); (2) pre-scanned NAME-BOUND →
+OP_SET_FN_NAME_LOCAL; (3) not in_outer and not in_module →
+local-eligible, fresh anonymous slot (`local` included); (4) ineligible
++ `local` → OP_SET_FN_NAME_LOCAL (the explicit shadow); (5) ineligible
+plain assign → OP_SET_NAME (outward mutation of the enclosing or module
+binding). test/programs/enclosing_scope.eigs pins read-modify-write,
+write-only, two-level nesting, sibling isolation, param shadow, and
+local-shadow + nested write — all byte-exact, failing at the round-2
+cut.
+(b) the unified pre-scan walker descended into listcomps for the
+interrogated class, but C's scan_for_interrogated has an explicit
+AST_LISTCOMP no-op — an interrogate operand appearing ONLY inside a
+listcomp body must NOT name-bind the outer variable, and the VM really
+answers null there (`[prev of y for v in xs]` on a slot-local y). The
+walker now carries the boundary (captures and env-bound still descend,
+matching scan_for_captures / scan_for_env_bound).
+test/programs/listcomp_interr_boundary.eigs pins the null AND the
+arming-interplay contrast (an outer interrogate name-binds y, after
+which the inside query answers) — oracle-verified, failing at the
+round-2 cut.
+
 STILL-UNSUPPORTED envelope at the self-host tier, previously untracked:
 `match` (OP_MATCH), `import` (OP_IMPORT) and `unobserved:` (the signature
 perf lever, EigenScript#915) throw LOUDLY at compile; predicate-of value
