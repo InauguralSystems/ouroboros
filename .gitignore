@@ -2,3 +2,4 @@ eigs
 *.out
 /tmp_out/
 __pycache__/
+aot/fuzz-findings/

@@ -1141,8 +1141,10 @@ byte-exact-beats-loud-beats-silent:
    AOT used to run straight past it (printed the post-exit line, exited
    0); it now honors g_exit_requested/g_exit_code (t73). An uncaught
    `throw of` (builtin_throw — same NULL-VM print path) now dies
-   cleanly at rc 1 with the VM's message (t74). Both harnesses now
-   compare _err death codes for EQUALITY (run.sh + fuzzdiff).
+   cleanly at rc 1 with the VM's message (t74). Both AOT-tier gates now
+   compare _err death codes for EQUALITY (aot/test/run.sh + fuzzdiff;
+   test/run.sh's must_reject deliberately checks nonzero-both, not
+   rc equality).
 
 7. **Seven dead #86-era inference walkers deleted** (find_str_builtin_use,
    find_numeric_use, find_for_iter_use, find_value_pos_use,

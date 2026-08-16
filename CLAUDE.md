@@ -14,10 +14,10 @@ number; a loud throw always beats a coercing guess.
 | `src/codegen.eigs` | Self-hosting compiler: AST → the C VM's bytecode (`vm_run_bytecode` runs it) |
 | `aot/compile.eigs` | AOT compiler: AST → C, linked against the runtime (`aot/aot_rt.h` helpers) |
 | `aot/build.sh` | `eigenscript compile.eigs PROG > gen.c && gcc gen.c libeigsrt.a` (`EIGS_DIR` defaults to `../../EigenScript`) |
-| `test/run.sh` | Self-host suite: `test/programs/*.eigs` parity + `reject_one` cases + the **byte-exact bootstrap fixed point** |
-| `aot/test/run.sh` | AOT parity suite: every `tN_*.eigs` diffed byte-for-byte vs the VM (`*_tol*` = FP tolerance) |
-| `aot/fuzzdiff.py` | Differential fuzzer across the edge classes (`--count`, `--seed`) |
-| `FINDINGS.md` | The F-OURO-NN ledger — GAP/BY-DESIGN/CONSTRAINT/TRACKING conventions; read before re-investigating anything |
+| `test/run.sh` | Self-host suite: `test/programs/*.eigs` parity (`*_err.eigs` = both sides must die) + `reject_one` (both parsers reject) + `must_reject` (C rejects at runtime, ouroboros must too) + the **byte-exact bootstrap fixed point, which also EXECUTES the self-compiled program** and diffs its stdout vs the C evaluator (#102) |
+| `aot/test/run.sh` | AOT parity suite: every `tN_*.eigs` diffed byte-for-byte vs the VM (`*_tol` = FP tolerance; `*_err` = both die, normalized message, **equal death codes**). Exit codes are part of every class's contract |
+| `aot/fuzzdiff.py` | Differential fuzzer across the edge classes (`--count`, `--seed`); VM-rejected programs are error-class cases (AOT must refuse or die matching), never skipped |
+| `FINDINGS.md` | The F-OURO-NN ledger — BUG/GAP/CONSTRAINT/BY-DESIGN conventions; read before re-investigating anything |
 | `.devcontainer/Dockerfile` | `ARG EIGS_REF=vX.Y.Z` — **the pin**; CI builds this runtime and runs both suites against it |
 
 ## Run / test
@@ -62,8 +62,12 @@ python3 aot/fuzzdiff.py             # differential fuzzing
   (`g_ret_type`) — value-preserving keeps byte-exactness.
 - **The AOT envelope is deliberately partial** — defaulted params,
   under-arity calls, and whole-list args to user fns all **throw loudly**
-  at build time (F-OURO-23) rather than guessing. Full semantics parity
-  is proven at the self-host tier; the AOT proves the subset it claims.
+  at build time (F-OURO-23) rather than guessing. Since the 2026-08-16
+  train, also loud at build time: the `when` qualifier, module-shadowing
+  `local`, and plain fn-body writes to builtin names (F-OURO-31/32);
+  tensor-add broadcast/mixed-shape refuses at *runtime*. Full semantics
+  parity is proven at the self-host tier; the AOT proves the subset it
+  claims.
 - **Opcode numbers are an ABI** — new opcodes append at the enum end
   (hand-built bytecode in upstream tests hardcodes them). **So is every
   operand's WIDTH**, and that half has no upstream number-guard. v0.33.0
@@ -72,8 +76,10 @@ python3 aot/fuzzdiff.py             # differential fuzzing
   instruction's first two bytes as the line number's high half and resuming
   misaligned. Every chunk we produced ran as garbage — empty output, exit 0,
   all 44 parity programs — while `bootstrap fixed point` still PASSED, because
-  self-host-compiling ourselves compares bytes and never executes the result.
-  **A green bootstrap is not evidence the codegen runs.** At every pin bump,
+  back then self-host-compiling ourselves compared bytes and never executed
+  the result. That exact hole is closed (#102: rebinding sentinels + the
+  self-compiled program is executed and diffed), but the lesson stands:
+  **a green check that never executes its subject is not evidence.** At every pin bump,
   diff `src/vm.h`'s enum comments for operand-width changes, and treat an
   emitter change as landing WITH the `EIGS_REF` bump (the deferred-mirror
   pattern above), never before it.
