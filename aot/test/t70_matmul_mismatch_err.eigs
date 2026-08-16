@@ -1,0 +1,11 @@
+# #100 item 8: runtime-dim matmul mismatch raises the VM's #512 error
+# ("matmul: incompatible shapes"); the old AOT returned a silent null
+# tensor that serialized to [].
+policy is {"w1": [[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]]}
+obs is [1.0, 1.0]
+define forward(policy, obs) as:
+    h1 is matmul of [obs, policy.w1]
+    return h1
+print of "pre"
+r is forward of [policy, obs]
+print of r

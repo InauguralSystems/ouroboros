@@ -1073,3 +1073,107 @@ working). aot/test/run.sh still has no reject tier (F-OURO-26's note),
 so the three refusals are verified manually per change; the exact
 refusal lines are recorded in PR #105. Growing any of these is new
 work, not a bug; this entry is the ledger naming them.
+
+## F-OURO-32 — the AOT silent-wrong family falls: full VM comparison semantics, per-call envs for boxed locals, builtin-return typing, loud negation/observed reads, clean uncaught-error death, tensor shape guards — FIXED (#100, #103)
+
+The 2026-08-16 adversarial review (#100) named a connected family of
+missed branches in the loud-throw discipline; all landed in one pass,
+byte-exact-beats-loud-beats-silent:
+
+1. **AOT_CMP is the VM's NUM_CMP now.** num/num compare, str/str
+   byte-wise strcmp with the operator applied to the strcmp result, and
+   the VM's exact `cannot compare X and Y with 'op'` (EK_TYPE) on any
+   other pair — the old macro answered 0 for EVERY non-num/num pair
+   (`"a" < "b"` → 0 silently; `1 < "a"` ran past a VM stop). Type names
+   mirror slot_type_name: null reports "none" on every oracle-probed
+   path (literal, dict miss, list element). t64 (parity) + t65 (_err).
+
+2. **Boxed function locals get a per-call env.** String/list/dict/null
+   locals and still-boxed for-in vars lived in the ONE global env:
+   recursion clobbered outer frames (`f(2)` printed inner0/inner0/inner0
+   for inner0/1/2) and locals leaked into module scope (`print of msg`
+   after the call printed the value where the VM raises). Each function
+   with boxed locals now allocates `Env* __eigs_l = env_new(NULL)` per
+   invocation, freed on every return path (emit_return wraps returns;
+   the value is computed into a temp BEFORE the env dies). Read tiers
+   mirror the VM's opcodes: __eigs_l misses are GET_LOCAL null (unset
+   slot — branch-conditional first assignment); __eigs_g reads go
+   through aot_get_named, which raises the VM's `undefined variable`
+   (GET_NAME) instead of the old silent make_null. Module-bound names
+   (any gnm/gbt key) deliberately stay global — a plain fn assign to one
+   is the VM's outward mutation. Observed/temporal functions keep Part
+   2a global routing (their existing guard rejects the nesting/recursion
+   that clobbers). `local` shadowing ANY module binding (boxed globals
+   included now, not just numeric/buffer) refuses loudly at build. This
+   unblocks #86's dpll_rec class. t67 (parity) + t68 (_err).
+
+3. **func_ret_type sees builtin returns and string concatenation.**
+   is_boxed_node now consults BOXED_RET_BUILTINS (`return trim of v`
+   declared double, aot_num returned 0 where the VM returns "hi") and
+   claims `+` chains carrying a string literal (the fuzz seed-6 shape:
+   `tag is "a" + (str of n); return tag` — same silent 0 through the
+   local's rhss). What still reaches the double-return coercion dies
+   loudly via aot_num_ck_at, never aot_num's silent 0. t69.
+
+4. **Observed-mode ident reads are checked** (the one branch F-OURO-29
+   missed): `aot_num(aot_get(...))` → `aot_num_ck_at(env_read(...))`.
+   A string reaching arithmetic in an observed program dies where the VM
+   raises `cannot apply` (AOT message text differs — verified manually,
+   same point, same rc, like F-OURO-29's planted faults).
+
+5. **emit_val unary `-` is OP_NEG**: aot_neg negates a number or raises
+   the VM's exact `cannot negate non-numeric`; the old aot_num coercion
+   printed 0 for `-s` on a string. t66 (_err).
+
+6. **Uncaught-error death is a clean exit(1) (#103).** Root cause
+   verified by inspection: rt_error's uncaught print path calls
+   vm_print_stack_trace whose first read is `(*eigs_current->vm)
+   .frame_count` — a native binary never attaches a VM, ->vm is NULL,
+   so every error-class death printed the message then SIGSEGV'd
+   (rc 139, core dumps). aot_boot now elevates g_try_depth to 1 for the
+   whole process (rt_error records, never prints, never touches the
+   NULL VM); the AOT prints g_error_msg itself and exits 1 — the VM's
+   uncaught-error code — at every error seam: the rt_error macro wrap
+   in aot_rt.h, and a g_has_error check after builtin/fn dispatch in
+   aot_call_name (a raising BUILTIN used to hand back null and the
+   program ran on — the run-past sibling). Two builtin flag protocols
+   surfaced by the check: `exit of N` unwinds via g_has_error TOO — the
+   AOT used to run straight past it (printed the post-exit line, exited
+   0); it now honors g_exit_requested/g_exit_code (t73). An uncaught
+   `throw of` (builtin_throw — same NULL-VM print path) now dies
+   cleanly at rc 1 with the VM's message (t74). Both harnesses now
+   compare _err death codes for EQUALITY (run.sh + fuzzdiff).
+
+7. **Seven dead #86-era inference walkers deleted** (find_str_builtin_use,
+   find_numeric_use, find_for_iter_use, find_value_pos_use,
+   find_str_concat_use, find_append_use, find_dict_param_use — each
+   referenced only by its own recursion, superseded by widen_ptypes;
+   ~190 lines). chain_has_str and find_numeric_use_direct stay (live).
+
+8. **Tensor runtime-dim guards** (the dict-field dims path, t18/t37
+   shape): matmul mismatch raises the VM's #512 error verbatim
+   (`matmul: incompatible shapes (1x2 · 3x2)`, EK_VALUE) instead of a
+   silent null tensor serializing to `[]`; add mirrors the VM where the
+   flat kernel can (equal shape; equal COUNT for buffer/buffer — the
+   VM's fast path keys on count; min-count for 1-D/1-D lists — the VM
+   truncates to the shorter) and REFUSES loudly at runtime on the
+   remaining broadcast/mixed-kind shapes, where the old kernel read
+   b.data past its end (OOB heap read, printed garbage). t70 (_err) +
+   t71 (parity).
+
+Follow-on found by the fuzz seeds: the boxed-index NUMERIC path forced
+the index through emit_num, so `d["a"] + 5` (string key in a numeric
+context) refused to build; the index is emitted as a VALUE now and
+aot_index_get dispatches like the VM. t72.
+
+STILL LOUD-REFUSED after this PR (the envelope): everything in
+F-OURO-31's list (match/import/unobserved/when, module-shadowing
+`local` — now including boxed module globals — builtin-name clobber,
+defaults, under/over-arity, whole-list args), tensor `add` broadcast
+and mixed buffer/list shapes (VM broadcasts or collapses to scalar 0.0
+— the flat kernel refuses), and observed/temporal functions calling
+observed/temporal functions (per-call env Part 2b). Known-remaining
+silent divergence, pre-existing and narrower than before: a still-boxed
+MODULE-scope for-var read after its loop serves the stale last value
+where the VM loop-scopes (F-OURO-30's residual); `report of x` answering
+"equilibrium" (#106).

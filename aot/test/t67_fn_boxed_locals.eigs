@@ -1,0 +1,36 @@
+# #100 item 2: boxed function locals live in a per-call env now. Recursion
+# must not clobber outer frames (the old ONE-global-env routing made every
+# frame share `msg`), and locals of one function must not bleed into another.
+define f(n) as:
+    local msg is "inner" + (str of n)
+    if n > 0:
+        r is f of (n - 1)
+        print of msg
+        return r + 1
+    print of msg
+    return 0
+print of (f of 2)
+# string-tag recursion returning through both arms (the fuzz seed-6 shape)
+define g(n) as:
+    tag is "a" + (str of n)
+    if n <= 0:
+        return tag
+    r2 is g of (n - 1)
+    return tag
+print of (g of 4)
+print of (g of 0)
+# boxed dict local per frame
+define h(n) as:
+    d is {"v": n}
+    if n > 0:
+        sub is h of (n - 1)
+        return d["v"] + sub
+    return d["v"]
+print of (h of 3)
+# boxed for-in var in a function: post-loop read sees the last iterate
+define last_of(xs) as:
+    cur is "none"
+    for w in xs:
+        cur is w
+    return cur
+print of (last_of of (["p", "q", "r"]))

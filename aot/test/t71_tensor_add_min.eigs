@@ -1,0 +1,9 @@
+# #100 item 8: 1-D list add with unequal lengths — the VM's tensor_elementwise
+# truncates to the shorter operand; the old AOT read past the shorter buffer
+# (OOB heap read, printed garbage).
+policy is {"b1": [10.0, 20.0]}
+obs is [1.0, 1.0, 1.0]
+define forward(policy, obs) as:
+    h1 is add of [obs, policy.b1]
+    return h1
+print of (forward of [policy, obs])

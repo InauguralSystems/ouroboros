@@ -1,0 +1,18 @@
+# #100 item 3: func_ret_type now consults BOXED_RET_BUILTINS and str-concat
+# chains, so builtin-returning and string-building functions are Value* —
+# the old declaration said double and aot_num returned 0.
+define f(v) as:
+    return trim of v
+print of (f of "  hi  ")
+define parts(s) as:
+    return split of [s, ","]
+p is parts of "a,b,c"
+print of p[1]
+define label(n) as:
+    return "id-" + (str of n)
+print of (label of 7)
+# via a local assigned from a builtin
+define g(v) as:
+    t is trim of v
+    return t
+print of (g of "  pad  ")

@@ -29,12 +29,13 @@ skip made this class structurally unfindable): the AOT must either refuse to
 build it (a loud build-time reject is a pass) or die too, with byte-exact
 pre-death stdout and the same error kind/message on stderr under the SAME
 normalization contract as aot/test/run.sh's _err class (VM-only source
-excerpt / caret / `at ...` frames dropped, `Error line N:` blanked; death
-CODES are not compared -- see that harness's residual note).
+excerpt / caret / `at ...` frames dropped, `Error line N:` blanked; since
+#103 death CODES are compared for equality -- the AOT exits cleanly with the
+VM's uncaught-error code).
 
-NOTE while ouroboros#100 is open, str-compare / recursion / mixed-compare
-programs are EXPECTED RED (e.g. `"a" < "b"` -> VM 1, AOT 0). fuzzdiff is a
-manual tool, not CI -- rediscovering those live bugs is the point.
+fuzzdiff is a manual tool, not CI. The #100 family (str-compare, recursion
+with boxed locals, mixed-compare run-past, builtin returns) is FIXED and
+these seeds must stay green; a red here is a new finding.
 
 Reproducible: every run prints its master seed; re-run with --seed N. Each
 finding's program text is saved under --findings-dir for a minimal repro.
@@ -237,16 +238,16 @@ def gen_recursion_str(r):
 
 def gen_null_death(r):
     # The t60 shape: print real work, then die on a null field/index access.
-    # BOTH sides must die -- the AOT's death is currently a SIGSEGV after the
-    # message (#103), which still counts as nonzero -- with byte-exact
-    # pre-death stdout and the same normalized error. This is the generator
-    # that exercises the error-class BOTH-DIE comparison path (the other
+    # BOTH sides must die -- since #103 the AOT dies by a clean exit with the
+    # VM's own code (1) -- with byte-exact pre-death stdout, the same
+    # normalized error, and the same death code. This is the generator that
+    # exercises the error-class BOTH-DIE comparison path (the other
     # error-class shapes all build-reject or run past).
     lines = [f"x is {_pint(r)}",
              f"print of (x {_addop(r)} {_pint(r)})"]
     if r.random() < 0.3:
-        # Pre-death stdout that DIVERGES today (#100 item 1): the deaths
-        # match but the printed work does not -- expected red until #100.
+        # Pre-death stdout carrying a string compare (#100 item 1 -- was
+        # expected-red until the AOT_CMP fix; now byte-exact).
         lines.append(f'print of ("{_word(r)}" < "{_word(r)}")')
     lines += ["n is null",
               r.choice(['print of n.f', 'print of n["k"]']),
@@ -338,12 +339,14 @@ def main():
             elif aot_rc == 0:
                 run_pasts.append((gen.__name__, prog, vm_out, vm_err, aot_out))
                 mark = "R"
-            elif vm_out != aot_out or norm_err(vm_err) != norm_err(aot_err):
+            elif (vm_out != aot_out or norm_err(vm_err) != norm_err(aot_err)
+                  or aot_rc != vm_rc):
                 divergences.append((gen.__name__, prog,
-                                    vm_out + vm_err, aot_out + aot_err))
+                                    vm_out + vm_err + f"<rc={vm_rc}>",
+                                    aot_out + aot_err + f"<rc={aot_rc}>"))
                 mark = "D"
             else:
-                err_both_die += 1      # both died, stdout + normalized error match
+                err_both_die += 1  # both died: stdout + normalized error + code match
         else:
             tested += 1
             aot_out, aot_err, aot_rc, err = run_aot(prog_path, out_path)

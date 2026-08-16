@@ -19,6 +19,30 @@
 #include <stdlib.h>
 #include <string.h>
 
+/* ---- uncaught-error death (#103) ------------------------------------------
+ * The AOT has no try/catch, so EVERY runtime error is uncaught and fatal —
+ * the VM's uncaught path exits 1 (main.c: g_has_error -> 1). Two problems
+ * with letting the runtime's rt_error handle that itself:
+ *   1. its uncaught print path calls vm_print_stack_trace, whose first read
+ *      is g_vm.frame_count == (*eigs_current->vm).frame_count — and a native
+ *      binary never attaches a VM, so ->vm is NULL: the diagnostic printed,
+ *      then SIGSEGV (rc 139), core dumps and all. That was #103, verified by
+ *      inspection of the pin's rt_error/vm_print_stack_trace/g_vm macro.
+ *   2. rt_error RETURNS, so the generated code ran on past the error — the
+ *      run-past class this repo exists to kill.
+ * The fix: aot_boot elevates g_try_depth to 1 for the whole process, so
+ * rt_error (from our helpers AND from raising builtins inside the runtime)
+ * only RECORDS the error — never touching the NULL VM — and the AOT prints
+ * the recorded message and exits 1 itself: clean nonzero death, same code
+ * and same message frame as the VM. */
+static void aot_error_exit(void) {
+    fprintf(stderr, "%s\n", g_error_msg);
+    exit(1);
+}
+/* Painting the name blue: the macro's inner rt_error is the real function;
+ * every call site in this header and in generated C dies cleanly after it. */
+#define rt_error(...) do { rt_error(__VA_ARGS__); aot_error_exit(); } while (0)
+
 /* ---- portable SIMD layer for vectorized element-wise numeric loops ----
  * The emitter writes vectorized loops in terms of AOT_VW / aot_v*; this maps
  * them to the widest available ISA at compile time. The packed guard uses
@@ -90,15 +114,40 @@ static inline double aot_vhsum(aot_vec x){ return x; }
 static Env *aot_boot(void) {
     EigsState *st = eigs_open();           /* new + attach + init runtime + builtins */
     if (!st) { fprintf(stderr, "aot: eigs_open failed\n"); exit(1); }
+    /* Pretend-caught for the whole run (#103, comment at the top): rt_error
+     * records without printing, so it can never walk the NULL VM; every
+     * AOT error exit prints g_error_msg itself via aot_error_exit. */
+    g_try_depth = 1;
     return g_global_env;
 }
 static void aot_shutdown(Env *g) { (void)g; /* process exit reclaims (slice 1) */ }
 
-/* ---- variable access ---- */
+/* ---- variable access ----
+ * Two tiers, mirroring the VM's two read opcodes:
+ *   aot_get       — GET_LOCAL semantics: a miss is an UNSET slot -> null
+ *                   (used for the per-call local env __eigs_l; a function
+ *                   local read before its branch-conditional first assignment
+ *                   answers null in the VM, never an error).
+ *   aot_get_named — GET_NAME semantics: a miss RAISES "undefined variable"
+ *                   (used for the global env __eigs_g; the VM raises there —
+ *                   the old silent make_null let a program print `null` where
+ *                   the VM stops, the #100 item-2 leak probe). */
 static Value *aot_get(Env *g, const char *name) {
     Value *v = env_get(g, name);
     if (!v) return make_null();
     val_incref(v);
+    return v;
+}
+static Value *aot_get_named(Env *g, const char *name) {
+    Value *v = env_get(g, name);
+    if (!v) rt_error(EK_UNDEFINED_NAME, 0, "undefined variable '%s'", name);
+    val_incref(v);
+    return v;
+}
+/* borrowed variant (call-argument reads: no incref, callee doesn't consume) */
+static Value *aot_getb_named(Env *g, const char *name) {
+    Value *v = env_get(g, name);
+    if (!v) rt_error(EK_UNDEFINED_NAME, 0, "undefined variable '%s'", name);
     return v;
 }
 static void aot_set(Env *g, const char *name, Value *val) {
@@ -143,17 +192,38 @@ AOT_NUMOP(aot_mod, (y == 0.0 ? 0.0 : fmod(x, y)))
 static inline double aot_ddiv(double a, double b) { return b == 0.0 ? 0.0 : num_guard(a / b); }
 static inline double aot_dmod(double a, double b) { return b == 0.0 ? 0.0 : num_guard(fmod(a, b)); }
 
-#define AOT_CMP(NAME, EXPR) \
+/* Ordering comparisons — the VM's NUM_CMP macro exactly (vm.c ~3100):
+ * num/num numeric compare; str/str byte-wise strcmp with the SAME operator
+ * applied to the strcmp result; ANY other pair raises EK_TYPE
+ * "cannot compare X and Y with 'op'". The old macro silently returned 0 for
+ * every non-num/num pair — `"a" < "b"` printed 0 where the VM prints 1, and
+ * `1 < "a"` printed 0 where the VM stops (#100 item 1). Type names mirror
+ * slot_type_name: a null VALUE reports "none" (the VM stores null as an
+ * immediate null slot on every probed path — literal, dict miss, list
+ * element — so "none" is what its message prints). */
+static const char *aot_cmp_type_name(Value *v) {
+    if (!v || v->type == VAL_NULL) return "none";
+    return val_type_name(v->type);
+}
+#define AOT_CMP(NAME, OP, OPNAME) \
     static Value *NAME(Value *a, Value *b) { \
-        int res = 0; \
+        double res; \
         if (a->type == VAL_NUM && b->type == VAL_NUM) { \
-            double x = a->data.num, y = b->data.num; (void)x; (void)y; res = (EXPR); } \
-        Value *r = make_num(res ? 1.0 : 0.0); \
-        val_decref(a); val_decref(b); return r; }
-AOT_CMP(aot_lt, x < y)
-AOT_CMP(aot_gt, x > y)
-AOT_CMP(aot_le, x <= y)
-AOT_CMP(aot_ge, x >= y)
+            res = (a->data.num OP b->data.num) ? 1.0 : 0.0; \
+        } else if (a->type == VAL_STR && b->type == VAL_STR) { \
+            int c = strcmp(a->data.str ? a->data.str : "", \
+                           b->data.str ? b->data.str : ""); \
+            res = (c OP 0) ? 1.0 : 0.0; \
+        } else { \
+            rt_error(EK_TYPE, 0, "cannot compare %s and %s with '%s'", \
+                     aot_cmp_type_name(a), aot_cmp_type_name(b), OPNAME); \
+        } \
+        val_decref(a); val_decref(b); \
+        return make_num(res); }
+AOT_CMP(aot_lt, <,  "<")
+AOT_CMP(aot_gt, >,  ">")
+AOT_CMP(aot_le, <=, "<=")
+AOT_CMP(aot_ge, >=, ">=")
 
 static Value *aot_eq(Value *a, Value *b) {
     int e = values_equal(a, b); val_decref(a); val_decref(b);
@@ -482,6 +552,19 @@ static double aot_num_ck(Value *v) {
     return d;
 }
 
+/* Unary minus on a boxed value — the VM's OP_NEG exactly: negate a number
+ * (no guard: negation preserves the finite invariant), raise EK_TYPE
+ * "cannot negate non-numeric" on anything else. The old emission coerced
+ * through aot_num, so `-s` on a string printed 0 where the VM stops
+ * (#100 item 5). Consumes v, returns owned. */
+static Value *aot_neg(Value *v) {
+    if (!v || v->type != VAL_NUM)
+        rt_error(EK_TYPE, 0, "cannot negate non-numeric");
+    double d = v->data.num;
+    val_decref(v);
+    return make_num(-d);
+}
+
 /* ---- tensor handles -------------------------------------------------------
  * Flat row-major double buffers that bridge the runtime's nested-list tensor
  * Values. The runtime's own tensor builtins (builtins_tensor.c) already flatten
@@ -598,7 +681,13 @@ static Value *aot_tensor_to_value(AotTensor t) {
 
 static AotTensor aot_tensor_matmul(AotTensor a, AotTensor b) {
     AotTensor o = aot_tensor_null();
-    if (a.cols != b.rows) return o;            /* shape mismatch -> null tensor */
+    /* Shape mismatch: the VM raises EK_VALUE (#512 upstream — builtins_tensor.c
+     * builtin_tensor_matmul), same message and dims (a 1-D operand reports as
+     * 1xN on both tiers). The old silent null tensor serialized to `[]` and the
+     * program ran on (#100 item 8). */
+    if (a.cols != b.rows)
+        rt_error(EK_VALUE, 0, "matmul: incompatible shapes (%ldx%ld · %ldx%ld)",
+                 a.rows, a.cols, b.rows, b.cols);
     o.rows = a.rows; o.cols = b.cols;
     o.is1d = a.is1d;                           /* 1-D result iff the left operand is a vector */
     o.kind = a.kind; o.owns = 1;
@@ -622,11 +711,39 @@ static AotTensor aot_tensor_matmul(AotTensor a, AotTensor b) {
     return o;
 }
 
+/* Elementwise add, mirroring the VM's `add` (builtins_tensor.c) on the shapes
+ * this kernel supports; the old version blindly read b.data over a's count —
+ * an OOB heap read when b is shorter (#100 item 8):
+ *   - buffer/buffer: the VM's fast path keys on EQUAL COUNT (shape ignored)
+ *     -> elementwise, result shaped like a. Unequal counts fall through the
+ *     VM's tensor_elementwise to a scalar 0.0 — unrepresentable here -> loud.
+ *   - list/list: equal dims -> elementwise; both 1-D -> the VM's min-count
+ *     elementwise (list-op-list truncates to the shorter); 2-D mismatches
+ *     broadcast in the VM (matrix±vector) — not implemented -> loud.
+ *   - mixed buffer/list: the VM's tensor_elementwise handles only NUM/LIST,
+ *     so a buffer operand falls through to scalar 0.0 — unrepresentable
+ *     here -> loud. */
 static AotTensor aot_tensor_add(AotTensor a, AotTensor b) {
     AotTensor o = a;                           /* inherit rows/cols/is1d/kind */
     o.owns = 1;
-    long n = a.rows * a.cols;
-    o.data = (double*)calloc((size_t)n, sizeof(double));
+    long n = -1;
+    if (a.rows == b.rows && a.cols == b.cols && a.kind == b.kind) {
+        n = a.rows * a.cols;
+    } else if (a.kind == 1 && b.kind == 1 &&
+               a.rows * a.cols == b.rows * b.cols) {
+        n = a.rows * a.cols;                   /* VM fast path: count, not shape */
+    } else if (a.kind == 0 && b.kind == 0 && a.is1d && b.is1d) {
+        n = a.cols < b.cols ? a.cols : b.cols; /* VM list-op-list min-count */
+        o.cols = n;
+    }
+    if (n < 0) {
+        fprintf(stderr, "aot: tensor add on mismatched shapes "
+                "(%ldx%ld vs %ldx%ld) — the VM broadcasts/coerces here; "
+                "not supported by the AOT tensor kernel\n",
+                a.rows, a.cols, b.rows, b.cols);
+        exit(1);
+    }
+    o.data = (double*)calloc(n > 0 ? (size_t)n : 1, sizeof(double));
     for (long i = 0; i < n; i++) o.data[i] = num_guard(a.data[i] + b.data[i]);
     return o;
 }
@@ -793,6 +910,16 @@ static Value *aot_call_name(Env *g, const char *name, Value *arg) {
     Value *res;
     if (fn->type == VAL_BUILTIN) res = fn->data.builtin(arg);
     else                         res = call_eigs_fn(fn, arg);
+    /* `exit of N` unwinds via g_has_error TOO (builtin_exit sets both flags);
+     * it is a clean requested exit, not an error — honor the code, print
+     * nothing (the VM's main clears g_has_error when g_exit_requested). */
+    if (g_exit_requested) exit(g_exit_code);
+    /* A raising builtin recorded its error via rt_error/builtin_throw (silent
+     * under the elevated g_try_depth) and RETURNED; running on from here is
+     * the run-past-error class (#103's sibling — the old code continued with
+     * a null result). Uncaught == fatal in the AOT: print the recorded
+     * diagnostic and die with the VM's uncaught exit code. */
+    if (g_has_error) aot_error_exit();
     if (!res) { val_decref(arg); return make_null(); }
     /* A builtin may return the arg itself, or one of its elements BORROWED
      * (e.g. append -> target = arg[0]). Mirror vm.c's direct-borrow heuristic:

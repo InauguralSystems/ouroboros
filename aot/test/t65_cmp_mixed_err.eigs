@@ -1,0 +1,5 @@
+# #100 item 1 (loud half): ordering a num against a str raises in the VM
+# ("cannot compare num and str with '<'"); the old AOT printed 0 and ran on.
+print of "before"
+print of (1 < "a")
+print of "after-never"
