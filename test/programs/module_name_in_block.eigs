@@ -1,6 +1,11 @@
-# A global first bound inside a top-level if/loop/for/try is still a module
+# A global first bound inside a top-level if/try block is still a module
 # binding; an inner function must mutate it, not shadow it. ouroboros's
 # module-name pre-scan only saw direct top-level assigns.
+#
+# This file used to carry a second half doing the same through a top-level
+# `for` body — at the v0.39.0 pin that is loop-local and errors on both sides
+# (upstream triage: EigenScript#959), so it now lives as a must_reject case in
+# test/run.sh, and this program is clean parity again.
 if 1 == 1:
     counter is 0
 define inc() as:
@@ -8,9 +13,3 @@ define inc() as:
 inc of null
 inc of null
 print of counter
-
-for q in [1, 2]:
-    acc2 is q
-define show2() as:
-    return acc2
-print of (show2 of null)
