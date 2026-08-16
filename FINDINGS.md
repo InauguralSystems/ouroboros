@@ -1063,6 +1063,13 @@ CAUTION — one form is NOT loud: `report of x` compiles as a plain builtin
 call and SILENTLY answers "equilibrium" where the VM classifies for real
 (pre-existing, reproduces on pre-#99 main) — that, plus bare
 interrogative statements being accepted where C compile-errors, is
-tracked in #106. The AOT additionally refuses `when` (no occurrence-ring
-seam) and module-shadowing `local` loudly. Growing any of these is new
+tracked in #106. The AOT additionally refuses, loudly at build time:
+`when` (no occurrence-ring seam), module-shadowing `local`, and — round
+6 — a plain function-body write to a BUILTIN name (the in_globals class:
+VM semantics clobber the global binding, the AOT's plain-assign path
+would make a C local — a silent wrong value on pre-#99 main; `local
+<builtin>` shadows, params named after builtins, and builtin reads keep
+working). aot/test/run.sh still has no reject tier (F-OURO-26's note),
+so the three refusals are verified manually per change; the exact
+refusal lines are recorded in PR #105. Growing any of these is new
 work, not a bug; this entry is the ledger naming them.

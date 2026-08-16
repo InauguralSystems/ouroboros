@@ -3615,6 +3615,38 @@ define collect_local_marked(node, acc) as:
         collect_local_marked of [node[k], acc]
     return 0
 
+# Collect names targeted by a PLAIN (unmarked) assign anywhere in a subtree —
+# the round-6 companion of collect_local_marked, feeding the builtin-name
+# clobber refusal in emit_function.
+define collect_plain_assigns(node, acc) as:
+    if (type of node) != "list":
+        return 0
+    if (len of node) == 0:
+        return 0
+    if node[0] == "assign":
+        if (len of node) == 3:
+            acc[node[1]] is 1
+    for k in range of (len of node):
+        collect_plain_assigns of [node[k], acc]
+    return 0
+
+# Is `name` bound to a genuine BUILTIN in the runtime's global env? Cached
+# type-of-eval probe (same mechanism as codegen.eigs's cg_is_builtin): only a
+# real builtin answers type "builtin" — this compiler's own module functions
+# are "function", and an unbound name throws into the catch.
+AOT_BUILTIN_NAMES is {}
+define aot_is_builtin_name(name) as:
+    if has_key of [AOT_BUILTIN_NAMES, name]:
+        return AOT_BUILTIN_NAMES[name]
+    local r is 0
+    try:
+        if (type of (eval of name)) == "builtin":
+            r is 1
+    catch _aot_ib_err:
+        r is 0
+    AOT_BUILTIN_NAMES[name] is r
+    return r
+
 define emit_function(fn, finfo, gnm, gbt) as:
     local name is fn[1]
     G_CUR_FN[0] is name
@@ -3667,6 +3699,25 @@ define emit_function(fn, finfo, gnm, gbt) as:
     for k in range of (len of _lmn):
         if (gnm[_lmn[k]] == 1) or (gbt[_lmn[k]] == 1):
             throw of ("AOT: `local " + _lmn[k] + "` shadowing a module binding is not supported (would write the file-scope global)")
+    # Round 6 (#99): a PLAIN function-body write to a BUILTIN name clobbers
+    # the runtime's global binding under VM semantics (the in_globals veto in
+    # emit_assign_for_tos makes it slot-ineligible -> OP_SET_NAME); the AOT's
+    # plain-assign path would make it a C local instead — a silent wrong
+    # value. Refuse loudly. A `local <builtin>` shadow (marked assign, and
+    # its follow-up plain writes land on the shadow), a PARAM named after a
+    # builtin (slot wins), and builtin READS all keep working.
+    local _pas is {}
+    collect_plain_assigns of [body, _pas]
+    local _pan is keys of _pas
+    for k in range of (len of _pan):
+        if (aot_is_builtin_name of _pan[k]) == 1:
+            if (_lmk[_pan[k]] != 1):
+                local _isp is 0
+                for p in range of (len of params):
+                    if params[p] == _pan[k]:
+                        _isp is 1
+                if _isp == 0:
+                    throw of ("AOT: `" + _pan[k] + " is ...` inside a function writes the GLOBAL builtin binding (VM semantics); the AOT has no global-clobber path — use `local " + _pan[k] + " is ...` for a function-local")
     # tensor (nested-list) layer for this scope: tensor locals (assigned from a
     # tensor RHS) + tensor/dict params.
     g_dict is {}
