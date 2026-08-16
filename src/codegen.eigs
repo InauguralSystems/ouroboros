@@ -44,6 +44,10 @@ OP_SET_LOCAL is 24
 OP_GET_NAME is 25
 OP_SET_NAME is 26
 OP_SET_NAME_LOCAL is 27
+# Bind in frame->fn_env, skipping intervening loop/scope envs — the C
+# compiler's op for function-scope NAME-path locals (captured / interrogated /
+# env-bound / `local`-shadow names; emit_assign_for_tos).
+OP_SET_FN_NAME_LOCAL is 28
 OP_JUMP is 29
 OP_JUMP_BACK is 30
 OP_JUMP_IF_FALSE is 31
@@ -104,8 +108,19 @@ MODULE_NAMES is {}
 USES_HISTORY is [0]
 
 # --- context -------------------------------------------------------------
+# name_bound: the pre-scan result (see cg_scan_name_bound) — names that must
+# bind by NAME in this function's frame env instead of an anonymous slot,
+# because a name-keyed consumer must be able to resolve them: nested closures
+# (GET_NAME through the captured env chain), the history/observer opcodes
+# (INTERROGATE_NAMED/_AT/_WHEN resolve (env,slot) by name — slot-locals are
+# invisible to them), and catch/listcomp bindings (bound by name at runtime).
+# Mirrors compiler.c's captured/interrogated/env_bound trio (compile of
+# AST_FUNC: scan_for_captures + scan_for_interrogated + scan_for_env_bound).
+# param_count: slots below it are parameters (params ARE name-visible in the
+# VM's call env, so they may stay slots even when captured/interrogated —
+# same as C, where resolve_local wins before the escape checks).
 define cg_new(is_function) as:
-    return {"code": [], "consts": [], "functions": [], "loops": [], "is_function": is_function, "locals": {}, "local_names": [], "next_slot": 0}
+    return {"code": [], "consts": [], "functions": [], "loops": [], "is_function": is_function, "locals": {}, "local_names": [], "next_slot": 0, "name_bound": {}, "param_count": 0}
 
 define cg_loop_top(c) as:
     return c.loops[(len of c.loops) - 1]
@@ -221,6 +236,111 @@ define cg_cond_observer(node) as:
         return cg_cond_observer of node[3]
     return 0
 
+# --- escape pre-scan (mirror of compiler.c's AST_FUNC escape analysis) ----
+# cg_collect_refs: every name a subtree references — reads (ident) AND
+# binding occurrences (assign targets, for vars, catch names, destructure
+# names, nested define names) — mirroring collect_referenced_names. Dot/
+# field keys and listcomp vars are NOT names here (C skips them too).
+define cg_collect_refs(node, acc) as:
+    if (type of node) != "list":
+        return null
+    if (len of node) == 0:
+        return null
+    local t is node[0]
+    if t == "ident":
+        acc[node[1]] is 1
+        return null
+    if t == "assign":
+        acc[node[1]] is 1
+        cg_collect_refs of [node[2], acc]
+        return null
+    if t == "for":
+        acc[node[1]] is 1
+        cg_collect_refs of [node[2], acc]
+        cg_collect_refs of [node[3], acc]
+        return null
+    if t == "try":
+        acc[node[2]] is 1
+        cg_collect_refs of [node[1], acc]
+        cg_collect_refs of [node[3], acc]
+        return null
+    if t == "func":
+        acc[node[1]] is 1
+        cg_collect_refs of [node[3], acc]              # body only, like C
+        return null
+    if t == "destructure":
+        local dn is node[1]
+        for i in range of (len of dn):
+            acc[dn[i]] is 1
+        cg_collect_refs of [node[2], acc]
+        return null
+    if t == "dot":
+        cg_collect_refs of [node[1], acc]              # key is a field, not a name
+        return null
+    for k in range of (len of node):
+        cg_collect_refs of [node[k], acc]
+    return null
+
+# cg_scan_name_bound: fill `acc` with the names of THIS function scope that
+# must bind by NAME (see cg_new's name_bound comment):
+#   - captured: every name a nested define/lambda references, minus that
+#     closure's own params (scan_for_captures) — the closure resolves them
+#     via GET_NAME through the captured env chain, which cannot see slots;
+#   - interrogated: the ident operand of any interrogate node — what/who/
+#     when/where/why/how/prev, at/when-qualified or not (scan_for_
+#     interrogated adds expr when it is an IDENT, every kind incl. prev) —
+#     the NAMED opcodes and the assignment history are name-keyed;
+#   - env-bound: catch error names and listcomp vars (scan_for_env_bound) —
+#     bound by name at runtime, so a same-named slot would go stale.
+# Nested closures are capture points: their whole subtree lands in the
+# capture set, so the walk does not descend past them (C's interrogated/
+# env_bound scans also stop at function boundaries).
+define cg_scan_name_bound(node, acc) as:
+    if (type of node) != "list":
+        return null
+    if (len of node) == 0:
+        return null
+    local t is node[0]
+    if t == "func":
+        local frefs is {}
+        cg_collect_refs of [node[3], frefs]
+        frefs[node[1]] is 1                            # the closure's name too
+        local fparams is node[2]
+        local frn is keys of frefs
+        for i in range of (len of frn):
+            local isparam is 0
+            for j in range of (len of fparams):
+                if fparams[j] == frn[i]:
+                    isparam is 1
+            if isparam == 0:
+                acc[frn[i]] is 1
+        return null
+    if t == "lambda":
+        local lrefs is {}
+        cg_collect_refs of [node[2], lrefs]
+        local lparams is node[1]
+        local lrn is keys of lrefs
+        for i in range of (len of lrn):
+            local isparam is 0
+            for j in range of (len of lparams):
+                if lparams[j] == lrn[i]:
+                    isparam is 1
+            if isparam == 0:
+                acc[lrn[i]] is 1
+        return null
+    if t == "interrogate":
+        local ie is node[2]
+        if (type of ie) == "list":
+            if ie[0] == "ident":
+                acc[ie[1]] is 1
+    if t == "try":
+        acc[node[2]] is 1                              # catch error name
+    if t == "listcomp":
+        acc[node[2]] is 1                              # comprehension var
+    for k in range of (len of node):
+        cg_scan_name_bound of [node[k], acc]
+    return null
+
 # --- variable resolution -------------------------------------------------
 define cg_load_name(c, name) as:
     if (c.is_function == 1) and (has_key of [c.locals, name]):
@@ -236,15 +356,21 @@ define cg_load_name(c, name) as:
 # last observer — the foundation the predicates read. (Slot-based locals use the
 # _LOCAL variants; name-based stores use OBSERVE_ASSIGN with the name index.)
 #
-# local_only mirrors compiler.c's emit_assign_for_tos (#99 item 2): a `local`
-# assign whose name already owns a slot writes THAT slot (same as C — an
-# existing slot always wins); with no slot it must NOT take the module-name
-# SET_NAME path (that mutates the module binding — the exact outward mutation
-# `local` exists to prevent) — it allocates a fresh function-local slot
-# instead (C binds by name via SET_FN_NAME_LOCAL; a slot is the same
-# function-scope shadow at this tier, where the oracle is stdout parity, not
-# byte parity — F-OURO-2). At module scope C emits SET_NAME_LOCAL: bind in
-# the CURRENT scope, never walk the env chain.
+# Function-scope resolution mirrors compiler.c's emit_assign_for_tos:
+#   1. an existing slot always wins (params, earlier slot-locals);
+#   2. a pre-scanned name-bound name (captured / interrogated / env-bound —
+#      see cg_scan_name_bound) binds by NAME in the frame env via
+#      OP_SET_FN_NAME_LOCAL, so name-keyed consumers (nested closures, the
+#      history/observer opcodes, catch/listcomp bindings) can resolve it;
+#   3. a module name takes SET_NAME (mutate the module binding) — UNLESS
+#      the assign is `local`-marked (#99 item 2), which forces the
+#      FN_NAME_LOCAL shadow (C: in_module makes it slot-ineligible, then
+#      local_only routes it to SET_FN_NAME_LOCAL); a SET_NAME after such a
+#      shadow still lands on the fn-env binding first — the chain walk
+#      finds the shadow before the module binding, same as C;
+#   4. everything else is local-eligible: a fresh anonymous slot.
+# At module scope C emits SET_NAME_LOCAL for `local`: bind in the CURRENT
+# scope, never walk the env chain.
 define cg_store_name(c, name, local_only) as:
     if c.is_function == 1:
         if has_key of [c.locals, name]:
@@ -253,6 +379,14 @@ define cg_store_name(c, name, local_only) as:
             cg_emit_u16 of [c, slot]
             cg_emit of [c, OP_SET_LOCAL]
             cg_emit_u16 of [c, slot]
+        elif (has_key of [c.name_bound, name]) or ((local_only == 1) and (has_key of [MODULE_NAMES, name])):
+            local fidx is cg_const of [c, name]
+            cg_emit of [c, OP_OBSERVE_ASSIGN]
+            cg_emit_u16 of [c, fidx]
+            cg_emit of [c, OP_SET_FN_NAME_LOCAL]
+            cg_emit_u16 of [c, fidx]
+            cg_emit of [c, OP_OBSERVE_NAME_POST]
+            cg_emit_u16 of [c, fidx]
         elif (local_only == 0) and (has_key of [MODULE_NAMES, name]):
             local idx is cg_const of [c, name]
             cg_emit of [c, OP_OBSERVE_ASSIGN]
@@ -631,10 +765,14 @@ define cg_node(c, node) as:
 
     throw of ("ouroboros: cannot compile node type '" + t + "'")
 
-# Lambda capture guard (see cg_node's "lambda" arm): walk the body expression
-# and refuse any identifier that is an enclosing function's slot-local (and
-# not one of the lambda's own params). Generic list walk; strings/nums are
-# skipped by the type check.
+# Lambda capture guard (see cg_node's "lambda" arm), defensive only: with the
+# cg_func escape pre-scan, every enclosing-function name a lambda references
+# is name-bound (never slotted), so a lambda capture resolves via GET_NAME
+# through the captured env chain. Enclosing PARAMS keep their slots but are
+# name-visible in the VM's call env (OP_CALL binds them by name), so reading
+# them by name works too. The only unreachable-in-theory hazard left is a
+# non-param slot escaping the pre-scan — refuse loudly rather than let a
+# GET_NAME miss return silent null.
 define cg_lambda_capture_check(c, lparams, node) as:
     if (type of node) != "list":
         return null
@@ -648,7 +786,8 @@ define cg_lambda_capture_check(c, lparams, node) as:
                 isp is 1
         if isp == 0:
             if has_key of [c.locals, nm2]:
-                throw of ("ouroboros: lambda capturing enclosing function local '" + nm2 + "' is not supported")
+                if c.locals[nm2] >= c.param_count:
+                    throw of ("ouroboros: lambda capturing enclosing function local '" + nm2 + "' is not supported")
         return null
     for k in range of (len of node):
         cg_lambda_capture_check of [c, lparams, node[k]]
@@ -662,8 +801,17 @@ define cg_func(c, node) as:
     local params is node[2]
     local body is node[3]
     local fc is cg_new of 1
+    # Escape pre-scan (mirror of compile AST_FUNC's scan_for_captures /
+    # scan_for_interrogated / scan_for_env_bound): names that must bind by
+    # NAME in this function instead of an anonymous slot. Runs before any
+    # slot allocation so cg_store_name never slots them. Params are added
+    # as slots below regardless — the slot check wins first, same as C's
+    # resolve_local-before-escape-checks ordering.
+    for i in range of (len of body):
+        cg_scan_name_bound of [body[i], fc.name_bound]
     for i in range of (len of params):
         cg_add_local of [fc, params[i]]               # params -> slots 0..P-1
+    fc.param_count is len of params
     # Default-param prologue (mirrors the C compiler): for each param with a
     # default, OP_DEFAULT_PARAM <slot> <skip>; <default expr>; OP_SET_LOCAL;
     # OP_POP. The opcode compares slot vs frame->call_argc — if the caller

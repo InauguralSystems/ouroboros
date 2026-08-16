@@ -31,3 +31,13 @@ define k(x) as:
         r is e
     return [r, e]
 print of (k of 1)
+# round 2: `prev of e` where the catch name has assignment history — the
+# env-bound pre-scan keeps `e` on the name path so history is recorded.
+define pv(q) as:
+    e is 5
+    try:
+        throw of "boom4"
+    catch e:
+        r is 0
+    return prev of e
+print of (pv of 1)

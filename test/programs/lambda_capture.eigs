@@ -1,0 +1,16 @@
+# #99 round 2: a lambda capturing an enclosing function's binding. The
+# escape pre-scan name-binds captured names, so the closure's GET_NAME
+# resolves them through the captured env chain; enclosing PARAMS stay
+# slots but are name-visible in the VM's call env.
+define mk() as:
+    k is 10
+    return (x) => x + k
+m is mk of null
+print of (m of 1)
+define fp(k) as:
+    g is (x) => x + k
+    return g of 1
+print of (fp of 40)
+base is 100
+adder is (x) => x + base
+print of (adder of 7)

@@ -24,3 +24,20 @@ define pset(v) as:
     local v is v * 2
     return v
 print of (pset of 21)
+# round 2: a `local` shadow must be NAME-bound (OP_SET_FN_NAME_LOCAL), not
+# slot-bound — a nested closure resolves it via GET_NAME through the env
+# chain, and `prev of` reads its name-keyed assignment history.
+define outer() as:
+    local counter is 3
+    define inner() as:
+        return counter
+    return inner of null
+print of (outer of null)
+print of counter
+x9 is 9
+define shadow_prev() as:
+    local x9 is 1
+    x9 is 2
+    return prev of x9
+print of (shadow_prev of null)
+print of x9

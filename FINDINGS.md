@@ -950,14 +950,19 @@ pre-fix main:
 2. The `local` qualifier was dropped to a plain assign, so a `local`
    shadowing a module name MUTATED the module binding. The assign node now
    carries a 4th local_only element; cg_store_name mirrors
-   emit_assign_for_tos (existing slot wins; no-slot local takes a fresh
-   slot, never the module SET_NAME path; module scope emits
-   SET_NAME_LOCAL). The AOT refuses a module-shadowing `local` loudly
-   (its plain-assign path writes the file-scope C global); non-shadowing
-   `local` is unchanged-correct. test/programs/local_shadow.eigs.
+   emit_assign_for_tos (existing slot wins; a no-slot `local` on a module
+   name binds by NAME in the frame env via OP_SET_FN_NAME_LOCAL — exactly
+   C's route, so nested closures and `prev of` see the shadow; module
+   scope emits SET_NAME_LOCAL). The AOT refuses a module-shadowing
+   `local` loudly (its plain-assign path writes the file-scope C global);
+   non-shadowing `local` is unchanged-correct.
+   test/programs/local_shadow.eigs.
 3. The catch variable ignored an existing local slot (F-OURO-8's class):
-   catch bound by name while reads went via GET_LOCAL — stale value. Same
-   slot-check as the `for` emitter. test/programs/catch_slot.eigs.
+   catch bound by name while reads went via GET_LOCAL — stale value.
+   Fixed twice over: the slot-check from the `for` emitter for param
+   names, plus the env-bound pre-scan (below) which keeps non-param catch
+   names off the slot path entirely, so `prev of e` reads real history.
+   test/programs/catch_slot.eigs.
 4. Unterminated string/f-string/brace-expression at EOF lexed silently,
    swallowing every following line at rc=0; now loud like lexer.c
    ("unterminated string"). must_reject cases.
@@ -980,18 +985,41 @@ pre-fix main:
    over-rejected); `%=` lexes and desugars end to end.
    test/programs/lambda_soft_params.eigs + compound_mod_assign.eigs.
 
-En route, codegen gained a minimal lambda arm (OP_CLOSURE descriptor,
-expression body) with a LOUD capture guard: a lambda referencing an
-enclosing function's slot-local throws (slots are anonymous — a name-path
-read inside the closure would silently miss); module names and builtins
-resolve through the captured env chain and work.
+ROUND 2 (blind-critic review of PR #105): the first cut mirrored only the
+SLOT arm of emit_assign_for_tos and missed its escape pre-scan — the C
+compiler keeps three name classes OFF the slot path and binds them via
+OP_SET_FN_NAME_LOCAL (frame env, skipping loop envs), because slot-locals
+are anonymous at runtime: invisible to the name-keyed history/observer
+opcodes (INTERROGATE_NAMED/_AT/_WHEN) and to nested closures' GET_NAME.
+Four oracle-backed divergences fell out (`when` on a fn local → null; a
+nested define reading a `local` shadow → module value; `prev of` a local
+shadow → null; `prev of` a catch name → null). cg_func now runs
+cg_scan_name_bound (the mirror of scan_for_captures +
+scan_for_interrogated + scan_for_env_bound): names referenced by nested
+define/lambda bodies (minus their own params), ident operands of any
+interrogate form (every kind incl. prev), and catch/listcomp names bind
+by name; params keep slots (they ARE name-visible in the VM call env —
+resolve_local wins first in C too); everything else stays slot-fast.
+This also fixed `prev of` on ANY plain function local (round 1 had it
+down as a pre-existing tail). Pinned by
+test/programs/interrogate_fn_scope.eigs, lambda_capture.eigs and the
+round-2 sections of local_shadow.eigs / catch_slot.eigs — each fails on
+the pre-scan-less first cut. The lambda arm (OP_CLOSURE descriptor,
+expression body) now supports captures through the pre-scan; its loud
+guard remains only for the theoretically-unreachable non-param-slot
+escape.
 
-STILL-UNSUPPORTED envelope at the self-host tier, previously untracked —
-all LOUD (throw at compile), none silent: `match` (OP_MATCH), `import`
-(OP_IMPORT), `unobserved:` (the signature perf lever, EigenScript#915),
-predicate-of / report-of value forms, and the appended observer opcode
-family (PREDICATE_SLOT/NAME 87/88, OBSERVE_VALUE_SLOT/NAME 84/85,
-REPORT_*, TRAJECTORY_*) — of that family only INTERROGATE_NAMED_WHEN 93
-is now emitted. The AOT additionally refuses `when` (no occurrence-ring
+STILL-UNSUPPORTED envelope at the self-host tier, previously untracked:
+`match` (OP_MATCH), `import` (OP_IMPORT) and `unobserved:` (the signature
+perf lever, EigenScript#915) throw LOUDLY at compile; predicate-of value
+forms (`converged of x`) die LOUDLY at runtime ("cannot call num" — the
+VM's OP_PREDICATE_NAME path is not emitted); of the appended observer
+opcode family (PREDICATE_SLOT/NAME 87/88, OBSERVE_VALUE_SLOT/NAME 84/85,
+REPORT_*, TRAJECTORY_*) only INTERROGATE_NAMED_WHEN 93 is emitted.
+CAUTION — one form is NOT loud: `report of x` compiles as a plain builtin
+call and SILENTLY answers "equilibrium" where the VM classifies for real
+(pre-existing, reproduces on pre-#99 main) — that, plus bare
+interrogative statements being accepted where C compile-errors, is
+tracked in #106. The AOT additionally refuses `when` (no occurrence-ring
 seam) and module-shadowing `local` loudly. Growing any of these is new
 work, not a bug; this entry is the ledger naming them.
