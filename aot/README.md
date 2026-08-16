@@ -5,6 +5,10 @@ EigenScript runtime, producing a native binary. The bytecode VM stays as the
 **differential oracle**: AOT output must match `eigenscript prog.eigs`
 byte-for-byte.
 
+The speed doesn't come from making native things native — the builtins already
+are. It comes from proving enough about types at compile time that the boxed
+machinery *between* the native pieces can be deleted (F-OURO-15/28/29/30).
+
 ## Architecture
 
 - **Front-end reuse** — tokenize/parse come from ouroboros's `src/frontend.eigs`
