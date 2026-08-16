@@ -363,6 +363,33 @@ define cg_scan_name_bound(node, acc, no_interr) as:
         cg_scan_name_bound of [node[k], acc, no_interr]
     return null
 
+# in_globals (round 5): C's local-eligibility also consults the COMPILE-TIME
+# global env — `!g_compile_module_boundary && c->env && env_get_hashed(...)`
+# (emit_assign_for_tos). For a main-program compile that env holds exactly
+# the BUILTIN registry (execution hasn't started; module bindings are the
+# separate in_module/MODULE_NAMES check), so a plain first write to a builtin
+# name inside a function is NOT local-eligible: it routes to OP_SET_NAME and
+# mutates the global binding (`define f as: len is 5` really clobbers `len` —
+# VM-verified). ouro_compile is always a main-program compile, never behind
+# a load_file/import module boundary, so the g_compile_module_boundary
+# disable never applies here. The probe: `eval of name` resolved from this
+# helper reaches the runtime's global env; only a genuine builtin answers
+# type "builtin" (ouroboros's own module functions are "function" and no
+# local here shadows a builtin name), and an unbound name throws — cached
+# per name.
+BUILTIN_NAMES is {}
+define cg_is_builtin(name) as:
+    if has_key of [BUILTIN_NAMES, name]:
+        return BUILTIN_NAMES[name]
+    local r is 0
+    try:
+        if (type of (eval of name)) == "builtin":
+            r is 1
+    catch _cg_ib_err:
+        r is 0
+    BUILTIN_NAMES[name] is r
+    return r
+
 # Is `name` visible in an ENCLOSING function's scope? Mirror of compiler.c's
 # name_in_enclosing: walk c->enclosing, checking each enclosing FUNCTION's
 # slot locals (params + slot-allocated body locals) and its name-bound set
@@ -442,7 +469,11 @@ define cg_store_name(c, name, local_only) as:
             local in_module is 0
             if has_key of [MODULE_NAMES, name]:
                 in_module is 1
-            if (in_outer == 0) and (in_module == 0):
+            # in_globals veto inside local_eligible (round 5) — not a new
+            # arm: a builtin name is slot-ineligible, so a plain write
+            # falls through to SET_NAME (mutates the global binding) and a
+            # `local` write to the FN_NAME_LOCAL shadow, exactly like C.
+            if (in_outer == 0) and (in_module == 0) and ((cg_is_builtin of name) == 0):
                 local nslot is cg_add_local of [c, name]
                 cg_emit of [c, OP_OBSERVE_ASSIGN_LOCAL]
                 cg_emit_u16 of [c, nslot]

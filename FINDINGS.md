@@ -1020,11 +1020,23 @@ alone had converted loud to silent). cg_new now carries the lexical
 at module scope). cg_store_name's function-scope arbitration is now
 emit_assign_for_tos's, in order: (1) existing SLOT wins (C resolves
 locals before every escape check); (2) pre-scanned NAME-BOUND →
-OP_SET_FN_NAME_LOCAL; (3) not in_outer and not in_module →
-local-eligible, fresh anonymous slot (`local` included); (4) ineligible
-+ `local` → OP_SET_FN_NAME_LOCAL (the explicit shadow); (5) ineligible
-plain assign → OP_SET_NAME (outward mutation of the enclosing or module
-binding). test/programs/enclosing_scope.eigs pins read-modify-write,
+OP_SET_FN_NAME_LOCAL; (3) not in_outer, not in_module AND not in_globals
+→ local-eligible, fresh anonymous slot (`local` included); (4)
+ineligible + `local` → OP_SET_FN_NAME_LOCAL (the explicit shadow); (5)
+ineligible plain assign → OP_SET_NAME (outward mutation of the
+enclosing, module or GLOBAL binding). The in_globals term landed in
+round 5 (critic round 4): C consults the compile-time global env —
+which for a main-program compile is the BUILTIN registry — so
+`define f as: len is 5` really clobbers the global `len` (VM-verified;
+the mirror had fresh-slotted it, a pre-existing silent-wrong on main).
+cg_is_builtin probes the runtime registry via a cached
+type-of-eval check; ouro_compile is never behind a load_file/import
+module boundary, so C's g_compile_module_boundary disable never applies.
+test/programs/builtin_name_write.eigs pins the plain-write, nested-write
+and local-shadow shapes; builtin_name_clobber_err.eigs pins the
+acceptance shape (both sides die "cannot call num" after the clobber) —
+both failing at the round-3 cut.
+test/programs/enclosing_scope.eigs pins read-modify-write,
 write-only, two-level nesting, sibling isolation, param shadow, and
 local-shadow + nested write — all byte-exact, failing at the round-2
 cut.

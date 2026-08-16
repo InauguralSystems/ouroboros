@@ -1,0 +1,10 @@
+# #99 round 5, acceptance shape: after a function's plain write to `len`
+# the global binding holds a number, so a later builtin-style call dies
+# ("cannot call num") on BOTH sides — the self-hosted compiler used to
+# fresh-slot the write and happily print 3 (silent acceptance).
+define f() as:
+    len is 5
+    return 0
+f of null
+print of len
+print of (len of [1, 2, 3])
