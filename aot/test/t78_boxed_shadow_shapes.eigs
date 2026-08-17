@@ -1,0 +1,71 @@
+# t78 (#86, F-OURO-35): boxed module-shadow `local` — the per-shape sweep.
+# list shadow (append mutates the shadow, not the module list); string
+# shadow (concat + a self-referencing decl RHS reading the MODULE value);
+# `local x is <call returning boxed>`; two boxed shadows in one function;
+# a boxed shadow and a numeric shadow (#109 class) side by side; and a
+# numeric re-assign of a boxed shadow (rebinds the frame binding).
+# Proven refused on pre-#86 main (module-shadowing `local` on boxed).
+xs is [1, 2, 3]
+tag is "mod"
+opts is {"n": 5}
+lim is 100
+
+define mk_opts as:
+    return {"n": 42}
+
+define f_list as:
+    local xs is [7]
+    append of [xs, 8]
+    append of [xs, 9]
+    print of (len of xs)
+    print of xs[2]
+    return 0
+
+define f_str as:
+    # self-referencing decl RHS: the VM evaluates the RHS BEFORE binding,
+    # so `tag` here reads the MODULE value
+    local tag is tag + "+shadow"
+    print of tag
+    tag is tag + "!"
+    print of tag
+    return 0
+
+define f_call as:
+    local opts is mk_opts of []
+    print of opts["n"]
+    return 0
+
+define f_two as:
+    local xs is ["a"]
+    local tag is "two"
+    append of [xs, tag]
+    print of xs[1]
+    print of (len of xs)
+    return 0
+
+define f_mix as:
+    local opts is {"n": 9}
+    local lim is 3
+    lim is lim + 1
+    print of opts["n"]
+    print of lim
+    return 0
+
+define f_renum as:
+    local opts is {"n": 1}
+    opts is 5
+    print of (opts + 1)
+    return 0
+
+f_list of []
+f_str of []
+f_call of []
+f_two of []
+f_mix of []
+f_renum of []
+# every module binding untouched
+print of (len of xs)
+print of xs[0]
+print of tag
+print of opts["n"]
+print of lim

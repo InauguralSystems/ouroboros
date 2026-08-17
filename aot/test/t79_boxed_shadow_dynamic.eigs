@@ -1,0 +1,49 @@
+# t79 (#86, F-OURO-35): boxed module-shadow `local` — the DYNAMIC shapes
+# the runtime chain dispatch makes exact (each oracle-probed at v0.39.0):
+#   - recursion: a fresh shadow per call, outer frames unclobbered;
+#   - iteration carry: an occurrence BEFORE the decl inside the decl's own
+#     loop reads the module binding on pass 1 and the PREVIOUS iteration's
+#     shadow after;
+#   - a decl inside a block outlives that block (the VM frame binding
+#     lives to end-of-function, unlike a C block-scope local);
+#   - two `local` decls of one name rebind the ONE frame binding.
+# Proven refused on pre-#86 main (module-shadowing `local` on boxed).
+d is {"k": 0}
+s is "g"
+
+define rec(n) as:
+    local s is "call" + (str of n)
+    if n > 0:
+        rec of (n - 1)
+    # after the nested call returns, THIS frame's shadow is intact
+    print of s
+    return 0
+
+define carry as:
+    for i in range of 3:
+        print of d["k"]
+        local d is {"k": i + 10}
+    print of d["k"]
+    return 0
+
+define outlive as:
+    if 1 == 1:
+        local d is {"k": 7}
+    print of d["k"]
+    d.k is 8
+    print of d["k"]
+    return 0
+
+define redecl as:
+    local d is {"k": 2}
+    print of d["k"]
+    local d is {"k": 3}
+    print of d["k"]
+    return 0
+
+rec of [2]
+carry of []
+outlive of []
+redecl of []
+print of d["k"]
+print of s

@@ -221,16 +221,24 @@ g_envactive is 0
 # numeric `local` shadows of module globals in the CURRENT function (#109):
 # emit_stmt declares these at the `local` statement's site (C block scope).
 g_locshadow is {}
+# BOXED `local` shadows of module globals in the CURRENT function (#86,
+# F-OURO-35): reads/writes route through the aot_*_sh chain helpers, which
+# dispatch on __eigs_l binding presence AT RUNTIME — the VM's chain walk.
+g_boxshadow is {}
 G_SH_N is [0]
 define envc(name) as:
     if g_envloc[name] == 1:
         return "__eigs_l"
     return "__eigs_g"
 define env_read(name) as:
+    if g_boxshadow[name] == 1:
+        return "aot_get_sh(__eigs_l, __eigs_g, \"" + name + "\")"
     if g_envloc[name] == 1:
         return "aot_get(__eigs_l, \"" + name + "\")"
     return "aot_get_named(__eigs_g, \"" + name + "\")"
 define env_readb(name) as:
+    if g_boxshadow[name] == 1:
+        return "aot_getb_sh(__eigs_l, __eigs_g, \"" + name + "\")"
     if g_envloc[name] == 1:
         return "env_get(__eigs_l, \"" + name + "\")"
     return "aot_getb_named(__eigs_g, \"" + name + "\")"
@@ -1294,6 +1302,19 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
             if g_observed == 1:
                 throw of ("AOT: rebinding generic parameter '" + name + "' in an observed program is not supported (env-boxed reads would see the stale incoming value)")
             return ind + name + " = " + (emit_val of [node[2], nm, bt]) + ";\n"
+        if g_boxshadow[name] == 1:
+            # boxed module-shadow (#86, F-OURO-35): the `local` decl binds
+            # the per-call frame env; a plain write goes wherever the VM's
+            # chain walk says — the shadow if the decl has executed in this
+            # call, the module binding otherwise (aot_set_sh dispatches on
+            # binding presence). The RHS is evaluated BEFORE the set either
+            # way (C argument order), so a self-referencing decl RHS reads
+            # the pre-binding chain — module global on first execution, the
+            # previous iteration's shadow under iteration carry — exactly
+            # like the VM.
+            if (len of node) >= 4:
+                return ind + "aot_set(__eigs_l, \"" + name + "\", " + (emit_val of [node[2], nm, bt]) + ");\n"
+            return ind + "aot_set_sh(__eigs_l, __eigs_g, \"" + name + "\", " + (emit_val of [node[2], nm, bt]) + ");\n"
         if g_tensor[name] == 1:
             return ind + (cn of name) + " = " + (emit_tensor of [node[2], nm, bt]) + ";\n"
         if bt[name] == 1:
@@ -3802,13 +3823,14 @@ define emit_function(fn, finfo, gnm, gbt) as:
     for k in range of (len of gb):
         if gbt[gb[k]] == 1:
             fbt[gb[k]] is 1
-    # `local NAME is e` (#99 item 2, narrowed by #109): a `local` shadowing a
-    # NUMERIC module global compiles to a C local declared at the `local`
-    # statement's site (validated below, after inference — see the sh_*
-    # walkers). Everything else stays a loud refusal: a BOXED module global
-    # (gnm key present, value 0) lives in __eigs_g and a BUFFER global is a
-    # file-scope Value*, and the plain-assign fallback would clobber the
-    # module binding the VM shadows (#100/#107). A `local` of a non-global
+    # `local NAME is e` (#99 item 2, narrowed by #109, widened by #86):
+    # a `local` shadowing a NUMERIC module global compiles to a C local
+    # declared at the `local` statement's site; one shadowing a BOXED
+    # module global (gnm key present, value 0) becomes a per-call-env
+    # binding with runtime chain dispatch (F-OURO-35) — both validated
+    # below, after inference (see the sh_* walkers). A BUFFER global stays
+    # a loud refusal: it is a file-scope Value* C variable, invisible to
+    # the env chain (#100/#107). A `local` of a non-global
     # name is a function local either way and falls through to the ordinary
     # assign path; a `local` of a PARAM name rebinds the param (the VM's
     # existing-slot-wins arbitration — the C param already shadows the
@@ -3817,6 +3839,7 @@ define emit_function(fn, finfo, gnm, gbt) as:
     collect_local_marked of [body, _lmk]
     local _lmn is keys of _lmk
     local _shcand is []
+    local _bshcand is []
     for k in range of (len of _lmn):
         local _shp is 0
         for p in range of (len of params):
@@ -3824,11 +3847,15 @@ define emit_function(fn, finfo, gnm, gbt) as:
                 _shp is 1
         if _shp == 0:
             if gbt[_lmn[k]] == 1:
-                throw of ("AOT: `local " + _lmn[k] + "` shadowing a module binding is not supported (would write the module binding the VM shadows)")
+                throw of ("AOT: `local " + _lmn[k] + "` shadowing a module BUFFER binding is not supported (the global is a file-scope C variable, invisible to the env chain)")
             if gnm[_lmn[k]] != null:
                 if gnm[_lmn[k]] != 1:
-                    throw of ("AOT: `local " + _lmn[k] + "` shadowing a module binding is not supported (would write the module binding the VM shadows)")
-                append of [_shcand, _lmn[k]]
+                    # BOXED module global (string/list/dict/null-valued):
+                    # per-call-env shadow with runtime chain dispatch (#86,
+                    # F-OURO-35) — validated below, after inference.
+                    append of [_bshcand, _lmn[k]]
+                else:
+                    append of [_shcand, _lmn[k]]
     # Round 6 (#99): a PLAIN function-body write to a BUILTIN name clobbers
     # the runtime's global binding under VM semantics (the in_globals veto in
     # emit_assign_for_tos makes it slot-ineligible -> OP_SET_NAME); the AOT's
@@ -3961,6 +3988,49 @@ define emit_function(fn, finfo, gnm, gbt) as:
             g_locshadow[shn] is 1
         else:
             throw of ("AOT: `local " + shn + "` shadowing a module binding is not supported here (" + shwhy + ")")
+    # BOXED module-shadow `local` validation (#86, F-OURO-35). Unlike the
+    # numeric class above (#109: C block-scope decl-at-site, which needs
+    # the sh_validate_block occurrence discipline), a boxed shadow is a
+    # per-call-env binding whose reads/writes dispatch on __eigs_l binding
+    # presence AT RUNTIME (aot_get_sh/aot_set_sh) — the VM's chain walk
+    # itself. The dynamic shapes are therefore exact with no occurrence
+    # analysis: pre-decl reads/writes hit the module binding, iteration
+    # carry serves the previous iteration's shadow, a nested decl outlives
+    # its block, re-decls rebind the one frame binding, recursion gets a
+    # fresh shadow per call, and a numeric re-assign of the shadow just
+    # rebinds it (all oracle-probed at v0.39.0). What stays refused:
+    # observed/temporal functions (Part 2a keys env/history state by NAME
+    # in __eigs_g), a nested define/lambda reading the name (a lifted C fn
+    # cannot see __eigs_l; a capbind capture is a stale snapshot), binder
+    # re-binding (#110's rule — the VM loop-scopes a for/catch/listcomp
+    # var OVER the shadow, a third semantics), and shadows the inference
+    # classified buffer/tensor (their storage is a C variable, not the
+    # env — routing them here would silently bypass that storage).
+    g_boxshadow is {}
+    local _bsh_any is 0
+    for k in range of (len of _bshcand):
+        local bshn is _bshcand[k]
+        local bwhy is ""
+        if (g_observed == 1) or (g_traced == 1):
+            bwhy is "observed/temporal function — history and env state are keyed by NAME, invisible to a per-call env"
+        elif (sh_deferred_ref of [body, bshn]) == 1:
+            bwhy is "the name is referenced by a nested define/lambda"
+        elif (sh_binds of [body, bshn]) == 1:
+            bwhy is "the name is re-bound as a for/catch/comprehension variable"
+        elif fbt[bshn] == 1:
+            bwhy is "the shadow is buffer-classified (C-variable storage, not the env)"
+        elif g_tensor[bshn] == 1:
+            bwhy is "the shadow is tensor-classified (C-variable storage, not the env)"
+        if bwhy == "":
+            g_boxshadow[bshn] is 1
+            _bsh_any is 1
+            # keep the name OFF the numeric/int emission paths: an
+            # all-numeric-assign shadow (`local d is 5` over a dict global)
+            # would otherwise be classified double and read the C name.
+            fnm[bshn] is 0
+            g_int[bshn] is 0
+        else:
+            throw of ("AOT: `local " + bshn + "` shadowing a module binding is not supported here (" + bwhy + ")")
     # for-in loop-var unboxing: eligible vars become C doubles for the body
     # emission (fnm) and the for emitter binds the C name per iteration.
     g_forunbox is {}
@@ -4014,6 +4084,10 @@ define emit_function(fn, finfo, gnm, gbt) as:
                 if (g_tensor[efv] != 1) and (fbt[efv] != 1) and (fnm[efv] != 1) and (g_dict[efv] != 1) and (g_genp[efv] != 1):
                     g_envloc[efv] is 1
                     g_envactive is 1
+    # a boxed module-shadow (#86) lives in __eigs_l too — the function needs
+    # the per-call env even when no other boxed local does.
+    if _bsh_any == 1:
+        g_envactive is 1
     # --dump-inference: report every param + assigned local with the storage
     # kind the ASSIGN path actually uses (mirrors emit_stmt's dispatch), so
     # the audit joins verdicts, not declarations.
@@ -4043,7 +4117,9 @@ define emit_function(fn, finfo, gnm, gbt) as:
                 disp is 1
             if disp == 0:
                 local lkind is "boxed-env"
-                if g_tensor[dv] == 1:
+                if g_boxshadow[dv] == 1:
+                    lkind is "boxed-shadow"
+                elif g_tensor[dv] == 1:
                     lkind is "tensor"
                 elif fbt[dv] == 1:
                     lkind is "buffer"
@@ -4115,7 +4191,7 @@ define emit_function(fn, finfo, gnm, gbt) as:
         # a local that shadows a global buffer is declared locally, not skipped.
         if shadowed[v] == 1:
             isglobal is 0
-        if (isparam == 0) and (isglobal == 0):
+        if (isparam == 0) and (isglobal == 0) and (g_boxshadow[v] != 1):
             if g_tensor[v] == 1:
                 decls is decls + "    AotTensor " + (cn of v) + " = aot_tensor_null();\n"
             elif fbt[v] == 1:
@@ -4158,6 +4234,7 @@ define emit_function(fn, finfo, gnm, gbt) as:
     g_ret_type is _save_ret
     g_envloc is {}
     g_envactive is 0
+    g_boxshadow is {}
     return _result
 
 # ---- nested `define` lifting (#86) ----
@@ -4498,8 +4575,9 @@ define emit_program(ast) as:
     # `lbd_activity_key` for a failure that was in main).
     G_CUR_FN[0] is "<module>"
     # module scope has no shadows (a module-level `local` IS the module
-    # binding) — clear the last function's map before emitting main.
+    # binding) — clear the last function's maps before emitting main.
     g_locshadow is {}
+    g_boxshadow is {}
     local body is emit_stmts of [rest, "    ", nm, bt, minits, {}]
     local obshdr is ""
     if g_obs_traced == 1:

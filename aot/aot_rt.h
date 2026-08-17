@@ -183,6 +183,33 @@ static void aot_set(Env *g, const char *name, Value *val) {
     env_set_local_owned(g, name, val);     /* adopts val's birth ref */
 }
 
+/* ---- boxed module-global `local` shadow (#86, F-OURO-35) ----
+ * The VM's chain walk in miniature: once `local NAME is <boxed>` has
+ * EXECUTED in this call, the frame binding (__eigs_l) wins; before it (and
+ * in calls where the decl never runs), the module binding (__eigs_g)
+ * serves reads and plain writes. env_get returns C NULL only for
+ * "unbound" (a bound null is a VAL_NULL Value), so binding presence IS
+ * the dispatch — which makes pre-decl occurrences, iteration carry,
+ * block-outliving shadows, re-decls and per-call freshness exact without
+ * any compile-time occurrence analysis (all oracle-probed at v0.39.0). */
+static Value *aot_get_sh(Env *l, Env *g, const char *name) {
+    Value *v = env_get(l, name);
+    if (v) { val_incref(v); return v; }
+    return aot_get_named(g, name);
+}
+/* borrowed variant (call-argument reads) */
+static Value *aot_getb_sh(Env *l, Env *g, const char *name) {
+    Value *v = env_get(l, name);
+    if (v) return v;
+    return aot_getb_named(g, name);
+}
+/* plain (non-`local`) write to a shadow name: the shadow if bound, else
+ * the module binding — the VM's SET_NAME chain walk. Adopts val. */
+static void aot_set_sh(Env *l, Env *g, const char *name, Value *val) {
+    if (env_get(l, name)) env_set_local_owned(l, name, val);
+    else env_set_local_owned(g, name, val);
+}
+
 /* ---- truthiness (consumes) ---- */
 static int aot_truthy(Value *v) { int t = is_truthy(v); val_decref(v); return t; }
 

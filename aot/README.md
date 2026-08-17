@@ -641,8 +641,11 @@ with `f of x`, not `f(x)` — EigenScript has no paren-call syntax.)
 global constant `DT`, a global buffer `G`. A function's params/locals shadow
 same-named globals; an assignment to a global name updates the file-global.
 `test/t17_globals`. Limits: mixed numeric/buffer returns in one function aren't
-type-checked; the `local` keyword forcing a function-local that shadows a global
-isn't modeled.
+type-checked. A `local` shadow of a module global IS modeled for numeric
+globals (#109: C block-scope decl at the `local` site, F-OURO-33) and for
+boxed string/list/dict globals (#86: a per-call-env binding with runtime
+chain dispatch, F-OURO-35 — `test/t77`–`t79`); a `local` shadow of a module
+BUFFER global stays a loud build-time refusal.
 
 ## Neighbor indexing / stencils
 
