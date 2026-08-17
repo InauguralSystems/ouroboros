@@ -2832,9 +2832,40 @@ define elem_is_boxed_use(node, name) as:
             if (chain_has_str of node) == 1:
                 if (contains_index_of of [node, name]) == 1:
                     return 1
+    # The element is used as a COLLECTION — each of these is a VM error on
+    # a number, so it is positive proof the elements are boxed (#86
+    # element-class: `x[i]` proves indexable, never numeric-element):
+    #   x[i][j] / x[i][j] is v  — the element is indexed
+    #   for y in x[i]           — the element is iterated
+    #   x[i].f / x[i].f is v    — the element is a dict
+    if (node[0] == "index") or (node[0] == "index_assign"):
+        if (is_index_of of [node[1], name]) == 1:
+            return 1
+    if node[0] == "for":
+        if (is_index_of of [node[2], name]) == 1:
+            return 1
+    if (node[0] == "dot") or (node[0] == "dot_assign"):
+        if (is_index_of of [node[1], name]) == 1:
+            return 1
     # x[i] passed to a string-only builtin
     if node[0] == "call":
         local callee is unwrap of node[1]
+        # append's FIRST argument is its in-place list target: an element
+        # there is a list (EigenMiniSat's watch buckets —
+        # `append of [watches[idx], clause_index]`). The appended VALUE
+        # position is NOT evidence (numbers are appended all the time).
+        # `len of x[i]` is evidence too: a number has no len.
+        if (callee[0] == "ident") and (callee[1] == "append"):
+            local aarg is unwrap of node[2]
+            if (aarg[0] == "list") and ((len of aarg) == 2):
+                local ael is aarg[1]
+                if (len of ael) >= 1:
+                    if (is_index_of of [ael[0], name]) == 1:
+                        return 1
+        if (callee[0] == "ident") and (callee[1] == "len"):
+            local larg is unwrap of node[2]
+            if (is_index_of of [larg, name]) == 1:
+                return 1
         if (callee[0] == "ident") and (STR_ARG_BUILTINS[callee[1]] == 1):
             local arg is unwrap of node[2]
             local elems is []
@@ -2906,7 +2937,13 @@ define find_gen_param_use(node, name) as:
                     elems is [arg]
                 local pts is (g_funcs[callee[1]])["ptypes"]
                 for k in range of (len of elems):
-                    if (pts[k]) == "gen":
+                    # dict and tensor positions count too (#86 gap 3): a
+                    # param whose ONLY use is flowing into a callee's dict
+                    # param holds a dict (EigenMiniSat's
+                    # `should_compact_deleted_clauses(store, ...)` passing
+                    # store straight to `clause_store_len`), and a numeric
+                    # default there emits a numeric read of a boxed value.
+                    if ((pts[k]) == "gen") or ((pts[k]) == "dict") or ((pts[k]) == "tensor"):
                         local e is unwrap of elems[k]
                         if (e[0] == "ident") and (e[1] == name):
                             return 1
@@ -3048,12 +3085,22 @@ define arg_class(node, caller_pt, caller_params, caller_locals) as:
 G_LGM_CACHE is [{}]
 
 define local_gen_map_for(fname, body) as:
-    local c is (G_LGM_CACHE[0])[fname]
+    return local_gen_map_for_seeded of [fname, body, {}]
+
+# Seed-aware memo (#86 element-class): widen_ptypes seeds each function's
+# map with its boxed-element params (gen/dict), and those classes WIDEN
+# across rounds — so the cache key must include the seed, or a map cached
+# under an earlier (smaller) seed silently serves a later round. Seeds
+# grow monotonically with ptypes, so keying on the seed's name list is a
+# sound identity.
+define local_gen_map_for_seeded(fname, body, seed) as:
+    local sig is fname + "|" + (join of [keys of seed, ","])
+    local c is (G_LGM_CACHE[0])[sig]
     if c != null:
         return c
-    local m is local_gen_map_seeded of [body, {}]
+    local m is local_gen_map_seeded of [body, seed]
     local cache is G_LGM_CACHE[0]
-    cache[fname] is m
+    cache[sig] is m
     return m
 
 define local_gen_map(body) as:
@@ -3323,7 +3370,20 @@ define widen_ptypes(funcs, rest) as:
         # snapshot pinned classes so a widening cannot violate them
         for k in range of (len of funcs):
             local fn2 is funcs[k]
-            if (widen_scan of [fn2[3], (g_funcs[fn2[1]])["ptypes"], fn2[2], local_gen_map_for of [fn2[1], fn2[3]]]) == 1:
+            # Seed the caller-locals map with the fn's BOXED-ELEMENT params
+            # (gen/dict — classes whose elements are boxed values), so
+            # for_var_gen_scan sees `for clause in clauses` where clauses
+            # is a param, not a local (#86 element-class: the loop var is
+            # boxed evidence for the callees it flows into). buf/tensor
+            # params are deliberately NOT seeded: their elements are
+            # numeric, and marking their loop vars gen would widen callee
+            # params onto the boxed path for values living in C doubles.
+            local pt2s is (g_funcs[fn2[1]])["ptypes"]
+            local seed2 is {}
+            for p2 in range of (len of fn2[2]):
+                if ((pt2s[p2]) == "gen") or ((pt2s[p2]) == "dict"):
+                    seed2[((fn2[2])[p2])] is "gen"
+            if (widen_scan of [fn2[3], pt2s, fn2[2], local_gen_map_for_seeded of [fn2[1], fn2[3], seed2]]) == 1:
                 changed is 1
         if (widen_scan of [rest, [], [], local_gen_map_for of ["<module>", rest]]) == 1:
             changed is 1

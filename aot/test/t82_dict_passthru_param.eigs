@@ -1,0 +1,20 @@
+# #86 element-class gap 3: a param whose ONLY use is flowing into a
+# callee's DICT (or tensor) position holds a dict — find_gen_param_use
+# counted only "gen" positions, so the pass-through stayed "num" and the
+# caller emitted a numeric read of the dict field it passed in. Before
+# the fix: `non-numeric value in a numeric context at cdcl_step: .store
+# (type dict)` (EigenMiniSat should_compact_deleted_clauses passing
+# store straight to clause_store_len, --cdcl conflict path).
+define store_len(store) as:
+    return len of store.lits
+
+define should(store) as:
+    if (store_len of store) > 2:
+        return 1
+    return 0
+
+define step(session) as:
+    return should of session.store
+
+s is {"store": {"lits": [1, 2, 3]}}
+print of (step of s)

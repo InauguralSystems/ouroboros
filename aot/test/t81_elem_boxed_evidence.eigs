@@ -1,0 +1,49 @@
+# #86 element-class gap 2: `x[i]` proves indexable, never
+# numeric-element. Each of these element uses is a VM error on a number,
+# so it is positive proof the elements are boxed and the param must
+# leave the unboxed aot_buf_get path: append target, nested index,
+# element iteration, dot on an element, len of an element, nested index
+# assignment. Before the fix, `append of [watches[idx], ci]` on a
+# list-of-lists param died at runtime with `non-numeric element in
+# `watches`[0] (list)` (EigenMiniSat watch_add, --cdcl mode).
+define bucket_add(watches, i, v) as:
+    # v (the appended VALUE position) must stay non-evidence: numbers are
+    # appended all the time. Only the TARGET position proves boxedness.
+    append of [watches[i], v]
+
+define bucket_len(watches, i) as:
+    return len of watches[i]
+
+define bucket_first(watches, i) as:
+    return watches[i][0]
+
+define bucket_sum(watches, i) as:
+    s is 0
+    for x in watches[i]:
+        s is s + x
+    return s
+
+define bucket_set(watches, i, j, v) as:
+    watches[i][j] is v
+
+# dot on an element demotes too; the field itself is read boxed and
+# compared (its CLASS is unknown, so returning it whole stays out of
+# envelope — runtime-loud, not silent)
+define field_is(recs, i, want) as:
+    if recs[i].name == want:
+        return 1
+    return 0
+
+ws is [[], []]
+bucket_add of [ws, 0, 5]
+bucket_add of [ws, 1, 7]
+bucket_add of [ws, 0, 9]
+print of ws
+print of (bucket_len of [ws, 0])
+print of (bucket_first of [ws, 0])
+print of (bucket_sum of [ws, 0])
+bucket_set of [ws, 0, 1, 11]
+print of ws
+rs is [{"name": "a"}, {"name": "b"}]
+print of (field_is of [rs, 1, "b"])
+print of (field_is of [rs, 0, "b"])
