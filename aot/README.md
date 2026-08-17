@@ -31,6 +31,14 @@ bash test/run.sh                        # differential harness: native == VM
 
 Override the runtime checkout with `EIGS_DIR=` (default `../../EigenScript`).
 
+**Path resolution** (F-OURO-34): the binary resolves `load_file` paths exactly
+as the VM would for `eigenscript <original .eigs>` from the same cwd — cwd
+first, then the program's source dir, then the runtime's stdlib roots. The
+program dir and runtime dir are **baked in at build time**, so moving or
+deleting the source tree breaks the binary's `load_file`; rebuild after moving
+sources. Code loaded this way runs on the embedded VM, not natively — see
+BASELINE.md in EigenMiniSat for what that means for speed.
+
 ## Flat-buffer tensor arc (the AOT measuring its own real-world reach)
 
 Pointing the AOT at *verbatim* consumer neural code (not hand-extracted kernels)
