@@ -68,7 +68,19 @@ if [ ! -f "$LIB" ] || [ "$SIG" != "$(cat "$STAMP" 2>/dev/null)" ]; then
 fi
 
 # Transpile + link against the cached lib.
+#
+# PDEFS (#86, F-OURO-34): bake the two resolution anchors main.c would have
+# set for `eigenscript $PROG` — the program's own dir (g_script_dir) and the
+# linked runtime's src dir (g_exe_dir; its ../lib is the stdlib). Absolutized,
+# so the binary resolves the same files from any cwd the VM would from that
+# cwd. Per-program by construction, so these defines must NOT join DEFS: the
+# lib stamp hashes DEFS and a per-program define there would rebuild the
+# cached runtime lib on every target change. aot_rt.h is header-only into
+# GEN, so the define reaches the one TU that reads it.
 GEN="$(mktemp /tmp/aot_gen.XXXXXX.c)"
 trap 'rm -f "$GEN"' EXIT
+PROG_DIR="$(cd "$(dirname "$PROG")" && pwd -P)"
+SRC_ABS="$(cd "$SRC" && pwd -P)"
+PDEFS="-DAOT_SCRIPT_DIR='\"$PROG_DIR\"' -DAOT_EXE_DIR='\"$SRC_ABS\"'"
 "$EIG" compile.eigs "$PROG" > "$GEN"
-eval gcc $CFLAGS $DEFS -I. -I"$SRC" "$GEN" "$LIB" -lm -lpthread -o "$OUT"
+eval gcc $CFLAGS $DEFS $PDEFS -I. -I"$SRC" "$GEN" "$LIB" -lm -lpthread -o "$OUT"

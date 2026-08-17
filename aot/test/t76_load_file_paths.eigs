@@ -1,0 +1,16 @@
+# F-OURO-34 / #86: load_file path resolution must match the VM's chain.
+# The harness runs BOTH sides from aot/ (a different cwd than this file's
+# dir), so neither prong below resolves via the cwd:
+#   1. "data/t76_lib.eigs"     -> script-dir step   (base/<path>)
+#   2. "lib/int_vector.eigs"   -> exe-dir stdlib step (g_exe_dir/../<path>)
+# On main the AOT never set g_script_dir/g_exe_dir (embed defaults are "."),
+# so both prongs died at `load_file: cannot read` while the VM passed.
+load_file of "data/t76_lib.eigs"
+print of (t76_tag of [])
+print of (t76_twice of (21))
+
+load_file of "lib/int_vector.eigs"
+v is int_vector_filled of [3, 7]
+int_vector_set of [v, 1, 42]
+print of (int_vector_get of [v, 1])
+print of (int_vector_get of [v, 2])

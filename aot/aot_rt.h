@@ -118,6 +118,35 @@ static Env *aot_boot(void) {
      * records without printing, so it can never walk the NULL VM; every
      * AOT error exit prints g_error_msg itself via aot_error_exit. */
     g_try_depth = 1;
+    /* ---- load_file/import path resolution (#86, F-OURO-34) ----
+     * resolve_eigenscript_file_from_ex's chain is anchored on two EigsState
+     * dirs the CLI's main.c sets and eigs_open leaves at the "." default:
+     *   g_script_dir — dirname(argv[1]), the .eigs program's own directory;
+     *   g_exe_dir    — dirname(/proc/self/exe), the eigenscript binary's dir,
+     *                  whose ../lib is the stdlib in a source checkout.
+     * With both at "." every non-cwd step of the chain was dead in a native
+     * binary: `load_file of "lib/int_vector.eigs"` failed anywhere the cwd
+     * didn't happen to contain the file (the EigenMiniSat stop on #86).
+     *
+     * THE RULE: the AOT binary resolves exactly the files the VM would
+     * resolve for `eigenscript <original .eigs>` run from the same cwd. So
+     * both anchors are baked at BUILD time by build.sh — AOT_SCRIPT_DIR is
+     * the absolutized dirname of the compiled program, AOT_EXE_DIR is the
+     * absolutized $EIGS_DIR/src of the runtime it linked (NOT the native
+     * binary's own location: the binary is a stand-in for the original
+     * program, and its imports live next to the SOURCE and that runtime's
+     * stdlib). Measured VM order (v0.39.0 probe, 2026-08-16): cwd-relative
+     * first, then script dir, script parent, exe-dir stdlib roots. The
+     * cwd-relative step stays naturally runtime-dependent — identical on
+     * both sides. Consequence, documented not accidental: a moved/deleted
+     * source tree breaks the binary's load_file the same way it breaks the
+     * VM invocation it mirrors. */
+#ifdef AOT_SCRIPT_DIR
+    snprintf(g_script_dir, sizeof(g_script_dir), "%s", AOT_SCRIPT_DIR);
+#endif
+#ifdef AOT_EXE_DIR
+    snprintf(g_exe_dir, sizeof(g_exe_dir), "%s", AOT_EXE_DIR);
+#endif
     return g_global_env;
 }
 static void aot_shutdown(Env *g) { (void)g; /* process exit reclaims (slice 1) */ }
