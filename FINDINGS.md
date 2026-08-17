@@ -1312,3 +1312,77 @@ is the next frontier; probing it with a concatenated single-file EMS
 hits a LOUD envelope refusal — `AOT: \`local cdcl_opts\` shadowing a
 module binding is not supported` (lib/solver.eigs's dict-valued opts
 shadow, the boxed-module-global `local` class F-OURO-33 left refused).
+
+## F-OURO-35 — boxed (string/list/dict) `local` shadows of module globals: per-call-env bindings with RUNTIME chain dispatch — FIXED (#86 increment)
+
+The `AOT: \`local cdcl_opts\` shadowing a module binding is not supported`
+refusal (F-OURO-32/33's boxed leftover) was the concrete blocker for
+compiling the concatenated single-file EigenMiniSat.
+
+**The design.** Where #109's numeric class maps the VM shadow onto C
+block scope (decl-at-site, with the sh_validate_block occurrence
+discipline that refuses whatever block scope cannot reproduce), a BOXED
+shadow reuses #107's per-call env `__eigs_l` and moves the chain walk
+to RUNTIME: `aot_get_sh`/`aot_getb_sh`/`aot_set_sh` (aot_rt.h) dispatch
+on `__eigs_l` binding presence — bound → the shadow; unbound → the
+module binding in `__eigs_g` (loud GET_NAME reads, SET_NAME-style
+writes). The `local` decl itself is a plain `aot_set(__eigs_l, ...)`,
+and env_get returns C NULL only for "unbound" (a bound null is a
+VAL_NULL Value), so binding presence IS the VM's frame-vs-module
+resolution. Consequence: NO occurrence discipline is needed — every
+dynamic shape the numeric class had to refuse is exact by construction,
+each oracle-probed at v0.39.0 and pinned in t77–t79 (all three proven
+refused at origin/main aaaa916):
+
+- pre-decl reads AND field/plain writes hit the module binding
+  (`print of d["k"]` then `d.k is 2` before the decl);
+- iteration carry: an occurrence before the decl inside the decl's own
+  loop reads the previous iteration's shadow (VM probe: 0/10/11 then 12);
+- a nested decl OUTLIVES its block (decl in an `if`, read+dot-write
+  after it);
+- two `local NAME` decls rebind the ONE frame binding;
+- recursion gets a fresh shadow per call (freed on every return path by
+  the existing #107 machinery; a returned shadow is computed into a temp
+  before `env_decref(__eigs_l)`);
+- a numeric re-assign of a boxed shadow rebinds it (`opts is 5` then
+  `opts + 1` — the RHS boxes through the aot_set_sh fallback; the
+  shadow name is force-stripped from fnm/g_int so an all-numeric-assign
+  shadow can't drift onto the C-double path);
+- `local x is <call returning boxed>`, two boxed shadows per fn, and a
+  boxed + numeric (#109) shadow in one fn (t78).
+
+**STILL LOUD-REFUSED** (verified manually per F-OURO-26's no-reject-tier
+note): a nested define/lambda reading the shadow name (a lifted C fn
+sees only `__eigs_g`; a capbind capture is a stale snapshot — same as
+the numeric class), #110's binder rule (for/catch/comprehension-var
+re-binding of the shadow name — the VM loop-scopes a binder OVER the
+shadow), observed/temporal functions (Part 2a keys env/history state by
+NAME), shadows the inference classifies buffer/tensor (their storage is
+a C variable the env cannot see, e.g. `local d is buffer of 4`), and
+`local` of a module BUFFER global. A boxed-RHS `local` over a NUMERIC
+module global stays refused too, on the #109 path — loudly but with the
+generic `emit_num on non-numeric node` message (pre-existing; the
+seeded lnm keeps a numeric-global name numeric, so the "non-numeric
+assignment" branch never fires for it).
+
+**Concat-EMS outcome (the acceptance probe).** Single-file EMS =
+stdlib int_vector + dimacs + solver + text_builder + bench + minisat,
+load_file lines stripped, in execution order. (1) The shadow refusal is
+GONE. (2) Next build-time stop: `AOT: \`negative is ...\` inside a
+function writes the GLOBAL builtin binding` — EigenMiniSat
+lib/bench.eigs:655 plain-assigns the builtin name `negative`
+(F-OURO-31 round 6 refusal, correct; consumer-fixable with one
+`local`). (3) With that one line patched, the whole 4,459-line program
+**transpiles, compiles and links, rc=0**. (4) At runtime it dies LOUDLY
+(rc=1, the F-OURO-32 discipline) at the known element-class frontier:
+default mode `non-numeric value in a numeric context at
+propagate_units: name clause (type list)`; `--cdcl`
+`non-numeric element in \`watches\`[0] (list)` — the indexable-boxed
+vs indexable-numeric split already named in #86's history. Two
+trivially-UNSAT --cdcl fixtures (unit_unsat, satlib_trailer_unsat)
+already run byte-exact end-to-end. No full solve → no timing number
+yet; the next #86 increment is the element-class split, not shadows.
+
+Gates: aot/test/run.sh (t77–t79 added) + test/run.sh green at the
+v0.39.0 pin; fuzzdiff 40 programs seed 42 → 0 divergences / 0
+run-pasts / 0 gaps.

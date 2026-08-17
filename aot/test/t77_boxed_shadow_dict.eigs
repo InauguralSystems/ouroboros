@@ -1,0 +1,38 @@
+# t77 (#86, F-OURO-35): `local` shadow of a BOXED (dict) module global —
+# the cdcl_opts shape that blocked the concatenated EigenMiniSat build.
+# The shadow is a per-call-env binding with runtime chain dispatch:
+# pre-decl reads/writes hit the module binding, post-decl occurrences hit
+# the shadow, the module global is untouched after the call, and the
+# shadow can cross a call boundary (passed as an arg, returned).
+# Proven refused on pre-#86 main: `AOT: local cdcl_opts shadowing a
+# module binding is not supported`.
+cdcl_opts is {"var_decay": 0.5, "mode": "global", "restarts": 10}
+
+define probe(o) as:
+    print of o["mode"]
+    o.restarts is 99
+    return 0
+
+define solve as:
+    # pre-decl occurrences: read + field-write land on the MODULE binding
+    print of cdcl_opts["var_decay"]
+    cdcl_opts.restarts is 20
+    local cdcl_opts is {"var_decay": 0.9, "mode": "local", "restarts": 1}
+    # post-decl: dot write, dot read, index read — all through the shadow
+    cdcl_opts.var_decay is 0.95
+    print of cdcl_opts.var_decay
+    print of cdcl_opts["mode"]
+    # the shadow crosses a call boundary as an argument (field mutation
+    # through the callee stays visible — same Value object)
+    probe of cdcl_opts
+    print of cdcl_opts["restarts"]
+    # and is returned out of the frame
+    return cdcl_opts
+
+r is solve of []
+print of r["var_decay"]
+print of r["restarts"]
+# module binding: shadow writes never touched it; the pre-decl write did
+print of cdcl_opts["var_decay"]
+print of cdcl_opts["mode"]
+print of cdcl_opts["restarts"]
