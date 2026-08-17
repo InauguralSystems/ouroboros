@@ -1255,3 +1255,60 @@ that the #107 seams cost the mono ~15% was REFUTED by measurement
 0.0923s vs 0.0916s at HEAD — statistically identical — so the delta vs
 the old 0.08s row is the original row's pin/measurement conditions, not
 the correctness train. aot/README.md's table updated accordingly.
+
+## F-OURO-34 — AOT binaries never set the resolution anchors: load_file/import's non-cwd chain was dead — FIXED (#86 endgame)
+
+**BUG (fixed).** `resolve_eigenscript_file_from_ex`'s candidate chain is
+anchored on two EigsState dirs that only the CLI's `main.c` sets:
+`g_script_dir` (dirname of argv[1]) and `g_exe_dir` (dirname of
+/proc/self/exe, whose `../lib` is the stdlib in a source checkout).
+`eigs_open` leaves both at the `"."` default and `aot_boot` never touched
+them, so in a native binary every step of the chain except bare
+cwd-relative was dead: `load_file of "lib/int_vector.eigs"` failed
+anywhere the cwd didn't happen to contain the file. This was the #86
+frontier after #107 unblocked the EigenMiniSat transpile — the built
+minisat died at `load_file: cannot read 'lib/int_vector.eigs'`.
+
+**Measured VM order (v0.39.0 probe, 2026-08-16, conflicting candidates
+planted at each anchor):** (a) cwd-relative wins first, then (b) the
+script's own dir, script parent, and (c) the exe-dir stdlib roots
+(`g_exe_dir/../<path>`, `g_exe_dir/../lib/eigenscript/<path>`, lib/-
+stripped variant, `~/.local/lib/eigenscript`). Matches the source chain
+in `builtins_host.c:resolve_eigenscript_file_from_ex`.
+
+**THE RULE:** the AOT binary resolves exactly the files the VM would
+resolve for `eigenscript <original .eigs>` run from the same cwd. Both
+anchors are baked at BUILD time (`build.sh` → `PDEFS` →
+`AOT_SCRIPT_DIR`/`AOT_EXE_DIR` → `aot_boot` snprintf): the absolutized
+dirname of the compiled program, and the absolutized `$EIGS_DIR/src` of
+the runtime it linked — NOT the native binary's own runtime location,
+because the binary is a stand-in for the original program and its
+imports live next to the SOURCE and that runtime's stdlib. The
+cwd-relative first step stays runtime-dependent, identically on both
+sides. Documented consequence: moving/deleting the source tree breaks
+the binary's load_file exactly the way it breaks the VM invocation it
+mirrors. The defines ride PDEFS on the gen.c compile only — DEFS is
+hashed into the cached-lib stamp, and a per-program define there would
+rebuild the runtime lib on every target change.
+
+**Test:** `aot/test/t76_load_file_paths.eigs` loads a sibling-dir lib
+(`test/data/`, invisible to the flat harness glob — script-dir step) and
+stdlib `lib/int_vector.eigs` (exe-dir step), with the harness running
+both sides from `aot/` — a different cwd than the program's dir. Proven
+failing at origin/main cd86040: AOT died `load_file: cannot read
+'data/t76_lib.eigs'` rc=1 while the VM printed all four lines rc=0.
+
+**Runtime-tier note for consumers — MEASURED:** load_file'd modules
+execute on the embedded bytecode VM inside the native binary
+(builtin_load_file compiles and `vm_execute`s at runtime) — the AOT
+compiles only the entry program's own statements. A load_file-structured
+consumer like EigenMiniSat therefore runs its core at VM speed under
+AOT. Measured (v0.39.0 pin, --cdcl, n=5 medians, taskset -c 0, SSE2
+devbox): AOT-EMS is **0.93–0.96x of VM-EMS** across Tseitin 3x3–3x7
+(e.g. 3x7: VM 49.94s vs AOT 52.52s), counters byte-exact on all five
+plus a 36-run fixtures/corpus sweep (18 files x default+--cdcl, zero
+divergences). Whole-program native compilation of multi-file consumers
+is the next frontier; probing it with a concatenated single-file EMS
+hits a LOUD envelope refusal — `AOT: \`local cdcl_opts\` shadowing a
+module binding is not supported` (lib/solver.eigs's dict-valued opts
+shadow, the boxed-module-global `local` class F-OURO-33 left refused).

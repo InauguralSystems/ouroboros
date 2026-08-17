@@ -1,0 +1,7 @@
+# Sibling-dir library for t76_load_file_paths.eigs (NOT a test itself —
+# the harness glob is test/*.eigs, flat on purpose, so data/ is invisible).
+define t76_tag as:
+    return "SIBLING-LIB"
+
+define t76_twice(n) as:
+    return n * 2
