@@ -1386,3 +1386,82 @@ yet; the next #86 increment is the element-class split, not shadows.
 Gates: aot/test/run.sh (t77–t79 added) + test/run.sh green at the
 v0.39.0 pin; fuzzdiff 40 programs seed 42 → 0 divergences / 0
 run-pasts / 0 gaps.
+
+## F-OURO-36 — the element-class frontier falls: concat-EMS runs byte-exact native, both modes — FIXED (#86 increment)
+
+The concatenated single-file EigenMiniSat (F-OURO-35's acceptance probe:
+stdlib int_vector + EMS dimacs + solver + stdlib text_builder + bench +
+minisat, load_file lines stripped, one `local negative` consumer patch)
+built rc=0 but died runtime-loud in both modes. Three distinct inference
+gaps, each minimized to a ~10-line repro proven failing at origin/main
+fbfd517 and fixed at the root (the F-OURO-17 one-gap-per-fix pattern
+held exactly — each fix advanced the consumer to the next stop):
+
+1. **For-in loop vars over a boxed-class PARAM are invisible to
+   call-site widening** (t80, `non-numeric value in a numeric context at
+   propagate_units: name clause (type list)`, default DPLL). local_gen_map
+   marked loop vars gen only when the iterable was a boxed LOCAL —
+   `for clause in clauses` with clauses a gen param left `clause`
+   unmarked, so callee params (clause_satisfied/unit_lit's `clause`)
+   defaulted num. Fix: widen_ptypes seeds each function's caller-locals
+   map with its gen/dict params (classes whose elements are boxed;
+   buf/tensor deliberately NOT seeded — their elements are numeric and a
+   gen mark would route C-double values onto the env path). The memo
+   cache key now includes the seed's name list
+   (local_gen_map_for_seeded) — seeds grow monotonically with ptypes, so
+   a map cached under an earlier smaller seed must not serve a later
+   round.
+
+2. **`x[i]` proves indexable, never numeric-element** (t81,
+   `non-numeric element in \`watches\`[0] (list)`, --cdcl). The buf class
+   assumed numeric elements; EigenMiniSat stores LISTS in lists (watch
+   buckets). elem_is_boxed_use (the buf→gen demotion) now also counts
+   the element uses that are VM errors on a number: `x[i]` as append's
+   in-place TARGET (the appended-VALUE position stays non-evidence —
+   numbers are appended all the time), `x[i][j]` and `x[i][j] is v`,
+   `for y in x[i]`, `x[i].f` / `x[i].f is v`, and `len of x[i]`.
+
+3. **Dict/tensor callee positions are pass-through evidence** (t82,
+   `non-numeric value in a numeric context at cdcl_step: .store (type
+   dict)`, --cdcl conflict path). find_gen_param_use counted only "gen"
+   positions, so a param whose ONLY use is flowing into a callee's dict
+   param (should_compact_deleted_clauses's `store` →
+   clause_store_len) stayed num, and the caller emitted `session.store`
+   through the numeric dot read. Now gen|dict|tensor positions all
+   count.
+
+**Still loud, by design:** returning an element field whole
+(`return recs[i].name`) stays runtime-loud — the field's class is
+statically unknown, and the numeric-default-plus-checked-read contract
+(F-OURO-32) already makes it a sited error, never a silent 0.
+
+**Correctness:** concat-EMS AOT vs the VM running the SAME concat file
+(load_file semantics out of the frame): all 7 tests/fixtures + all 8
+tests/corpus CNFs x {default DPLL, --cdcl} = 30 runs, stdout byte-exact
+(only in-band `ms=` normalized), exit codes equal, zero divergences.
+
+**THE FIRST NATIVE NUMBER** (whole-solver native, no embedded-VM
+confound — v0.39.0 pin, --cdcl, n=5 medians, taskset -c 0, SSE2 devbox,
+VM = same concat file):
+
+| instance | VM-concat | AOT-concat | VM/AOT |
+|---|---|---|---|
+| tseitin 3x3 | 1.63 s | 0.31 s | **5.26x** |
+| tseitin 3x5 | 13.95 s | 1.74 s | **8.02x** |
+
+(3x3 runs: VM 1.63/1.65/1.71/1.63/1.63, AOT 0.43/0.30/0.31/0.30/0.31;
+3x5 runs: VM 13.98/13.95/13.90/14.01/13.91, AOT 1.74 x5. Outputs
+byte-exact on every timed run's first sample.) The ratio grows with
+instance size as fixed startup amortizes, converging on the measured
+8.5x observer-elision ceiling (EigenScript#915) — consistent with the
+#86-thread attribution that the bulk of AOT's win on an
+assignment-heavy solver is observer elision by construction, with
+native codegen taking the residue. Contrast F-OURO-35's
+load_file-structured build at **0.93–0.96x** (solver core on the
+embedded VM): whole-program native compilation is what unlocked the
+number. EigenMiniSat#88's ~8x threshold for reopening the 5x6 ladder
+rung is met at 3x5 scale.
+
+Gates: aot/test/run.sh (t80–t82 added) + test/run.sh (57 programs +
+bootstrap) green at the v0.39.0 pin; fuzzdiff 40 programs seed 42 → 0
+divergences / 0 run-pasts / 0 gaps.

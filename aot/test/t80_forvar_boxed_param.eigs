@@ -1,0 +1,38 @@
+# #86 element-class gap 1: a for-in loop variable over a BOXED-CLASS
+# PARAM (gen/dict iterable) is boxed evidence for the callees it flows
+# into. Before the fix, local_gen_map never consulted param classes, so
+# `for clause in clauses` (clauses a gen param) left `clause` unmarked
+# and callee params defaulted "num" — the native binary died at runtime
+# with `non-numeric value in a numeric context ... name clause (type
+# list)` (EigenMiniSat propagate_units, default DPLL mode).
+define clause_satisfied(clause, asg) as:
+    for lit in clause:
+        if asg[lit] == 1:
+            return 1
+    return 0
+
+define propagate(clauses, asg) as:
+    n is 0
+    for clause in clauses:
+        if (clause_satisfied of [clause, asg]) == 1:
+            n += 1
+    return n
+
+# string elements of a gen param flowing into a callee that only
+# compares them (its param would default num without the loop-var mark)
+define is_beta(w) as:
+    if w == "beta":
+        return 1
+    return 0
+
+define count_beta(words) as:
+    n is 0
+    for w in words:
+        n += is_beta of w
+    return n
+
+cs is [[1, 2], [2], [1]]
+a is [0, 1, 0]
+print of (propagate of [cs, a])
+ws is ["alpha", "beta", "beta"]
+print of (count_beta of ws)
