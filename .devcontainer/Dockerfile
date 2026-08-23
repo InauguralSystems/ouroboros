@@ -39,7 +39,7 @@ RUN apt-get update \
 # provenance (EigsChunk.compiler_scanned) and made trace_assign the
 # unconditional producer-facing entry point, which is what aot_rt.h already
 # calls — so there is nothing to mirror on this side.
-ARG EIGS_REF=v0.40.0
+ARG EIGS_REF=v0.41.0
 RUN mkdir -p /opt/eigenscript-src && cd /opt/eigenscript-src && git init -q \
  && git remote add origin https://github.com/InauguralSystems/EigenScript.git \
  && git fetch -q --depth 1 origin "${EIGS_REF}" && git checkout -q FETCH_HEAD \

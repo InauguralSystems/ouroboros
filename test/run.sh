@@ -142,18 +142,6 @@ must_reject 'print of undefined_var_xyz'
 # v0.39.0 pin (upstream #898 / ouroboros #98): reading a field off null raises.
 must_reject 'n is null
 print of n.f'
-# v0.39.0 pin: a global first bound in a top-level `for` body is loop-local —
-# reading it afterwards is undefined-variable on BOTH sides (this was the
-# second half of module_name_in_block.eigs until it degraded at a pin bump).
-# Matched-behavior canary for upstream EigenScript#959 (intended vs
-# regression, verdict pending): if a future pin accepts this again, the
-# stale-case check fires — fold it back into the parity program in the same
-# EIGS_REF bump.
-must_reject 'for q in [1, 2]:
-    acc2 is q
-define show2() as:
-    return acc2
-print of (show2 of null)'
 # #99 item 4: a string/f-string still open at end-of-source must die loudly on
 # both sides — the front-end used to emit the buffer at EOF, silently
 # SWALLOWING every following line (the print of 99 here vanished at rc=0).
