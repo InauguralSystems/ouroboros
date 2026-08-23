@@ -4641,7 +4641,11 @@ define emit_program(ast) as:
     local body is emit_stmts of [rest, "    ", nm, bt, minits, {}]
     local obshdr is ""
     if g_obs_traced == 1:
-        obshdr is "    g_trace_obs_hist = 1;\n"
+        # v0.41.0: the trace flags are atomic — the g_* names are LOAD
+        # macros, not lvalues, so a raw store FAILS TO COMPILE against the
+        # linked headers (by upstream design: write sites stay enumerable).
+        # trace_flag_store is the sanctioned store (trace.h).
+        obshdr is "    trace_flag_store(g_trace_obs_hist_storage, 1);\n"
     # (#86) boxed wrappers for user functions used as VALUES (sort_by keys
     # etc.): Value* -> Value*, arg borrowed per the builtin convention.
     local wraps is ""
