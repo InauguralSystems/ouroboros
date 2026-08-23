@@ -118,6 +118,18 @@ static Env *aot_boot(void) {
      * records without printing, so it can never walk the NULL VM; every
      * AOT error exit prints g_error_msg itself via aot_error_exit. */
     g_try_depth = 1;
+    /* #915 (EigenScript v0.41.0): the runtime's observer gate is per-state
+     * and armed by compile_ast — which an AOT binary never runs. Left at 0,
+     * the LINKED bookkeeping (observer_slot_update et al.) returns early via
+     * eigs_obs_gate_open() and every predicate silently answers from an
+     * empty window: t27_observer read all-zeros against the VM's impr=1,
+     * the exact silent-wrong the gate's own header forbids. Arm it here,
+     * unconditionally: the AOT does its own elision at COMPILE time (the
+     * g_observed bit decides whether observer calls are emitted at all), so
+     * a non-observing program never reaches the bookkeeping and the flag
+     * costs nothing. eigs_obs_enable() is the runtime's one sanctioned
+     * arming path (obs_exec_started is still 0 here, so no history gap). */
+    eigs_obs_enable();
     /* ---- load_file/import path resolution (#86, F-OURO-34) ----
      * resolve_eigenscript_file_from_ex's chain is anchored on two EigsState
      * dirs the CLI's main.c sets and eigs_open leaves at the "." default:
