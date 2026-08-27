@@ -7,13 +7,23 @@ fail=0
 for prog in test/*.eigs; do
   name=$(basename "$prog")
   bin=$(mktemp /tmp/aot_test.XXXXXX)
+  why=""
   if ! bash build.sh "$prog" "$bin" >/tmp/aot_build.log 2>&1; then
     echo "BUILD FAIL: $name"; tail -3 /tmp/aot_build.log; fail=1; rm -f "$bin"; continue
   fi
-  ref=$("$EIG" "$prog" 2>&1); ref_rc=$?
-  got=$("$bin" 2>&1); got_rc=$?
+  # BOTH sides run under a timeout. Neither did, and on 2026-08-23 a built
+  # test binary hung and was still spinning a full core 3.8 days later --
+  # orphaned to init, invisible to this harness, and slowing every other job
+  # on the box until it was found by accident. An AOT that loops where the VM
+  # terminates is precisely the miscompile class this suite exists to catch,
+  # so a hang must be a loud FAIL, not an unbounded wait: `timeout` exits 124,
+  # which the exit-code contract below already reads as a divergence.
+  AOT_TEST_TIMEOUT="${AOT_TEST_TIMEOUT:-300}"
+  ref=$(timeout "$AOT_TEST_TIMEOUT" "$EIG" "$prog" 2>&1); ref_rc=$?
+  got=$(timeout "$AOT_TEST_TIMEOUT" "$bin" 2>&1); got_rc=$?
+  [ "$ref_rc" -eq 124 ] && why="VM reference TIMED OUT after ${AOT_TEST_TIMEOUT}s"
+  [ "$got_rc" -eq 124 ] && why="AOT binary TIMED OUT after ${AOT_TEST_TIMEOUT}s — it does not terminate where the VM does"
   match=0
-  why=""
   case "$name" in
     *_tol.eigs)
       # Association-unspecified reductions (dot): the AOT reassociates the sum
