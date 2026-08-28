@@ -247,15 +247,44 @@ define envc(name) as:
 define env_read(name) as:
     if g_boxshadow[name] == 1:
         return "aot_get_sh(__eigs_l, __eigs_g, \"" + name + "\")"
+    local hp is ic_cache of 0
     if g_envloc[name] == 1:
-        return "aot_get(__eigs_l, \"" + name + "\")"
-    return "aot_get_named(__eigs_g, \"" + name + "\")"
+        return "({ " + hp[0] + "aot_get_ic(__eigs_l, \"" + name + "\", " + hp[1] + "); })"
+    return "({ " + hp[0] + "aot_get_named_ic(__eigs_g, \"" + name + "\", " + hp[1] + "); })"
+# Numeric env read/write through the NaN-boxed slot (#130). A per-site static
+# holds the name's hash so it is computed once per site rather than once per
+# access; the runtime helpers delegate every miss and non-numeric case back to
+# the boxed accessor these mirror, so error text and exit codes are unchanged.
+define ic_cache(tag) as:
+    local hn is (str of tag) + (str of (G_IC_N[0]))
+    G_IC_N[0] is (G_IC_N[0]) + 1
+    return ["static AotNameIC __n" + hn + " = {0}; ", "&__n" + hn]
+define env_read_num(name, site) as:
+    if g_boxshadow[name] == 1:
+        local hs is ic_hash_only of 0
+        return "({ " + hs[0] + "aot_get_num_sh(__eigs_l, __eigs_g, \"" + name + "\", " + hs[1] + ", " + site + "); })"
+    local hp is ic_cache of 0
+    if g_envloc[name] == 1:
+        return "({ " + hp[0] + "aot_get_num_local_ic(__eigs_l, \"" + name + "\", " + hp[1] + ", " + site + "); })"
+    return "({ " + hp[0] + "aot_get_num_named_ic(__eigs_g, \"" + name + "\", " + hp[1] + ", " + site + "); })"
+define ic_hash_only(tag) as:
+    local hn is (str of tag) + (str of (G_IC_N[0]))
+    G_IC_N[0] is (G_IC_N[0]) + 1
+    return ["static uint32_t __h" + hn + " = 0; ", "&__h" + hn]
+define env_write_num(name, dexpr) as:
+    if g_boxshadow[name] == 1:
+        local hs is ic_hash_only of 0
+        return "{ " + hs[0] + "aot_set_num_sh(__eigs_l, __eigs_g, \"" + name + "\", " + hs[1] + ", " + dexpr + "); }"
+    local hp is ic_cache of 0
+    return "{ " + hp[0] + "aot_set_num_ic(" + (envc of name) + ", \"" + name + "\", " + hp[1] + ", " + dexpr + "); }"
+
 define env_readb(name) as:
     if g_boxshadow[name] == 1:
         return "aot_getb_sh(__eigs_l, __eigs_g, \"" + name + "\")"
+    local hp is ic_cache of 0
     if g_envloc[name] == 1:
-        return "env_get(__eigs_l, \"" + name + "\")"
-    return "aot_getb_named(__eigs_g, \"" + name + "\")"
+        return "({ " + hp[0] + "aot_getb_ic(__eigs_l, \"" + name + "\", " + hp[1] + "); })"
+    return "({ " + hp[0] + "aot_getb_named_ic(__eigs_g, \"" + name + "\", " + hp[1] + "); })"
 
 # A call to a tensor builtin (matmul/add/relu)?
 define is_tensor_call(node) as:
@@ -934,7 +963,7 @@ define emit_num(node, nm, bt, raw) as:
         # non-number read here is a VM raise ("cannot apply ... to str"),
         # and aot_num's silent 0.0 was the worst-outcome class.
         if g_observed == 1:
-            return "aot_num_ck_at(" + (env_read of node[1]) + ", \"" + (c_escape of (G_CUR_FN[0])) + ": name " + (c_escape of node[1]) + "\")"
+            return env_read_num of [node[1], "\"" + (c_escape of (G_CUR_FN[0])) + ": name " + (c_escape of node[1]) + "\""]
         if nm[node[1]] == 1:
             return cn of node[1]
         # A Value-typed C name (buffer/dict/tensor param or local) in a numeric
@@ -955,7 +984,7 @@ define emit_num(node, nm, bt, raw) as:
         # CHECKED (#65 inc. 2): the VM raises when a non-number reaches an
         # arithmetic context; aot_num's silent 0.0 was the worst-outcome
         # class.
-        return "aot_num_ck_at(" + (env_read of node[1]) + ", \"" + (c_escape of (G_CUR_FN[0])) + ": name " + (c_escape of node[1]) + "\")"
+        return env_read_num of [node[1], "\"" + (c_escape of (G_CUR_FN[0])) + ": name " + (c_escape of node[1]) + "\""]
     if t == "unary":
         local uop is node[1]
         local uv is emit_num of [node[2], nm, bt, raw]
@@ -1272,8 +1301,10 @@ define emit_val(node, nm, bt) as:
         # #355) is itself the single argument.
         local barg is unwrap of node[2]
         if (barg[0] == "list") and ((len of barg) == 2) and ((len of barg[1]) == 1):
-            return "aot_call_name(__eigs_g, \"" + callee[1] + "\", " + (emit_val of [(barg[1])[0], nm, bt]) + ")"
-        return "aot_call_name(__eigs_g, \"" + callee[1] + "\", " + (emit_val of [node[2], nm, bt]) + ")"
+            local hc1 is ic_cache of 0
+            return "({ " + hc1[0] + "aot_call_name_ic(__eigs_g, \"" + callee[1] + "\", " + (emit_val of [(barg[1])[0], nm, bt]) + ", " + hc1[1] + "); })"
+        local hc2 is ic_cache of 0
+        return "({ " + hc2[0] + "aot_call_name_ic(__eigs_g, \"" + callee[1] + "\", " + (emit_val of [node[2], nm, bt]) + ", " + hc2[1] + "); })"
     throw of ("AOT: cannot emit value node '" + t + "'")
 
 # Render a tensor-valued expression as a C `AotTensor` expr. Producers (matmul/
@@ -1366,6 +1397,8 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
             # like the VM.
             if (len of node) >= 4:
                 return ind + "aot_set(__eigs_l, \"" + name + "\", " + (emit_val of [node[2], nm, bt]) + ");\n"
+            if (is_num_expr of [node[2], nm, bt]) == 1:
+                return ind + (env_write_num of [name, (emit_num of [node[2], nm, bt, 0])]) + "\n"
             return ind + "aot_set_sh(__eigs_l, __eigs_g, \"" + name + "\", " + (emit_val of [node[2], nm, bt]) + ");\n"
         if g_tensor[name] == 1:
             return ind + (cn of name) + " = " + (emit_tensor of [node[2], nm, bt]) + ";\n"
@@ -1429,6 +1462,8 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
             if g_traced == 1:
                 asn is asn + ind + "aot_trace_assign(\"" + name + "\", " + (cn of name) + ");\n"
             return asn
+        if (is_num_expr of [node[2], nm, bt]) == 1:
+            return ind + (env_write_num of [name, (emit_num of [node[2], nm, bt, 0])]) + "\n"
         return ind + "aot_set(" + (envc of name) + ", \"" + name + "\", " + (emit_val of [node[2], nm, bt]) + ");\n"
     if t == "index_assign":
         # Compound form (`l[i] += e`, 5th elem = base op) is not lowered here

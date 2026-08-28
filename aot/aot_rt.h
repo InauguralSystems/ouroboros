@@ -173,6 +173,100 @@ static void aot_shutdown(Env *g) { (void)g; /* process exit reclaims (slice 1) *
  *                   (used for the global env __eigs_g; the VM raises there —
  *                   the old silent make_null let a program print `null` where
  *                   the VM stops, the #100 item-2 leak probe). */
+/* ---- per-SITE inline cache for env NAME resolution (#130) -----------------
+ * Every boxed read of a global or frame-local compiles to a name lookup: a
+ * hash, a chain walk, and a strcmp per access. On DMG's dispatch that is two
+ * lookups (_op_table, _exec_ctx) plus a third for the callee, PER EMULATED
+ * INSTRUCTION.
+ *
+ * The VM's own JIT already solved this and its guard is the design copied
+ * here: cache the home env and slot index, and validate BOTH the starting
+ * env's binding_version and the home env's (jit.c ~2600). A new binding
+ * anywhere on the walked chain bumps a version, so a shadowing insert cannot
+ * be missed; value writes do not bump, and must not — they land in the same
+ * slot, which is exactly what the cache points at.
+ *
+ * Env and EnvHash are public in eigenscript.h, so the finder is mirrored here
+ * rather than requiring a new upstream export. The multithreaded fall-back is
+ * deliberate: the runtime takes a shared lock around find+load (#607) because
+ * a concurrent module-env grow republishes `values`, and the fast path holds
+ * no lock. */
+typedef struct { Env *start, *home; int idx; uint32_t sver, tver, h; } AotNameIC;
+
+static inline int aot_env_hash_find(const EnvHash *ht, const char *name,
+                                    uint32_t h, char **names) {
+    if (!ht->generations) return -1;
+    int slot = h & ht->mask;
+    uint32_t gen = ht->generation;
+    while (ht->generations[slot] == gen) {
+        if (ht->hashes[slot] == h) {
+            const char *stored = names[ht->indices[slot]];
+            if (stored == name || strcmp(stored, name) == 0) return ht->indices[slot];
+        }
+        slot = (slot + 1) & ht->mask;
+    }
+    return -1;
+}
+
+static EigsSlot *aot_name_slot_slow(Env *start, const char *name, AotNameIC *c) {
+    if (!c->h) c->h = env_hash_name(name);
+    for (Env *e = start; e; e = e->parent) {
+        int idx = aot_env_hash_find(&e->hash, name, c->h, e->names);
+        if (idx >= 0) {
+            c->start = start; c->home = e; c->idx = idx;
+            c->sver = start->binding_version;
+            c->tver = e->binding_version;
+            return &e->values[idx];
+        }
+    }
+    c->home = NULL;
+    return NULL;
+}
+
+static inline EigsSlot *aot_name_slot(Env *start, const char *name, AotNameIC *c) {
+    Env *home = c->home;
+    if (__builtin_expect(home != NULL && c->start == start
+                         && c->sver == start->binding_version
+                         && c->tver == home->binding_version
+                         && !g_vm_multithreaded, 1))
+        return &home->values[c->idx];
+    return aot_name_slot_slow(start, name, c);
+}
+
+/* Materialize an immediate into the slot exactly as env_get_hashed does, so
+ * the returned pointer's lifetime matches the slot's. */
+static inline Value *aot_slot_value(EigsSlot *sp) {
+    if (slot_is_ptr(*sp)) return slot_as_ptr(*sp);
+    Value *v = slot_to_value(*sp);
+    slot_decref(*sp);
+    *sp = slot_from_heap(v);
+    return v;
+}
+
+static Value *aot_get_named_ic(Env *g, const char *name, AotNameIC *c) {
+    EigsSlot *sp = aot_name_slot(g, name, c);
+    if (!sp) rt_error(EK_UNDEFINED_NAME, 0, "undefined variable '%s'", name);
+    Value *v = aot_slot_value(sp);
+    val_incref(v);
+    return v;
+}
+static Value *aot_getb_named_ic(Env *g, const char *name, AotNameIC *c) {
+    EigsSlot *sp = aot_name_slot(g, name, c);
+    if (!sp) rt_error(EK_UNDEFINED_NAME, 0, "undefined variable '%s'", name);
+    return aot_slot_value(sp);
+}
+static Value *aot_get_ic(Env *l, const char *name, AotNameIC *c) {
+    EigsSlot *sp = aot_name_slot(l, name, c);
+    if (!sp) return make_null();
+    Value *v = aot_slot_value(sp);
+    val_incref(v);
+    return v;
+}
+static Value *aot_getb_ic(Env *l, const char *name, AotNameIC *c) {
+    EigsSlot *sp = aot_name_slot(l, name, c);
+    return sp ? aot_slot_value(sp) : NULL;   /* env_get's NULL-on-miss contract */
+}
+
 static Value *aot_get(Env *g, const char *name) {
     Value *v = env_get(g, name);
     if (!v) return make_null();
@@ -663,6 +757,84 @@ static double aot_num_ck(Value *v) {
     return d;
 }
 
+/* ---- numeric env access straight through the NaN-boxed slot (#130) --------
+ * An env slot holds a number as an IMMEDIATE double (value_slot.h); only heap
+ * types are pointers. The Value-level accessors round-trip through a box in
+ * both directions and that round trip is pure waste for a numeric binding:
+ *
+ *   write  aot_set(e, n, make_num(d))  -> make_num allocates a VAL_NUM,
+ *          env_set_local_hashed calls slot_from_value which collapses it back
+ *          to an immediate, then the birth ref is dropped. One malloc and one
+ *          free per numeric assignment, for a double that never needed a box.
+ *   read   env_get_hashed on an immediate MATERIALIZES a heap Value and
+ *          writes it back into the slot, so the next write re-collapses it.
+ *
+ * Measured on DMG after the dict ICs landed: make_num 10.7% + free_value 9.0%
+ * of runtime, with env_get_hashed/env_set_local_hashed another 11.7%. These
+ * read and write the slot directly: no allocation, no refcount traffic, and
+ * no slot mutation on the read side.
+ *
+ * The hash is cached per site (a static, computed once) so the name is hashed
+ * once per site rather than once per access. MISS AND NON-NUMERIC CASES DELEGATE
+ * TO THE ORIGINAL EXPRESSION — the error text and exit behaviour are then
+ * produced by the identical code that produced them before, which is why the
+ * three variants below differ only in which accessor they fall back to
+ * (aot_get_named raises on a miss; aot_get answers null and lets aot_num_ck_at
+ * die; aot_get_sh walks the shadow chain first). */
+static inline double aot_get_num_named_ic(Env *g, const char *name,
+                                          AotNameIC *c, const char *site) {
+    EigsSlot *sp = aot_name_slot(g, name, c);
+    if (sp && slot_is_num(*sp)) return sp->d;
+    return aot_num_ck_at(aot_get_named_ic(g, name, c), site);
+}
+static inline double aot_get_num_local_ic(Env *l, const char *name,
+                                          AotNameIC *c, const char *site) {
+    EigsSlot *sp = aot_name_slot(l, name, c);
+    if (sp && slot_is_num(*sp)) return sp->d;
+    return aot_num_ck_at(aot_get_ic(l, name, c), site);
+}
+static inline double aot_get_num_sh(Env *l, Env *g, const char *name,
+                                    uint32_t *hc, const char *site) {
+    if (!*hc) *hc = env_hash_name(name);
+    int found = 0;
+    EigsSlot s = env_get_hashed_slot(l, name, *hc, &found);
+    if (found && slot_is_num(s)) return s.d;
+    return aot_num_ck_at(aot_get_sh(l, g, name), site);
+}
+
+/* Numeric env write. The cached arm writes the slot in place — no box, no
+ * lookup — and bumps assign_counts exactly as env_set_local_hashed does
+ * (`when is x` reads that counter). Local-only, matching env_set_local_owned:
+ * a cache whose home is not `e` itself does not qualify. */
+static inline void aot_set_num_ic(Env *e, const char *name,
+                                  AotNameIC *c, double d) {
+    if (__builtin_expect(c->home == e && c->start == e
+                         && c->sver == e->binding_version
+                         && !g_vm_multithreaded, 1)) {
+        EigsSlot *sp = &e->values[c->idx];
+        slot_decref(*sp);
+        *sp = slot_from_num(num_guard(d));
+        if (e->assign_counts) e->assign_counts[c->idx]++;
+        return;
+    }
+    if (!c->h) c->h = env_hash_name(name);
+    env_set_local_hashed_slot(e, name, c->h, slot_from_num(num_guard(d)));
+    int idx = aot_env_hash_find(&e->hash, name, c->h, e->names);
+    if (idx >= 0) {
+        c->start = e; c->home = e; c->idx = idx;
+        c->sver = e->binding_version; c->tver = c->sver;
+    }
+}
+
+/* plain (non-`local`) numeric write to a shadow name — aot_set_sh's dispatch. */
+static inline void aot_set_num_sh(Env *l, Env *g, const char *name,
+                                  uint32_t *hc, double d) {
+    if (!*hc) *hc = env_hash_name(name);
+    Env *home = env_get(l, name) ? l : g;
+    env_set_local_hashed_slot(home, name, *hc, slot_from_num(num_guard(d)));
+}
+
+
 /* Unary minus on a boxed value — the VM's OP_NEG exactly: negate a number
  * (no guard: negation preserves the finite invariant), raise EK_TYPE
  * "cannot negate non-numeric" on anything else. The old emission coerced
@@ -1078,6 +1250,8 @@ static Value *aot_dot_get_ic(Value *target, const char *key,
  * back to semantics identical to aot_dot_set. */
 static void aot_dot_set_num_ic(Value *target, const char *key, double d,
                                int *ic, const char **ick) {
+    d = num_guard(d);   /* make_num guards; this path must not depend on its
+                         * caller having done so (emit_num does, today). */
     if (target && target->type == VAL_DICT) {
         int i = aot_ic_slot(target, key, ic, ick);
         if (i >= 0) {
@@ -1154,8 +1328,46 @@ static Value *aot_iter_get(Value *v, long k) {   /* owned element k */
     return make_null();
 }
 
+/* Same as aot_call_name with the callee resolution cached per site. The AOT
+ * already refuses fn-body writes to builtin names (F-OURO-31/32), and the
+ * version guard covers rebinding of user functions, so the cached callee
+ * cannot go stale unnoticed. */
+static Value *aot_call_name_ic(Env *g, const char *name, Value *arg, AotNameIC *c);
+
 static Value *aot_call_name(Env *g, const char *name, Value *arg) {
     Value *fn = env_get(g, name);
+    if (!fn) { fprintf(stderr, "aot: undefined function '%s'\n", name); exit(1); }
+    Value *res;
+    if (fn->type == VAL_BUILTIN) res = fn->data.builtin(arg);
+    else                         res = call_eigs_fn(fn, arg);
+    /* `exit of N` unwinds via g_has_error TOO (builtin_exit sets both flags);
+     * it is a clean requested exit, not an error — honor the code, print
+     * nothing (the VM's main clears g_has_error when g_exit_requested). */
+    if (g_exit_requested) exit(g_exit_code);
+    /* A raising builtin recorded its error via rt_error/builtin_throw (silent
+     * under the elevated g_try_depth) and RETURNED; running on from here is
+     * the run-past-error class (#103's sibling — the old code continued with
+     * a null result). Uncaught == fatal in the AOT: print the recorded
+     * diagnostic and die with the VM's uncaught exit code. */
+    if (g_has_error) aot_error_exit();
+    if (!res) { val_decref(arg); return make_null(); }
+    /* A builtin may return the arg itself, or one of its elements BORROWED
+     * (e.g. append -> target = arg[0]). Mirror vm.c's direct-borrow heuristic:
+     * keep arg's ref if res IS arg; incref a borrowed arg-element before the arg
+     * is torn down. Owned returns aren't arg elements, so they're untouched. */
+    if (res == arg) return res;
+    if (arg && arg->type == VAL_LIST) {
+        for (int i = 0; i < arg->data.list.count; i++) {
+            if (arg->data.list.items[i] == res) { val_incref(res); break; }
+        }
+    }
+    val_decref(arg);
+    return res;
+}
+
+static Value *aot_call_name_ic(Env *g, const char *name, Value *arg, AotNameIC *c) {
+    EigsSlot *sp = aot_name_slot(g, name, c);
+    Value *fn = sp ? aot_slot_value(sp) : NULL;
     if (!fn) { fprintf(stderr, "aot: undefined function '%s'\n", name); exit(1); }
     Value *res;
     if (fn->type == VAL_BUILTIN) res = fn->data.builtin(arg);
