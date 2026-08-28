@@ -173,6 +173,125 @@ static void aot_shutdown(Env *g) { (void)g; /* process exit reclaims (slice 1) *
  *                   (used for the global env __eigs_g; the VM raises there —
  *                   the old silent make_null let a program print `null` where
  *                   the VM stops, the #100 item-2 leak probe). */
+/* ---- per-SITE inline cache for env NAME resolution (#130) -----------------
+ * Every boxed read of a global or frame-local compiles to a name lookup: a
+ * hash, a chain walk, and a strcmp per access. On DMG's dispatch that is two
+ * lookups (_op_table, _exec_ctx) plus a third for the callee, PER EMULATED
+ * INSTRUCTION.
+ *
+ * The VM's own JIT already solved this and its guard is the design copied
+ * here: cache the home env and slot index, and validate BOTH the starting
+ * env's binding_version and the home env's (jit.c ~2600). A new binding
+ * anywhere on the walked chain bumps a version, so a shadowing insert cannot
+ * be missed; value writes do not bump, and must not — they land in the same
+ * slot, which is exactly what the cache points at.
+ *
+ * Env and EnvHash are public in eigenscript.h, so the finder is mirrored here
+ * rather than requiring a new upstream export. The multithreaded fall-back is
+ * deliberate: the runtime takes a shared lock around find+load (#607) because
+ * a concurrent module-env grow republishes `values`, and the fast path holds
+ * no lock. */
+typedef struct {
+    Env *start, *home;
+    const char *iname;   /* interned name at [idx] — the depth-0 guard */
+    int idx, depth;
+    uint32_t sver, tver, h;
+} AotNameIC;
+
+static inline int aot_env_hash_find(const EnvHash *ht, const char *name,
+                                    uint32_t h, char **names) {
+    if (!ht->generations) return -1;
+    int slot = h & ht->mask;
+    uint32_t gen = ht->generation;
+    while (ht->generations[slot] == gen) {
+        if (ht->hashes[slot] == h) {
+            const char *stored = names[ht->indices[slot]];
+            if (stored == name || strcmp(stored, name) == 0) return ht->indices[slot];
+        }
+        slot = (slot + 1) & ht->mask;
+    }
+    return -1;
+}
+
+static EigsSlot *aot_name_slot_slow(Env *start, const char *name, AotNameIC *c) {
+    if (!c->h) c->h = env_hash_name(name);
+    int depth = 0;
+    for (Env *e = start; e; e = e->parent, depth++) {
+        int idx = aot_env_hash_find(&e->hash, name, c->h, e->names);
+        if (idx >= 0) {
+            c->start = start; c->home = e; c->idx = idx; c->depth = depth;
+            c->iname = e->names[idx];      /* interned */
+            c->sver = start->binding_version;
+            c->tver = e->binding_version;
+            return &e->values[idx];
+        }
+    }
+    c->home = NULL;
+    return NULL;
+}
+
+/* Two guards, because the two cases have different stability.
+ *
+ * depth 0 — the binding lives in the STARTING env. A frame env (__eigs_l) is
+ * a fresh Env on every call, so an env-identity guard can never hit there:
+ * that was aot_name_slot_slow burning 3.9% of DMG with an inline cache
+ * nominally installed. Validate the SHAPE instead — names are interned, so
+ * `names[idx] == iname` says this slot holds this exact binding, whichever
+ * Env object we are looking at. Nothing can shadow the starting env, so a
+ * hit needs no version check at all.
+ *
+ * depth > 0 — the walk passed through envs that could gain a shadowing
+ * binding, which is precisely what binding_version is for; keep the JIT's
+ * two-version guard (start's and home's). */
+static inline EigsSlot *aot_name_slot(Env *start, const char *name, AotNameIC *c) {
+    if (__builtin_expect(c->depth == 0 && c->home != NULL
+                         && c->idx < start->count
+                         && start->names[c->idx] == c->iname
+                         && !g_vm_multithreaded, 1))
+        return &start->values[c->idx];
+    Env *home = c->home;
+    if (home != NULL && c->depth > 0 && c->start == start
+        && c->sver == start->binding_version
+        && c->tver == home->binding_version
+        && !g_vm_multithreaded)
+        return &home->values[c->idx];
+    return aot_name_slot_slow(start, name, c);
+}
+
+/* Materialize an immediate into the slot exactly as env_get_hashed does, so
+ * the returned pointer's lifetime matches the slot's. */
+static inline Value *aot_slot_value(EigsSlot *sp) {
+    if (slot_is_ptr(*sp)) return slot_as_ptr(*sp);
+    Value *v = slot_to_value(*sp);
+    slot_decref(*sp);
+    *sp = slot_from_heap(v);
+    return v;
+}
+
+static Value *aot_get_named_ic(Env *g, const char *name, AotNameIC *c) {
+    EigsSlot *sp = aot_name_slot(g, name, c);
+    if (!sp) rt_error(EK_UNDEFINED_NAME, 0, "undefined variable '%s'", name);
+    Value *v = aot_slot_value(sp);
+    val_incref(v);
+    return v;
+}
+static Value *aot_getb_named_ic(Env *g, const char *name, AotNameIC *c) {
+    EigsSlot *sp = aot_name_slot(g, name, c);
+    if (!sp) rt_error(EK_UNDEFINED_NAME, 0, "undefined variable '%s'", name);
+    return aot_slot_value(sp);
+}
+static Value *aot_get_ic(Env *l, const char *name, AotNameIC *c) {
+    EigsSlot *sp = aot_name_slot(l, name, c);
+    if (!sp) return make_null();
+    Value *v = aot_slot_value(sp);
+    val_incref(v);
+    return v;
+}
+static Value *aot_getb_ic(Env *l, const char *name, AotNameIC *c) {
+    EigsSlot *sp = aot_name_slot(l, name, c);
+    return sp ? aot_slot_value(sp) : NULL;   /* env_get's NULL-on-miss contract */
+}
+
 static Value *aot_get(Env *g, const char *name) {
     Value *v = env_get(g, name);
     if (!v) return make_null();
@@ -292,6 +411,110 @@ AOT_CMP(aot_lt, <,  "<")
 AOT_CMP(aot_gt, >,  ">")
 AOT_CMP(aot_le, <=, "<=")
 AOT_CMP(aot_ge, >=, ">=")
+
+/* ---- comparison against a numeric operand, without the boxes (#130) -------
+ * DMG's emulation loop is full of `cpu.halted == 1`, `mem.x > 0`, and the
+ * emitter rendered every one of them fully boxed:
+ *
+ *   aot_truthy(aot_eq(aot_dot_get_ic(cpu, "halted"), make_num(1)))
+ *
+ * — a box for the literal, a box for the result, and two frees, per
+ * conditional, several times per emulated instruction. make_num called
+ * DIRECTLY from run_headless_loop was 5.66% of runtime.
+ *
+ * The `_n` forms take the numeric side as a C double and the `_t` forms
+ * return a C int for condition position. Semantics are unchanged, including
+ * for a non-numeric left operand: equality falls back to values_equal against
+ * a stack Value (arena=1, so the decrefs are no-ops), and the ordering forms
+ * fall back to the raising AOT_CMP path. A null or string field still
+ * compares false rather than dying — which is why this is not simply
+ * "treat dict fields as numeric". */
+static inline int aot_eq_n_t(Value *a, double b) {
+    if (a && a->type == VAL_NUM) { int e = (a->data.num == b); val_decref(a); return e; }
+    Value bv; memset(&bv, 0, sizeof bv);
+    bv.type = VAL_NUM; bv.data.num = b; bv.arena = 1;
+    int e = values_equal(a, &bv);
+    val_decref(a);
+    return e;
+}
+static inline Value *aot_eq_n(Value *a, double b)  { return make_num(aot_eq_n_t(a, b) ? 1.0 : 0.0); }
+static inline int    aot_ne_n_t(Value *a, double b){ return !aot_eq_n_t(a, b); }
+static inline Value *aot_ne_n(Value *a, double b)  { return make_num(aot_eq_n_t(a, b) ? 0.0 : 1.0); }
+
+#define AOT_CMP_N(NAME, BASE, OP) \
+    static inline int NAME##_t(Value *a, double b) { \
+        if (a && a->type == VAL_NUM) { int r = (a->data.num OP b) ? 1 : 0; val_decref(a); return r; } \
+        Value bv; memset(&bv, 0, sizeof bv); \
+        bv.type = VAL_NUM; bv.data.num = b; bv.arena = 1; \
+        return aot_truthy(BASE(a, &bv)); } \
+    static inline Value *NAME(Value *a, double b) { return make_num(NAME##_t(a, b) ? 1.0 : 0.0); }
+AOT_CMP_N(aot_lt_n, aot_lt, <)
+AOT_CMP_N(aot_gt_n, aot_gt, >)
+AOT_CMP_N(aot_le_n, aot_le, <=)
+AOT_CMP_N(aot_ge_n, aot_ge, >=)
+
+/* Mirrored forms: `<numeric> OP <expr>`, numeric side on the LEFT. The
+ * fallback must NOT delegate to the swapped operator: the raise names both
+ * operand types AND the operator, so `1 < "a"` has to report
+ * `cannot compare num and str with '<'`, not `str and num with '>'`
+ * (t65_cmp_mixed_err caught exactly that). Keep the order, keep the op. */
+#define AOT_CMP_NL(NAME, BASE, OP) \
+    static inline int NAME##_t(Value *b, double a) { \
+        if (b && b->type == VAL_NUM) { int r = (a OP b->data.num) ? 1 : 0; val_decref(b); return r; } \
+        Value av; memset(&av, 0, sizeof av); \
+        av.type = VAL_NUM; av.data.num = a; av.arena = 1; \
+        return aot_truthy(BASE(&av, b)); } \
+    static inline Value *NAME(Value *b, double a) { return make_num(NAME##_t(b, a) ? 1.0 : 0.0); }
+AOT_CMP_NL(aot_lt_nl, aot_lt, <)
+AOT_CMP_NL(aot_gt_nl, aot_gt, >)
+AOT_CMP_NL(aot_le_nl, aot_le, <=)
+AOT_CMP_NL(aot_ge_nl, aot_ge, >=)
+
+/* ---- fully borrowed field-compare (#130) ---------------------------------
+ * After the boxes came out of the comparisons, what was left on top of the
+ * profile was pure bookkeeping: aot_dot_get_ic 11.0% with val_incref +
+ * val_decref another 12.3%. A read like `mem.tima_reload_pending > 0` did
+ * FOUR refcount operations — incref the target because the reader consumes
+ * it, incref the result, decref the target, decref the result — every one of
+ * which is provably balanced within a single expression.
+ *
+ * When the target is a plain C Value* variable (a dict/buffer/generic local or
+ * parameter, never a temporary) it is live for the whole expression, and the
+ * result is a slot of that dict which nothing in the comparison can free. So
+ * borrow both. A missing key borrows as C NULL; the helpers below substitute a
+ * stack VAL_NULL so `null == 1` is false and `null < 1` raises naming "null",
+ * exactly as the owned path does. */
+static inline int aot_eq_nb_t(Value *a, double b) {
+    if (a && a->type == VAL_NUM) return a->data.num == b;
+    Value nv; memset(&nv, 0, sizeof nv); nv.type = VAL_NULL; nv.arena = 1;
+    Value bv; memset(&bv, 0, sizeof bv);
+    bv.type = VAL_NUM; bv.data.num = b; bv.arena = 1;
+    return values_equal(a ? a : &nv, &bv);
+}
+static inline int aot_ne_nb_t(Value *a, double b) { return !aot_eq_nb_t(a, b); }
+
+#define AOT_CMP_NB(NAME, BASE, OP) \
+    static inline int NAME(Value *a, double b) { \
+        if (a && a->type == VAL_NUM) return (a->data.num OP b) ? 1 : 0; \
+        Value nv; memset(&nv, 0, sizeof nv); nv.type = VAL_NULL; nv.arena = 1; \
+        Value bv; memset(&bv, 0, sizeof bv); \
+        bv.type = VAL_NUM; bv.data.num = b; bv.arena = 1; \
+        return aot_truthy(BASE(a ? a : &nv, &bv)); }
+#define AOT_CMP_NBL(NAME, BASE, OP) \
+    static inline int NAME(Value *b, double a) { \
+        if (b && b->type == VAL_NUM) return (a OP b->data.num) ? 1 : 0; \
+        Value nv; memset(&nv, 0, sizeof nv); nv.type = VAL_NULL; nv.arena = 1; \
+        Value av; memset(&av, 0, sizeof av); \
+        av.type = VAL_NUM; av.data.num = a; av.arena = 1; \
+        return aot_truthy(BASE(&av, b ? b : &nv)); }
+AOT_CMP_NB(aot_lt_nb_t, aot_lt, <)
+AOT_CMP_NB(aot_gt_nb_t, aot_gt, >)
+AOT_CMP_NB(aot_le_nb_t, aot_le, <=)
+AOT_CMP_NB(aot_ge_nb_t, aot_ge, >=)
+AOT_CMP_NBL(aot_lt_nlb_t, aot_lt, <)
+AOT_CMP_NBL(aot_gt_nlb_t, aot_gt, >)
+AOT_CMP_NBL(aot_le_nlb_t, aot_le, <=)
+AOT_CMP_NBL(aot_ge_nlb_t, aot_ge, >=)
 
 static Value *aot_eq(Value *a, Value *b) {
     int e = values_equal(a, b); val_decref(a); val_decref(b);
@@ -652,6 +875,17 @@ static double aot_num_ck_at(Value *v, const char *site) {
     return d;
 }
 
+/* Checked unbox that does NOT consume — the boxed-wrapper argument convention
+ * borrows __a. Same diagnostic as aot_num_ck_at. */
+static double aot_num_ck_bat(Value *v, const char *site) {
+    if (!v || v->type != VAL_NUM) {
+        fprintf(stderr, "non-numeric value in a numeric context at %s (type %s)\n",
+                site, v ? val_type_name(v->type) : "null");
+        exit(1);
+    }
+    return v->data.num;
+}
+
 static double aot_num_ck(Value *v) {
     if (!v || v->type != VAL_NUM) {
         fprintf(stderr, "non-numeric value in a numeric context (type %d; the VM raises here)\n",
@@ -662,6 +896,113 @@ static double aot_num_ck(Value *v) {
     val_decref(v);
     return d;
 }
+
+/* ---- numeric env access straight through the NaN-boxed slot (#130) --------
+ * An env slot holds a number as an IMMEDIATE double (value_slot.h); only heap
+ * types are pointers. The Value-level accessors round-trip through a box in
+ * both directions and that round trip is pure waste for a numeric binding:
+ *
+ *   write  aot_set(e, n, make_num(d))  -> make_num allocates a VAL_NUM,
+ *          env_set_local_hashed calls slot_from_value which collapses it back
+ *          to an immediate, then the birth ref is dropped. One malloc and one
+ *          free per numeric assignment, for a double that never needed a box.
+ *   read   env_get_hashed on an immediate MATERIALIZES a heap Value and
+ *          writes it back into the slot, so the next write re-collapses it.
+ *
+ * Measured on DMG after the dict ICs landed: make_num 10.7% + free_value 9.0%
+ * of runtime, with env_get_hashed/env_set_local_hashed another 11.7%. These
+ * read and write the slot directly: no allocation, no refcount traffic, and
+ * no slot mutation on the read side.
+ *
+ * The hash is cached per site (a static, computed once) so the name is hashed
+ * once per site rather than once per access. MISS AND NON-NUMERIC CASES DELEGATE
+ * TO THE ORIGINAL EXPRESSION — the error text and exit behaviour are then
+ * produced by the identical code that produced them before, which is why the
+ * three variants below differ only in which accessor they fall back to
+ * (aot_get_named raises on a miss; aot_get answers null and lets aot_num_ck_at
+ * die; aot_get_sh walks the shadow chain first). */
+static inline double aot_get_num_named_ic(Env *g, const char *name,
+                                          AotNameIC *c, const char *site) {
+    EigsSlot *sp = aot_name_slot(g, name, c);
+    if (sp && slot_is_num(*sp)) return sp->d;
+    return aot_num_ck_at(aot_get_named_ic(g, name, c), site);
+}
+static inline double aot_get_num_local_ic(Env *l, const char *name,
+                                          AotNameIC *c, const char *site) {
+    EigsSlot *sp = aot_name_slot(l, name, c);
+    if (sp && slot_is_num(*sp)) return sp->d;
+    return aot_num_ck_at(aot_get_ic(l, name, c), site);
+}
+static inline double aot_get_num_sh(Env *l, Env *g, const char *name,
+                                    uint32_t *hc, const char *site) {
+    if (!*hc) *hc = env_hash_name(name);
+    int found = 0;
+    EigsSlot s = env_get_hashed_slot(l, name, *hc, &found);
+    if (found && slot_is_num(s)) return s.d;
+    return aot_num_ck_at(aot_get_sh(l, g, name), site);
+}
+
+/* Numeric env write. The cached arm writes the slot in place — no box, no
+ * lookup — and bumps assign_counts exactly as env_set_local_hashed does
+ * (`when is x` reads that counter). Local-only, matching env_set_local_owned:
+ * a cache whose home is not `e` itself does not qualify. */
+static inline void aot_set_num_ic(Env *e, const char *name,
+                                  AotNameIC *c, double d) {
+    if (__builtin_expect(c->home != NULL && c->depth == 0
+                         && c->idx < e->count && e->names[c->idx] == c->iname
+                         && !g_vm_multithreaded, 1)) {
+        EigsSlot *sp = &e->values[c->idx];
+        slot_decref(*sp);
+        *sp = slot_from_num(num_guard(d));
+        if (e->assign_counts) e->assign_counts[c->idx]++;
+        return;
+    }
+    if (!c->h) c->h = env_hash_name(name);
+    env_set_local_hashed_slot(e, name, c->h, slot_from_num(num_guard(d)));
+    int idx = aot_env_hash_find(&e->hash, name, c->h, e->names);
+    if (idx >= 0) {
+        c->start = e; c->home = e; c->idx = idx; c->depth = 0;
+        c->iname = e->names[idx];
+        c->sver = e->binding_version; c->tver = c->sver;
+    }
+}
+
+/* Boxed env write, local-only (env_set_local_owned's contract). The cached arm
+ * replicates env_set_local_hashed's replace arm exactly — promote_if_arena,
+ * conditional incref, slot_from_value, decref the old — then drops the caller's
+ * ref like env_set_local_owned. */
+static inline void aot_set_ic(Env *e, const char *name, AotNameIC *c, Value *val) {
+    if (__builtin_expect(c->home != NULL && c->depth == 0
+                         && c->idx < e->count && e->names[c->idx] == c->iname
+                         && !g_vm_multithreaded, 1)) {
+        Value *promoted = promote_if_arena(val);
+        if (promoted == val) val_incref(promoted);
+        EigsSlot ns = slot_from_value(promoted);
+        slot_decref(e->values[c->idx]);
+        e->values[c->idx] = ns;
+        if (e->assign_counts) e->assign_counts[c->idx]++;
+        val_decref(val);
+        return;
+    }
+    if (!c->h) c->h = env_hash_name(name);
+    env_set_local_hashed(e, name, c->h, val);
+    val_decref(val);
+    int idx = aot_env_hash_find(&e->hash, name, c->h, e->names);
+    if (idx >= 0) {
+        c->start = e; c->home = e; c->idx = idx; c->depth = 0;
+        c->iname = e->names[idx];
+        c->sver = e->binding_version; c->tver = c->sver;
+    }
+}
+
+/* plain (non-`local`) numeric write to a shadow name — aot_set_sh's dispatch. */
+static inline void aot_set_num_sh(Env *l, Env *g, const char *name,
+                                  uint32_t *hc, double d) {
+    if (!*hc) *hc = env_hash_name(name);
+    Env *home = env_get(l, name) ? l : g;
+    env_set_local_hashed_slot(home, name, *hc, slot_from_num(num_guard(d)));
+}
+
 
 /* Unary minus on a boxed value — the VM's OP_NEG exactly: negate a number
  * (no guard: negation preserves the finite invariant), raise EK_TYPE
@@ -878,6 +1219,116 @@ static AotTensor aot_tensor_relu(AotTensor a) {
 static int aot_idx_is_int(double d, int *out) { int i = (int)d; if ((double)i != d) return 0; *out = i; return 1; }
 static int aot_idx_resolve(int *i, int len) { int r = (*i < 0) ? *i + len : *i; if (r < 0 || r >= len) return 0; *i = r; return 1; }
 
+/* Target-borrowed integer index read/write (#130): `mem.data[addr]` is the
+ * emulator's single commonest expression, and the container it indexes is a
+ * dict slot that outlives the expression. Borrowing it removes the last
+ * refcount pair on that path. Result ownership is unchanged. */
+static Value *aot_index_get_ib(Value *target, double d) {
+    Value *result = NULL;
+    int i;
+    if (target && target->type == VAL_LIST) {
+        if (!aot_idx_is_int(d, &i))
+            rt_error(EK_VALUE, 0, "index must be an integer, got %g", d);
+        else if (aot_idx_resolve(&i, target->data.list.count)) {
+            result = target->data.list.items[i]; val_incref(result);
+        } else
+            rt_error(EK_INDEX, 0, "index %d out of range (list length %d)", i, target->data.list.count);
+    } else if (target && target->type == VAL_STR) {
+        if (!aot_idx_is_int(d, &i))
+            rt_error(EK_VALUE, 0, "index must be an integer, got %g", d);
+        else if (aot_idx_resolve(&i, (int)strlen(target->data.str))) {
+            char b[2] = { target->data.str[i], 0 }; result = make_str(b);
+        } else
+            rt_error(EK_INDEX, 0, "string index %d out of range (length %d)", i, (int)strlen(target->data.str));
+    } else if (target && target->type == VAL_BUFFER) {
+        if (!aot_idx_is_int(d, &i))
+            rt_error(EK_VALUE, 0, "index must be an integer, got %g", d);
+        else if (aot_idx_resolve(&i, target->data.buffer.count))
+            result = make_num(target->data.buffer.data[i]);
+        else
+            rt_error(EK_INDEX, 0, "buffer index %d out of range (length %d)", i, target->data.buffer.count);
+    } else {
+        rt_error(EK_TYPE, 0, "cannot index %s",
+                 target ? val_type_name(target->type) : "null");
+    }
+    return result ? result : make_null();
+}
+
+/* Numeric element read straight to a double: no box for the index, and none
+ * for the element when the list already holds a VAL_NUM. */
+static double aot_index_num_ib(Value *target, double d, const char *site) {
+    Value *v = aot_index_get_ib(target, d);
+    if (v && v->type == VAL_NUM) { double r = v->data.num; val_decref(v); return r; }
+    return aot_num_ck_at(v, site);
+}
+
+static void aot_index_set_ib(Value *target, double d, Value *val) {
+    int i;
+    if (target && target->type == VAL_LIST) {
+        if (!aot_idx_is_int(d, &i))
+            rt_error(EK_VALUE, 0, "index must be an integer, got %g", d);
+        else if (aot_idx_resolve(&i, target->data.list.count)) {
+            Value *old = target->data.list.items[i];
+            target->data.list.items[i] = val; val = NULL;   /* adopt */
+            if (old) val_decref(old);
+        } else
+            rt_error(EK_INDEX, 0, "index %d out of range (list length %d)", i, target->data.list.count);
+    } else if (target && target->type == VAL_BUFFER) {
+        if (val && val->type == VAL_NUM) {
+            if (!aot_idx_is_int(d, &i))
+                rt_error(EK_VALUE, 0, "index must be an integer, got %g", d);
+            else if (aot_idx_resolve(&i, target->data.buffer.count))
+                target->data.buffer.data[i] = val->data.num;
+            else
+                rt_error(EK_INDEX, 0, "buffer index %d out of range (length %d)", i, target->data.buffer.count);
+        } else
+            rt_error(EK_TYPE, 0, "buffer elements must be numbers");
+    } else {
+        rt_error(EK_TYPE, 0, "cannot index-assign into %s",
+                 target ? val_type_name(target->type) : "null");
+    }
+    if (val) val_decref(val);
+}
+
+/* Integer-index read (#130). Identical to aot_index_get with a VAL_NUM index
+ * that is already known integral, minus the box: 474 sites in DMG's generated
+ * C read `aot_index_get(x, make_num(<literal>))`, each allocating and freeing
+ * a VAL_NUM purely to carry an index. The `d` argument is the same double the
+ * boxed form would have carried, so the non-integral and out-of-range
+ * diagnostics stay byte-identical. */
+static Value *aot_index_get_i(Value *target, double d) {
+    Value *result = NULL;
+    int i;
+    if (target->type == VAL_LIST) {
+        if (!aot_idx_is_int(d, &i))
+            rt_error(EK_VALUE, 0, "index must be an integer, got %g", d);
+        else if (aot_idx_resolve(&i, target->data.list.count)) {
+            result = target->data.list.items[i]; val_incref(result);
+        } else
+            rt_error(EK_INDEX, 0, "index %d out of range (list length %d)", i, target->data.list.count);
+    } else if (target->type == VAL_STR) {
+        if (!aot_idx_is_int(d, &i))
+            rt_error(EK_VALUE, 0, "index must be an integer, got %g", d);
+        else if (aot_idx_resolve(&i, (int)strlen(target->data.str))) {
+            char b[2] = { target->data.str[i], 0 }; result = make_str(b);
+        } else
+            rt_error(EK_INDEX, 0, "string index %d out of range (length %d)", i, (int)strlen(target->data.str));
+    } else if (target->type == VAL_BUFFER) {
+        if (!aot_idx_is_int(d, &i))
+            rt_error(EK_VALUE, 0, "index must be an integer, got %g", d);
+        else if (aot_idx_resolve(&i, target->data.buffer.count))
+            result = make_num(target->data.buffer.data[i]);
+        else
+            rt_error(EK_INDEX, 0, "buffer index %d out of range (length %d)", i, target->data.buffer.count);
+    } else {
+        /* A VAL_DICT with a numeric index falls here in the oracle too: its
+         * dict arm requires VAL_STR, so the final else raises. */
+        rt_error(EK_TYPE, 0, "cannot index %s", val_type_name(target->type));
+    }
+    val_decref(target);
+    return result ? result : make_null();
+}
+
 static Value *aot_index_get(Value *target, Value *idx) {
     Value *result = NULL;
     if (target->type == VAL_LIST && idx->type == VAL_NUM) {
@@ -933,6 +1384,40 @@ static void aot_args(int argc, char **argv) {
  * Mirrors OP_INDEX_SET: list (integer index, in range -> replace, old ref
  * dropped), dict (string key -> set), buffer (numeric value). Consumes
  * target and idx; adopts val. */
+/* Integer-index write (#130) — aot_index_set with the index already a known
+ * double, minus the box. The twin of aot_index_get_i; the diagnostics are
+ * byte-identical because `d` is the same double the box would have carried.
+ * A VAL_DICT target falls to the final raise here exactly as it does there,
+ * since the dict arm requires a VAL_STR index. */
+static void aot_index_set_i(Value *target, double d, Value *val) {
+    int i;
+    if (target && target->type == VAL_LIST) {
+        if (!aot_idx_is_int(d, &i))
+            rt_error(EK_VALUE, 0, "index must be an integer, got %g", d);
+        else if (aot_idx_resolve(&i, target->data.list.count)) {
+            Value *old = target->data.list.items[i];
+            target->data.list.items[i] = val; val = NULL;   /* adopt */
+            if (old) val_decref(old);
+        } else
+            rt_error(EK_INDEX, 0, "index %d out of range (list length %d)", i, target->data.list.count);
+    } else if (target && target->type == VAL_BUFFER) {
+        if (val && val->type == VAL_NUM) {
+            if (!aot_idx_is_int(d, &i))
+                rt_error(EK_VALUE, 0, "index must be an integer, got %g", d);
+            else if (aot_idx_resolve(&i, target->data.buffer.count))
+                target->data.buffer.data[i] = val->data.num;
+            else
+                rt_error(EK_INDEX, 0, "buffer index %d out of range (length %d)", i, target->data.buffer.count);
+        } else
+            rt_error(EK_TYPE, 0, "buffer elements must be numbers");
+    } else {
+        rt_error(EK_TYPE, 0, "cannot index-assign into %s",
+                 target ? val_type_name(target->type) : "null");
+    }
+    if (val) val_decref(val);
+    if (target) val_decref(target);
+}
+
 static void aot_index_set(Value *target, Value *idx, Value *val) {
     if (target && target->type == VAL_LIST && idx && idx->type == VAL_NUM) {
         int i;
@@ -990,6 +1475,219 @@ static Value *aot_dot_get(Value *target, const char *key) {
     return result ? result : make_null();
 }
 
+/* MONOMORPHIC INLINE CACHE for a dict field read (ouroboros#130).
+ *
+ * Profiled on DMG's emulation loop: dict_get 14.9% and
+ * __strcmp_sse2_unaligned 11.8%, against 3.5% for the emulation itself.
+ * Two cheaper ideas were measured and BOTH did nothing — fusing the
+ * read+unbox (1.025x) and pre-hashing the key (0.998x) — because the cost
+ * is neither refcounting nor computing the hash: it is the bucket walk and
+ * the key strcmp inside the lookup.
+ *
+ * So cache per SITE. A site like `cpu.pc` sees the same dict object every
+ * time, so the slot index and the dict's own key POINTER are stable; a hit
+ * is a bounds check plus a pointer compare plus an array index, with no
+ * hash and no strcmp. A miss (different shape, grown dict, rehash) falls
+ * back to the normal lookup and re-arms. Correct for any dict because the
+ * guard validates the cached slot still holds that exact key pointer. */
+/* Non-static in eigenscript.c but absent from eigenscript.h (EigenScript#1056);
+ * declared here so the IC helpers below are not implicitly declared. */
+int env_hash_find_dict(Value *dict, const char *key, uint32_t h);
+
+/* Resolve a field to its slot index through the per-site cache, re-arming on
+ * a miss. Returns -1 if the dict has no such key. Shared by all three ICs. */
+static inline int aot_ic_slot(Value *target, const char *key,
+                              int *ic, const char **ick) {
+    int i = *ic;
+    if (i >= 0 && i < target->data.dict.count &&
+        target->data.dict.keys[i] == *ick) return i;
+    i = env_hash_find_dict(target, key, env_hash_name(key));
+    if (i >= 0) { *ic = i; *ick = target->data.dict.keys[i]; }
+    return i;
+}
+
+static inline Value *aot_dot_borrow_ic(Value *target, const char *key,
+                                       int *ic, const char **ick) {
+    if (target && target->type == VAL_DICT) {
+        int i = aot_ic_slot(target, key, ic, ick);
+        return (i >= 0) ? target->data.dict.vals[i] : NULL;
+    }
+    if (target)
+        rt_error(EK_TYPE, 0, "cannot access field '%s' on %s",
+                 key, val_type_name(target->type));
+    return NULL;   /* null target reads null, silently — the #898 contract */
+}
+
+/* Target-borrowed variants (#130). When the target expression is a plain C
+ * Value* variable it is live for the whole statement, so the incref/decref
+ * pair the consuming forms require is pure bookkeeping — measured at 11.7% of
+ * runtime across val_incref/val_decref once the boxes were gone. These do not
+ * consume the target; the RESULT keeps the same ownership as the form each
+ * mirrors, so only the emitter's target expression changes. */
+static Value *aot_dot_get_tb_ic(Value *target, const char *key,
+                                int *ic, const char **ick) {
+    if (target && target->type == VAL_DICT) {
+        int i = aot_ic_slot(target, key, ic, ick);
+        Value *v = (i >= 0) ? target->data.dict.vals[i] : NULL;
+        if (v) { val_incref(v); return v; }
+        return make_null();
+    }
+    if (target)
+        rt_error(EK_TYPE, 0, "cannot access field '%s' on %s",
+                 key, val_type_name(target->type));
+    return make_null();
+}
+
+static double aot_dot_num_tb_ic(Value *target, const char *key,
+                                int *ic, const char **ick, const char *site) {
+    if (target && target->type == VAL_DICT) {
+        int i = aot_ic_slot(target, key, ic, ick);
+        Value *v = (i >= 0) ? target->data.dict.vals[i] : NULL;
+        if (v && v->type == VAL_NUM) return v->data.num;
+        fprintf(stderr, "non-numeric value in a numeric context at %s (type %s)\n",
+                site, v ? val_type_name(v->type) : "null");
+        exit(1);
+    }
+    if (target)
+        rt_error(EK_TYPE, 0, "cannot access field '%s' on %s",
+                 key, val_type_name(target->type));
+    fprintf(stderr, "non-numeric value in a numeric context at %s (null)\n", site);
+    exit(1);
+}
+
+static void aot_dot_set_num_tb_ic(Value *target, const char *key, double d,
+                                  int *ic, const char **ick) {
+    d = num_guard(d);
+    if (target && target->type == VAL_DICT) {
+        int i = aot_ic_slot(target, key, ic, ick);
+        if (i >= 0) {
+            Value *old = target->data.dict.vals[i];
+            if (old && old->type == VAL_NUM && old->refcount == 1) {
+                old->data.num = d;
+            } else {
+                Value *nv = promote_if_arena(make_num(d));
+                val_decref(old);
+                target->data.dict.vals[i] = nv;
+            }
+        } else {
+            dict_set_owned(target, key, make_num(d));
+        }
+    } else if (target && target->type != VAL_NULL) {
+        rt_error(EK_TYPE, 0, "cannot set field '%s' on %s",
+                 key, val_type_name(target->type));
+    }
+}
+
+static double aot_dot_num_ic(Value *target, const char *key,
+                             int *ic, const char **ick, const char *site) {
+    if (target && target->type == VAL_DICT) {
+        int i = aot_ic_slot(target, key, ic, ick);
+        Value *v = (i >= 0) ? target->data.dict.vals[i] : NULL;
+        if (v && v->type == VAL_NUM) {
+            double d = v->data.num;
+            val_decref(target);
+            return d;
+        }
+        fprintf(stderr, "non-numeric value in a numeric context at %s (type %s)\n",
+                site, v ? val_type_name(v->type) : "null");
+        exit(1);
+    }
+    if (target) {
+        rt_error(EK_TYPE, 0, "cannot access field '%s' on %s",
+                 key, val_type_name(target->type));
+    }
+    fprintf(stderr, "non-numeric value in a numeric context at %s (null)\n", site);
+    exit(1);
+}
+
+/* IC'd generic field read — same contract as aot_dot_get (consumes the owned
+ * target, returns owned). The numeric IC above only covers sites the numeric
+ * inference already proved numeric; measured on DMG that was 0.9 reads per
+ * emulated cycle against a dict_get still holding 10.8% of runtime, i.e. most
+ * field traffic is BOXED and never saw the cache. This covers the rest. */
+static Value *aot_dot_get_ic(Value *target, const char *key,
+                             int *ic, const char **ick) {
+    if (target && target->type == VAL_DICT) {
+        int i = aot_ic_slot(target, key, ic, ick);
+        Value *v = (i >= 0) ? target->data.dict.vals[i] : NULL;
+        if (v) val_incref(v);
+        val_decref(target);
+        return v ? v : make_null();
+    }
+    if (target) {
+        rt_error(EK_TYPE, 0, "cannot access field '%s' on %s",
+                 key, val_type_name(target->type));
+        val_decref(target);
+    }
+    return make_null();
+}
+
+/* IC'd NUMERIC field write. The rhs arrives as a C double, so the common
+ * case — the slot already holds a sole-owned VAL_NUM — allocates nothing and
+ * frees nothing: the existing box is reused. That is the point. `ctx.pc is
+ * ctx.pc + 1` in DMG's dispatch was a make_num plus a free_value per write
+ * (8.5% + 7.1% of runtime between them) on top of the lookup.
+ *
+ * Reuse is gated on refcount == 1, so no other holder can observe the box
+ * change identity-for-value: anything that read the field through
+ * aot_dot_get(_ic) increfs, which forces the replacing path instead. Slots
+ * holding a shared or non-numeric value, and keys not present at all, fall
+ * back to semantics identical to aot_dot_set. */
+static void aot_dot_set_num_ic(Value *target, const char *key, double d,
+                               int *ic, const char **ick) {
+    d = num_guard(d);   /* make_num guards; this path must not depend on its
+                         * caller having done so (emit_num does, today). */
+    if (target && target->type == VAL_DICT) {
+        int i = aot_ic_slot(target, key, ic, ick);
+        if (i >= 0) {
+            Value *old = target->data.dict.vals[i];
+            if (old && old->type == VAL_NUM && old->refcount == 1) {
+                old->data.num = d;
+            } else {
+                Value *nv = promote_if_arena(make_num(d));
+                val_decref(old);
+                target->data.dict.vals[i] = nv;
+            }
+        } else {
+            dict_set_owned(target, key, make_num(d));
+        }
+    } else if (target && target->type != VAL_NULL) {
+        rt_error(EK_TYPE, 0, "cannot set field '%s' on %s",
+                 key, val_type_name(target->type));
+    }
+    if (target) val_decref(target);
+}
+
+/* IC'd generic field write — mirrors dict_set_hashed's replace arm exactly
+ * (promote_if_arena, then decref-old/adopt) and then the owned-argument
+ * convention of dict_set_owned. */
+static void aot_dot_set_ic(Value *target, const char *key, Value *val,
+                           int *ic, const char **ick) {
+    if (target && target->type == VAL_DICT) {
+        int i = aot_ic_slot(target, key, ic, ick);
+        if (i >= 0) {
+            Value *promoted = promote_if_arena(val);
+            if (promoted != val) {
+                val_decref(target->data.dict.vals[i]);
+                target->data.dict.vals[i] = promoted;
+            } else {
+                val_incref(val);
+                val_decref(target->data.dict.vals[i]);
+                target->data.dict.vals[i] = val;
+            }
+            val_decref(val);
+        } else {
+            dict_set_owned(target, key, val);
+        }
+    } else {
+        if (target && target->type != VAL_NULL)
+            rt_error(EK_TYPE, 0, "cannot set field '%s' on %s",
+                     key, val_type_name(target->type));
+        if (val) val_decref(val);
+    }
+    if (target) val_decref(target);
+}
+
 static void aot_dot_set(Value *target, const char *key, Value *val) {
     if (target && target->type == VAL_DICT) {
         dict_set_owned(target, key, val);   /* adopts val's ref */
@@ -1015,8 +1713,90 @@ static Value *aot_iter_get(Value *v, long k) {   /* owned element k */
     return make_null();
 }
 
+/* Same as aot_call_name with the callee resolution cached per site. The AOT
+ * already refuses fn-body writes to builtin names (F-OURO-31/32), and the
+ * version guard covers rebinding of user functions, so the cached callee
+ * cannot go stale unnoticed. */
+static Value *aot_call_name_ic(Env *g, const char *name, Value *arg, AotNameIC *c);
+
+/* `dispatch of [table, key, ctx]` without heap-allocating the argument vector
+ * (#130). Measured on DMG: builtin_dispatch is 27.7% of total runtime with
+ * children, and every emulated instruction paid a make_list(3) plus a
+ * make_num for the key before any emulation happened.
+ *
+ * builtin_dispatch reads items[0..2], validates, and calls the handler with
+ * items[2] ALONE — the vector never escapes it — so the vector can live on
+ * the stack. Both stack Values carry arena=1, which is the runtime's existing
+ * "not refcount-managed" flag: val_incref/val_decref are no-ops on them, and
+ * anything that tried to retain one would go through promote_if_arena and get
+ * a heap copy instead of a dangling stack pointer.
+ *
+ * Consumes table and ctx and returns owned, matching aot_call_name. The
+ * res == ctx case is builtin_dispatch's documented raw borrow (it passes
+ * caller_owns_arg=1 to vm_borrow_compensate precisely so the caller settles
+ * it), so ctx's ref transfers to the result instead of being dropped. */
+static Value *aot_dispatch(Value *table, double key, Value *ctx) {
+    Value keyv;
+    memset(&keyv, 0, sizeof keyv);
+    keyv.type = VAL_NUM; keyv.data.num = key; keyv.arena = 1;
+
+    Value *items[3] = { table, &keyv, ctx };
+    Value lst;
+    memset(&lst, 0, sizeof lst);
+    lst.type = VAL_LIST; lst.arena = 1;
+    lst.data.list.items = items; lst.data.list.count = 3; lst.data.list.capacity = 3;
+
+    Value *res = builtin_dispatch(&lst);
+    if (g_exit_requested) exit(g_exit_code);
+    if (g_has_error) aot_error_exit();
+    /* aot_call_name's direct-borrow compensation, verbatim: incref a result
+     * that IS one of the argument-vector elements, then release the vector's
+     * refs. Whether the handler returned a raw borrow (a builtin: see
+     * builtin_dispatch's caller_owns_arg=1) or a fresh ref (a user fn), this
+     * is what the aot_call_name path this replaces already did — matching it
+     * is the point, so the substitution cannot introduce a new divergence.
+     * &keyv is unreachable as a result: builtin_dispatch hands the handler
+     * items[2] alone. */
+    if (res == ctx || res == table) val_incref(res);
+    val_decref(table);
+    val_decref(ctx);
+    return res ? res : make_null();
+}
+
 static Value *aot_call_name(Env *g, const char *name, Value *arg) {
     Value *fn = env_get(g, name);
+    if (!fn) { fprintf(stderr, "aot: undefined function '%s'\n", name); exit(1); }
+    Value *res;
+    if (fn->type == VAL_BUILTIN) res = fn->data.builtin(arg);
+    else                         res = call_eigs_fn(fn, arg);
+    /* `exit of N` unwinds via g_has_error TOO (builtin_exit sets both flags);
+     * it is a clean requested exit, not an error — honor the code, print
+     * nothing (the VM's main clears g_has_error when g_exit_requested). */
+    if (g_exit_requested) exit(g_exit_code);
+    /* A raising builtin recorded its error via rt_error/builtin_throw (silent
+     * under the elevated g_try_depth) and RETURNED; running on from here is
+     * the run-past-error class (#103's sibling — the old code continued with
+     * a null result). Uncaught == fatal in the AOT: print the recorded
+     * diagnostic and die with the VM's uncaught exit code. */
+    if (g_has_error) aot_error_exit();
+    if (!res) { val_decref(arg); return make_null(); }
+    /* A builtin may return the arg itself, or one of its elements BORROWED
+     * (e.g. append -> target = arg[0]). Mirror vm.c's direct-borrow heuristic:
+     * keep arg's ref if res IS arg; incref a borrowed arg-element before the arg
+     * is torn down. Owned returns aren't arg elements, so they're untouched. */
+    if (res == arg) return res;
+    if (arg && arg->type == VAL_LIST) {
+        for (int i = 0; i < arg->data.list.count; i++) {
+            if (arg->data.list.items[i] == res) { val_incref(res); break; }
+        }
+    }
+    val_decref(arg);
+    return res;
+}
+
+static Value *aot_call_name_ic(Env *g, const char *name, Value *arg, AotNameIC *c) {
+    EigsSlot *sp = aot_name_slot(g, name, c);
+    Value *fn = sp ? aot_slot_value(sp) : NULL;
     if (!fn) { fprintf(stderr, "aot: undefined function '%s'\n", name); exit(1); }
     Value *res;
     if (fn->type == VAL_BUILTIN) res = fn->data.builtin(arg);

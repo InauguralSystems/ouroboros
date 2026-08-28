@@ -173,9 +173,65 @@ define has_obs_interrogate(node) as:
             return 1
     return 0
 
+# Functions referenced as VALUES (put in a dispatch table, passed to sort_by,
+# stored in a dict). Their call sites are not statically visible, so nothing in
+# the body licenses a narrowed parameter type: `define h(ctx) as: return ctx`
+# reads as numeric, and the wrapper then coerced a list argument to 0.0 while
+# the VM returned the list (found by aot/test/t88_dispatch.eigs, ouroboros#130).
+# Over-approximating is safe: it only forces a parameter to stay boxed.
+g_fnval_params is {}
+define collect_fn_value_refs(node, fnames, out) as:
+    if (type of node) != "list":
+        return 0
+    if (len of node) == 0:
+        return 0
+    if node[0] == "ident":
+        if fnames[node[1]] == 1:
+            out[node[1]] is 1
+        return 0
+    if node[0] == "interrogate":
+        # `what is g` asks ABOUT the binding; a bare name here is not passed
+        # anywhere. Descend only into the non-subject slots.
+        local isub is unwrap of node[2]
+        if isub[0] != "ident":
+            collect_fn_value_refs of [node[2], fnames, out]
+        return 0
+    if node[0] == "call":
+        local cal is unwrap of node[1]
+        # `<predicate> of g` — the #708 opaque band. The VM answers about the
+        # BINDING; nothing is passed to a caller, so this is not a value
+        # reference (t87_observer_named_fn, which this walker first broke).
+        local carg is unwrap of node[2]
+        if cal[0] == "predicate":
+            if carg[0] != "ident":
+                collect_fn_value_refs of [node[2], fnames, out]
+            return 0
+        # the callee of a direct call is a CALL, not a value reference
+        if cal[0] != "ident":
+            collect_fn_value_refs of [node[1], fnames, out]
+        collect_fn_value_refs of [node[2], fnames, out]
+        return 0
+    for k in range of (len of node):
+        collect_fn_value_refs of [node[k], fnames, out]
+    return 0
+
 # Set of user-defined numeric functions (name -> 1). A call to one is numeric;
 # emitted as a native C `double name(double, ...)` call. Set in emit_program.
 g_funcs is {}
+g_match_n is 0
+G_IC_N is [0]
+# Per-SITE monomorphic inline cache for dict field access (#130). Each textual
+# access site gets its own `static` pair — declared inline at the site (a GNU
+# statement-expression for reads, a plain block for writes) so no separate
+# declaration pass is needed. Returns [declaration, "&ic, &ick"].
+define ic_new(field) as:
+    local sn is str of (G_IC_N[0])
+    G_IC_N[0] is (G_IC_N[0]) + 1
+    return [
+        "static int __ic" + sn + " = -1; static const char *__ick" + sn + " = 0; ",
+        "&__ic" + sn + ", &__ick" + sn,
+        "\"" + (c_escape of (G_CUR_FN[0])) + ": ." + (c_escape of field) + "\""
+    ]
 # Just the NAMES of all user functions (-> 1), seeded before ptype inference so
 # is_tensor_call can tell a user-defined matmul/add/relu (which shadows the
 # tensor builtin) from the builtin, regardless of definition order.
@@ -233,15 +289,44 @@ define envc(name) as:
 define env_read(name) as:
     if g_boxshadow[name] == 1:
         return "aot_get_sh(__eigs_l, __eigs_g, \"" + name + "\")"
+    local hp is ic_cache of 0
     if g_envloc[name] == 1:
-        return "aot_get(__eigs_l, \"" + name + "\")"
-    return "aot_get_named(__eigs_g, \"" + name + "\")"
+        return "({ " + hp[0] + "aot_get_ic(__eigs_l, \"" + name + "\", " + hp[1] + "); })"
+    return "({ " + hp[0] + "aot_get_named_ic(__eigs_g, \"" + name + "\", " + hp[1] + "); })"
+# Numeric env read/write through the NaN-boxed slot (#130). A per-site static
+# holds the name's hash so it is computed once per site rather than once per
+# access; the runtime helpers delegate every miss and non-numeric case back to
+# the boxed accessor these mirror, so error text and exit codes are unchanged.
+define ic_cache(tag) as:
+    local hn is (str of tag) + (str of (G_IC_N[0]))
+    G_IC_N[0] is (G_IC_N[0]) + 1
+    return ["static AotNameIC __n" + hn + " = {0}; ", "&__n" + hn]
+define env_read_num(name, site) as:
+    if g_boxshadow[name] == 1:
+        local hs is ic_hash_only of 0
+        return "({ " + hs[0] + "aot_get_num_sh(__eigs_l, __eigs_g, \"" + name + "\", " + hs[1] + ", " + site + "); })"
+    local hp is ic_cache of 0
+    if g_envloc[name] == 1:
+        return "({ " + hp[0] + "aot_get_num_local_ic(__eigs_l, \"" + name + "\", " + hp[1] + ", " + site + "); })"
+    return "({ " + hp[0] + "aot_get_num_named_ic(__eigs_g, \"" + name + "\", " + hp[1] + ", " + site + "); })"
+define ic_hash_only(tag) as:
+    local hn is (str of tag) + (str of (G_IC_N[0]))
+    G_IC_N[0] is (G_IC_N[0]) + 1
+    return ["static uint32_t __h" + hn + " = 0; ", "&__h" + hn]
+define env_write_num(name, dexpr) as:
+    if g_boxshadow[name] == 1:
+        local hs is ic_hash_only of 0
+        return "{ " + hs[0] + "aot_set_num_sh(__eigs_l, __eigs_g, \"" + name + "\", " + hs[1] + ", " + dexpr + "); }"
+    local hp is ic_cache of 0
+    return "{ " + hp[0] + "aot_set_num_ic(" + (envc of name) + ", \"" + name + "\", " + hp[1] + ", " + dexpr + "); }"
+
 define env_readb(name) as:
     if g_boxshadow[name] == 1:
         return "aot_getb_sh(__eigs_l, __eigs_g, \"" + name + "\")"
+    local hp is ic_cache of 0
     if g_envloc[name] == 1:
-        return "env_get(__eigs_l, \"" + name + "\")"
-    return "aot_getb_named(__eigs_g, \"" + name + "\")"
+        return "({ " + hp[0] + "aot_getb_ic(__eigs_l, \"" + name + "\", " + hp[1] + "); })"
+    return "({ " + hp[0] + "aot_getb_named_ic(__eigs_g, \"" + name + "\", " + hp[1] + "); })"
 
 # A call to a tensor builtin (matmul/add/relu)?
 define is_tensor_call(node) as:
@@ -920,7 +1005,7 @@ define emit_num(node, nm, bt, raw) as:
         # non-number read here is a VM raise ("cannot apply ... to str"),
         # and aot_num's silent 0.0 was the worst-outcome class.
         if g_observed == 1:
-            return "aot_num_ck_at(" + (env_read of node[1]) + ", \"" + (c_escape of (G_CUR_FN[0])) + ": name " + (c_escape of node[1]) + "\")"
+            return env_read_num of [node[1], "\"" + (c_escape of (G_CUR_FN[0])) + ": name " + (c_escape of node[1]) + "\""]
         if nm[node[1]] == 1:
             return cn of node[1]
         # A Value-typed C name (buffer/dict/tensor param or local) in a numeric
@@ -941,7 +1026,7 @@ define emit_num(node, nm, bt, raw) as:
         # CHECKED (#65 inc. 2): the VM raises when a non-number reaches an
         # arithmetic context; aot_num's silent 0.0 was the worst-outcome
         # class.
-        return "aot_num_ck_at(" + (env_read of node[1]) + ", \"" + (c_escape of (G_CUR_FN[0])) + ": name " + (c_escape of node[1]) + "\")"
+        return env_read_num of [node[1], "\"" + (c_escape of (G_CUR_FN[0])) + ": name " + (c_escape of node[1]) + "\""]
     if t == "unary":
         local uop is node[1]
         local uv is emit_num of [node[2], nm, bt, raw]
@@ -961,7 +1046,14 @@ define emit_num(node, nm, bt, raw) as:
         # numeric read of a dict field (#86): box-read then checked unbox.
         # aot_num_ck consumes the owned aot_dot_get result (same idiom as
         # the boxed index read below).
-        return "aot_num_ck_at(aot_dot_get(" + (emit_val of [node[1], nm, bt]) + ", \"" + (c_escape of node[2]) + "\"), \"" + (c_escape of (G_CUR_FN[0])) + ": ." + (c_escape of node[2]) + "\")"
+        # Per-SITE monomorphic inline cache (#130). The statics are declared
+        # inside the expression via a GNU statement-expression so no separate
+        # declaration pass is needed; each textual site gets its own pair.
+        local ic is ic_new of node[2]
+        local ncv is borrowable_cvar of [node[1], nm, bt]
+        if ncv != "":
+            return "({ " + ic[0] + "aot_dot_num_tb_ic(" + ncv + ", \"" + (c_escape of node[2]) + "\", " + ic[1] + ", " + ic[2] + "); })"
+        return "({ " + ic[0] + "aot_dot_num_ic(" + (emit_val of [node[1], nm, bt]) + ", \"" + (c_escape of node[2]) + "\", " + ic[1] + ", " + ic[2] + "); })"
     if t == "index":
         local tgt is unwrap of node[1]
         # a buffer C var -> aot_buf_get; anything else (a boxed list local,
@@ -972,6 +1064,11 @@ define emit_num(node, nm, bt, raw) as:
             # in a numeric context (`d["a"] + 5`) has a STRING index —
             # aot_index_get dispatches on the runtime types exactly like the
             # VM, and the RESULT is what must be numeric-or-raise here.
+            if (is_num_expr of [node[2], nm, bt]) == 1:
+                local nib is emit_val_borrow of [node[1], nm, bt, node[2]]
+                if nib != "":
+                    return "aot_index_num_ib(" + nib + ", " + (emit_num of [node[2], nm, bt, 0]) + ", \"" + (c_escape of (G_CUR_FN[0])) + ": index read\")"
+                return "aot_num_ck_at(aot_index_get_i(" + (emit_val of [node[1], nm, bt]) + ", " + (emit_num of [node[2], nm, bt, 0]) + "), \"" + (c_escape of (G_CUR_FN[0])) + ": index read\")"
             return "aot_num_ck_at(aot_index_get(" + (emit_val of [node[1], nm, bt]) + ", " + (emit_val of [node[2], nm, bt]) + "), \"" + (c_escape of (G_CUR_FN[0])) + ": index read\")"
         if (is_int_expr of node[2]) == 1:
             return "aot_buf_get_i(" + (cn of tgt[1]) + ", " + (emit_int of node[2]) + ")"
@@ -1149,13 +1246,24 @@ define emit_val(node, nm, bt) as:
         local itgt is unwrap of node[1]
         if (itgt[0] == "ident") and (bt[itgt[1]] == 1):
             return "make_num(aot_buf_get(" + (cn of itgt[1]) + ", " + (emit_num of [node[2], nm, bt, 0]) + "))"
+        if (is_num_expr of [node[2], nm, bt]) == 1:
+            local bib is emit_val_borrow of [node[1], nm, bt, node[2]]
+            if bib != "":
+                return "aot_index_get_ib(" + bib + ", " + (emit_num of [node[2], nm, bt, 0]) + ")"
+            return "aot_index_get_i(" + (emit_val of [node[1], nm, bt]) + ", " + (emit_num of [node[2], nm, bt, 0]) + ")"
         return "aot_index_get(" + (emit_val of [node[1], nm, bt]) + ", " + (emit_val of [node[2], nm, bt]) + ")"
     if t == "dot":
         # general dict field read (#86) -> owned Value. aot_dot_get consumes
         # the owned target and mirrors the VM's field-read semantics (null
         # target -> null silently; non-dict -> EK_TYPE). The tensor slice
         # keeps its own dot path inside emit_tensor.
-        return "aot_dot_get(" + (emit_val of [node[1], nm, bt]) + ", \"" + (c_escape of node[2]) + "\")"
+        # Inline-cached (#130): most field traffic in a real program is BOXED,
+        # so this site — not the numeric one — carries the bulk of the lookups.
+        local ic is ic_new of node[2]
+        local dcv is borrowable_cvar of [node[1], nm, bt]
+        if dcv != "":
+            return "({ " + ic[0] + "aot_dot_get_tb_ic(" + dcv + ", \"" + (c_escape of node[2]) + "\", " + ic[1] + "); })"
+        return "({ " + ic[0] + "aot_dot_get_ic(" + (emit_val of [node[1], nm, bt]) + ", \"" + (c_escape of node[2]) + "\", " + ic[1] + "); })"
     if t == "list":
         # nested-list literal -> owned Value built inline (GCC statement-expr).
         local le is node[1]
@@ -1211,6 +1319,9 @@ define emit_val(node, nm, bt) as:
             return "({ Value* _x = (" + (emit_val of [node[2], nm, bt]) + "); is_truthy(_x) ? ({ val_decref(_x); (" + (emit_val of [node[3], nm, bt]) + "); }) : _x; })"
         if bop == "or":
             return "({ Value* _x = (" + (emit_val of [node[2], nm, bt]) + "); is_truthy(_x) ? _x : ({ val_decref(_x); (" + (emit_val of [node[3], nm, bt]) + "); }); })"
+        local cn2 is emit_cmp_n of [node, nm, bt, 0]
+        if cn2 != "":
+            return cn2
         return (binfn of bop) + "(" + (emit_val of [node[2], nm, bt]) + ", " + (emit_val of [node[3], nm, bt]) + ")"
     if t == "call":
         local callee is unwrap of node[1]
@@ -1250,9 +1361,17 @@ define emit_val(node, nm, bt) as:
         # back into a list for builtins). A paren-marked list (3-slot node,
         # #355) is itself the single argument.
         local barg is unwrap of node[2]
+        # `dispatch of [table, key, ctx]` with a bare 3-element literal list:
+        # emit the stack-vector form, which avoids a make_list plus a boxed
+        # key on a path DMG executes once per emulated instruction (#130).
+        if (callee[1] == "dispatch") and (barg[0] == "list") and ((len of barg) == 2) and ((len of barg[1]) == 3):
+            if (is_num_expr of [(barg[1])[1], nm, bt]) == 1:
+                return "aot_dispatch(" + (emit_val of [(barg[1])[0], nm, bt]) + ", " + (emit_num of [(barg[1])[1], nm, bt, 0]) + ", " + (emit_val of [(barg[1])[2], nm, bt]) + ")"
         if (barg[0] == "list") and ((len of barg) == 2) and ((len of barg[1]) == 1):
-            return "aot_call_name(__eigs_g, \"" + callee[1] + "\", " + (emit_val of [(barg[1])[0], nm, bt]) + ")"
-        return "aot_call_name(__eigs_g, \"" + callee[1] + "\", " + (emit_val of [node[2], nm, bt]) + ")"
+            local hc1 is ic_cache of 0
+            return "({ " + hc1[0] + "aot_call_name_ic(__eigs_g, \"" + callee[1] + "\", " + (emit_val of [(barg[1])[0], nm, bt]) + ", " + hc1[1] + "); })"
+        local hc2 is ic_cache of 0
+        return "({ " + hc2[0] + "aot_call_name_ic(__eigs_g, \"" + callee[1] + "\", " + (emit_val of [node[2], nm, bt]) + ", " + hc2[1] + "); })"
     throw of ("AOT: cannot emit value node '" + t + "'")
 
 # Render a tensor-valued expression as a C `AotTensor` expr. Producers (matmul/
@@ -1288,9 +1407,118 @@ define emit_tensor(node, nm, bt) as:
             return "aot_treg(aot_tensor_relu(" + (emit_tensor of [elems[0], nm, bt]) + "))"
     throw of ("AOT: cannot emit tensor node '" + t + "'")
 
+# `<expr> OP <numeric>` / `<numeric> OP <expr>` for a comparison, with the
+# numeric side emitted as a C double instead of a boxed literal (#130). DMG's
+# loop is full of `cpu.halted == 1`; the boxed rendering cost a make_num for
+# the literal and another for the result, per conditional. Returns "" when the
+# node is not a one-sided-numeric comparison (both sides numeric is already
+# handled by the fully numeric path; neither side is the general boxed path).
+CMP_OPS is {"==": 1, "!=": 1, "<": 1, ">": 1, "<=": 1, ">=": 1}
+CMPN_R is {"==": "aot_eq_n", "!=": "aot_ne_n", "<": "aot_lt_n", ">": "aot_gt_n", "<=": "aot_le_n", ">=": "aot_ge_n"}
+CMPN_L is {"==": "aot_eq_n", "!=": "aot_ne_n", "<": "aot_lt_nl", ">": "aot_gt_nl", "<=": "aot_le_nl", ">=": "aot_ge_nl"}
+CMPNB_R is {"==": "aot_eq_nb_t", "!=": "aot_ne_nb_t", "<": "aot_lt_nb_t", ">": "aot_gt_nb_t", "<=": "aot_le_nb_t", ">=": "aot_ge_nb_t"}
+CMPNB_L is {"==": "aot_eq_nb_t", "!=": "aot_ne_nb_t", "<": "aot_lt_nlb_t", ">": "aot_gt_nlb_t", "<=": "aot_le_nlb_t", ">=": "aot_ge_nlb_t"}
+
+# `<cvar>.field` where <cvar> is a C Value* name (a dict/buffer/generic local
+# or parameter, never a temporary) -> a BORROWED read: no ref is taken on the
+# target and none on the result. Returns "" when the shape does not apply.
+# A plain C Value* name (dict/buffer/generic local or parameter) is live for
+# the whole statement, so a helper reading a field of it need not take a ref on
+# it. Returns the C name, or "" when the target is a temporary and must be
+# handed an owned ref as before (#130).
+define borrowable_cvar(node, nm, bt) as:
+    local n is unwrap of node
+    if n[0] != "ident":
+        return ""
+    if bt[n[1]] == 1:
+        return cn of n[1]
+    if g_dict[n[1]] == 1:
+        return cn of n[1]
+    if g_genp[n[1]] == 1:
+        return cn of n[1]
+    return ""
+
+define emit_borrow_dot(node, nm, bt) as:
+    local n is unwrap of node
+    if n[0] != "dot":
+        return ""
+    local cv is borrowable_cvar of [n[1], nm, bt]
+    if cv == "":
+        return ""
+    local ic is ic_new of n[2]
+    return "({ " + ic[0] + "aot_dot_borrow_ic(" + cv + ", \"" + (c_escape of n[2]) + "\", " + ic[1] + "); })"
+define emit_cmp_n(node, nm, bt, want_bool) as:
+    local n is unwrap of node
+    if n[0] != "binop":
+        return ""
+    if CMP_OPS[n[1]] != 1:
+        return ""
+    local lnum is is_num_expr of [n[2], nm, bt]
+    local rnum is is_num_expr of [n[3], nm, bt]
+    if lnum == rnum:
+        return ""
+    local fn is ""
+    local boxed is ""
+    local num is ""
+    if rnum == 1:
+        fn is CMPN_R[n[1]]
+        boxed is emit_val of [n[2], nm, bt]
+        num is emit_num of [n[3], nm, bt, 0]
+    else:
+        fn is CMPN_L[n[1]]
+        boxed is emit_val of [n[3], nm, bt]
+        num is emit_num of [n[2], nm, bt, 0]
+    if want_bool == 1:
+        # condition position: if the boxed side is a field of a C variable,
+        # borrow it and do no refcount work at all.
+        local bexpr is ""
+        if rnum == 1:
+            bexpr is emit_val_borrow of [n[2], nm, bt, n[3]]
+        else:
+            bexpr is emit_val_borrow of [n[3], nm, bt, n[2]]
+        if bexpr != "":
+            local bfn is ""
+            if rnum == 1:
+                bfn is CMPNB_R[n[1]]
+            else:
+                bfn is CMPNB_L[n[1]]
+            return bfn + "(" + bexpr + ", " + num + ")"
+        return fn + "_t(" + boxed + ", " + num + ")"
+    return fn + "(" + boxed + ", " + num + ")"
+
+# Does this expression contain a CALL? A borrowed container is only safe while
+# nothing can replace the slot holding it, and a call is the only thing in an
+# operand position that could. C argument evaluation order is unspecified, so
+# the sibling operand is checked, not assumed (#130).
+define expr_has_call(node) as:
+    if (type of node) != "list":
+        return 0
+    if (len of node) == 0:
+        return 0
+    if node[0] == "call":
+        return 1
+    for k in range of (len of node):
+        if (expr_has_call of node[k]) == 1:
+            return 1
+    return 0
+
+# A BORROWED C expression for `node`, or "" when it cannot be borrowed: a plain
+# C Value* variable, or a field of one. `sibling` is the expression evaluated
+# alongside it; if that can call, the borrow is refused.
+define emit_val_borrow(node, nm, bt, sibling) as:
+    if (expr_has_call of sibling) == 1:
+        return ""
+    local cv is borrowable_cvar of [node, nm, bt]
+    if cv != "":
+        return cv
+    return emit_borrow_dot of [node, nm, bt]
+
 define emit_cond(node, nm, bt) as:
     if (is_num_expr of [node, nm, bt]) == 1:
         return "(" + (emit_num of [node, nm, bt, 0]) + " != 0.0)"
+    local cn1 is emit_cmp_n of [node, nm, bt, 1]
+    if cn1 != "":
+        return cn1
     return "aot_truthy(" + (emit_val of [node, nm, bt]) + ")"
 
 # One return statement, honoring the per-call env (#100 item 2): when the
@@ -1344,7 +1572,10 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
             # previous iteration's shadow under iteration carry — exactly
             # like the VM.
             if (len of node) >= 4:
-                return ind + "aot_set(__eigs_l, \"" + name + "\", " + (emit_val of [node[2], nm, bt]) + ");\n"
+                local dc is ic_cache of 0
+                return ind + "{ " + dc[0] + "aot_set_ic(__eigs_l, \"" + name + "\", " + dc[1] + ", " + (emit_val of [node[2], nm, bt]) + "); }\n"
+            if (is_num_expr of [node[2], nm, bt]) == 1:
+                return ind + (env_write_num of [name, (emit_num of [node[2], nm, bt, 0])]) + "\n"
             return ind + "aot_set_sh(__eigs_l, __eigs_g, \"" + name + "\", " + (emit_val of [node[2], nm, bt]) + ");\n"
         if g_tensor[name] == 1:
             return ind + (cn of name) + " = " + (emit_tensor of [node[2], nm, bt]) + ";\n"
@@ -1408,7 +1639,10 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
             if g_traced == 1:
                 asn is asn + ind + "aot_trace_assign(\"" + name + "\", " + (cn of name) + ");\n"
             return asn
-        return ind + "aot_set(" + (envc of name) + ", \"" + name + "\", " + (emit_val of [node[2], nm, bt]) + ");\n"
+        if (is_num_expr of [node[2], nm, bt]) == 1:
+            return ind + (env_write_num of [name, (emit_num of [node[2], nm, bt, 0])]) + "\n"
+        local wc is ic_cache of 0
+        return ind + "{ " + wc[0] + "aot_set_ic(" + (envc of name) + ", \"" + name + "\", " + wc[1] + ", " + (emit_val of [node[2], nm, bt]) + "); }\n"
     if t == "index_assign":
         # Compound form (`l[i] += e`, 5th elem = base op) is not lowered here
         # yet -- node[3] is the RAW rhs, so emitting it as a plain set would be
@@ -1423,6 +1657,11 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
                 return ind + "aot_buf_set(" + (cn of tgt[1]) + ", " + (emit_num of [node[2], nm, bt, 0]) + ", " + (emit_num of [node[3], nm, bt, 0]) + ");\n"
         # general boxed index-assign (#86): list / dict / buffer target as a
         # Value* — aot_index_set mirrors OP_INDEX_SET and consumes/adopts.
+        if (is_num_expr of [node[2], nm, bt]) == 1:
+            local sib is emit_val_borrow of [node[1], nm, bt, [node[2], node[3]]]
+            if sib != "":
+                return ind + "aot_index_set_ib(" + sib + ", " + (emit_num of [node[2], nm, bt, 0]) + ", " + (emit_val of [node[3], nm, bt]) + ");\n"
+            return ind + "aot_index_set_i(" + (emit_val of [node[1], nm, bt]) + ", " + (emit_num of [node[2], nm, bt, 0]) + ", " + (emit_val of [node[3], nm, bt]) + ");\n"
         return ind + "aot_index_set(" + (emit_val of [node[1], nm, bt]) + ", " + (emit_val of [node[2], nm, bt]) + ", " + (emit_val of [node[3], nm, bt]) + ");\n"
     if t == "capbind":
         # (#86) bind a lifted nested-define's captures: alias each captured
@@ -1440,7 +1679,17 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
         # so one case covers both. aot_dot_set consumes the owned target and
         # adopts the owned rhs, mirroring the VM's set-field semantics (null
         # target -> silent no-op; non-dict -> EK_TYPE).
-        return ind + "aot_dot_set(" + (emit_val of [node[1], nm, bt]) + ", \"" + (c_escape of node[2]) + "\", " + (emit_val of [node[3], nm, bt]) + ");\n"
+        # Inline-cached (#130). A rhs the numeric inference can prove scalar
+        # goes through the double-taking setter, which reuses the slot's
+        # existing box instead of allocating and freeing one per write.
+        if (is_num_expr of [node[3], nm, bt]) == 1:
+            local icn is ic_new of node[2]
+            local scv is borrowable_cvar of [node[1], nm, bt]
+            if scv != "":
+                return ind + "{ " + icn[0] + "aot_dot_set_num_tb_ic(" + scv + ", \"" + (c_escape of node[2]) + "\", " + (emit_num of [node[3], nm, bt, 0]) + ", " + icn[1] + "); }\n"
+            return ind + "{ " + icn[0] + "aot_dot_set_num_ic(" + (emit_val of [node[1], nm, bt]) + ", \"" + (c_escape of node[2]) + "\", " + (emit_num of [node[3], nm, bt, 0]) + ", " + icn[1] + "); }\n"
+        local icg is ic_new of node[2]
+        return ind + "{ " + icg[0] + "aot_dot_set_ic(" + (emit_val of [node[1], nm, bt]) + ", \"" + (c_escape of node[2]) + "\", " + (emit_val of [node[3], nm, bt]) + ", " + icg[1] + "); }\n"
     if t == "call":
         local callee is unwrap of node[1]
         if callee[0] == "ident":
@@ -1584,6 +1833,41 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
         # returns early when g_unobserved_depth != 0, so the slot trajectory is
         # untouched, byte-exact with the VM.
         return ind + "g_unobserved_depth += 1;\n" + (emit_stmts of [node[1], ind, nm, bt, minits, gf]) + ind + "g_unobserved_depth -= 1;\n"
+    if t == "match":
+        # `match subj: case P: ... case Q: ...` — first match wins, a null
+        # pattern is the wildcard. Mirrors the interpreter's ntype == "match":
+        # evaluate the subject ONCE, compare with `==` against each pattern in
+        # order, run the first matching body.
+        #
+        # Needed because ouroboros#129 compiles static load_file targets, which
+        # pulls modules into the AOT envelope that were previously interpreted
+        # — DMG's src/opcodes.eigs dispatches registers with five of these.
+        # NUMERIC subjects only; anything else refuses loudly rather than
+        # emitting a comparison whose semantics were never checked.
+        if (is_num_expr of [node[1], nm, bt]) != 1:
+            throw of "AOT: `match` on a non-numeric subject is not supported"
+        local mcases is node[2]
+        local msub is "__m" + (str of g_match_n)
+        g_match_n is g_match_n + 1
+        local mout is ind + "{ double " + msub + " = " + (emit_num of [node[1], nm, bt, 0]) + ";\n"
+        local mfirst is 1
+        local mi is 0
+        loop while mi < (len of mcases):
+            local mpair is mcases[mi]
+            local mpat is mpair[0]
+            local mbody is mpair[1]
+            if mpat == null:
+                mout is mout + ind + "    else {\n" + (emit_stmts of [mbody, ind + "        ", nm, bt, minits, gf]) + ind + "    }\n"
+            else:
+                if (is_num_expr of [mpat, nm, bt]) != 1:
+                    throw of "AOT: `match` case pattern must be numeric"
+                local mkw is "if"
+                if mfirst == 0:
+                    mkw is "else if"
+                mout is mout + ind + "    " + mkw + " (" + msub + " == " + (emit_num of [mpat, nm, bt, 0]) + ") {\n" + (emit_stmts of [mbody, ind + "        ", nm, bt, minits, gf]) + ind + "    }\n"
+                mfirst is 0
+            mi is mi + 1
+        return mout + ind + "}\n"
     throw of ("AOT: cannot emit statement node '" + t + "'")
 
 # ---- buffer value-bound inference (for guard elision in vectorized maps) ----
@@ -2756,6 +3040,39 @@ STR_ARG_BUILTINS is {"split": 1, "trim": 1, "substr": 1, "str_replace": 1, "cont
 # Direct numeric evidence: arithmetic/comparison operand or index
 # expression. Deliberately does NOT count "passed to a numeric param"
 # (see local_gen_map).
+# Is `name` handed to a call as (or inside) an argument? Passing it to a
+# callee whose parameter is numeric is numeric evidence that
+# find_numeric_use_direct deliberately does not count, and the ptypes fixpoint
+# cannot be consulted from inside func_ptypes without circularity. Used only to
+# hold back the value-reference boxing below (#130) — conservative in the safe
+# direction: a param that is passed onward keeps whatever the body inferred.
+define param_in_call_arg(node, name) as:
+    if (type of node) != "list":
+        return 0
+    if (len of node) == 0:
+        return 0
+    if node[0] == "call":
+        if (contains_ident of [node[2], name]) == 1:
+            return 1
+    for k in range of (len of node):
+        if (param_in_call_arg of [node[k], name]) == 1:
+            return 1
+    return 0
+
+define contains_ident(node, name) as:
+    if (type of node) != "list":
+        return 0
+    if (len of node) == 0:
+        return 0
+    if node[0] == "ident":
+        if node[1] == name:
+            return 1
+        return 0
+    for k in range of (len of node):
+        if (contains_ident of [node[k], name]) == 1:
+            return 1
+    return 0
+
 define find_numeric_use_direct(node, name) as:
     if (type of node) != "list":
         return 0
@@ -2842,6 +3159,53 @@ define scan_arg_overrides(node) as:
 # tokenizer's `parts[0] == "p"` is a list of strings. Demoting only on
 # this evidence keeps every numeric program on the unboxed fast path, so
 # the change cannot regress the numeric benchmarks.
+# Does any `name[i]` READ appear in a genuinely numeric position — an
+# arithmetic/comparison operand, or an index expression? (#86 element-class.)
+#
+# `find_buffer_use` assigns "buf" from index USAGE alone, and the unboxed
+# read it emits (aot_buf_get_i -> aot_list_num_at) EXITS on a non-numeric
+# element. `elem_is_boxed_use` demotes that, but only on shapes that touch
+# the element directly (x[i].f, x[i][j], for y in x[i]) — so a function whose
+# only use is PASSING x[i] to another function kept the unboxed read.
+#
+# DMG hits exactly that: `_op_ld_bc_d16(ctx)` does
+# `set_bc of [ctx[0], fetch16 of [ctx[0], ctx[1]]]` and never touches the
+# element itself, so `ctx` stayed "buf" and the emulator died on
+# `non-numeric element in ctx[0] (dict)` — while sibling handlers doing
+# `ctx[0].sp` were demoted correctly. Same param, same value, two classes.
+#
+# The asymmetry decides the default: a wrong "buf" is a crash or a wrong
+# read, a wrong "gen" is one boxed access. So an element read that is never
+# used numerically demotes, rather than requiring proof that it is boxed.
+define elem_has_numeric_use(node, name) as:
+    if (type of node) != "list":
+        return 0
+    if (len of node) == 0:
+        return 0
+    # DIRECT operands only. `contains_index_of` descends into call arguments,
+    # so `(get_bc of ctx[0]) + 1` counted ctx[0] as numerically used when the
+    # numeric thing is the CALL RESULT — that false positive kept six DMG
+    # handlers on the unboxed read. The element itself must be the operand.
+    if node[0] == "binop":
+        if (is_index_of of [node[2], name]) == 1:
+            return 1
+        if (is_index_of of [node[3], name]) == 1:
+            return 1
+    if node[0] == "unop":
+        if (is_index_of of [node[2], name]) == 1:
+            return 1
+    # y[ x[i] ] — the element is used as an index, which must be a number
+    if (node[0] == "index") or (node[0] == "index_assign"):
+        if (is_index_of of [node[2], name]) == 1:
+            return 1
+    local k is 0
+    loop while k < (len of node):
+        if (type of node[k]) == "list":
+            if (elem_has_numeric_use of [node[k], name]) == 1:
+                return 1
+        k is k + 1
+    return 0
+
 define elem_is_boxed_use(node, name) as:
     if (type of node) != "list":
         return 0
@@ -2987,8 +3351,26 @@ define func_ptypes(fn) as:
     local params is fn[2]
     local body is fn[3]
     local pt is []
+    # Referenced as a VALUE somewhere in the program? Then its call sites are
+    # not statically visible and the body licenses no narrowing: the default
+    # "num" would have the wrapper coerce a non-number argument to 0.0 while
+    # the VM passes it through (ouroboros#130, aot/test/t88_dispatch.eigs).
+    # Applied HERE rather than at the single build site because the ptypes
+    # fixpoint re-derives them up to four times.
+    local fnval is 0
+    if g_fnval_params[fn[1]] == 1:
+        fnval is 1
     for p in range of (len of params):
         local cls is "num"
+        if fnval == 1:
+            # Box only when the BODY gives no evidence the parameter must be a
+            # double: not an arithmetic/index operand, and not handed onward to
+            # a call. `define h(ctx) as: return ctx` and `define _op_nop(ctx)
+            # as: return 4` qualify — and those are exactly the shapes whose
+            # wrapper coerced a dict or list argument to 0.0.
+            if (find_numeric_use_direct of [body, params[p]]) == 0:
+                if (param_in_call_arg of [body, params[p]]) == 0:
+                    cls is "gen"
         if (uses_as_dot of [body, params[p]]) == 1:
             cls is "dict"
         elif (uses_as_tensor_arg of [body, params[p]]) == 1:
@@ -3002,6 +3384,10 @@ define func_ptypes(fn) as:
             # path. Demotion needs positive evidence, so numeric code is
             # untouched.
             if (elem_is_boxed_use of [body, params[p]]) == 1:
+                cls is "gen"
+            elif (elem_has_numeric_use of [body, params[p]]) == 0:
+                # indexable, but nothing ever uses an element as a number —
+                # take the boxed read rather than betting on it (#86).
                 cls is "gen"
         elif (find_buf_param_use of [body, params[p]]) == 1:
             cls is "buf"
@@ -3158,6 +3544,20 @@ define local_gen_map_seeded(body, seed) as:
             local r is unwrap of rhss[j]
             if (len of r) > 0:
                 if (r[0] == "str") or (r[0] == "dict") or (r[0] == "list"):
+                    isgen is 1
+                # An INDEX read is boxed evidence (#86). `rom_path is argv[0]`
+                # yields a str, but an index node was not evidence of anything,
+                # so the name stayed unclassified, `load_rom`'s `path` kept its
+                # num default, and the call emitted aot_num_ck_at on a string —
+                # DMG died at `name rom_path (type str)` the moment #129 made
+                # load_rom a COMPILED function instead of an interpreted one.
+                #
+                # Safe by the same veto every other signal here relies on:
+                # find_numeric_use_direct below drops any name with direct
+                # arithmetic use, so `x is buf[i]` followed by `x + 1` is not
+                # widened. Over-widening costs a boxed read; UNDER-widening is
+                # a wrong emission, which is the asymmetry this pass exists for.
+                if r[0] == "index":
                     isgen is 1
                 if r[0] == "call":
                     local rc is unwrap of r[1]
@@ -4507,6 +4907,13 @@ define emit_program(ast) as:
         for j in range of (len of lan):
             lbound[(lan[j])] is 1
         lift_nested of [lf[3], lbound, funcs]
+    # Which functions are referenced as VALUES? Scan every function body and
+    # the module-level statements, AFTER nested lifting so lifted bodies are
+    # in `funcs`. Must run before the ptypes build below reads it.
+    g_fnval_params is {}
+    for k in range of (len of funcs):
+        collect_fn_value_refs of [(funcs[k])[3], g_func_names, g_fnval_params]
+    collect_fn_value_refs of [rest, g_func_names, g_fnval_params]
     for k in range of (len of funcs):
         local fn is funcs[k]
         local pt is func_ptypes of fn
@@ -4740,7 +5147,12 @@ define emit_program(ast) as:
             throw of ("AOT: function '" + wn + "' used as a value must take exactly one parameter")
         local warg is "__a"
         if (wpt[0]) == "num":
-            warg is "((__a && __a->type == VAL_NUM) ? __a->data.num : 0.0)"
+            # NOT a silent coercion. A non-number here used to become 0.0 while
+            # the VM went on using the value (#130); the whole F-OURO-29 /
+            # #100-item-4 family is the same shape and the same answer applies:
+            # a loud death beats a coercing guess. Borrowed, per the builtin
+            # argument convention — this must not consume __a.
+            warg is "aot_num_ck_bat(__a, \"" + (c_escape of wn) + " parameter\")"
         local wcall is (cn of wn) + "(" + warg + ")"
         wprotos is wprotos + "static Value* __wrap_" + (cn of wn) + "(Value* __a);\n"
         if (wi["ret"]) == "double":
@@ -4753,6 +5165,81 @@ define emit_program(ast) as:
     local ftr is "    aot_shutdown(__eigs_g);\n    return 0;\n}\n"
     return hdr + body + ftr
 
+# ---- ouroboros#129: compile static `load_file` targets --------------------
+#
+# `load_file of "<literal>"` used to be emitted as a RUNTIME call, so the
+# target was parsed and INTERPRETED by the linked VM while its parent ran as
+# compiled C. That is the seam six separate defects came from (#127, #121,
+# EigenScript#1046/#373), and it is why the AOT cannot accelerate any program
+# that modularises its hot path: DMG is 3,288 lines of which 2,470 — including
+# the 128-function opcode dispatch — live behind this call.
+#
+# A literal target is spliced into the compilation unit instead. emit_program
+# already splits `func` nodes out of the top-level block and hoists them, so
+# the child's definitions become visible to the parent and vice versa, which
+# is exactly load_file's scope behaviour.
+#
+# A COMPUTED path stays a runtime call: that is a genuinely dynamic load and
+# the hybrid is correct for it.
+define _lf_dirname(p) as:
+    local i is (len of p) - 1
+    loop while i >= 0:
+        if (char_at of [p, i]) == "/":
+            return substr of [p, 0, i + 1]
+        i is i - 1
+    return ""
+
+# The literal path if `st` is `load_file of "<str>"`, else null.
+define _lf_target(st) as:
+    local u is unwrap of st
+    if u[0] != "call":
+        return null
+    local callee is unwrap of u[1]
+    if callee[0] != "ident":
+        return null
+    if callee[1] != "load_file":
+        return null
+    local a is unwrap of u[2]
+    if a[0] != "str":
+        return null
+    return a[1]
+
+define splice_static_loads(blk, base, depth) as:
+    if depth > 16:
+        throw of "AOT: load_file nesting deeper than 16 — cyclic load?"
+    local out is []
+    local stmts is blk[1]
+    for i in range of (len of stmts):
+        local st is stmts[i]
+        local path is _lf_target of st
+        if path == null:
+            append of [out, st]
+        else:
+            # BEST-EFFORT, and that is the design rather than a shortcut.
+            # The VM resolves load_file through a CHAIN: script-dir first,
+            # then the exe-dir stdlib step (g_exe_dir/../<path>, which is how
+            # `load_file of "lib/int_vector.eigs"` finds the stdlib). This
+            # pass can only resolve the script-dir step — it has no idea what
+            # the built binary's exe dir will be — so anything it cannot read
+            # STAYS a runtime call and behaves exactly as it does today.
+            #
+            # Caught by t76_load_file_paths, which exercises both prongs: the
+            # first version threw on an unresolvable path and turned a passing
+            # stdlib load into a build failure.
+            local full is (_lf_dirname of base) + path
+            local csrc is read_text of full
+            if csrc == null:
+                append of [out, st]
+            elif (len of csrc) == 0:
+                append of [out, st]
+            else:
+                local cast is eigen_parse of (eigen_tokenize of csrc)
+                local sp is splice_static_loads of [cast, full, depth + 1]
+                local cs is sp[1]
+                for k in range of (len of cs):
+                    append of [out, cs[k]]
+    return ["block", out]
+
 # ---- driver ----
 argv is args of null
 src is read_text of argv[0]
@@ -4761,6 +5248,7 @@ if (len of argv) > 1:
         g_dump is 1
 toks is eigen_tokenize of src
 ast is eigen_parse of toks
+ast is splice_static_loads of [ast, argv[0], 0]
 gen_c is emit_program of ast
 if g_dump == 1:
     # deterministic inference report (#65): header + D records, no C output.

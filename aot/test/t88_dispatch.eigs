@@ -1,0 +1,66 @@
+# `dispatch of [table, key, ctx]` — ouroboros#130.
+#
+# THE POINT OF THIS FIXTURE is that the AOT stopped heap-allocating the
+# argument vector for this call. builtin_dispatch reads items[0..2] and hands
+# the handler items[2] alone, so the AOT now passes a STACK vector carrying
+# the runtime's arena=1 "not refcount-managed" flag. That is an ownership
+# change on a hot path, and before this fixture existed NO AOT test called
+# `dispatch` at all — the whole path was outside the differential.
+#
+# So exercise the ownership corners, not just the happy path:
+#   - a handler that RETURNS ITS OWN ARGUMENT (the raw-borrow case
+#     builtin_dispatch deliberately leaves for the caller to settle);
+#   - a handler that returns a fresh container, and one that returns a scalar;
+#   - keys that miss (out of range, and a null table entry) -> null, not death;
+#   - a table entry that is a user fn as well as ones that are builtins;
+#   - dispatch nested inside dispatch, so a stack vector is live across a
+#     second one and cannot be a single shared static.
+
+define h_scalar(ctx) as:
+    return (ctx[0]) * 10
+
+define h_passthru(ctx) as:
+    # returns the argument itself — res == ctx
+    return ctx
+
+define h_fresh(ctx) as:
+    return [(ctx[0]) + 1, (ctx[0]) + 2]
+
+define h_nested(ctx) as:
+    # a second dispatch while this one's vector is still live
+    return dispatch of [table, 0, [(ctx[0]) * 2]]
+
+table is []
+append of [table, h_scalar]
+append of [table, h_passthru]
+append of [table, h_fresh]
+append of [table, h_nested]
+append of [table, null]
+
+print of (dispatch of [table, 0, [4]])
+print of (dispatch of [table, 1, [7]])
+print of (dispatch of [table, 2, [7]])
+print of (dispatch of [table, 3, [6]])
+
+# a null entry and an out-of-range key both answer null
+print of (dispatch of [table, 4, [1]])
+print of (dispatch of [table, 99, [1]])
+print of (dispatch of [table, 0 - 3, [1]])
+
+# the passthru result is a live, usable value after the call returns
+kept is dispatch of [table, 1, [11, 12]]
+print of (len of kept)
+print of (kept[1])
+
+# hammer it so a refcount error on the borrow path shows up as a crash or a
+# wrong number rather than passing on one lucky iteration
+total is 0
+i is 0
+loop while i < 200:
+    total is total + (dispatch of [table, 0, [i]])
+    r is dispatch of [table, 1, [i]]
+    total is total + (r[0])
+    f is dispatch of [table, 2, [i]]
+    total is total + (f[1])
+    i is i + 1
+print of total
