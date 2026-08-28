@@ -173,6 +173,48 @@ define has_obs_interrogate(node) as:
             return 1
     return 0
 
+# Functions referenced as VALUES (put in a dispatch table, passed to sort_by,
+# stored in a dict). Their call sites are not statically visible, so nothing in
+# the body licenses a narrowed parameter type: `define h(ctx) as: return ctx`
+# reads as numeric, and the wrapper then coerced a list argument to 0.0 while
+# the VM returned the list (found by aot/test/t88_dispatch.eigs, ouroboros#130).
+# Over-approximating is safe: it only forces a parameter to stay boxed.
+g_fnval_params is {}
+define collect_fn_value_refs(node, fnames, out) as:
+    if (type of node) != "list":
+        return 0
+    if (len of node) == 0:
+        return 0
+    if node[0] == "ident":
+        if fnames[node[1]] == 1:
+            out[node[1]] is 1
+        return 0
+    if node[0] == "interrogate":
+        # `what is g` asks ABOUT the binding; a bare name here is not passed
+        # anywhere. Descend only into the non-subject slots.
+        local isub is unwrap of node[2]
+        if isub[0] != "ident":
+            collect_fn_value_refs of [node[2], fnames, out]
+        return 0
+    if node[0] == "call":
+        local cal is unwrap of node[1]
+        # `<predicate> of g` — the #708 opaque band. The VM answers about the
+        # BINDING; nothing is passed to a caller, so this is not a value
+        # reference (t87_observer_named_fn, which this walker first broke).
+        local carg is unwrap of node[2]
+        if cal[0] == "predicate":
+            if carg[0] != "ident":
+                collect_fn_value_refs of [node[2], fnames, out]
+            return 0
+        # the callee of a direct call is a CALL, not a value reference
+        if cal[0] != "ident":
+            collect_fn_value_refs of [node[1], fnames, out]
+        collect_fn_value_refs of [node[2], fnames, out]
+        return 0
+    for k in range of (len of node):
+        collect_fn_value_refs of [node[k], fnames, out]
+    return 0
+
 # Set of user-defined numeric functions (name -> 1). A call to one is numeric;
 # emitted as a native C `double name(double, ...)` call. Set in emit_program.
 g_funcs is {}
@@ -1304,6 +1346,12 @@ define emit_val(node, nm, bt) as:
         # back into a list for builtins). A paren-marked list (3-slot node,
         # #355) is itself the single argument.
         local barg is unwrap of node[2]
+        # `dispatch of [table, key, ctx]` with a bare 3-element literal list:
+        # emit the stack-vector form, which avoids a make_list plus a boxed
+        # key on a path DMG executes once per emulated instruction (#130).
+        if (callee[1] == "dispatch") and (barg[0] == "list") and ((len of barg) == 2) and ((len of barg[1]) == 3):
+            if (is_num_expr of [(barg[1])[1], nm, bt]) == 1:
+                return "aot_dispatch(" + (emit_val of [(barg[1])[0], nm, bt]) + ", " + (emit_num of [(barg[1])[1], nm, bt, 0]) + ", " + (emit_val of [(barg[1])[2], nm, bt]) + ")"
         if (barg[0] == "list") and ((len of barg) == 2) and ((len of barg[1]) == 1):
             local hc1 is ic_cache of 0
             return "({ " + hc1[0] + "aot_call_name_ic(__eigs_g, \"" + callee[1] + "\", " + (emit_val of [(barg[1])[0], nm, bt]) + ", " + hc1[1] + "); })"
@@ -2860,6 +2908,39 @@ STR_ARG_BUILTINS is {"split": 1, "trim": 1, "substr": 1, "str_replace": 1, "cont
 # Direct numeric evidence: arithmetic/comparison operand or index
 # expression. Deliberately does NOT count "passed to a numeric param"
 # (see local_gen_map).
+# Is `name` handed to a call as (or inside) an argument? Passing it to a
+# callee whose parameter is numeric is numeric evidence that
+# find_numeric_use_direct deliberately does not count, and the ptypes fixpoint
+# cannot be consulted from inside func_ptypes without circularity. Used only to
+# hold back the value-reference boxing below (#130) — conservative in the safe
+# direction: a param that is passed onward keeps whatever the body inferred.
+define param_in_call_arg(node, name) as:
+    if (type of node) != "list":
+        return 0
+    if (len of node) == 0:
+        return 0
+    if node[0] == "call":
+        if (contains_ident of [node[2], name]) == 1:
+            return 1
+    for k in range of (len of node):
+        if (param_in_call_arg of [node[k], name]) == 1:
+            return 1
+    return 0
+
+define contains_ident(node, name) as:
+    if (type of node) != "list":
+        return 0
+    if (len of node) == 0:
+        return 0
+    if node[0] == "ident":
+        if node[1] == name:
+            return 1
+        return 0
+    for k in range of (len of node):
+        if (contains_ident of [node[k], name]) == 1:
+            return 1
+    return 0
+
 define find_numeric_use_direct(node, name) as:
     if (type of node) != "list":
         return 0
@@ -3138,8 +3219,26 @@ define func_ptypes(fn) as:
     local params is fn[2]
     local body is fn[3]
     local pt is []
+    # Referenced as a VALUE somewhere in the program? Then its call sites are
+    # not statically visible and the body licenses no narrowing: the default
+    # "num" would have the wrapper coerce a non-number argument to 0.0 while
+    # the VM passes it through (ouroboros#130, aot/test/t88_dispatch.eigs).
+    # Applied HERE rather than at the single build site because the ptypes
+    # fixpoint re-derives them up to four times.
+    local fnval is 0
+    if g_fnval_params[fn[1]] == 1:
+        fnval is 1
     for p in range of (len of params):
         local cls is "num"
+        if fnval == 1:
+            # Box only when the BODY gives no evidence the parameter must be a
+            # double: not an arithmetic/index operand, and not handed onward to
+            # a call. `define h(ctx) as: return ctx` and `define _op_nop(ctx)
+            # as: return 4` qualify — and those are exactly the shapes whose
+            # wrapper coerced a dict or list argument to 0.0.
+            if (find_numeric_use_direct of [body, params[p]]) == 0:
+                if (param_in_call_arg of [body, params[p]]) == 0:
+                    cls is "gen"
         if (uses_as_dot of [body, params[p]]) == 1:
             cls is "dict"
         elif (uses_as_tensor_arg of [body, params[p]]) == 1:
@@ -4676,6 +4775,13 @@ define emit_program(ast) as:
         for j in range of (len of lan):
             lbound[(lan[j])] is 1
         lift_nested of [lf[3], lbound, funcs]
+    # Which functions are referenced as VALUES? Scan every function body and
+    # the module-level statements, AFTER nested lifting so lifted bodies are
+    # in `funcs`. Must run before the ptypes build below reads it.
+    g_fnval_params is {}
+    for k in range of (len of funcs):
+        collect_fn_value_refs of [(funcs[k])[3], g_func_names, g_fnval_params]
+    collect_fn_value_refs of [rest, g_func_names, g_fnval_params]
     for k in range of (len of funcs):
         local fn is funcs[k]
         local pt is func_ptypes of fn
@@ -4909,7 +5015,12 @@ define emit_program(ast) as:
             throw of ("AOT: function '" + wn + "' used as a value must take exactly one parameter")
         local warg is "__a"
         if (wpt[0]) == "num":
-            warg is "((__a && __a->type == VAL_NUM) ? __a->data.num : 0.0)"
+            # NOT a silent coercion. A non-number here used to become 0.0 while
+            # the VM went on using the value (#130); the whole F-OURO-29 /
+            # #100-item-4 family is the same shape and the same answer applies:
+            # a loud death beats a coercing guess. Borrowed, per the builtin
+            # argument convention — this must not consume __a.
+            warg is "aot_num_ck_bat(__a, \"" + (c_escape of wn) + " parameter\")"
         local wcall is (cn of wn) + "(" + warg + ")"
         wprotos is wprotos + "static Value* __wrap_" + (cn of wn) + "(Value* __a);\n"
         if (wi["ret"]) == "double":

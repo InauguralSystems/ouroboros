@@ -771,6 +771,17 @@ static double aot_num_ck_at(Value *v, const char *site) {
     return d;
 }
 
+/* Checked unbox that does NOT consume — the boxed-wrapper argument convention
+ * borrows __a. Same diagnostic as aot_num_ck_at. */
+static double aot_num_ck_bat(Value *v, const char *site) {
+    if (!v || v->type != VAL_NUM) {
+        fprintf(stderr, "non-numeric value in a numeric context at %s (type %s)\n",
+                site, v ? val_type_name(v->type) : "null");
+        exit(1);
+    }
+    return v->data.num;
+}
+
 static double aot_num_ck(Value *v) {
     if (!v || v->type != VAL_NUM) {
         fprintf(stderr, "non-numeric value in a numeric context (type %d; the VM raises here)\n",
@@ -1426,6 +1437,50 @@ static Value *aot_iter_get(Value *v, long k) {   /* owned element k */
  * version guard covers rebinding of user functions, so the cached callee
  * cannot go stale unnoticed. */
 static Value *aot_call_name_ic(Env *g, const char *name, Value *arg, AotNameIC *c);
+
+/* `dispatch of [table, key, ctx]` without heap-allocating the argument vector
+ * (#130). Measured on DMG: builtin_dispatch is 27.7% of total runtime with
+ * children, and every emulated instruction paid a make_list(3) plus a
+ * make_num for the key before any emulation happened.
+ *
+ * builtin_dispatch reads items[0..2], validates, and calls the handler with
+ * items[2] ALONE — the vector never escapes it — so the vector can live on
+ * the stack. Both stack Values carry arena=1, which is the runtime's existing
+ * "not refcount-managed" flag: val_incref/val_decref are no-ops on them, and
+ * anything that tried to retain one would go through promote_if_arena and get
+ * a heap copy instead of a dangling stack pointer.
+ *
+ * Consumes table and ctx and returns owned, matching aot_call_name. The
+ * res == ctx case is builtin_dispatch's documented raw borrow (it passes
+ * caller_owns_arg=1 to vm_borrow_compensate precisely so the caller settles
+ * it), so ctx's ref transfers to the result instead of being dropped. */
+static Value *aot_dispatch(Value *table, double key, Value *ctx) {
+    Value keyv;
+    memset(&keyv, 0, sizeof keyv);
+    keyv.type = VAL_NUM; keyv.data.num = key; keyv.arena = 1;
+
+    Value *items[3] = { table, &keyv, ctx };
+    Value lst;
+    memset(&lst, 0, sizeof lst);
+    lst.type = VAL_LIST; lst.arena = 1;
+    lst.data.list.items = items; lst.data.list.count = 3; lst.data.list.capacity = 3;
+
+    Value *res = builtin_dispatch(&lst);
+    if (g_exit_requested) exit(g_exit_code);
+    if (g_has_error) aot_error_exit();
+    /* aot_call_name's direct-borrow compensation, verbatim: incref a result
+     * that IS one of the argument-vector elements, then release the vector's
+     * refs. Whether the handler returned a raw borrow (a builtin: see
+     * builtin_dispatch's caller_owns_arg=1) or a fresh ref (a user fn), this
+     * is what the aot_call_name path this replaces already did — matching it
+     * is the point, so the substitution cannot introduce a new divergence.
+     * &keyv is unreachable as a result: builtin_dispatch hands the handler
+     * items[2] alone. */
+    if (res == ctx || res == table) val_incref(res);
+    val_decref(table);
+    val_decref(ctx);
+    return res ? res : make_null();
+}
 
 static Value *aot_call_name(Env *g, const char *name, Value *arg) {
     Value *fn = env_get(g, name);
