@@ -1,0 +1,31 @@
+# An UNSET frame local passed as a call argument — ouroboros#132.
+#
+# THE POINT OF THIS FIXTURE is that this SEGFAULTED before #132, and nothing
+# in the suite noticed. The borrowed call-argument read went through
+# aot_getb_ic, whose documented contract is "env_get's NULL-on-miss" — it
+# returns a C NULL pointer, not a null Value. Handed to a callee that
+# dereferences it, that is a wild pointer:
+#
+#   VM       exit 1, "len: null has no length"
+#   AOT pre  exit 139, Segmentation fault (core dumped)
+#   AOT post exit 1, matching the VM
+#
+# `x` is bound only on the n > 0 branch, so `f of 0` reads it unset. That is
+# ordinary EigenScript — `if` creates no scope and a read before the first
+# assignment is a null, not an error — which is why the crash was reachable
+# from plain code rather than a corner.
+#
+# Both sides must die with the same code and a normalized message. Verified to
+# FAIL on the pre-#132 tree (rc 139 vs 1) and pass after, so it is a guard with
+# a demonstrated fault class rather than a decoration.
+
+define g(d) as:
+    return (len of d)
+
+define f(n) as:
+    if n > 0:
+        x is {"a": 1, "b": 2}
+    return g of x
+
+print of (f of 1)
+print of (f of 0)

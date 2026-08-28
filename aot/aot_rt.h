@@ -897,6 +897,56 @@ static double aot_num_ck(Value *v) {
     return d;
 }
 
+/* ---- LOWERED FRAME LOCALS (#132) ------------------------------------------
+ * A function's boxed locals used to live in a per-call `Env* __eigs_l`, so
+ * every read and write paid a name lookup — 16% of DMG's runtime across
+ * aot_get_ic / aot_set_ic / env_set_local_hashed / env_decref even with a
+ * per-site inline cache in front of it. The names are private to one call and
+ * statically known, so they can simply be C variables.
+ *
+ * They are lowered to EigsSlot, NOT Value*. That is the whole point: an env
+ * slot is NaN-boxed, so a number lives there UNBOXED, and lowering to Value*
+ * would reintroduce a malloc/free per numeric assignment — trading a lookup
+ * for an allocation and losing. An EigsSlot is a plain 8-byte union that GCC
+ * register-allocates, so the representation is preserved exactly and only the
+ * lookup disappears.
+ *
+ * GET_LOCAL semantics are preserved: an unset local is slot_null(), and
+ * slot_to_value turns that into a fresh null Value — the same answer aot_get
+ * gave for a miss. Lowering is refused for any function carrying a boxed
+ * module shadow, because #86's aot_get_sh dispatches on binding PRESENCE in
+ * __eigs_l and a C variable has no presence to test. `when is x` reads
+ * assign_counts, which a C local does not have — but a `when` qualifier parses
+ * to an interrogate node, and env-locals only exist when the body has none
+ * (g_traced == 0), so no lowered function can observe it. */
+static inline Value *aot_lv_get(EigsSlot *s) {      /* owned; miss -> null */
+    return slot_to_value(*s);
+}
+static inline Value *aot_lv_getb(EigsSlot *s) {     /* borrowed, like env_get */
+    if (slot_is_ptr(*s)) return slot_as_ptr(*s);
+    Value *v = slot_to_value(*s);
+    slot_decref(*s);
+    *s = slot_from_heap(v);                          /* the local now owns it */
+    return v;
+}
+static inline void aot_lv_set(EigsSlot *s, Value *val) {   /* adopts val */
+    Value *p = promote_if_arena(val);
+    if (p == val) val_incref(p);
+    EigsSlot ns = slot_from_value(p);
+    slot_decref(*s);
+    *s = ns;
+    val_decref(val);
+}
+static inline void aot_lv_set_num(EigsSlot *s, double d) {
+    slot_decref(*s);
+    *s = slot_from_num(num_guard(d));
+}
+static inline double aot_lv_num(EigsSlot *s, const char *site) {
+    if (slot_is_num(*s)) return s->d;
+    return aot_num_ck_at(slot_to_value(*s), site);
+}
+
+
 /* ---- numeric env access straight through the NaN-boxed slot (#130) --------
  * An env slot holds a number as an IMMEDIATE double (value_slot.h); only heap
  * types are pointers. The Value-level accessors round-trip through a box in

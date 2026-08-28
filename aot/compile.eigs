@@ -274,6 +274,11 @@ g_genp is {}
 # are GET_NAME (miss -> 'undefined variable', loud).
 g_envloc is {}
 g_envactive is 0
+# #132: when set, the function's env-locals are lowered to C EigsSlot variables
+# and no per-call Env is allocated. Whitelist, not blacklist — see aot_rt.h.
+g_lowerloc is 0
+define lv(name) as:
+    return "__lv_" + (cn of name)
 # numeric `local` shadows of module globals in the CURRENT function (#109):
 # emit_stmt declares these at the `local` statement's site (C block scope).
 g_locshadow is {}
@@ -289,6 +294,8 @@ define envc(name) as:
 define env_read(name) as:
     if g_boxshadow[name] == 1:
         return "aot_get_sh(__eigs_l, __eigs_g, \"" + name + "\")"
+    if (g_lowerloc == 1) and (g_envloc[name] == 1):
+        return "aot_lv_get(&" + (lv of name) + ")"
     local hp is ic_cache of 0
     if g_envloc[name] == 1:
         return "({ " + hp[0] + "aot_get_ic(__eigs_l, \"" + name + "\", " + hp[1] + "); })"
@@ -302,6 +309,8 @@ define ic_cache(tag) as:
     G_IC_N[0] is (G_IC_N[0]) + 1
     return ["static AotNameIC __n" + hn + " = {0}; ", "&__n" + hn]
 define env_read_num(name, site) as:
+    if (g_lowerloc == 1) and (g_envloc[name] == 1) and (g_boxshadow[name] != 1):
+        return "aot_lv_num(&" + (lv of name) + ", " + site + ")"
     if g_boxshadow[name] == 1:
         local hs is ic_hash_only of 0
         return "({ " + hs[0] + "aot_get_num_sh(__eigs_l, __eigs_g, \"" + name + "\", " + hs[1] + ", " + site + "); })"
@@ -314,6 +323,8 @@ define ic_hash_only(tag) as:
     G_IC_N[0] is (G_IC_N[0]) + 1
     return ["static uint32_t __h" + hn + " = 0; ", "&__h" + hn]
 define env_write_num(name, dexpr) as:
+    if (g_lowerloc == 1) and (g_envloc[name] == 1) and (g_boxshadow[name] != 1):
+        return "aot_lv_set_num(&" + (lv of name) + ", " + dexpr + ");"
     if g_boxshadow[name] == 1:
         local hs is ic_hash_only of 0
         return "{ " + hs[0] + "aot_set_num_sh(__eigs_l, __eigs_g, \"" + name + "\", " + hs[1] + ", " + dexpr + "); }"
@@ -323,6 +334,8 @@ define env_write_num(name, dexpr) as:
 define env_readb(name) as:
     if g_boxshadow[name] == 1:
         return "aot_getb_sh(__eigs_l, __eigs_g, \"" + name + "\")"
+    if (g_lowerloc == 1) and (g_envloc[name] == 1):
+        return "aot_lv_getb(&" + (lv of name) + ")"
     local hp is ic_cache of 0
     if g_envloc[name] == 1:
         return "({ " + hp[0] + "aot_getb_ic(__eigs_l, \"" + name + "\", " + hp[1] + "); })"
@@ -1532,7 +1545,13 @@ define emit_return(ctype, expr, ind, pre) as:
     local s is ind + "{ " + ctype + " _rv = " + expr + ";"
     if pre != "":
         s is s + " " + pre
-    if g_envactive == 1:
+    if g_lowerloc == 1:
+        # #132: the frame env was lowered to C slots — release each one on
+        # this return path, in place of the single env_decref.
+        local rlvn is keys of g_envloc
+        for rk in range of (len of rlvn):
+            s is s + " slot_decref(" + (lv of (rlvn[rk])) + ");"
+    elif g_envactive == 1:
         s is s + " env_decref(__eigs_l);"
     return s + " return _rv; }\n"
 
@@ -1572,6 +1591,8 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
             # previous iteration's shadow under iteration carry — exactly
             # like the VM.
             if (len of node) >= 4:
+                if (g_lowerloc == 1) and (g_envloc[name] == 1):
+                    return ind + "aot_lv_set(&" + (lv of name) + ", " + (emit_val of [node[2], nm, bt]) + ");\n"
                 local dc is ic_cache of 0
                 return ind + "{ " + dc[0] + "aot_set_ic(__eigs_l, \"" + name + "\", " + dc[1] + ", " + (emit_val of [node[2], nm, bt]) + "); }\n"
             if (is_num_expr of [node[2], nm, bt]) == 1:
@@ -1641,6 +1662,8 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
             return asn
         if (is_num_expr of [node[2], nm, bt]) == 1:
             return ind + (env_write_num of [name, (emit_num of [node[2], nm, bt, 0])]) + "\n"
+        if (g_lowerloc == 1) and (g_envloc[name] == 1):
+            return ind + "aot_lv_set(&" + (lv of name) + ", " + (emit_val of [node[2], nm, bt]) + ");\n"
         local wc is ic_cache of 0
         return ind + "{ " + wc[0] + "aot_set_ic(" + (envc of name) + ", \"" + name + "\", " + wc[1] + ", " + (emit_val of [node[2], nm, bt]) + "); }\n"
     if t == "index_assign":
@@ -1819,7 +1842,10 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
             else:
                 fo is fo + ind + "    " + (cn of fvar) + " = aot_num_ck_at(aot_iter_get(" + itv + ", " + kv + "), \"" + (c_escape of (G_CUR_FN[0])) + ": for-in " + (c_escape of fvar) + "\");\n"
         else:
-            fo is fo + ind + "    aot_set(" + (envc of fvar) + ", \"" + fvar + "\", aot_iter_get(" + itv + ", " + kv + "));\n"
+            if (g_lowerloc == 1) and (g_envloc[fvar] == 1):
+                fo is fo + ind + "    aot_lv_set(&" + (lv of fvar) + ", aot_iter_get(" + itv + ", " + kv + "));\n"
+            else:
+                fo is fo + ind + "    aot_set(" + (envc of fvar) + ", \"" + fvar + "\", aot_iter_get(" + itv + ", " + kv + "));\n"
         fo is fo + (emit_stmts of [fbody, ind + "    ", nm, bt, minits, gf])
         fo is fo + ind + "  }\n"
         if fowned == 1:
@@ -4753,12 +4779,28 @@ define emit_function(fn, finfo, gnm, gbt) as:
                 fudp is 1
         if (fudp == 0) and (ba[fud] == null) and (gnm[fud] != 1) and (gbt[fud] != 1):
             decls is decls + "    double " + (cn of fud) + " = 0;\n"
+    # #132 whitelist: lower the frame env to C EigsSlot variables only when
+    # nothing in this function needs a real Env. A boxed module shadow does
+    # (aot_get_sh dispatches on binding PRESENCE in __eigs_l), so its presence
+    # vetoes lowering for the whole function.
+    g_lowerloc is 0
     if g_envactive == 1:
+        local _bshn is keys of g_boxshadow
+        if (len of _bshn) == 0:
+            g_lowerloc is 1
+    local _lvn is keys of g_envloc
+    if g_lowerloc == 1:
+        for k in range of (len of _lvn):
+            decls is decls + "    EigsSlot " + (lv of (_lvn[k])) + " = slot_null();\n"
+    elif g_envactive == 1:
         decls is decls + "    Env* __eigs_l = env_new(NULL);\n"
     local fminits is module_inits of body
     local bodyc is emit_stmts of [body, "    ", fnm, fbt, fminits, {}]
     local tailret is ""
-    if g_envactive == 1:
+    if g_lowerloc == 1:
+        for k in range of (len of _lvn):
+            tailret is tailret + "    slot_decref(" + (lv of (_lvn[k])) + ");\n"
+    elif g_envactive == 1:
         # fallthrough exit (no return statement taken): free the call env.
         tailret is "    env_decref(__eigs_l);\n"
     if (finfo["ret"]) == "double":
@@ -4775,6 +4817,7 @@ define emit_function(fn, finfo, gnm, gbt) as:
     g_ret_type is _save_ret
     g_envloc is {}
     g_envactive is 0
+    g_lowerloc is 0
     g_boxshadow is {}
     return _result
 

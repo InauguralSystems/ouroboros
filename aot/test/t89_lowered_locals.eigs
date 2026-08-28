@@ -1,0 +1,91 @@
+# Frame locals lowered to C EigsSlot variables — ouroboros#132.
+#
+# THE POINT OF THIS FIXTURE is coverage. When #132 landed, a blind critic
+# transpiled all 101 fixtures and found that only TEN of them lowered anything
+# at all: 20 `EigsSlot __lv_` declarations in the whole suite, with
+# aot_lv_getb appearing in exactly one file and aot_lv_set_num in exactly one.
+# The suite that certified the change barely touched it — DMG did the real
+# work. That is a green suite being evidence about the corpus, not the change.
+#
+# So exercise every lowered path deliberately:
+#   aot_lv_set      a boxed write, and a REASSIGNMENT (the old value must be
+#                   released, not leaked, and not freed twice);
+#   aot_lv_set_num  a numeric write into a lowered slot — no box at all;
+#   aot_lv_num      a numeric read back out of one;
+#   aot_lv_get      an owned boxed read;
+#   aot_lv_getb     a BORROWED read, which is the call-argument path;
+#   teardown        on several distinct return paths, plus fallthrough;
+#   for-loop vars   which are lowered too;
+#   an UNSET local, which must read null (GET_LOCAL semantics), not raise.
+
+define takes(v) as:
+    # a borrowed call-argument read of the caller's lowered local
+    return v
+
+define mixed(k) as:
+    # `acc` is boxed (it holds a string on one path and a number on another),
+    # so it is env-local — but the numeric assignment must still take the
+    # unboxed slot write.
+    local acc is 0
+    if k > 2:
+        acc is k * 2
+    else:
+        acc is "small"
+    return acc
+
+define many_returns(k) as:
+    local a is [1, 2, 3]
+    local b is {"x": 10}
+    if k == 0:
+        return len of a
+    if k == 1:
+        return b["x"]
+    if k == 2:
+        # reassign a live container: the previous list must be released once
+        a is [9, 9, 9, 9]
+        return len of a
+    return 0 - 1
+
+define unset_reads(k) as:
+    # `u` is only bound on one branch; the other path must read null
+    if k > 0:
+        u is "bound"
+    return u
+
+define loopvar(n) as:
+    local total is 0
+    for v in range of n:
+        total is total + v
+    return total
+
+define numread(k) as:
+    # `z` is boxed (a string reaches it on one path) but is READ in a numeric
+    # context — the aot_lv_num path, which nothing else in the suite covers.
+    local z is 0
+    if k > 100:
+        z is "big"
+    z is 5
+    return (z * 2) + 1
+
+print of (numread of 1)
+print of (takes of 41)
+print of (takes of "str")
+print of (mixed of 5)
+print of (mixed of 1)
+print of (many_returns of 0)
+print of (many_returns of 1)
+print of (many_returns of 2)
+print of (many_returns of 7)
+print of (unset_reads of 1)
+print of (unset_reads of 0)
+print of (loopvar of 6)
+
+# hammer the reassignment path so a refcount error shows as a crash or a wrong
+# number rather than passing on one lucky iteration
+i is 0
+acc2 is 0
+loop while i < 300:
+    local tmp is [i, i + 1]
+    acc2 is acc2 + (len of tmp) + (many_returns of (i % 4))
+    i is i + 1
+print of acc2
