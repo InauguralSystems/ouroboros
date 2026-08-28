@@ -341,6 +341,78 @@ static void aot_set_sh(Env *l, Env *g, const char *name, Value *val) {
     else env_set_local_owned(g, name, val);
 }
 
+/* forward declarations: the out-of-line bodies live further down, next to the
+ * other dict/index helpers they belong with. */
+static Value *aot_dot_get_tb_slow(Value *target, const char *key, int *ic, const char **ick);
+static double aot_dot_num_tb_slow(Value *target, const char *key, int *ic, const char **ick, const char *site);
+static void   aot_dot_set_num_tb_slow(Value *target, const char *key, double d, int *ic, const char **ick);
+static Value *aot_index_get_ib_slow(Value *target, double d);
+
+/* ---- inlinable fast paths (#133) -----------------------------------------
+ * The three dict-field helpers plus the integer index read are 20.8% of DMG's
+ * runtime across 968 call sites, and each was a plain out-of-line `static`:
+ * every access paid a real call for what is, on a cache hit, a bounds check, a
+ * pointer compare and an array index. Split them — an inlinable fast path that
+ * handles exactly the hit, and the original body kept out of line behind
+ * `noinline` so the fast path stays small enough not to cost I-cache on a
+ * machine where that is the binding constraint.
+ *
+ * Semantics are unchanged BY CONSTRUCTION: every case the fast path does not
+ * itself answer (wrong type, cold cache, missing key, negative or non-integral
+ * index, a shared or non-numeric slot) falls through to the untouched original.
+ * There is no second implementation to keep in step. */
+static inline Value *aot_dot_get_tb_ic(Value *target, const char *key,
+                                       int *ic, const char **ick) {
+    if (__builtin_expect(target != NULL && target->type == VAL_DICT, 1)) {
+        int i = *ic;
+        if (__builtin_expect(i >= 0 && i < target->data.dict.count
+                             && target->data.dict.keys[i] == *ick, 1)) {
+            Value *v = target->data.dict.vals[i];
+            if (v) { val_incref(v); return v; }
+        }
+    }
+    return aot_dot_get_tb_slow(target, key, ic, ick);
+}
+static inline double aot_dot_num_tb_ic(Value *target, const char *key,
+                                       int *ic, const char **ick, const char *site) {
+    if (__builtin_expect(target != NULL && target->type == VAL_DICT, 1)) {
+        int i = *ic;
+        if (__builtin_expect(i >= 0 && i < target->data.dict.count
+                             && target->data.dict.keys[i] == *ick, 1)) {
+            Value *v = target->data.dict.vals[i];
+            if (v && v->type == VAL_NUM) return v->data.num;
+        }
+    }
+    return aot_dot_num_tb_slow(target, key, ic, ick, site);
+}
+static inline void aot_dot_set_num_tb_ic(Value *target, const char *key, double d,
+                                         int *ic, const char **ick) {
+    if (__builtin_expect(target != NULL && target->type == VAL_DICT, 1)) {
+        int i = *ic;
+        if (__builtin_expect(i >= 0 && i < target->data.dict.count
+                             && target->data.dict.keys[i] == *ick, 1)) {
+            Value *old = target->data.dict.vals[i];
+            if (old && old->type == VAL_NUM && old->refcount == 1) {
+                old->data.num = num_guard(d);
+                return;
+            }
+        }
+    }
+    aot_dot_set_num_tb_slow(target, key, d, ic, ick);
+}
+static inline Value *aot_index_get_ib(Value *target, double d) {
+    if (__builtin_expect(target != NULL && target->type == VAL_LIST, 1)) {
+        long i = (long)d;
+        if (__builtin_expect((double)i == d && i >= 0
+                             && i < (long)target->data.list.count, 1)) {
+            Value *r = target->data.list.items[i];
+            val_incref(r);
+            return r;
+        }
+    }
+    return aot_index_get_ib_slow(target, d);
+}
+
 /* ---- truthiness (consumes) ---- */
 static int aot_truthy(Value *v) { int t = is_truthy(v); val_decref(v); return t; }
 
@@ -1273,7 +1345,7 @@ static int aot_idx_resolve(int *i, int len) { int r = (*i < 0) ? *i + len : *i; 
  * emulator's single commonest expression, and the container it indexes is a
  * dict slot that outlives the expression. Borrowing it removes the last
  * refcount pair on that path. Result ownership is unchanged. */
-static Value *aot_index_get_ib(Value *target, double d) {
+static __attribute__((noinline)) Value *aot_index_get_ib_slow(Value *target, double d) {
     Value *result = NULL;
     int i;
     if (target && target->type == VAL_LIST) {
@@ -1574,8 +1646,8 @@ static inline Value *aot_dot_borrow_ic(Value *target, const char *key,
  * runtime across val_incref/val_decref once the boxes were gone. These do not
  * consume the target; the RESULT keeps the same ownership as the form each
  * mirrors, so only the emitter's target expression changes. */
-static Value *aot_dot_get_tb_ic(Value *target, const char *key,
-                                int *ic, const char **ick) {
+static __attribute__((noinline)) Value *aot_dot_get_tb_slow(Value *target, const char *key,
+                                                           int *ic, const char **ick) {
     if (target && target->type == VAL_DICT) {
         int i = aot_ic_slot(target, key, ic, ick);
         Value *v = (i >= 0) ? target->data.dict.vals[i] : NULL;
@@ -1588,8 +1660,8 @@ static Value *aot_dot_get_tb_ic(Value *target, const char *key,
     return make_null();
 }
 
-static double aot_dot_num_tb_ic(Value *target, const char *key,
-                                int *ic, const char **ick, const char *site) {
+static __attribute__((noinline)) double aot_dot_num_tb_slow(Value *target, const char *key,
+                                                           int *ic, const char **ick, const char *site) {
     if (target && target->type == VAL_DICT) {
         int i = aot_ic_slot(target, key, ic, ick);
         Value *v = (i >= 0) ? target->data.dict.vals[i] : NULL;
@@ -1605,8 +1677,8 @@ static double aot_dot_num_tb_ic(Value *target, const char *key,
     exit(1);
 }
 
-static void aot_dot_set_num_tb_ic(Value *target, const char *key, double d,
-                                  int *ic, const char **ick) {
+static __attribute__((noinline)) void aot_dot_set_num_tb_slow(Value *target, const char *key, double d,
+                                                             int *ic, const char **ick) {
     d = num_guard(d);
     if (target && target->type == VAL_DICT) {
         int i = aot_ic_slot(target, key, ic, ick);
