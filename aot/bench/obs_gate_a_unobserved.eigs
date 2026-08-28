@@ -1,0 +1,45 @@
+# OBSERVER-GATE COST, arm A of a paired TRIPLE (ouroboros#126).
+#
+# A: no observer anywhere    -> g_observed == 0, AOT fast path fully enabled
+# B: obs_gate_b_gate_only    -> g_observed == 1, hot loops in `unobserved:`
+# C: obs_gate_c_full         -> g_observed == 1, full observer bookkeeping
+#
+# All three do IDENTICAL arithmetic and must print the same checksum
+# (0.018600000000004294). That equality is what makes the timing comparable —
+# if it ever diverges the triple is measuring two different workloads and the
+# numbers below are void.
+#
+# Measured on the dev box, n=5 paired, medians: A 28 ms, B 85 ms, C 102 ms.
+# So A->B = +57 ms is the COMPILE-TIME GATE alone (no entropy walk runs in B's
+# loops) and B->C = +17 ms is the actual bookkeeping: 77% of the observer's
+# total AOT overhead is the all-or-nothing gate, not observation.
+#
+# The mechanism is in the generated C, and it is not the vectoriser — the SIMD
+# `aot_dot_range` survives in every arm. It is that under g_observed a loop
+# counter nobody queries becomes `aot_num_ck_at(aot_get_named(__eigs_g, "i"))`,
+# a hash lookup plus a type check, four times per iteration.
+define dots(out, A, B, M, D) as:
+    k is 0
+    loop while k < M:
+        out[k] is dot of [A[k * D : k * D + D], B[k * D : k * D + D]]
+        k is k + 1
+D is 256
+M is 512
+A is buffer of (M * D)
+B is buffer of (M * D)
+out is buffer of M
+i is 0
+loop while i < (M * D):
+    A[i] is ((i % 17) - 8) * 0.01
+    B[i] is ((i % 13) - 6) * 0.02
+    i is i + 1
+r is 0
+loop while r < 30:
+    dots of [out, A, B, M, D]
+    r is r + 1
+acc is 0.0
+j is 0
+loop while j < M:
+    acc is acc + out[j]
+    j is j + 1
+print of f"checksum {acc}"
