@@ -1447,6 +1447,66 @@ static inline Value *aot_dot_borrow_ic(Value *target, const char *key,
     return NULL;   /* null target reads null, silently — the #898 contract */
 }
 
+/* Target-borrowed variants (#130). When the target expression is a plain C
+ * Value* variable it is live for the whole statement, so the incref/decref
+ * pair the consuming forms require is pure bookkeeping — measured at 11.7% of
+ * runtime across val_incref/val_decref once the boxes were gone. These do not
+ * consume the target; the RESULT keeps the same ownership as the form each
+ * mirrors, so only the emitter's target expression changes. */
+static Value *aot_dot_get_tb_ic(Value *target, const char *key,
+                                int *ic, const char **ick) {
+    if (target && target->type == VAL_DICT) {
+        int i = aot_ic_slot(target, key, ic, ick);
+        Value *v = (i >= 0) ? target->data.dict.vals[i] : NULL;
+        if (v) { val_incref(v); return v; }
+        return make_null();
+    }
+    if (target)
+        rt_error(EK_TYPE, 0, "cannot access field '%s' on %s",
+                 key, val_type_name(target->type));
+    return make_null();
+}
+
+static double aot_dot_num_tb_ic(Value *target, const char *key,
+                                int *ic, const char **ick, const char *site) {
+    if (target && target->type == VAL_DICT) {
+        int i = aot_ic_slot(target, key, ic, ick);
+        Value *v = (i >= 0) ? target->data.dict.vals[i] : NULL;
+        if (v && v->type == VAL_NUM) return v->data.num;
+        fprintf(stderr, "non-numeric value in a numeric context at %s (type %s)\n",
+                site, v ? val_type_name(v->type) : "null");
+        exit(1);
+    }
+    if (target)
+        rt_error(EK_TYPE, 0, "cannot access field '%s' on %s",
+                 key, val_type_name(target->type));
+    fprintf(stderr, "non-numeric value in a numeric context at %s (null)\n", site);
+    exit(1);
+}
+
+static void aot_dot_set_num_tb_ic(Value *target, const char *key, double d,
+                                  int *ic, const char **ick) {
+    d = num_guard(d);
+    if (target && target->type == VAL_DICT) {
+        int i = aot_ic_slot(target, key, ic, ick);
+        if (i >= 0) {
+            Value *old = target->data.dict.vals[i];
+            if (old && old->type == VAL_NUM && old->refcount == 1) {
+                old->data.num = d;
+            } else {
+                Value *nv = promote_if_arena(make_num(d));
+                val_decref(old);
+                target->data.dict.vals[i] = nv;
+            }
+        } else {
+            dict_set_owned(target, key, make_num(d));
+        }
+    } else if (target && target->type != VAL_NULL) {
+        rt_error(EK_TYPE, 0, "cannot set field '%s' on %s",
+                 key, val_type_name(target->type));
+    }
+}
+
 static double aot_dot_num_ic(Value *target, const char *key,
                              int *ic, const char **ick, const char *site) {
     if (target && target->type == VAL_DICT) {

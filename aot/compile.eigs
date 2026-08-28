@@ -1050,6 +1050,9 @@ define emit_num(node, nm, bt, raw) as:
         # inside the expression via a GNU statement-expression so no separate
         # declaration pass is needed; each textual site gets its own pair.
         local ic is ic_new of node[2]
+        local ncv is borrowable_cvar of [node[1], nm, bt]
+        if ncv != "":
+            return "({ " + ic[0] + "aot_dot_num_tb_ic(" + ncv + ", \"" + (c_escape of node[2]) + "\", " + ic[1] + ", " + ic[2] + "); })"
         return "({ " + ic[0] + "aot_dot_num_ic(" + (emit_val of [node[1], nm, bt]) + ", \"" + (c_escape of node[2]) + "\", " + ic[1] + ", " + ic[2] + "); })"
     if t == "index":
         local tgt is unwrap of node[1]
@@ -1251,6 +1254,9 @@ define emit_val(node, nm, bt) as:
         # Inline-cached (#130): most field traffic in a real program is BOXED,
         # so this site — not the numeric one — carries the bulk of the lookups.
         local ic is ic_new of node[2]
+        local dcv is borrowable_cvar of [node[1], nm, bt]
+        if dcv != "":
+            return "({ " + ic[0] + "aot_dot_get_tb_ic(" + dcv + ", \"" + (c_escape of node[2]) + "\", " + ic[1] + "); })"
         return "({ " + ic[0] + "aot_dot_get_ic(" + (emit_val of [node[1], nm, bt]) + ", \"" + (c_escape of node[2]) + "\", " + ic[1] + "); })"
     if t == "list":
         # nested-list literal -> owned Value built inline (GCC statement-expr).
@@ -1410,24 +1416,31 @@ CMPNB_L is {"==": "aot_eq_nb_t", "!=": "aot_ne_nb_t", "<": "aot_lt_nlb_t", ">": 
 # `<cvar>.field` where <cvar> is a C Value* name (a dict/buffer/generic local
 # or parameter, never a temporary) -> a BORROWED read: no ref is taken on the
 # target and none on the result. Returns "" when the shape does not apply.
+# A plain C Value* name (dict/buffer/generic local or parameter) is live for
+# the whole statement, so a helper reading a field of it need not take a ref on
+# it. Returns the C name, or "" when the target is a temporary and must be
+# handed an owned ref as before (#130).
+define borrowable_cvar(node, nm, bt) as:
+    local n is unwrap of node
+    if n[0] != "ident":
+        return ""
+    if bt[n[1]] == 1:
+        return cn of n[1]
+    if g_dict[n[1]] == 1:
+        return cn of n[1]
+    if g_genp[n[1]] == 1:
+        return cn of n[1]
+    return ""
+
 define emit_borrow_dot(node, nm, bt) as:
     local n is unwrap of node
     if n[0] != "dot":
         return ""
-    local tgt is unwrap of n[1]
-    if tgt[0] != "ident":
-        return ""
-    local ok is 0
-    if bt[tgt[1]] == 1:
-        ok is 1
-    if g_dict[tgt[1]] == 1:
-        ok is 1
-    if g_genp[tgt[1]] == 1:
-        ok is 1
-    if ok == 0:
+    local cv is borrowable_cvar of [n[1], nm, bt]
+    if cv == "":
         return ""
     local ic is ic_new of n[2]
-    return "({ " + ic[0] + "aot_dot_borrow_ic(" + (cn of tgt[1]) + ", \"" + (c_escape of n[2]) + "\", " + ic[1] + "); })"
+    return "({ " + ic[0] + "aot_dot_borrow_ic(" + cv + ", \"" + (c_escape of n[2]) + "\", " + ic[1] + "); })"
 define emit_cmp_n(node, nm, bt, want_bool) as:
     local n is unwrap of node
     if n[0] != "binop":
@@ -1635,6 +1648,9 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
         # existing box instead of allocating and freeing one per write.
         if (is_num_expr of [node[3], nm, bt]) == 1:
             local icn is ic_new of node[2]
+            local scv is borrowable_cvar of [node[1], nm, bt]
+            if scv != "":
+                return ind + "{ " + icn[0] + "aot_dot_set_num_tb_ic(" + scv + ", \"" + (c_escape of node[2]) + "\", " + (emit_num of [node[3], nm, bt, 0]) + ", " + icn[1] + "); }\n"
             return ind + "{ " + icn[0] + "aot_dot_set_num_ic(" + (emit_val of [node[1], nm, bt]) + ", \"" + (c_escape of node[2]) + "\", " + (emit_num of [node[3], nm, bt, 0]) + ", " + icn[1] + "); }\n"
         local icg is ic_new of node[2]
         return ind + "{ " + icg[0] + "aot_dot_set_ic(" + (emit_val of [node[1], nm, bt]) + ", \"" + (c_escape of node[2]) + "\", " + (emit_val of [node[3], nm, bt]) + ", " + icg[1] + "); }\n"
