@@ -40,6 +40,28 @@ for x, y in zip(a, b):
 sys.exit(0)
 PY
       ;;
+    *_die.eigs)
+      # Programs the AOT stops with its OWN fatal diagnostic. `aot_num_ck_at`
+      # and friends are not rt_error raises — they print a native message and
+      # exit(1) — so their text legitimately differs from the VM's
+      # operator-specific raise ("non-numeric value in a numeric context at f:
+      # name z (type str)" vs "cannot apply '*' to str and num"). That put the
+      # ENTIRE aot_num_ck_at family outside _err, and a blind critic proved the
+      # consequence: replacing a checked arm with `return 0.0` — converting a
+      # loud death into a run-past-error (#96) — left the whole suite green.
+      #
+      # What is still semantics rather than presentation: everything printed
+      # BEFORE the death, and the death itself. So compare stdout exactly and
+      # require equal nonzero exit codes; do not compare the message. A
+      # gutted check shows up twice over — extra stdout AND rc 0.
+      #
+      # Use _err whenever the messages DO match; this class is strictly for
+      # diagnostics the AOT owns. Re-runs capture stdout alone, so it costs an
+      # extra pair of runs, paid only by fixtures in this class.
+      ref_out=$(timeout "$AOT_TEST_TIMEOUT" "$EIG" "$prog" 2>/dev/null)
+      got_out=$(timeout "$AOT_TEST_TIMEOUT" "$bin" 2>/dev/null)
+      [ "$ref_out" = "$got_out" ] && match=1
+      ;;
     *_err.eigs)
       # Programs that RAISE. The AOT cannot reproduce the VM's uncaught-error
       # diagnostic: the source excerpt + column caret are added by the VM's
@@ -85,6 +107,14 @@ PY
   # VM's uncaught-error exit code.
   if [ "$match" -eq 1 ]; then
     case "$name" in
+      *_die.eigs)
+        if [ "$ref_rc" -eq 0 ]; then
+          match=0; why="_die case but the VM exits 0 — stale class, drop the suffix"
+        elif [ "$got_rc" -eq 0 ]; then
+          match=0; why="VM errors (rc=$ref_rc) but the AOT exits 0 — runs past the error"
+        elif [ "$got_rc" -ne "$ref_rc" ]; then
+          match=0; why="death codes differ (VM $ref_rc, AOT $got_rc)"
+        fi ;;
       *_err.eigs)
         if [ "$ref_rc" -eq 0 ]; then
           match=0; why="_err case but the VM exits 0 — stale class, drop the suffix"

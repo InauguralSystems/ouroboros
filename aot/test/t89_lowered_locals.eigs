@@ -60,14 +60,42 @@ define loopvar(n) as:
 
 define numread(k) as:
     # `z` is boxed (a string reaches it on one path) but is READ in a numeric
-    # context — the aot_lv_num path, which nothing else in the suite covers.
+    # context — the aot_lv_num path. Only the NUMERIC arm is exercised here;
+    # the checked non-numeric arm dies, so it lives in t91_*_die.eigs. Splitting
+    # them is the point: with `z is 5` left in front of the read, as this
+    # fixture first had it, aot_lv_num could only ever see slot_is_num and the
+    # checked arm could be replaced by `return 0.0` with the whole suite green.
     local z is 0
     if k > 100:
         z is "big"
     z is 5
     return (z * 2) + 1
 
+define passer(k) as:
+    # a lowered local read as a CALL ARGUMENT — the borrowed aot_lv_getb path.
+    # The first version of this fixture claimed to cover it via a function
+    # PARAMETER, which is a C variable and lowers nothing: zero getb sites.
+    local box is [1, 2, 3]
+    if k > 5:
+        box is [1, 2, 3, 4]
+    return takes_len of box
+
+define takes_len(d) as:
+    return len of d
+
+define loopbox(xs) as:
+    # a for-loop variable that stays BOXED. `loopvar` below iterates a numeric
+    # range, so its variable unboxes to a C double and lowers nothing — the
+    # original "for-loop vars are lowered too" claim was false.
+    local n is 0
+    for sv in xs:
+        n is n + (len of sv)
+    return n
+
 print of (numread of 1)
+print of (passer of 1)
+print of (passer of 9)
+print of (loopbox of (["ab", "cde", "f"]))
 print of (takes of 41)
 print of (takes of "str")
 print of (mixed of 5)

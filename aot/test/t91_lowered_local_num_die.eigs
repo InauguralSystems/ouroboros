@@ -1,0 +1,25 @@
+# A lowered frame local read in a NUMERIC context while holding a string —
+# ouroboros#132.
+#
+# THE POINT OF THIS FIXTURE is that aot_lv_num's checked arm had no coverage
+# and could be deleted with the whole suite green. t89's first version put an
+# unconditional `z is 5` in front of the read, so the slot was ALWAYS numeric
+# and the checked arm was structurally unreachable for every input. Replacing
+# it with `return 0.0` kept 103/103 passing — while turning a loud death into
+# a run-past-error (ouroboros#96), the worst outcome class this repo has:
+#
+#   VM             Error: cannot apply '*' to str and num          rc=1
+#   AOT (checked)  non-numeric value in a numeric context ...      rc=1
+#   AOT (gutted)   1                                               rc=0   <- runs past
+#
+# So the numeric arm lives in t89 and the checked arm lives here, where it is
+# the only thing the program does. Both sides must die with the same code.
+
+define numread(k) as:
+    local z is 0
+    if k > 100:
+        z is "big"
+    return (z * 2) + 1
+
+print of (numread of 1)
+print of (numread of 200)
