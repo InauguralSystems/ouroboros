@@ -1,0 +1,59 @@
+# Calling a function through a DOT or an INDEX — ouroboros#140.
+#
+# THE POINT OF THIS FIXTURE is the module pattern. `import x` binds a dict of
+# functions, and every call through it is `x.fn of args` — a call whose callee
+# is a dot, not a plain name. The AOT required `callee[0] == "ident"` and threw
+# "only named calls supported", which refused FIVE of phugoid's eight programs
+# and, by count, 208 sites in Tidepool, 102 in dynamics, 20 in DeslanStudio.
+#
+# The consequence was structural rather than cosmetic: every consumer that did
+# the right thing and used `lib/` became un-AOT-compilable, so stdlib adoption
+# and AOT reach pulled against each other.
+#
+# A dict of functions is the whole repro — no import is needed to exercise it.
+
+define twice(x) as:
+    return x * 2
+
+define add2(a, b) as:
+    return a + b
+
+define label(s) as:
+    return "<" + s + ">"
+
+# a module in miniature: a dict whose values are functions
+m is {"twice": null, "add2": null, "label": null}
+m.twice is twice
+m.add2 is add2
+m.label is label
+
+# single argument through a dot callee
+print of (m.twice of 21)
+# multiple arguments — the bare literal list IS the argument list (#405)
+print of (m.add2 of [3, 4])
+# a non-numeric argument and return through the same shape
+print of (m.label of "hi")
+
+# the callee expression is re-evaluated per call, so a REBOUND slot must be
+# picked up rather than cached from the first call
+define thrice(x) as:
+    return x * 3
+i is 0
+loop while i < 3:
+    print of (m.twice of 10)
+    i is i + 1
+m.twice is thrice
+print of (m.twice of 10)
+
+# an INDEX callee — the other non-ident shape
+fns is [twice, add2]
+print of (fns[0] of 5)
+
+# nested one level: a dict inside a dict
+outer is {"inner": null}
+outer.inner is m
+print of (outer.inner.twice of 7)
+
+# a dot callee used as a value-producing subexpression, not a statement
+total is (m.twice of 4) + (m.twice of 6)
+print of total

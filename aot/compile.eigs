@@ -1355,7 +1355,17 @@ define emit_val(node, nm, bt) as:
             # rather than emit something that answers about the wrong thing.
             throw of "AOT: a predicate operand must be a name"
         if callee[0] != "ident":
-            throw of "AOT: only named calls supported"
+            # A callee that is an EXPRESSION, not a name (#140): `m.fn of x`,
+            # `table[i] of x`. This is the module pattern — `import x` binds a
+            # dict of functions — so refusing it made every stdlib-using
+            # program un-compilable. Evaluate the callee and dispatch at
+            # runtime; the argument convention is the builtin one (#405: a
+            # bare 1-element literal list passes its element RAW), because a
+            # dynamically-resolved callee has no statically known signature.
+            local vcarg is unwrap of node[2]
+            if (vcarg[0] == "list") and ((len of vcarg) == 2) and ((len of vcarg[1]) == 1):
+                return "aot_call_value(" + (emit_val of [node[1], nm, bt]) + ", " + (emit_val of [(vcarg[1])[0], nm, bt]) + ")"
+            return "aot_call_value(" + (emit_val of [node[1], nm, bt]) + ", " + (emit_val of [node[2], nm, bt]) + ")"
         # `report of x` -> the most-specific predicate of x's observed slot.
         if callee[1] == "report":
             local ra is unwrap of node[2]
@@ -5187,7 +5197,31 @@ define emit_program(ast) as:
         local wi is g_funcs[wn]
         local wpt is wi["ptypes"]
         if (len of wpt) != 1:
-            throw of ("AOT: function '" + wn + "' used as a value must take exactly one parameter")
+            # MULTI-PARAMETER value wrappers (#140). The builtin calling
+            # convention hands arity-1 the value itself and arity>1 a LIST, so
+            # a wrapper for an N-ary function unpacks that list. Refusing this
+            # was what actually blocked the module pattern: stdlib calls are
+            # multi-argument (`linalg.mat_mul of [a, b]`), so accepting dot
+            # callees without this would not have compiled a single one.
+            local wmulti is ""
+            for wk in range of (len of wpt):
+                if wk > 0:
+                    wmulti is wmulti + ", "
+                if (wpt[wk]) == "tensor":
+                    throw of ("AOT: function '" + wn + "' used as a value takes a tensor parameter, which has no boxed calling convention")
+                if (wpt[wk]) == "num":
+                    wmulti is wmulti + "aot_num_ck_bat(aot_arg_at(__a, " + (str of wk) + "), \"" + (c_escape of wn) + " parameter " + (str of wk) + "\")"
+                else:
+                    wmulti is wmulti + "aot_arg_at(__a, " + (str of wk) + ")"
+            local wcallm is (cn of wn) + "(" + wmulti + ")"
+            wprotos is wprotos + "static Value* __wrap_" + (cn of wn) + "(Value* __a);\n"
+            if (wi["ret"]) == "double":
+                wraps is wraps + "static Value* __wrap_" + (cn of wn) + "(Value* __a) { return make_num(" + wcallm + "); }\n"
+            elif (wi["ret"]) == "Value*":
+                wraps is wraps + "static Value* __wrap_" + (cn of wn) + "(Value* __a) { return " + wcallm + "; }\n"
+            else:
+                wraps is wraps + "static Value* __wrap_" + (cn of wn) + "(Value* __a) { " + wcallm + "; return make_null(); }\n"
+            continue
         local warg is "__a"
         if (wpt[0]) == "num":
             # NOT a silent coercion. A non-number here used to become 0.0 while

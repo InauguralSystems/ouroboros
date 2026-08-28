@@ -1923,6 +1923,48 @@ static Value *aot_call_name(Env *g, const char *name, Value *arg) {
     return res;
 }
 
+/* Borrowed element k of a value-wrapper's argument list (#140). For arity 1
+ * the builtin convention hands the value itself as __a; for arity > 1 it hands
+ * a LIST, and user functions take boxed parameters BORROWED (see emit_args),
+ * so this must not incref. Out of range answers NULL, which the callee's own
+ * checks then report — the VM likewise sees a missing argument as null. */
+static inline Value *aot_arg_at(Value *a, int k) {
+    if (a && a->type == VAL_LIST && k >= 0 && k < a->data.list.count)
+        return a->data.list.items[k];
+    return NULL;
+}
+
+/* Call a callee that is an EXPRESSION rather than a name (#140) — `m.fn of x`,
+ * `table[i] of x`. That is how EigenScript's module pattern works: `import x`
+ * binds a dict of functions and every use is a dot call, so requiring a
+ * statically-known name made every stdlib-using program un-compilable.
+ *
+ * Identical to aot_call_name from the dispatch onward; only the resolution
+ * differs. `fn` arrives OWNED (emit_val's result) and is consumed here. A
+ * non-callable raises the VM's own message rather than being coerced. */
+static Value *aot_call_value(Value *fn, Value *arg) {
+    if (!fn || (fn->type != VAL_BUILTIN && fn->type != VAL_FN)) {
+        rt_error(EK_TYPE, 0, "cannot call %s",
+                 fn ? val_type_name(fn->type) : "null");
+    }
+    Value *res;
+    if (fn->type == VAL_BUILTIN) res = fn->data.builtin(arg);
+    else                         res = call_eigs_fn(fn, arg);
+    if (g_exit_requested) exit(g_exit_code);
+    if (g_has_error) aot_error_exit();
+    if (!res) { val_decref(arg); val_decref(fn); return make_null(); }
+    /* aot_call_name's direct-borrow compensation, verbatim. */
+    if (res == arg) { val_decref(fn); return res; }
+    if (arg && arg->type == VAL_LIST) {
+        for (int i = 0; i < arg->data.list.count; i++) {
+            if (arg->data.list.items[i] == res) { val_incref(res); break; }
+        }
+    }
+    val_decref(arg);
+    val_decref(fn);
+    return res;
+}
+
 static Value *aot_call_name_ic(Env *g, const char *name, Value *arg, AotNameIC *c) {
     EigsSlot *sp = aot_name_slot(g, name, c);
     Value *fn = sp ? aot_slot_value(sp) : NULL;
