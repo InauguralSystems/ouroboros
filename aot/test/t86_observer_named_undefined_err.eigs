@@ -1,0 +1,12 @@
+# `<predicate> of <undefined name>` raises, exactly like the VM's GET_NAME path
+# (CASE(PREDICATE_NAME) calls rt_error(EK_UNDEFINED_NAME) when
+# env_resolve_chain misses). Also unwitnessed until a blind review asked which
+# fixture would red if the raise were replaced by `return 0`.
+#
+# The companion case — a name that IS a compiled function, so env-unbound in
+# the AOT but bound in the VM — is t87, and must NOT raise.
+observed is 2.0
+observed is 3.0
+print of "before"
+q is converged of nosuchname
+print of ("q " + (str of q))

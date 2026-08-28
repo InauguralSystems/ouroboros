@@ -1,0 +1,17 @@
+# ouroboros#122: a predicate asked inside an `unobserved:` block cannot be
+# answered — the block suppresses observer updates and its depth is dynamic.
+# The VM raises (#871). Generated code used to return a confident verdict
+# instead: this program printed `p 1` and exited 0 against the VM's raise,
+# which is the silent-wrong class the AOT exists to not have.
+#
+# Named as *_err.eigs so the harness compares the death: everything printed
+# before it, the error kind and message, and a nonzero exit on both sides.
+u is 1.0
+i is 0
+loop while i < 12:
+    u is u * 1.5
+    i is i + 1
+print of "before"
+unobserved:
+    p is diverging
+print of ("p " + (str of p))

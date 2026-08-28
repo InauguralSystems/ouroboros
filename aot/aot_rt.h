@@ -532,20 +532,63 @@ static void aot_observe_num(Env *e, const char *name, double val) {
         }
     }
 }
+/* #871, mirrored from the VM's vm_pred_unobserved: a predicate asked inside an
+ * `unobserved:` block cannot be answered, and the block's depth is DYNAMIC so
+ * it covers callees too. The VM raises; generated code used to return a
+ * confident verdict instead (ouroboros#122 — a bare `diverging` inside the
+ * block printed 1 where the VM raised and exited 1). rt_error is macro-wrapped
+ * here to exit rather than return, so this matches the VM's control flow as
+ * well as its message. */
+static void aot_pred_unobserved_check(int kind) {
+    if (g_unobserved_depth == 0) return;
+    rt_error(EK_VALUE, g_trace_current_line,
+             "%s: the observer is off inside an 'unobserved:' block, so this "
+             "predicate has no trajectory to classify — the block's depth is "
+             "dynamic, so it also covers functions called from inside it",
+             eigs_predicate_name((unsigned)kind));
+}
+
+/* Bare predicate — the last-observed binding's slot.
+ *
+ * CALLS THE VM's classifier rather than reimplementing it (ouroboros#119/#122).
+ * The previous version switched straight onto observer_slot_* and so skipped
+ * the #708 opaque band, the #711 query view and the #871 unobserved raise —
+ * three documented behaviours the differential never caught, because t27/t28
+ * exercise exactly the region where the copy and the original agree.
+ * require_used=0 matches the bare opcode, which has never tested `used`. */
 static int aot_predicate(int kind) {
-    if (g_last_obs_slot_idx >= 0 && g_last_obs_slot_env &&
-        g_last_obs_slot_idx < g_last_obs_slot_env->obs_cap) {
-        const ObserverSlot *s = &g_last_obs_slot_env->obs[g_last_obs_slot_idx];
-        switch (kind) {
-        case 0: return observer_slot_converged(s);
-        case 1: return observer_slot_stable(s);
-        case 2: return observer_slot_improving(s);
-        case 3: return observer_slot_oscillating(s);
-        case 4: return observer_slot_diverging(s);
-        case 5: return observer_slot_equilibrium(s);
-        }
+    aot_pred_unobserved_check(kind);
+    return observer_predicate_at(g_last_obs_slot_env, g_last_obs_slot_idx, kind, 0);
+}
+
+/* `<predicate> of <name>` — the NAMED binding's slot (ouroboros#119), mirroring
+ * OP_PREDICATE_NAME. This is the only form a multi-channel program can use
+ * correctly: bare predicates read the last-observed alias, so a loop assigning
+ * several observed variables per iteration can only ever ask about the last.
+ * Undefined name raises, exactly like the VM's GET_NAME path. */
+static int aot_predicate_of(Env *e, const char *name, int kind, int is_compiled_fn) {
+    aot_pred_unobserved_check(kind);
+    int oidx = -1, odepth = 0;
+    Env *oe = env_resolve_chain(e, name, env_hash_name(name), &oidx, &odepth);
+    if (!oe) {
+        /* A COMPILED FUNCTION is not env-bound here — the AOT emits it as a C
+         * function and only materialises a Value when it is used AS a value —
+         * but in the VM the same name IS bound, resolves fine, and answers 0
+         * through the #708 opaque band (a function has no content to sample).
+         * So an env miss on a known function name is not an undefined name:
+         * return the band's answer rather than raising. Without this,
+         * `equilibrium of g` printed `undefined variable 'g'` and exited 1
+         * against the VM's `fn.equi=0` and exit 0 — a divergence this very
+         * change introduced, found by attacking the fix.
+         *
+         * The env lookup still runs FIRST, so a later `g is 5.0` rebinding
+         * wins and is classified as the number it now is, matching the VM. */
+        if (is_compiled_fn) return 0;
+        rt_error(EK_UNDEFINED_NAME, g_trace_current_line,
+                 "undefined variable '%s'", name);
+        return 0;
     }
-    return 0;
+    return observer_predicate_at(oe, oidx, kind, 1);
 }
 /* `report of x` — the most-specific predicate of x's observed slot, as a string
  * (mirrors CASE(REPORT_NAME)): resolve the binding's slot, classify it, else

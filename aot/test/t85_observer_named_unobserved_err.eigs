@@ -1,0 +1,19 @@
+# ouroboros#122 on the NAMED path — the gap a blind review found in the first
+# version of this fix.
+#
+# t84 covers the same raise for the BARE form, which routes to aot_predicate.
+# The named form routes to aot_predicate_of, a different function with its own
+# copy of the check, and NO fixture witnessed it: deleting the unobserved check
+# from aot_predicate_of left t83 and t84 both byte-identical and the suite
+# green, with the silent-wrong bug fully live on the newly added path.
+# mechanical-gates §38 — for every branch, name a fixture where that branch is
+# the SOLE evidence.
+a is 1.0
+i is 0
+loop while i < 12:
+    a is a * 1.5
+    i is i + 1
+print of "before"
+unobserved:
+    p is diverging of a
+print of ("p " + (str of p))

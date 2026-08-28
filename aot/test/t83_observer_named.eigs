@@ -1,0 +1,49 @@
+# `<predicate> of <name>` — ouroboros#119.
+#
+# THE POINT OF THIS FIXTURE is the multi-channel case. Bare predicates read the
+# LAST-OBSERVED binding, so in a loop that assigns several observed variables
+# per iteration they can only ever answer about the last one. The named form is
+# the only correct form here, and it did not compile at all before #119.
+#
+# `a` climbs steadily, `b` oscillates, `c` is pinned. Asked BY NAME, the three
+# must give three different answers; asked bare, all three questions would be
+# about `c` alone.
+a is 100.0
+b is 5.0
+c is 7.0
+i is 0
+loop while i < 14:
+    a is a + 10.0
+    b is 0.0 - b
+    c is 7.0
+    i is i + 1
+
+print of ("a.dive=" + (str of (diverging of a)))
+print of ("a.osci=" + (str of (oscillating of a)))
+print of ("b.osci=" + (str of (oscillating of b)))
+print of ("b.dive=" + (str of (diverging of b)))
+print of ("c.stab=" + (str of (stable of c)))
+print of ("c.osci=" + (str of (oscillating of c)))
+
+# the named form in a CONDITION and in arithmetic, not only as a print operand
+n is 0
+if diverging of a:
+    n is n + 1
+if oscillating of b:
+    n is n + 10
+n is n + (stable of c)
+print of ("n=" + (str of n))
+
+# A binding assigned once and never moved. This row pins that the answer is 0
+# rather than a confident verdict — but NOT, as an earlier version of this
+# comment claimed, because of the named ops' `used` gate: the bare form answers
+# 0 here too, so the predicate itself is what makes it false and flipping
+# require_used 1->0 leaves this fixture byte-identical (mechanical-gates §41 —
+# a row that passes for a different reason than its comment states).
+#
+# The `used` gate is genuinely exercised UPSTREAM, where the VM's bare and
+# named opcodes differ on an in-range never-assigned slot; it is not
+# discriminated by anything in this file, and that is recorded rather than
+# papered over.
+z is 3.0
+print of ("z.equi=" + (str of (equilibrium of z)))

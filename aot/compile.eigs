@@ -451,6 +451,9 @@ define is_num_expr(node, nm, bt) as:
         return 0
     if t == "call":
         local callee is unwrap of node[1]
+        # a predicate verdict is a number (0/1), like the bare form above
+        if callee[0] == "predicate":
+            return 1
         if callee[0] == "ident":
             if callee[1] == "len":
                 local a is unwrap of node[2]
@@ -975,6 +978,18 @@ define emit_num(node, nm, bt, raw) as:
         return "aot_buf_get(" + (cn of tgt[1]) + ", " + (emit_num of [node[2], nm, bt, 0]) + ")"
     if t == "call":
         local callee is unwrap of node[1]
+        # predicate-of in a NUMERIC context (`d is diverging of u`, a condition,
+        # an arithmetic operand): the verdict is a 0/1 double, same as the bare
+        # form five lines up. Without this the node falls through to the boxed
+        # fallback and emit_val, which is where #119's refusal fired.
+        if callee[0] == "predicate":
+            local pna is unwrap of node[2]
+            if pna[0] == "ident":
+                local pnfn is 0
+                if g_funcs[pna[1]] != null:
+                    pnfn is 1
+                return "((double)aot_predicate_of(__eigs_g, \"" + pna[1] + "\", " + (str of callee[1]) + ", " + (str of pnfn) + "))"
+            throw of "AOT: a predicate operand must be a name"
         if callee[0] == "ident":
             if callee[1] == "len":
                 # buffer fast path only for a C buffer var; a boxed list/str
@@ -1199,6 +1214,22 @@ define emit_val(node, nm, bt) as:
         return (binfn of bop) + "(" + (emit_val of [node[2], nm, bt]) + ", " + (emit_val of [node[3], nm, bt]) + ")"
     if t == "call":
         local callee is unwrap of node[1]
+        # `<predicate> of <name>` parses as a CALL whose callee is the
+        # predicate keyword: ["call", ["predicate", kind], ["ident", name]].
+        # It is not an ident, so it used to hit the refusal below and no
+        # multi-channel program could be compiled at all (ouroboros#119) —
+        # bare predicates read the last-observed alias, so they are the only
+        # INCORRECT form once a program observes more than one channel.
+        if callee[0] == "predicate":
+            local pa is unwrap of node[2]
+            if pa[0] == "ident":
+                local pfn is 0
+                if g_funcs[pa[1]] != null:
+                    pfn is 1
+                return "make_num((double)aot_predicate_of(__eigs_g, \"" + pa[1] + "\", " + (str of callee[1]) + ", " + (str of pfn) + "))"
+            # a non-name operand is `cannot call num` in the VM; refuse loudly
+            # rather than emit something that answers about the wrong thing.
+            throw of "AOT: a predicate operand must be a name"
         if callee[0] != "ident":
             throw of "AOT: only named calls supported"
         # `report of x` -> the most-specific predicate of x's observed slot.
@@ -3895,6 +3926,56 @@ define emit_function(fn, finfo, gnm, gbt) as:
     # assign path; a `local` of a PARAM name rebinds the param (the VM's
     # existing-slot-wins arbitration — the C param already shadows the
     # file-scope var, so the plain emission is already exact).
+    # A PARAM that shadows a module global is refused too, but ONLY when this
+    # function is observed or traced (ouroboros#123).
+    #
+    # The comment above is right on the unobserved path — the C param shadows
+    # the file-scope var and the plain emission is exact. Under g_observed it
+    # is false: Part 2a keys the param into __eigs_g BY NAME (aot_set below,
+    # and aot_observe_num on every assignment), so the callee's `a` IS the
+    # module's `a` and writing it clobbers the caller's binding. Measured:
+    # `define work(a)` with a module-level `a is 5.0` printed a.val=5 in the
+    # VM and a.val=129.746 from the AOT, both exiting 0 — the silent-wrong
+    # class, reachable with `report` alone and invisible to all 97 fixtures.
+    #
+    # `local a` one branch down has been a loud refusal all along; this is the
+    # same collision reached through the parameter list, so it gets the same
+    # answer. The validated population was derived from one syntactic marker
+    # (`local`) rather than from "names Part 2a keys into the global env",
+    # which is why the parameter form fell out of it.
+    # GATED ON THE SEEDING CONDITION ITSELF, not on a syntactic marker. Part 2a
+    # seeds `if g_observed == 1:` and `if (ptypes[k]) == "num":` (see the
+    # aot_set loop below) — so those are the two tests, read off the mechanism
+    # rather than approximated.
+    #
+    # The first version of this guard used `func_observed of fn` and every
+    # param, and was wrong in BOTH directions. Too wide: a STRING param
+    # shadowing a module string is never seeded (it stays a plain C Value*),
+    # yet was refused — a program the VM runs and the AOT previously compiled
+    # byte-exact. `func_observed` is uses_observer OR has_interrogate, while
+    # the seeding gates on g_observed (uses_observer OR has_obs_interrogate),
+    # so a `prev of`-only function was refused with nothing seeded in it at
+    # all. That is the same error this guard exists to fix — a population
+    # derived from a marker instead of from the mechanism — committed one
+    # level up while fixing an instance of it.
+    # PARTIAL BY DESIGN, and this says so rather than reading as a closure.
+    # It covers the PARAMETER shape of ouroboros#123. It does NOT cover the
+    # sibling shape in #124: under g_observed every plain function-local
+    # numeric assign is keyed into __eigs_g too, so a local leaks into module
+    # scope and stays readable after the call — `converged of t` then answers
+    # 0 about a binding the VM says does not exist. A refusal covering that
+    # would reject essentially every observed function with a local variable,
+    # so the class closes at Part 2b (the per-call env named at the aot_set
+    # loop below), not here.
+    if g_observed == 1:
+        for p2 in range of (len of params):
+            if (ptypes[p2]) == "num":
+                local _pn is params[p2]
+                if gnm[_pn] != null:
+                    throw of ("AOT: numeric parameter `" + _pn + "` shadows a module binding in an observed function — Part 2a keys it into the global env BY NAME (aot_set below), so the call silently overwrites the caller's `" + _pn + "` (ouroboros#123). Rename the parameter.")
+                if gbt[_pn] == 1:
+                    throw of ("AOT: numeric parameter `" + _pn + "` shadows a module BUFFER binding in an observed function (ouroboros#123)")
+
     local _lmk is {}
     collect_local_marked of [body, _lmk]
     local _lmn is keys of _lmk
