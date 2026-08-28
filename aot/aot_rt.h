@@ -990,6 +990,145 @@ static Value *aot_dot_get(Value *target, const char *key) {
     return result ? result : make_null();
 }
 
+/* MONOMORPHIC INLINE CACHE for a dict field read (ouroboros#130).
+ *
+ * Profiled on DMG's emulation loop: dict_get 14.9% and
+ * __strcmp_sse2_unaligned 11.8%, against 3.5% for the emulation itself.
+ * Two cheaper ideas were measured and BOTH did nothing — fusing the
+ * read+unbox (1.025x) and pre-hashing the key (0.998x) — because the cost
+ * is neither refcounting nor computing the hash: it is the bucket walk and
+ * the key strcmp inside the lookup.
+ *
+ * So cache per SITE. A site like `cpu.pc` sees the same dict object every
+ * time, so the slot index and the dict's own key POINTER are stable; a hit
+ * is a bounds check plus a pointer compare plus an array index, with no
+ * hash and no strcmp. A miss (different shape, grown dict, rehash) falls
+ * back to the normal lookup and re-arms. Correct for any dict because the
+ * guard validates the cached slot still holds that exact key pointer. */
+/* Non-static in eigenscript.c but absent from eigenscript.h (EigenScript#1056);
+ * declared here so the IC helpers below are not implicitly declared. */
+int env_hash_find_dict(Value *dict, const char *key, uint32_t h);
+
+/* Resolve a field to its slot index through the per-site cache, re-arming on
+ * a miss. Returns -1 if the dict has no such key. Shared by all three ICs. */
+static inline int aot_ic_slot(Value *target, const char *key,
+                              int *ic, const char **ick) {
+    int i = *ic;
+    if (i >= 0 && i < target->data.dict.count &&
+        target->data.dict.keys[i] == *ick) return i;
+    i = env_hash_find_dict(target, key, env_hash_name(key));
+    if (i >= 0) { *ic = i; *ick = target->data.dict.keys[i]; }
+    return i;
+}
+
+static double aot_dot_num_ic(Value *target, const char *key,
+                             int *ic, const char **ick, const char *site) {
+    if (target && target->type == VAL_DICT) {
+        int i = aot_ic_slot(target, key, ic, ick);
+        Value *v = (i >= 0) ? target->data.dict.vals[i] : NULL;
+        if (v && v->type == VAL_NUM) {
+            double d = v->data.num;
+            val_decref(target);
+            return d;
+        }
+        fprintf(stderr, "non-numeric value in a numeric context at %s (type %s)\n",
+                site, v ? val_type_name(v->type) : "null");
+        exit(1);
+    }
+    if (target) {
+        rt_error(EK_TYPE, 0, "cannot access field '%s' on %s",
+                 key, val_type_name(target->type));
+    }
+    fprintf(stderr, "non-numeric value in a numeric context at %s (null)\n", site);
+    exit(1);
+}
+
+/* IC'd generic field read — same contract as aot_dot_get (consumes the owned
+ * target, returns owned). The numeric IC above only covers sites the numeric
+ * inference already proved numeric; measured on DMG that was 0.9 reads per
+ * emulated cycle against a dict_get still holding 10.8% of runtime, i.e. most
+ * field traffic is BOXED and never saw the cache. This covers the rest. */
+static Value *aot_dot_get_ic(Value *target, const char *key,
+                             int *ic, const char **ick) {
+    if (target && target->type == VAL_DICT) {
+        int i = aot_ic_slot(target, key, ic, ick);
+        Value *v = (i >= 0) ? target->data.dict.vals[i] : NULL;
+        if (v) val_incref(v);
+        val_decref(target);
+        return v ? v : make_null();
+    }
+    if (target) {
+        rt_error(EK_TYPE, 0, "cannot access field '%s' on %s",
+                 key, val_type_name(target->type));
+        val_decref(target);
+    }
+    return make_null();
+}
+
+/* IC'd NUMERIC field write. The rhs arrives as a C double, so the common
+ * case — the slot already holds a sole-owned VAL_NUM — allocates nothing and
+ * frees nothing: the existing box is reused. That is the point. `ctx.pc is
+ * ctx.pc + 1` in DMG's dispatch was a make_num plus a free_value per write
+ * (8.5% + 7.1% of runtime between them) on top of the lookup.
+ *
+ * Reuse is gated on refcount == 1, so no other holder can observe the box
+ * change identity-for-value: anything that read the field through
+ * aot_dot_get(_ic) increfs, which forces the replacing path instead. Slots
+ * holding a shared or non-numeric value, and keys not present at all, fall
+ * back to semantics identical to aot_dot_set. */
+static void aot_dot_set_num_ic(Value *target, const char *key, double d,
+                               int *ic, const char **ick) {
+    if (target && target->type == VAL_DICT) {
+        int i = aot_ic_slot(target, key, ic, ick);
+        if (i >= 0) {
+            Value *old = target->data.dict.vals[i];
+            if (old && old->type == VAL_NUM && old->refcount == 1) {
+                old->data.num = d;
+            } else {
+                Value *nv = promote_if_arena(make_num(d));
+                val_decref(old);
+                target->data.dict.vals[i] = nv;
+            }
+        } else {
+            dict_set_owned(target, key, make_num(d));
+        }
+    } else if (target && target->type != VAL_NULL) {
+        rt_error(EK_TYPE, 0, "cannot set field '%s' on %s",
+                 key, val_type_name(target->type));
+    }
+    if (target) val_decref(target);
+}
+
+/* IC'd generic field write — mirrors dict_set_hashed's replace arm exactly
+ * (promote_if_arena, then decref-old/adopt) and then the owned-argument
+ * convention of dict_set_owned. */
+static void aot_dot_set_ic(Value *target, const char *key, Value *val,
+                           int *ic, const char **ick) {
+    if (target && target->type == VAL_DICT) {
+        int i = aot_ic_slot(target, key, ic, ick);
+        if (i >= 0) {
+            Value *promoted = promote_if_arena(val);
+            if (promoted != val) {
+                val_decref(target->data.dict.vals[i]);
+                target->data.dict.vals[i] = promoted;
+            } else {
+                val_incref(val);
+                val_decref(target->data.dict.vals[i]);
+                target->data.dict.vals[i] = val;
+            }
+            val_decref(val);
+        } else {
+            dict_set_owned(target, key, val);
+        }
+    } else {
+        if (target && target->type != VAL_NULL)
+            rt_error(EK_TYPE, 0, "cannot set field '%s' on %s",
+                     key, val_type_name(target->type));
+        if (val) val_decref(val);
+    }
+    if (target) val_decref(target);
+}
+
 static void aot_dot_set(Value *target, const char *key, Value *val) {
     if (target && target->type == VAL_DICT) {
         dict_set_owned(target, key, val);   /* adopts val's ref */

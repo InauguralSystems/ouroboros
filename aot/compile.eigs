@@ -177,6 +177,19 @@ define has_obs_interrogate(node) as:
 # emitted as a native C `double name(double, ...)` call. Set in emit_program.
 g_funcs is {}
 g_match_n is 0
+G_IC_N is [0]
+# Per-SITE monomorphic inline cache for dict field access (#130). Each textual
+# access site gets its own `static` pair — declared inline at the site (a GNU
+# statement-expression for reads, a plain block for writes) so no separate
+# declaration pass is needed. Returns [declaration, "&ic, &ick"].
+define ic_new(field) as:
+    local sn is str of (G_IC_N[0])
+    G_IC_N[0] is (G_IC_N[0]) + 1
+    return [
+        "static int __ic" + sn + " = -1; static const char *__ick" + sn + " = 0; ",
+        "&__ic" + sn + ", &__ick" + sn,
+        "\"" + (c_escape of (G_CUR_FN[0])) + ": ." + (c_escape of field) + "\""
+    ]
 # Just the NAMES of all user functions (-> 1), seeded before ptype inference so
 # is_tensor_call can tell a user-defined matmul/add/relu (which shadows the
 # tensor builtin) from the builtin, regardless of definition order.
@@ -962,7 +975,11 @@ define emit_num(node, nm, bt, raw) as:
         # numeric read of a dict field (#86): box-read then checked unbox.
         # aot_num_ck consumes the owned aot_dot_get result (same idiom as
         # the boxed index read below).
-        return "aot_num_ck_at(aot_dot_get(" + (emit_val of [node[1], nm, bt]) + ", \"" + (c_escape of node[2]) + "\"), \"" + (c_escape of (G_CUR_FN[0])) + ": ." + (c_escape of node[2]) + "\")"
+        # Per-SITE monomorphic inline cache (#130). The statics are declared
+        # inside the expression via a GNU statement-expression so no separate
+        # declaration pass is needed; each textual site gets its own pair.
+        local ic is ic_new of node[2]
+        return "({ " + ic[0] + "aot_dot_num_ic(" + (emit_val of [node[1], nm, bt]) + ", \"" + (c_escape of node[2]) + "\", " + ic[1] + ", " + ic[2] + "); })"
     if t == "index":
         local tgt is unwrap of node[1]
         # a buffer C var -> aot_buf_get; anything else (a boxed list local,
@@ -1156,7 +1173,10 @@ define emit_val(node, nm, bt) as:
         # the owned target and mirrors the VM's field-read semantics (null
         # target -> null silently; non-dict -> EK_TYPE). The tensor slice
         # keeps its own dot path inside emit_tensor.
-        return "aot_dot_get(" + (emit_val of [node[1], nm, bt]) + ", \"" + (c_escape of node[2]) + "\")"
+        # Inline-cached (#130): most field traffic in a real program is BOXED,
+        # so this site — not the numeric one — carries the bulk of the lookups.
+        local ic is ic_new of node[2]
+        return "({ " + ic[0] + "aot_dot_get_ic(" + (emit_val of [node[1], nm, bt]) + ", \"" + (c_escape of node[2]) + "\", " + ic[1] + "); })"
     if t == "list":
         # nested-list literal -> owned Value built inline (GCC statement-expr).
         local le is node[1]
@@ -1441,7 +1461,14 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
         # so one case covers both. aot_dot_set consumes the owned target and
         # adopts the owned rhs, mirroring the VM's set-field semantics (null
         # target -> silent no-op; non-dict -> EK_TYPE).
-        return ind + "aot_dot_set(" + (emit_val of [node[1], nm, bt]) + ", \"" + (c_escape of node[2]) + "\", " + (emit_val of [node[3], nm, bt]) + ");\n"
+        # Inline-cached (#130). A rhs the numeric inference can prove scalar
+        # goes through the double-taking setter, which reuses the slot's
+        # existing box instead of allocating and freeing one per write.
+        if (is_num_expr of [node[3], nm, bt]) == 1:
+            local icn is ic_new of node[2]
+            return ind + "{ " + icn[0] + "aot_dot_set_num_ic(" + (emit_val of [node[1], nm, bt]) + ", \"" + (c_escape of node[2]) + "\", " + (emit_num of [node[3], nm, bt, 0]) + ", " + icn[1] + "); }\n"
+        local icg is ic_new of node[2]
+        return ind + "{ " + icg[0] + "aot_dot_set_ic(" + (emit_val of [node[1], nm, bt]) + ", \"" + (c_escape of node[2]) + "\", " + (emit_val of [node[3], nm, bt]) + ", " + icg[1] + "); }\n"
     if t == "call":
         local callee is unwrap of node[1]
         if callee[0] == "ident":
