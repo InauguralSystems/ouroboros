@@ -1065,6 +1065,9 @@ define emit_num(node, nm, bt, raw) as:
             # aot_index_get dispatches on the runtime types exactly like the
             # VM, and the RESULT is what must be numeric-or-raise here.
             if (is_num_expr of [node[2], nm, bt]) == 1:
+                local nib is emit_val_borrow of [node[1], nm, bt, node[2]]
+                if nib != "":
+                    return "aot_index_num_ib(" + nib + ", " + (emit_num of [node[2], nm, bt, 0]) + ", \"" + (c_escape of (G_CUR_FN[0])) + ": index read\")"
                 return "aot_num_ck_at(aot_index_get_i(" + (emit_val of [node[1], nm, bt]) + ", " + (emit_num of [node[2], nm, bt, 0]) + "), \"" + (c_escape of (G_CUR_FN[0])) + ": index read\")"
             return "aot_num_ck_at(aot_index_get(" + (emit_val of [node[1], nm, bt]) + ", " + (emit_val of [node[2], nm, bt]) + "), \"" + (c_escape of (G_CUR_FN[0])) + ": index read\")"
         if (is_int_expr of node[2]) == 1:
@@ -1244,6 +1247,9 @@ define emit_val(node, nm, bt) as:
         if (itgt[0] == "ident") and (bt[itgt[1]] == 1):
             return "make_num(aot_buf_get(" + (cn of itgt[1]) + ", " + (emit_num of [node[2], nm, bt, 0]) + "))"
         if (is_num_expr of [node[2], nm, bt]) == 1:
+            local bib is emit_val_borrow of [node[1], nm, bt, node[2]]
+            if bib != "":
+                return "aot_index_get_ib(" + bib + ", " + (emit_num of [node[2], nm, bt, 0]) + ")"
             return "aot_index_get_i(" + (emit_val of [node[1], nm, bt]) + ", " + (emit_num of [node[2], nm, bt, 0]) + ")"
         return "aot_index_get(" + (emit_val of [node[1], nm, bt]) + ", " + (emit_val of [node[2], nm, bt]) + ")"
     if t == "dot":
@@ -1467,9 +1473,9 @@ define emit_cmp_n(node, nm, bt, want_bool) as:
         # borrow it and do no refcount work at all.
         local bexpr is ""
         if rnum == 1:
-            bexpr is emit_borrow_dot of [n[2], nm, bt]
+            bexpr is emit_val_borrow of [n[2], nm, bt, n[3]]
         else:
-            bexpr is emit_borrow_dot of [n[3], nm, bt]
+            bexpr is emit_val_borrow of [n[3], nm, bt, n[2]]
         if bexpr != "":
             local bfn is ""
             if rnum == 1:
@@ -1479,6 +1485,33 @@ define emit_cmp_n(node, nm, bt, want_bool) as:
             return bfn + "(" + bexpr + ", " + num + ")"
         return fn + "_t(" + boxed + ", " + num + ")"
     return fn + "(" + boxed + ", " + num + ")"
+
+# Does this expression contain a CALL? A borrowed container is only safe while
+# nothing can replace the slot holding it, and a call is the only thing in an
+# operand position that could. C argument evaluation order is unspecified, so
+# the sibling operand is checked, not assumed (#130).
+define expr_has_call(node) as:
+    if (type of node) != "list":
+        return 0
+    if (len of node) == 0:
+        return 0
+    if node[0] == "call":
+        return 1
+    for k in range of (len of node):
+        if (expr_has_call of node[k]) == 1:
+            return 1
+    return 0
+
+# A BORROWED C expression for `node`, or "" when it cannot be borrowed: a plain
+# C Value* variable, or a field of one. `sibling` is the expression evaluated
+# alongside it; if that can call, the borrow is refused.
+define emit_val_borrow(node, nm, bt, sibling) as:
+    if (expr_has_call of sibling) == 1:
+        return ""
+    local cv is borrowable_cvar of [node, nm, bt]
+    if cv != "":
+        return cv
+    return emit_borrow_dot of [node, nm, bt]
 
 define emit_cond(node, nm, bt) as:
     if (is_num_expr of [node, nm, bt]) == 1:
@@ -1625,6 +1658,9 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
         # general boxed index-assign (#86): list / dict / buffer target as a
         # Value* — aot_index_set mirrors OP_INDEX_SET and consumes/adopts.
         if (is_num_expr of [node[2], nm, bt]) == 1:
+            local sib is emit_val_borrow of [node[1], nm, bt, [node[2], node[3]]]
+            if sib != "":
+                return ind + "aot_index_set_ib(" + sib + ", " + (emit_num of [node[2], nm, bt, 0]) + ", " + (emit_val of [node[3], nm, bt]) + ");\n"
             return ind + "aot_index_set_i(" + (emit_val of [node[1], nm, bt]) + ", " + (emit_num of [node[2], nm, bt, 0]) + ", " + (emit_val of [node[3], nm, bt]) + ");\n"
         return ind + "aot_index_set(" + (emit_val of [node[1], nm, bt]) + ", " + (emit_val of [node[2], nm, bt]) + ", " + (emit_val of [node[3], nm, bt]) + ");\n"
     if t == "capbind":

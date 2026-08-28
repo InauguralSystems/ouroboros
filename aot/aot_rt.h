@@ -1219,6 +1219,77 @@ static AotTensor aot_tensor_relu(AotTensor a) {
 static int aot_idx_is_int(double d, int *out) { int i = (int)d; if ((double)i != d) return 0; *out = i; return 1; }
 static int aot_idx_resolve(int *i, int len) { int r = (*i < 0) ? *i + len : *i; if (r < 0 || r >= len) return 0; *i = r; return 1; }
 
+/* Target-borrowed integer index read/write (#130): `mem.data[addr]` is the
+ * emulator's single commonest expression, and the container it indexes is a
+ * dict slot that outlives the expression. Borrowing it removes the last
+ * refcount pair on that path. Result ownership is unchanged. */
+static Value *aot_index_get_ib(Value *target, double d) {
+    Value *result = NULL;
+    int i;
+    if (target && target->type == VAL_LIST) {
+        if (!aot_idx_is_int(d, &i))
+            rt_error(EK_VALUE, 0, "index must be an integer, got %g", d);
+        else if (aot_idx_resolve(&i, target->data.list.count)) {
+            result = target->data.list.items[i]; val_incref(result);
+        } else
+            rt_error(EK_INDEX, 0, "index %d out of range (list length %d)", i, target->data.list.count);
+    } else if (target && target->type == VAL_STR) {
+        if (!aot_idx_is_int(d, &i))
+            rt_error(EK_VALUE, 0, "index must be an integer, got %g", d);
+        else if (aot_idx_resolve(&i, (int)strlen(target->data.str))) {
+            char b[2] = { target->data.str[i], 0 }; result = make_str(b);
+        } else
+            rt_error(EK_INDEX, 0, "string index %d out of range (length %d)", i, (int)strlen(target->data.str));
+    } else if (target && target->type == VAL_BUFFER) {
+        if (!aot_idx_is_int(d, &i))
+            rt_error(EK_VALUE, 0, "index must be an integer, got %g", d);
+        else if (aot_idx_resolve(&i, target->data.buffer.count))
+            result = make_num(target->data.buffer.data[i]);
+        else
+            rt_error(EK_INDEX, 0, "buffer index %d out of range (length %d)", i, target->data.buffer.count);
+    } else {
+        rt_error(EK_TYPE, 0, "cannot index %s",
+                 target ? val_type_name(target->type) : "null");
+    }
+    return result ? result : make_null();
+}
+
+/* Numeric element read straight to a double: no box for the index, and none
+ * for the element when the list already holds a VAL_NUM. */
+static double aot_index_num_ib(Value *target, double d, const char *site) {
+    Value *v = aot_index_get_ib(target, d);
+    if (v && v->type == VAL_NUM) { double r = v->data.num; val_decref(v); return r; }
+    return aot_num_ck_at(v, site);
+}
+
+static void aot_index_set_ib(Value *target, double d, Value *val) {
+    int i;
+    if (target && target->type == VAL_LIST) {
+        if (!aot_idx_is_int(d, &i))
+            rt_error(EK_VALUE, 0, "index must be an integer, got %g", d);
+        else if (aot_idx_resolve(&i, target->data.list.count)) {
+            Value *old = target->data.list.items[i];
+            target->data.list.items[i] = val; val = NULL;   /* adopt */
+            if (old) val_decref(old);
+        } else
+            rt_error(EK_INDEX, 0, "index %d out of range (list length %d)", i, target->data.list.count);
+    } else if (target && target->type == VAL_BUFFER) {
+        if (val && val->type == VAL_NUM) {
+            if (!aot_idx_is_int(d, &i))
+                rt_error(EK_VALUE, 0, "index must be an integer, got %g", d);
+            else if (aot_idx_resolve(&i, target->data.buffer.count))
+                target->data.buffer.data[i] = val->data.num;
+            else
+                rt_error(EK_INDEX, 0, "buffer index %d out of range (length %d)", i, target->data.buffer.count);
+        } else
+            rt_error(EK_TYPE, 0, "buffer elements must be numbers");
+    } else {
+        rt_error(EK_TYPE, 0, "cannot index-assign into %s",
+                 target ? val_type_name(target->type) : "null");
+    }
+    if (val) val_decref(val);
+}
+
 /* Integer-index read (#130). Identical to aot_index_get with a VAL_NUM index
  * that is already known integral, minus the box: 474 sites in DMG's generated
  * C read `aot_index_get(x, make_num(<literal>))`, each allocating and freeing
