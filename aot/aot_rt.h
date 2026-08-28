@@ -470,6 +470,52 @@ AOT_CMP_NL(aot_gt_nl, aot_gt, >)
 AOT_CMP_NL(aot_le_nl, aot_le, <=)
 AOT_CMP_NL(aot_ge_nl, aot_ge, >=)
 
+/* ---- fully borrowed field-compare (#130) ---------------------------------
+ * After the boxes came out of the comparisons, what was left on top of the
+ * profile was pure bookkeeping: aot_dot_get_ic 11.0% with val_incref +
+ * val_decref another 12.3%. A read like `mem.tima_reload_pending > 0` did
+ * FOUR refcount operations — incref the target because the reader consumes
+ * it, incref the result, decref the target, decref the result — every one of
+ * which is provably balanced within a single expression.
+ *
+ * When the target is a plain C Value* variable (a dict/buffer/generic local or
+ * parameter, never a temporary) it is live for the whole expression, and the
+ * result is a slot of that dict which nothing in the comparison can free. So
+ * borrow both. A missing key borrows as C NULL; the helpers below substitute a
+ * stack VAL_NULL so `null == 1` is false and `null < 1` raises naming "null",
+ * exactly as the owned path does. */
+static inline int aot_eq_nb_t(Value *a, double b) {
+    if (a && a->type == VAL_NUM) return a->data.num == b;
+    Value nv; memset(&nv, 0, sizeof nv); nv.type = VAL_NULL; nv.arena = 1;
+    Value bv; memset(&bv, 0, sizeof bv);
+    bv.type = VAL_NUM; bv.data.num = b; bv.arena = 1;
+    return values_equal(a ? a : &nv, &bv);
+}
+static inline int aot_ne_nb_t(Value *a, double b) { return !aot_eq_nb_t(a, b); }
+
+#define AOT_CMP_NB(NAME, BASE, OP) \
+    static inline int NAME(Value *a, double b) { \
+        if (a && a->type == VAL_NUM) return (a->data.num OP b) ? 1 : 0; \
+        Value nv; memset(&nv, 0, sizeof nv); nv.type = VAL_NULL; nv.arena = 1; \
+        Value bv; memset(&bv, 0, sizeof bv); \
+        bv.type = VAL_NUM; bv.data.num = b; bv.arena = 1; \
+        return aot_truthy(BASE(a ? a : &nv, &bv)); }
+#define AOT_CMP_NBL(NAME, BASE, OP) \
+    static inline int NAME(Value *b, double a) { \
+        if (b && b->type == VAL_NUM) return (a OP b->data.num) ? 1 : 0; \
+        Value nv; memset(&nv, 0, sizeof nv); nv.type = VAL_NULL; nv.arena = 1; \
+        Value av; memset(&av, 0, sizeof av); \
+        av.type = VAL_NUM; av.data.num = a; av.arena = 1; \
+        return aot_truthy(BASE(&av, b ? b : &nv)); }
+AOT_CMP_NB(aot_lt_nb_t, aot_lt, <)
+AOT_CMP_NB(aot_gt_nb_t, aot_gt, >)
+AOT_CMP_NB(aot_le_nb_t, aot_le, <=)
+AOT_CMP_NB(aot_ge_nb_t, aot_ge, >=)
+AOT_CMP_NBL(aot_lt_nlb_t, aot_lt, <)
+AOT_CMP_NBL(aot_gt_nlb_t, aot_gt, >)
+AOT_CMP_NBL(aot_le_nlb_t, aot_le, <=)
+AOT_CMP_NBL(aot_ge_nlb_t, aot_ge, >=)
+
 static Value *aot_eq(Value *a, Value *b) {
     int e = values_equal(a, b); val_decref(a); val_decref(b);
     return make_num(e ? 1.0 : 0.0);
@@ -1267,6 +1313,40 @@ static void aot_args(int argc, char **argv) {
  * Mirrors OP_INDEX_SET: list (integer index, in range -> replace, old ref
  * dropped), dict (string key -> set), buffer (numeric value). Consumes
  * target and idx; adopts val. */
+/* Integer-index write (#130) — aot_index_set with the index already a known
+ * double, minus the box. The twin of aot_index_get_i; the diagnostics are
+ * byte-identical because `d` is the same double the box would have carried.
+ * A VAL_DICT target falls to the final raise here exactly as it does there,
+ * since the dict arm requires a VAL_STR index. */
+static void aot_index_set_i(Value *target, double d, Value *val) {
+    int i;
+    if (target && target->type == VAL_LIST) {
+        if (!aot_idx_is_int(d, &i))
+            rt_error(EK_VALUE, 0, "index must be an integer, got %g", d);
+        else if (aot_idx_resolve(&i, target->data.list.count)) {
+            Value *old = target->data.list.items[i];
+            target->data.list.items[i] = val; val = NULL;   /* adopt */
+            if (old) val_decref(old);
+        } else
+            rt_error(EK_INDEX, 0, "index %d out of range (list length %d)", i, target->data.list.count);
+    } else if (target && target->type == VAL_BUFFER) {
+        if (val && val->type == VAL_NUM) {
+            if (!aot_idx_is_int(d, &i))
+                rt_error(EK_VALUE, 0, "index must be an integer, got %g", d);
+            else if (aot_idx_resolve(&i, target->data.buffer.count))
+                target->data.buffer.data[i] = val->data.num;
+            else
+                rt_error(EK_INDEX, 0, "buffer index %d out of range (length %d)", i, target->data.buffer.count);
+        } else
+            rt_error(EK_TYPE, 0, "buffer elements must be numbers");
+    } else {
+        rt_error(EK_TYPE, 0, "cannot index-assign into %s",
+                 target ? val_type_name(target->type) : "null");
+    }
+    if (val) val_decref(val);
+    if (target) val_decref(target);
+}
+
 static void aot_index_set(Value *target, Value *idx, Value *val) {
     if (target && target->type == VAL_LIST && idx && idx->type == VAL_NUM) {
         int i;
@@ -1353,6 +1433,18 @@ static inline int aot_ic_slot(Value *target, const char *key,
     i = env_hash_find_dict(target, key, env_hash_name(key));
     if (i >= 0) { *ic = i; *ick = target->data.dict.keys[i]; }
     return i;
+}
+
+static inline Value *aot_dot_borrow_ic(Value *target, const char *key,
+                                       int *ic, const char **ick) {
+    if (target && target->type == VAL_DICT) {
+        int i = aot_ic_slot(target, key, ic, ick);
+        return (i >= 0) ? target->data.dict.vals[i] : NULL;
+    }
+    if (target)
+        rt_error(EK_TYPE, 0, "cannot access field '%s' on %s",
+                 key, val_type_name(target->type));
+    return NULL;   /* null target reads null, silently — the #898 contract */
 }
 
 static double aot_dot_num_ic(Value *target, const char *key,

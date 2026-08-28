@@ -1404,6 +1404,30 @@ define emit_tensor(node, nm, bt) as:
 CMP_OPS is {"==": 1, "!=": 1, "<": 1, ">": 1, "<=": 1, ">=": 1}
 CMPN_R is {"==": "aot_eq_n", "!=": "aot_ne_n", "<": "aot_lt_n", ">": "aot_gt_n", "<=": "aot_le_n", ">=": "aot_ge_n"}
 CMPN_L is {"==": "aot_eq_n", "!=": "aot_ne_n", "<": "aot_lt_nl", ">": "aot_gt_nl", "<=": "aot_le_nl", ">=": "aot_ge_nl"}
+CMPNB_R is {"==": "aot_eq_nb_t", "!=": "aot_ne_nb_t", "<": "aot_lt_nb_t", ">": "aot_gt_nb_t", "<=": "aot_le_nb_t", ">=": "aot_ge_nb_t"}
+CMPNB_L is {"==": "aot_eq_nb_t", "!=": "aot_ne_nb_t", "<": "aot_lt_nlb_t", ">": "aot_gt_nlb_t", "<=": "aot_le_nlb_t", ">=": "aot_ge_nlb_t"}
+
+# `<cvar>.field` where <cvar> is a C Value* name (a dict/buffer/generic local
+# or parameter, never a temporary) -> a BORROWED read: no ref is taken on the
+# target and none on the result. Returns "" when the shape does not apply.
+define emit_borrow_dot(node, nm, bt) as:
+    local n is unwrap of node
+    if n[0] != "dot":
+        return ""
+    local tgt is unwrap of n[1]
+    if tgt[0] != "ident":
+        return ""
+    local ok is 0
+    if bt[tgt[1]] == 1:
+        ok is 1
+    if g_dict[tgt[1]] == 1:
+        ok is 1
+    if g_genp[tgt[1]] == 1:
+        ok is 1
+    if ok == 0:
+        return ""
+    local ic is ic_new of n[2]
+    return "({ " + ic[0] + "aot_dot_borrow_ic(" + (cn of tgt[1]) + ", \"" + (c_escape of n[2]) + "\", " + ic[1] + "); })"
 define emit_cmp_n(node, nm, bt, want_bool) as:
     local n is unwrap of node
     if n[0] != "binop":
@@ -1426,6 +1450,20 @@ define emit_cmp_n(node, nm, bt, want_bool) as:
         boxed is emit_val of [n[3], nm, bt]
         num is emit_num of [n[2], nm, bt, 0]
     if want_bool == 1:
+        # condition position: if the boxed side is a field of a C variable,
+        # borrow it and do no refcount work at all.
+        local bexpr is ""
+        if rnum == 1:
+            bexpr is emit_borrow_dot of [n[2], nm, bt]
+        else:
+            bexpr is emit_borrow_dot of [n[3], nm, bt]
+        if bexpr != "":
+            local bfn is ""
+            if rnum == 1:
+                bfn is CMPNB_R[n[1]]
+            else:
+                bfn is CMPNB_L[n[1]]
+            return bfn + "(" + bexpr + ", " + num + ")"
         return fn + "_t(" + boxed + ", " + num + ")"
     return fn + "(" + boxed + ", " + num + ")"
 
@@ -1573,6 +1611,8 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
                 return ind + "aot_buf_set(" + (cn of tgt[1]) + ", " + (emit_num of [node[2], nm, bt, 0]) + ", " + (emit_num of [node[3], nm, bt, 0]) + ");\n"
         # general boxed index-assign (#86): list / dict / buffer target as a
         # Value* — aot_index_set mirrors OP_INDEX_SET and consumes/adopts.
+        if (is_num_expr of [node[2], nm, bt]) == 1:
+            return ind + "aot_index_set_i(" + (emit_val of [node[1], nm, bt]) + ", " + (emit_num of [node[2], nm, bt, 0]) + ", " + (emit_val of [node[3], nm, bt]) + ");\n"
         return ind + "aot_index_set(" + (emit_val of [node[1], nm, bt]) + ", " + (emit_val of [node[2], nm, bt]) + ", " + (emit_val of [node[3], nm, bt]) + ");\n"
     if t == "capbind":
         # (#86) bind a lifted nested-define's captures: alias each captured
