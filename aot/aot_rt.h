@@ -406,8 +406,15 @@ static inline Value *aot_index_get_ib(Value *target, double d) {
         if (__builtin_expect((double)i == d && i >= 0
                              && i < (long)target->data.list.count, 1)) {
             Value *r = target->data.list.items[i];
-            val_incref(r);
-            return r;
+            /* The `if (r)` mirrors the slow path's `result ? result :
+             * make_null()` and the dict fast paths' own guard. val_incref is
+             * NULL-safe, so without it a NULL live slot would hand back a bare
+             * NULL where the slow path hands back a VAL_NULL. A review traced
+             * every list-slot writer and found no reachable NULL-within-count,
+             * so this is not a live bug — but the asymmetry was real, and a
+             * fast path that answers a case differently from the arm it
+             * shortcuts is the one thing this split must never do. */
+            if (r) { val_incref(r); return r; }
         }
     }
     return aot_index_get_ib_slow(target, d);
