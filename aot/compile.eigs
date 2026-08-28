@@ -176,6 +176,7 @@ define has_obs_interrogate(node) as:
 # Set of user-defined numeric functions (name -> 1). A call to one is numeric;
 # emitted as a native C `double name(double, ...)` call. Set in emit_program.
 g_funcs is {}
+g_match_n is 0
 # Just the NAMES of all user functions (-> 1), seeded before ptype inference so
 # is_tensor_call can tell a user-defined matmul/add/relu (which shadows the
 # tensor builtin) from the builtin, regardless of definition order.
@@ -1584,6 +1585,41 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
         # returns early when g_unobserved_depth != 0, so the slot trajectory is
         # untouched, byte-exact with the VM.
         return ind + "g_unobserved_depth += 1;\n" + (emit_stmts of [node[1], ind, nm, bt, minits, gf]) + ind + "g_unobserved_depth -= 1;\n"
+    if t == "match":
+        # `match subj: case P: ... case Q: ...` — first match wins, a null
+        # pattern is the wildcard. Mirrors the interpreter's ntype == "match":
+        # evaluate the subject ONCE, compare with `==` against each pattern in
+        # order, run the first matching body.
+        #
+        # Needed because ouroboros#129 compiles static load_file targets, which
+        # pulls modules into the AOT envelope that were previously interpreted
+        # — DMG's src/opcodes.eigs dispatches registers with five of these.
+        # NUMERIC subjects only; anything else refuses loudly rather than
+        # emitting a comparison whose semantics were never checked.
+        if (is_num_expr of [node[1], nm, bt]) != 1:
+            throw of "AOT: `match` on a non-numeric subject is not supported"
+        local mcases is node[2]
+        local msub is "__m" + (str of g_match_n)
+        g_match_n is g_match_n + 1
+        local mout is ind + "{ double " + msub + " = " + (emit_num of [node[1], nm, bt, 0]) + ";\n"
+        local mfirst is 1
+        local mi is 0
+        loop while mi < (len of mcases):
+            local mpair is mcases[mi]
+            local mpat is mpair[0]
+            local mbody is mpair[1]
+            if mpat == null:
+                mout is mout + ind + "    else {\n" + (emit_stmts of [mbody, ind + "        ", nm, bt, minits, gf]) + ind + "    }\n"
+            else:
+                if (is_num_expr of [mpat, nm, bt]) != 1:
+                    throw of "AOT: `match` case pattern must be numeric"
+                local mkw is "if"
+                if mfirst == 0:
+                    mkw is "else if"
+                mout is mout + ind + "    " + mkw + " (" + msub + " == " + (emit_num of [mpat, nm, bt, 0]) + ") {\n" + (emit_stmts of [mbody, ind + "        ", nm, bt, minits, gf]) + ind + "    }\n"
+                mfirst is 0
+            mi is mi + 1
+        return mout + ind + "}\n"
     throw of ("AOT: cannot emit statement node '" + t + "'")
 
 # ---- buffer value-bound inference (for guard elision in vectorized maps) ----
@@ -2842,6 +2878,53 @@ define scan_arg_overrides(node) as:
 # tokenizer's `parts[0] == "p"` is a list of strings. Demoting only on
 # this evidence keeps every numeric program on the unboxed fast path, so
 # the change cannot regress the numeric benchmarks.
+# Does any `name[i]` READ appear in a genuinely numeric position — an
+# arithmetic/comparison operand, or an index expression? (#86 element-class.)
+#
+# `find_buffer_use` assigns "buf" from index USAGE alone, and the unboxed
+# read it emits (aot_buf_get_i -> aot_list_num_at) EXITS on a non-numeric
+# element. `elem_is_boxed_use` demotes that, but only on shapes that touch
+# the element directly (x[i].f, x[i][j], for y in x[i]) — so a function whose
+# only use is PASSING x[i] to another function kept the unboxed read.
+#
+# DMG hits exactly that: `_op_ld_bc_d16(ctx)` does
+# `set_bc of [ctx[0], fetch16 of [ctx[0], ctx[1]]]` and never touches the
+# element itself, so `ctx` stayed "buf" and the emulator died on
+# `non-numeric element in ctx[0] (dict)` — while sibling handlers doing
+# `ctx[0].sp` were demoted correctly. Same param, same value, two classes.
+#
+# The asymmetry decides the default: a wrong "buf" is a crash or a wrong
+# read, a wrong "gen" is one boxed access. So an element read that is never
+# used numerically demotes, rather than requiring proof that it is boxed.
+define elem_has_numeric_use(node, name) as:
+    if (type of node) != "list":
+        return 0
+    if (len of node) == 0:
+        return 0
+    # DIRECT operands only. `contains_index_of` descends into call arguments,
+    # so `(get_bc of ctx[0]) + 1` counted ctx[0] as numerically used when the
+    # numeric thing is the CALL RESULT — that false positive kept six DMG
+    # handlers on the unboxed read. The element itself must be the operand.
+    if node[0] == "binop":
+        if (is_index_of of [node[2], name]) == 1:
+            return 1
+        if (is_index_of of [node[3], name]) == 1:
+            return 1
+    if node[0] == "unop":
+        if (is_index_of of [node[2], name]) == 1:
+            return 1
+    # y[ x[i] ] — the element is used as an index, which must be a number
+    if (node[0] == "index") or (node[0] == "index_assign"):
+        if (is_index_of of [node[2], name]) == 1:
+            return 1
+    local k is 0
+    loop while k < (len of node):
+        if (type of node[k]) == "list":
+            if (elem_has_numeric_use of [node[k], name]) == 1:
+                return 1
+        k is k + 1
+    return 0
+
 define elem_is_boxed_use(node, name) as:
     if (type of node) != "list":
         return 0
@@ -3003,6 +3086,10 @@ define func_ptypes(fn) as:
             # untouched.
             if (elem_is_boxed_use of [body, params[p]]) == 1:
                 cls is "gen"
+            elif (elem_has_numeric_use of [body, params[p]]) == 0:
+                # indexable, but nothing ever uses an element as a number —
+                # take the boxed read rather than betting on it (#86).
+                cls is "gen"
         elif (find_buf_param_use of [body, params[p]]) == 1:
             cls is "buf"
         elif (find_gen_param_use of [body, params[p]]) == 1:
@@ -3158,6 +3245,20 @@ define local_gen_map_seeded(body, seed) as:
             local r is unwrap of rhss[j]
             if (len of r) > 0:
                 if (r[0] == "str") or (r[0] == "dict") or (r[0] == "list"):
+                    isgen is 1
+                # An INDEX read is boxed evidence (#86). `rom_path is argv[0]`
+                # yields a str, but an index node was not evidence of anything,
+                # so the name stayed unclassified, `load_rom`'s `path` kept its
+                # num default, and the call emitted aot_num_ck_at on a string —
+                # DMG died at `name rom_path (type str)` the moment #129 made
+                # load_rom a COMPILED function instead of an interpreted one.
+                #
+                # Safe by the same veto every other signal here relies on:
+                # find_numeric_use_direct below drops any name with direct
+                # arithmetic use, so `x is buf[i]` followed by `x + 1` is not
+                # widened. Over-widening costs a boxed read; UNDER-widening is
+                # a wrong emission, which is the asymmetry this pass exists for.
+                if r[0] == "index":
                     isgen is 1
                 if r[0] == "call":
                     local rc is unwrap of r[1]
@@ -4753,6 +4854,81 @@ define emit_program(ast) as:
     local ftr is "    aot_shutdown(__eigs_g);\n    return 0;\n}\n"
     return hdr + body + ftr
 
+# ---- ouroboros#129: compile static `load_file` targets --------------------
+#
+# `load_file of "<literal>"` used to be emitted as a RUNTIME call, so the
+# target was parsed and INTERPRETED by the linked VM while its parent ran as
+# compiled C. That is the seam six separate defects came from (#127, #121,
+# EigenScript#1046/#373), and it is why the AOT cannot accelerate any program
+# that modularises its hot path: DMG is 3,288 lines of which 2,470 — including
+# the 128-function opcode dispatch — live behind this call.
+#
+# A literal target is spliced into the compilation unit instead. emit_program
+# already splits `func` nodes out of the top-level block and hoists them, so
+# the child's definitions become visible to the parent and vice versa, which
+# is exactly load_file's scope behaviour.
+#
+# A COMPUTED path stays a runtime call: that is a genuinely dynamic load and
+# the hybrid is correct for it.
+define _lf_dirname(p) as:
+    local i is (len of p) - 1
+    loop while i >= 0:
+        if (char_at of [p, i]) == "/":
+            return substr of [p, 0, i + 1]
+        i is i - 1
+    return ""
+
+# The literal path if `st` is `load_file of "<str>"`, else null.
+define _lf_target(st) as:
+    local u is unwrap of st
+    if u[0] != "call":
+        return null
+    local callee is unwrap of u[1]
+    if callee[0] != "ident":
+        return null
+    if callee[1] != "load_file":
+        return null
+    local a is unwrap of u[2]
+    if a[0] != "str":
+        return null
+    return a[1]
+
+define splice_static_loads(blk, base, depth) as:
+    if depth > 16:
+        throw of "AOT: load_file nesting deeper than 16 — cyclic load?"
+    local out is []
+    local stmts is blk[1]
+    for i in range of (len of stmts):
+        local st is stmts[i]
+        local path is _lf_target of st
+        if path == null:
+            append of [out, st]
+        else:
+            # BEST-EFFORT, and that is the design rather than a shortcut.
+            # The VM resolves load_file through a CHAIN: script-dir first,
+            # then the exe-dir stdlib step (g_exe_dir/../<path>, which is how
+            # `load_file of "lib/int_vector.eigs"` finds the stdlib). This
+            # pass can only resolve the script-dir step — it has no idea what
+            # the built binary's exe dir will be — so anything it cannot read
+            # STAYS a runtime call and behaves exactly as it does today.
+            #
+            # Caught by t76_load_file_paths, which exercises both prongs: the
+            # first version threw on an unresolvable path and turned a passing
+            # stdlib load into a build failure.
+            local full is (_lf_dirname of base) + path
+            local csrc is read_text of full
+            if csrc == null:
+                append of [out, st]
+            elif (len of csrc) == 0:
+                append of [out, st]
+            else:
+                local cast is eigen_parse of (eigen_tokenize of csrc)
+                local sp is splice_static_loads of [cast, full, depth + 1]
+                local cs is sp[1]
+                for k in range of (len of cs):
+                    append of [out, cs[k]]
+    return ["block", out]
+
 # ---- driver ----
 argv is args of null
 src is read_text of argv[0]
@@ -4761,6 +4937,7 @@ if (len of argv) > 1:
         g_dump is 1
 toks is eigen_tokenize of src
 ast is eigen_parse of toks
+ast is splice_static_loads of [ast, argv[0], 0]
 gen_c is emit_program of ast
 if g_dump == 1:
     # deterministic inference report (#65): header + D records, no C output.
