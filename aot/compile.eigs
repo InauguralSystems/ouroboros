@@ -1019,6 +1019,8 @@ define emit_num(node, nm, bt, raw) as:
             # in a numeric context (`d["a"] + 5`) has a STRING index —
             # aot_index_get dispatches on the runtime types exactly like the
             # VM, and the RESULT is what must be numeric-or-raise here.
+            if (is_num_expr of [node[2], nm, bt]) == 1:
+                return "aot_num_ck_at(aot_index_get_i(" + (emit_val of [node[1], nm, bt]) + ", " + (emit_num of [node[2], nm, bt, 0]) + "), \"" + (c_escape of (G_CUR_FN[0])) + ": index read\")"
             return "aot_num_ck_at(aot_index_get(" + (emit_val of [node[1], nm, bt]) + ", " + (emit_val of [node[2], nm, bt]) + "), \"" + (c_escape of (G_CUR_FN[0])) + ": index read\")"
         if (is_int_expr of node[2]) == 1:
             return "aot_buf_get_i(" + (cn of tgt[1]) + ", " + (emit_int of node[2]) + ")"
@@ -1196,6 +1198,8 @@ define emit_val(node, nm, bt) as:
         local itgt is unwrap of node[1]
         if (itgt[0] == "ident") and (bt[itgt[1]] == 1):
             return "make_num(aot_buf_get(" + (cn of itgt[1]) + ", " + (emit_num of [node[2], nm, bt, 0]) + "))"
+        if (is_num_expr of [node[2], nm, bt]) == 1:
+            return "aot_index_get_i(" + (emit_val of [node[1], nm, bt]) + ", " + (emit_num of [node[2], nm, bt, 0]) + ")"
         return "aot_index_get(" + (emit_val of [node[1], nm, bt]) + ", " + (emit_val of [node[2], nm, bt]) + ")"
     if t == "dot":
         # general dict field read (#86) -> owned Value. aot_dot_get consumes
@@ -1396,7 +1400,8 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
             # previous iteration's shadow under iteration carry — exactly
             # like the VM.
             if (len of node) >= 4:
-                return ind + "aot_set(__eigs_l, \"" + name + "\", " + (emit_val of [node[2], nm, bt]) + ");\n"
+                local dc is ic_cache of 0
+                return ind + "{ " + dc[0] + "aot_set_ic(__eigs_l, \"" + name + "\", " + dc[1] + ", " + (emit_val of [node[2], nm, bt]) + "); }\n"
             if (is_num_expr of [node[2], nm, bt]) == 1:
                 return ind + (env_write_num of [name, (emit_num of [node[2], nm, bt, 0])]) + "\n"
             return ind + "aot_set_sh(__eigs_l, __eigs_g, \"" + name + "\", " + (emit_val of [node[2], nm, bt]) + ");\n"
@@ -1464,7 +1469,8 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
             return asn
         if (is_num_expr of [node[2], nm, bt]) == 1:
             return ind + (env_write_num of [name, (emit_num of [node[2], nm, bt, 0])]) + "\n"
-        return ind + "aot_set(" + (envc of name) + ", \"" + name + "\", " + (emit_val of [node[2], nm, bt]) + ");\n"
+        local wc is ic_cache of 0
+        return ind + "{ " + wc[0] + "aot_set_ic(" + (envc of name) + ", \"" + name + "\", " + wc[1] + ", " + (emit_val of [node[2], nm, bt]) + "); }\n"
     if t == "index_assign":
         # Compound form (`l[i] += e`, 5th elem = base op) is not lowered here
         # yet -- node[3] is the RAW rhs, so emitting it as a plain set would be

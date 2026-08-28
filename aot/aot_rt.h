@@ -191,7 +191,12 @@ static void aot_shutdown(Env *g) { (void)g; /* process exit reclaims (slice 1) *
  * deliberate: the runtime takes a shared lock around find+load (#607) because
  * a concurrent module-env grow republishes `values`, and the fast path holds
  * no lock. */
-typedef struct { Env *start, *home; int idx; uint32_t sver, tver, h; } AotNameIC;
+typedef struct {
+    Env *start, *home;
+    const char *iname;   /* interned name at [idx] — the depth-0 guard */
+    int idx, depth;
+    uint32_t sver, tver, h;
+} AotNameIC;
 
 static inline int aot_env_hash_find(const EnvHash *ht, const char *name,
                                     uint32_t h, char **names) {
@@ -210,10 +215,12 @@ static inline int aot_env_hash_find(const EnvHash *ht, const char *name,
 
 static EigsSlot *aot_name_slot_slow(Env *start, const char *name, AotNameIC *c) {
     if (!c->h) c->h = env_hash_name(name);
-    for (Env *e = start; e; e = e->parent) {
+    int depth = 0;
+    for (Env *e = start; e; e = e->parent, depth++) {
         int idx = aot_env_hash_find(&e->hash, name, c->h, e->names);
         if (idx >= 0) {
-            c->start = start; c->home = e; c->idx = idx;
+            c->start = start; c->home = e; c->idx = idx; c->depth = depth;
+            c->iname = e->names[idx];      /* interned */
             c->sver = start->binding_version;
             c->tver = e->binding_version;
             return &e->values[idx];
@@ -223,12 +230,30 @@ static EigsSlot *aot_name_slot_slow(Env *start, const char *name, AotNameIC *c) 
     return NULL;
 }
 
+/* Two guards, because the two cases have different stability.
+ *
+ * depth 0 — the binding lives in the STARTING env. A frame env (__eigs_l) is
+ * a fresh Env on every call, so an env-identity guard can never hit there:
+ * that was aot_name_slot_slow burning 3.9% of DMG with an inline cache
+ * nominally installed. Validate the SHAPE instead — names are interned, so
+ * `names[idx] == iname` says this slot holds this exact binding, whichever
+ * Env object we are looking at. Nothing can shadow the starting env, so a
+ * hit needs no version check at all.
+ *
+ * depth > 0 — the walk passed through envs that could gain a shadowing
+ * binding, which is precisely what binding_version is for; keep the JIT's
+ * two-version guard (start's and home's). */
 static inline EigsSlot *aot_name_slot(Env *start, const char *name, AotNameIC *c) {
-    Env *home = c->home;
-    if (__builtin_expect(home != NULL && c->start == start
-                         && c->sver == start->binding_version
-                         && c->tver == home->binding_version
+    if (__builtin_expect(c->depth == 0 && c->home != NULL
+                         && c->idx < start->count
+                         && start->names[c->idx] == c->iname
                          && !g_vm_multithreaded, 1))
+        return &start->values[c->idx];
+    Env *home = c->home;
+    if (home != NULL && c->depth > 0 && c->start == start
+        && c->sver == start->binding_version
+        && c->tver == home->binding_version
+        && !g_vm_multithreaded)
         return &home->values[c->idx];
     return aot_name_slot_slow(start, name, c);
 }
@@ -808,8 +833,8 @@ static inline double aot_get_num_sh(Env *l, Env *g, const char *name,
  * a cache whose home is not `e` itself does not qualify. */
 static inline void aot_set_num_ic(Env *e, const char *name,
                                   AotNameIC *c, double d) {
-    if (__builtin_expect(c->home == e && c->start == e
-                         && c->sver == e->binding_version
+    if (__builtin_expect(c->home != NULL && c->depth == 0
+                         && c->idx < e->count && e->names[c->idx] == c->iname
                          && !g_vm_multithreaded, 1)) {
         EigsSlot *sp = &e->values[c->idx];
         slot_decref(*sp);
@@ -821,7 +846,36 @@ static inline void aot_set_num_ic(Env *e, const char *name,
     env_set_local_hashed_slot(e, name, c->h, slot_from_num(num_guard(d)));
     int idx = aot_env_hash_find(&e->hash, name, c->h, e->names);
     if (idx >= 0) {
-        c->start = e; c->home = e; c->idx = idx;
+        c->start = e; c->home = e; c->idx = idx; c->depth = 0;
+        c->iname = e->names[idx];
+        c->sver = e->binding_version; c->tver = c->sver;
+    }
+}
+
+/* Boxed env write, local-only (env_set_local_owned's contract). The cached arm
+ * replicates env_set_local_hashed's replace arm exactly — promote_if_arena,
+ * conditional incref, slot_from_value, decref the old — then drops the caller's
+ * ref like env_set_local_owned. */
+static inline void aot_set_ic(Env *e, const char *name, AotNameIC *c, Value *val) {
+    if (__builtin_expect(c->home != NULL && c->depth == 0
+                         && c->idx < e->count && e->names[c->idx] == c->iname
+                         && !g_vm_multithreaded, 1)) {
+        Value *promoted = promote_if_arena(val);
+        if (promoted == val) val_incref(promoted);
+        EigsSlot ns = slot_from_value(promoted);
+        slot_decref(e->values[c->idx]);
+        e->values[c->idx] = ns;
+        if (e->assign_counts) e->assign_counts[c->idx]++;
+        val_decref(val);
+        return;
+    }
+    if (!c->h) c->h = env_hash_name(name);
+    env_set_local_hashed(e, name, c->h, val);
+    val_decref(val);
+    int idx = aot_env_hash_find(&e->hash, name, c->h, e->names);
+    if (idx >= 0) {
+        c->start = e; c->home = e; c->idx = idx; c->depth = 0;
+        c->iname = e->names[idx];
         c->sver = e->binding_version; c->tver = c->sver;
     }
 }
@@ -1049,6 +1103,45 @@ static AotTensor aot_tensor_relu(AotTensor a) {
  * the only path the differential harness exercises — is byte-exact. */
 static int aot_idx_is_int(double d, int *out) { int i = (int)d; if ((double)i != d) return 0; *out = i; return 1; }
 static int aot_idx_resolve(int *i, int len) { int r = (*i < 0) ? *i + len : *i; if (r < 0 || r >= len) return 0; *i = r; return 1; }
+
+/* Integer-index read (#130). Identical to aot_index_get with a VAL_NUM index
+ * that is already known integral, minus the box: 474 sites in DMG's generated
+ * C read `aot_index_get(x, make_num(<literal>))`, each allocating and freeing
+ * a VAL_NUM purely to carry an index. The `d` argument is the same double the
+ * boxed form would have carried, so the non-integral and out-of-range
+ * diagnostics stay byte-identical. */
+static Value *aot_index_get_i(Value *target, double d) {
+    Value *result = NULL;
+    int i;
+    if (target->type == VAL_LIST) {
+        if (!aot_idx_is_int(d, &i))
+            rt_error(EK_VALUE, 0, "index must be an integer, got %g", d);
+        else if (aot_idx_resolve(&i, target->data.list.count)) {
+            result = target->data.list.items[i]; val_incref(result);
+        } else
+            rt_error(EK_INDEX, 0, "index %d out of range (list length %d)", i, target->data.list.count);
+    } else if (target->type == VAL_STR) {
+        if (!aot_idx_is_int(d, &i))
+            rt_error(EK_VALUE, 0, "index must be an integer, got %g", d);
+        else if (aot_idx_resolve(&i, (int)strlen(target->data.str))) {
+            char b[2] = { target->data.str[i], 0 }; result = make_str(b);
+        } else
+            rt_error(EK_INDEX, 0, "string index %d out of range (length %d)", i, (int)strlen(target->data.str));
+    } else if (target->type == VAL_BUFFER) {
+        if (!aot_idx_is_int(d, &i))
+            rt_error(EK_VALUE, 0, "index must be an integer, got %g", d);
+        else if (aot_idx_resolve(&i, target->data.buffer.count))
+            result = make_num(target->data.buffer.data[i]);
+        else
+            rt_error(EK_INDEX, 0, "buffer index %d out of range (length %d)", i, target->data.buffer.count);
+    } else {
+        /* A VAL_DICT with a numeric index falls here in the oracle too: its
+         * dict arm requires VAL_STR, so the final else raises. */
+        rt_error(EK_TYPE, 0, "cannot index %s", val_type_name(target->type));
+    }
+    val_decref(target);
+    return result ? result : make_null();
+}
 
 static Value *aot_index_get(Value *target, Value *idx) {
     Value *result = NULL;
