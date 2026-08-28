@@ -1307,6 +1307,9 @@ define emit_val(node, nm, bt) as:
             return "({ Value* _x = (" + (emit_val of [node[2], nm, bt]) + "); is_truthy(_x) ? ({ val_decref(_x); (" + (emit_val of [node[3], nm, bt]) + "); }) : _x; })"
         if bop == "or":
             return "({ Value* _x = (" + (emit_val of [node[2], nm, bt]) + "); is_truthy(_x) ? _x : ({ val_decref(_x); (" + (emit_val of [node[3], nm, bt]) + "); }); })"
+        local cn2 is emit_cmp_n of [node, nm, bt, 0]
+        if cn2 != "":
+            return cn2
         return (binfn of bop) + "(" + (emit_val of [node[2], nm, bt]) + ", " + (emit_val of [node[3], nm, bt]) + ")"
     if t == "call":
         local callee is unwrap of node[1]
@@ -1392,9 +1395,46 @@ define emit_tensor(node, nm, bt) as:
             return "aot_treg(aot_tensor_relu(" + (emit_tensor of [elems[0], nm, bt]) + "))"
     throw of ("AOT: cannot emit tensor node '" + t + "'")
 
+# `<expr> OP <numeric>` / `<numeric> OP <expr>` for a comparison, with the
+# numeric side emitted as a C double instead of a boxed literal (#130). DMG's
+# loop is full of `cpu.halted == 1`; the boxed rendering cost a make_num for
+# the literal and another for the result, per conditional. Returns "" when the
+# node is not a one-sided-numeric comparison (both sides numeric is already
+# handled by the fully numeric path; neither side is the general boxed path).
+CMP_OPS is {"==": 1, "!=": 1, "<": 1, ">": 1, "<=": 1, ">=": 1}
+CMPN_R is {"==": "aot_eq_n", "!=": "aot_ne_n", "<": "aot_lt_n", ">": "aot_gt_n", "<=": "aot_le_n", ">=": "aot_ge_n"}
+CMPN_L is {"==": "aot_eq_n", "!=": "aot_ne_n", "<": "aot_lt_nl", ">": "aot_gt_nl", "<=": "aot_le_nl", ">=": "aot_ge_nl"}
+define emit_cmp_n(node, nm, bt, want_bool) as:
+    local n is unwrap of node
+    if n[0] != "binop":
+        return ""
+    if CMP_OPS[n[1]] != 1:
+        return ""
+    local lnum is is_num_expr of [n[2], nm, bt]
+    local rnum is is_num_expr of [n[3], nm, bt]
+    if lnum == rnum:
+        return ""
+    local fn is ""
+    local boxed is ""
+    local num is ""
+    if rnum == 1:
+        fn is CMPN_R[n[1]]
+        boxed is emit_val of [n[2], nm, bt]
+        num is emit_num of [n[3], nm, bt, 0]
+    else:
+        fn is CMPN_L[n[1]]
+        boxed is emit_val of [n[3], nm, bt]
+        num is emit_num of [n[2], nm, bt, 0]
+    if want_bool == 1:
+        return fn + "_t(" + boxed + ", " + num + ")"
+    return fn + "(" + boxed + ", " + num + ")"
+
 define emit_cond(node, nm, bt) as:
     if (is_num_expr of [node, nm, bt]) == 1:
         return "(" + (emit_num of [node, nm, bt, 0]) + " != 0.0)"
+    local cn1 is emit_cmp_n of [node, nm, bt, 1]
+    if cn1 != "":
+        return cn1
     return "aot_truthy(" + (emit_val of [node, nm, bt]) + ")"
 
 # One return statement, honoring the per-call env (#100 item 2): when the

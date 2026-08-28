@@ -412,6 +412,64 @@ AOT_CMP(aot_gt, >,  ">")
 AOT_CMP(aot_le, <=, "<=")
 AOT_CMP(aot_ge, >=, ">=")
 
+/* ---- comparison against a numeric operand, without the boxes (#130) -------
+ * DMG's emulation loop is full of `cpu.halted == 1`, `mem.x > 0`, and the
+ * emitter rendered every one of them fully boxed:
+ *
+ *   aot_truthy(aot_eq(aot_dot_get_ic(cpu, "halted"), make_num(1)))
+ *
+ * — a box for the literal, a box for the result, and two frees, per
+ * conditional, several times per emulated instruction. make_num called
+ * DIRECTLY from run_headless_loop was 5.66% of runtime.
+ *
+ * The `_n` forms take the numeric side as a C double and the `_t` forms
+ * return a C int for condition position. Semantics are unchanged, including
+ * for a non-numeric left operand: equality falls back to values_equal against
+ * a stack Value (arena=1, so the decrefs are no-ops), and the ordering forms
+ * fall back to the raising AOT_CMP path. A null or string field still
+ * compares false rather than dying — which is why this is not simply
+ * "treat dict fields as numeric". */
+static inline int aot_eq_n_t(Value *a, double b) {
+    if (a && a->type == VAL_NUM) { int e = (a->data.num == b); val_decref(a); return e; }
+    Value bv; memset(&bv, 0, sizeof bv);
+    bv.type = VAL_NUM; bv.data.num = b; bv.arena = 1;
+    int e = values_equal(a, &bv);
+    val_decref(a);
+    return e;
+}
+static inline Value *aot_eq_n(Value *a, double b)  { return make_num(aot_eq_n_t(a, b) ? 1.0 : 0.0); }
+static inline int    aot_ne_n_t(Value *a, double b){ return !aot_eq_n_t(a, b); }
+static inline Value *aot_ne_n(Value *a, double b)  { return make_num(aot_eq_n_t(a, b) ? 0.0 : 1.0); }
+
+#define AOT_CMP_N(NAME, BASE, OP) \
+    static inline int NAME##_t(Value *a, double b) { \
+        if (a && a->type == VAL_NUM) { int r = (a->data.num OP b) ? 1 : 0; val_decref(a); return r; } \
+        Value bv; memset(&bv, 0, sizeof bv); \
+        bv.type = VAL_NUM; bv.data.num = b; bv.arena = 1; \
+        return aot_truthy(BASE(a, &bv)); } \
+    static inline Value *NAME(Value *a, double b) { return make_num(NAME##_t(a, b) ? 1.0 : 0.0); }
+AOT_CMP_N(aot_lt_n, aot_lt, <)
+AOT_CMP_N(aot_gt_n, aot_gt, >)
+AOT_CMP_N(aot_le_n, aot_le, <=)
+AOT_CMP_N(aot_ge_n, aot_ge, >=)
+
+/* Mirrored forms: `<numeric> OP <expr>`, numeric side on the LEFT. The
+ * fallback must NOT delegate to the swapped operator: the raise names both
+ * operand types AND the operator, so `1 < "a"` has to report
+ * `cannot compare num and str with '<'`, not `str and num with '>'`
+ * (t65_cmp_mixed_err caught exactly that). Keep the order, keep the op. */
+#define AOT_CMP_NL(NAME, BASE, OP) \
+    static inline int NAME##_t(Value *b, double a) { \
+        if (b && b->type == VAL_NUM) { int r = (a OP b->data.num) ? 1 : 0; val_decref(b); return r; } \
+        Value av; memset(&av, 0, sizeof av); \
+        av.type = VAL_NUM; av.data.num = a; av.arena = 1; \
+        return aot_truthy(BASE(&av, b)); } \
+    static inline Value *NAME(Value *b, double a) { return make_num(NAME##_t(b, a) ? 1.0 : 0.0); }
+AOT_CMP_NL(aot_lt_nl, aot_lt, <)
+AOT_CMP_NL(aot_gt_nl, aot_gt, >)
+AOT_CMP_NL(aot_le_nl, aot_le, <=)
+AOT_CMP_NL(aot_ge_nl, aot_ge, >=)
+
 static Value *aot_eq(Value *a, Value *b) {
     int e = values_equal(a, b); val_decref(a); val_decref(b);
     return make_num(e ? 1.0 : 0.0);
