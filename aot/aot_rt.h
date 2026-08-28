@@ -1490,7 +1490,7 @@ static Value *aot_dot_get(Value *target, const char *key) {
  * hash and no strcmp. A miss (different shape, grown dict, rehash) falls
  * back to the normal lookup and re-arms. Correct for any dict because the
  * guard validates the cached slot still holds that exact key pointer. */
-/* Non-static in eigenscript.c but absent from eigenscript.h (EigenScript#1056);
+/* Non-static in eigenscript.c but absent from eigenscript.h (EigenScript#1055);
  * declared here so the IC helpers below are not implicitly declared. */
 int env_hash_find_dict(Value *dict, const char *key, uint32_t h);
 
