@@ -1,0 +1,38 @@
+# OBSERVER-GATE COST, arm C of the triple (ouroboros#126).
+# Method, numbers and mechanism: obs_gate_a_unobserved.eigs.
+#
+# Identical to arm B except the hot loops are NOT wrapped, so the observer's
+# per-assignment bookkeeping runs on every iteration as well.
+#
+# C minus B is the bookkeeping alone (+17 ms, 1.20x); C minus A is the whole
+# cost of observing in the AOT (3.64x). The split is the point: 77% of that
+# total is the gate, which is recoverable with NO loss of exactness because the
+# scalars it demotes — i, r, j, acc — are never queried by anything.
+define dots(out, A, B, M, D) as:
+    k is 0
+    loop while k < M:
+        out[k] is dot of [A[k * D : k * D + D], B[k * D : k * D + D]]
+        k is k + 1
+D is 256
+M is 512
+A is buffer of (M * D)
+B is buffer of (M * D)
+out is buffer of M
+i is 0
+loop while i < (M * D):
+    A[i] is ((i % 17) - 8) * 0.01
+    B[i] is ((i % 13) - 6) * 0.02
+    i is i + 1
+r is 0
+loop while r < 30:
+    dots of [out, A, B, M, D]
+    r is r + 1
+acc is 0.0
+j is 0
+loop while j < M:
+    acc is acc + out[j]
+    j is j + 1
+print of f"checksum {acc}"
+ch is 1.0
+ch is 2.0
+print of f"obs {converged of ch}"
