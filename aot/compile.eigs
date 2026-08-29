@@ -5419,6 +5419,34 @@ define lift_nested_at(node, bound, out_funcs, outer_after) as:
                 local own is {}
                 for p in range of (len of fparams):
                     own[(fparams[p])] is 1
+                # ...and `local` DECLARATIONS at the nested body's top level. A
+                # declaration is not outward mutation -- it is the construct
+                # that PREVENTS it -- but the frontend emits `local x is e` as
+                # ["assign","x",e,1], the same tag as an outward write with a
+                # 4th marker element that collect_assigns_stmt discards. So the
+                # outward-mutation guard refused the fix and the bug with one
+                # message:
+                #
+                #   define f(y) as: local x is 100
+                #       define b(d) as: local x is 7 / return d
+                #   VM 101, and HEAD~1 compiled it byte-exact; the guard then
+                #   refused it outright.
+                #
+                # TOP LEVEL ONLY, and that restriction is load-bearing: `local`
+                # is not block-scoped inside a function body, so a CONDITIONAL
+                # declaration followed by a bare write really does reach
+                # outward. Measured --
+                #
+                #   define b(d) as: if d == 1: local x is 7 / x is 5
+                #   b of 1 -> outer x untouched;  b of 0 -> outer x CLOBBERED
+                #
+                # -- so a conditionally-declared name must keep refusing.
+                for lp in range of (len of fbody):
+                    local lst is unwrap of fbody[lp]
+                    if (type of lst) == "list":
+                        if (len of lst) >= 4:
+                            if lst[0] == "assign":
+                                own[(lst[1])] is 1
                 local nested_assigns is collect_assigns of [fbody, {}]
                 # Statements AFTER this define in the enclosing body. A capture
                 # is a value SNAPSHOT taken HERE, so a later rebind of a

@@ -1,0 +1,54 @@
+# `local` inside a nested define, shadowing an enclosing name.
+#
+# THE POINT OF THIS FIXTURE is that the outward-mutation guard refused the fix
+# and the bug with the same message. The frontend emits `local x is e` as
+# ["assign", "x", e, 1] — the same tag as an outward write, with the marker as a
+# 4th element that collect_assigns_stmt discards — so a pure DECLARATION looked
+# like a mutation. `local` is the construct that PREVENTS outward mutation, and
+# `src/frontend.eigs` says so at the site that emits it.
+#
+# The regression was real: the round before this one widened the guard from "a
+# local that is also read" to "any local at all", and the previous commit
+# compiled `f` below to a byte-exact correct answer.
+#
+# THE TOP-LEVEL-ONLY RESTRICTION IS LOAD-BEARING, and the reason is measured,
+# not assumed: `local` is NOT block-scoped inside a function body, so a
+# CONDITIONAL declaration followed by a bare write really does reach outward —
+#
+#   define b(d) as: if d == 1: local x is 7 / x is 5
+#   b of 1  ->  outer x untouched        b of 0  ->  outer x CLOBBERED
+#
+# — which is why `conditional` below must keep being refused, and is covered by
+# its own refusal fixture rather than here.
+
+define f(y) as:
+    local x is 100
+    define b(d) as:
+        # a declaration, not a mutation: the enclosing x must survive
+        local x is 7
+        return d
+    local t is b of 1
+    return x + t
+
+print of (f of 0)
+
+define scale(factor) as:
+    define twice(v) as:
+        # shadowing the enclosing PARAMETER, the idiomatic shape
+        local factor is 2
+        return v * factor
+    return (twice of factor)
+
+print of (scale of 5)
+
+define accum(total) as:
+    define helper(n) as:
+        local total is 0
+        local i is 0
+        loop while i < n:
+            total is total + i
+            i is i + 1
+        return total
+    return (helper of 3) + total
+
+print of (accum of 1)

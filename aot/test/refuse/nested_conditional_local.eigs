@@ -1,0 +1,33 @@
+# EXPECT: assigns enclosing name
+#
+# A `local` declared CONDITIONALLY inside a nested define, followed by a bare
+# write to the same name.
+#
+# THE POINT OF THIS FIXTURE is the restriction on its sibling. t111 lets a
+# top-level `local` in a nested define count as the define's own name, so it is
+# no longer refused as outward mutation. That relaxation is only sound at the
+# TOP level, because `local` is not block-scoped inside a function body:
+#
+#   define b(d) as: if d == 1: local x is 7 / x is 5
+#   b of 1  ->  the declaration ran; the outer x is untouched
+#   b of 0  ->  the declaration did NOT run; `x is 5` writes the OUTER x
+#
+# Measured on the VM, not assumed — `f of 0` prints 5, the clobbered value.
+# So a conditionally-declared name is genuine outward mutation on the path where
+# the declaration is skipped, and must keep refusing.
+#
+# Without this fixture the obvious generalisation of t111's fix — seed every
+# `local` name in the body — passes every gate and silently reintroduces the
+# outward write the guard exists to stop.
+
+define f(y) as:
+    local x is 100
+    define b(d) as:
+        if d == 1:
+            local x is 7
+        x is 5
+        return d
+    local t is b of y
+    return x
+
+print of (f of 0)
