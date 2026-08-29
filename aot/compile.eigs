@@ -787,6 +787,14 @@ define infer_int(stmts, params, nm, bt) as:
     return iv
 
 define collect_assigns_stmt(node, acc) as:
+    # Tolerate a non-statement node. lift_nested recurses into ANY list element,
+    # so the "statements after this define" suffix it accumulates can carry a
+    # condition expression or an empty else-body. This walker is also called on
+    # arbitrary sublists elsewhere; crashing on one is never the right answer.
+    if (type of node) != "list":
+        return null
+    if (len of node) == 0:
+        return null
     local t is node[0]
     if t == "_line":
         collect_assigns_stmt of [node[2], acc]
@@ -809,6 +817,17 @@ define collect_assigns_stmt(node, acc) as:
         return null
     if t == "unobserved":
         collect_assigns of [node[1], acc]
+        return null
+    if t == "match":
+        # A `match` case body assigns like any other block. Its absence made a
+        # rebind inside a case invisible to the capture-rebind refusal:
+        #   local x is 100 / define inner ... / match y: case 0: x is 7
+        #   VM 7   AOT 100   both rc 0
+        # (`try` is missing too, moot only because emit_stmt refuses `try`
+        # loudly -- if that changes, this arm needs a sibling.)
+        local mcs is node[2]
+        for mi in range of (len of mcs):
+            collect_assigns of [(mcs[mi])[1], acc]
         return null
     return null
 
@@ -5299,8 +5318,16 @@ define emit_function(fn, finfo, gnm, gbt) as:
 # top-level function whose captured names are rewritten to mangled ENV
 # globals, bound at the definition site (["capbind", ...] statement). A
 # Value-class capture aliases the same Value, so mutation stays live —
-# matching the VM. Numeric captures would SNAPSHOT (env copy of a double),
-# so they throw. The nested fn's name stays callable (g_funcs) and usable
+# matching the VM: mutation THROUGH a capture is seen (`box[0] is 9`; t110
+# covers it). Rebinding the NAME is the broken case -- for every type, not just
+# numerics -- and lift_nested_at refuses it.
+#
+# This sentence used to claim numeric captures "throw". They never did; no such
+# throw was written. The commit that FIXED the bug quoted this very sentence as
+# false in its own message, rewrote a different comment, and left this copy
+# standing -- where t110, added by that same commit and containing a numeric
+# capture that is never rebound and does not throw, falsified it on arrival.
+# The nested fn's name stays callable (g_funcs) and usable
 # as a VALUE argument (emit_val emits make_builtin of a boxed wrapper).
 G_LIFT_N is [0]
 G_CUR_FN is ["<module>"]
@@ -5337,6 +5364,19 @@ define collect_for_binders(node, out) as:
     return 0
 
 define lift_nested(node, bound, out_funcs) as:
+    return lift_nested_at of [node, bound, out_funcs, []]
+
+# `outer_after` carries the statements that follow this block in EVERY enclosing
+# scope. Without it, "after this definition" meant "after it within the
+# innermost statement list", so putting the nested define inside an `if` hid
+# every later rebind and the stale-capture bug was fully alive:
+#
+#   local x is 100 / if y == 0: define inner(d) as: print of x / x is 7
+#   VM 7   AOT 100   both build, both rc 0
+#
+# "After the definition" is a property of the enclosing FUNCTION, not of the
+# block the define happens to sit in.
+define lift_nested_at(node, bound, out_funcs, outer_after) as:
     if (type of node) != "list":
         return 0
     if (len of node) == 0:
@@ -5381,6 +5421,8 @@ define lift_nested(node, bound, out_funcs) as:
                 loop while ak < (len of node):
                     append of [after_stmts, node[ak]]
                     ak is ak + 1
+                for oa in range of (len of outer_after):
+                    append of [after_stmts, outer_after[oa]]
                 local after_assigns is collect_assigns of [after_stmts, {}]
                 local after_binders is {}
                 collect_for_binders of [after_stmts, after_binders]
@@ -5409,7 +5451,14 @@ define lift_nested(node, bound, out_funcs) as:
         # recurse into sub-blocks (if/loop/for/try bodies, nested lists)
         if ((type of st) == "list") and ((len of st) > 0):
             if st[0] != "func":
-                lift_nested of [st, bound, out_funcs]
+                local sub_after is []
+                local sk is k + 1
+                loop while sk < (len of node):
+                    append of [sub_after, node[sk]]
+                    sk is sk + 1
+                for oa2 in range of (len of outer_after):
+                    append of [sub_after, outer_after[oa2]]
+                lift_nested_at of [st, bound, out_funcs, sub_after]
     return 0
 
 define emit_program(ast) as:

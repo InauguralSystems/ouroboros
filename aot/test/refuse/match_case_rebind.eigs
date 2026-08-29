@@ -1,0 +1,31 @@
+# EXPECT: rebinds after this definition
+#
+# A capture rebound inside a `match` case.
+#
+# THE POINT OF THIS FIXTURE is a missing arm rather than a missing scope.
+# `collect_assigns_stmt` — the walker the capture refusal asks "is this name
+# assigned later?" — had arms for `_line`/`assign`/`if`/`loop`/`for`/
+# `unobserved` and none for `match`, so an assignment inside a case body was
+# invisible to every caller of it, not just this guard.
+#
+#   VM   7        AOT  100        both build, both rc 0
+#
+# It is a separate hole from the block-scope one its sibling covers: this one
+# reproduces with the define at the TOP level of the function body, so fixing
+# the scope walk alone leaves it open.
+#
+# `try` is still missing from that walker. It is moot only because emit_stmt
+# refuses `try` loudly — if that ever changes, this arm needs a sibling.
+
+define f(y) as:
+    local x is 100
+    define inner(d) as:
+        print of x
+        return 0
+    match y:
+        case 0:
+            x is 7
+    print of (inner of 1)
+    return 0
+
+print of (f of 0)
