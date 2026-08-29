@@ -1,0 +1,26 @@
+# EXPECT: ends its own top level with a `return`
+#
+# THE POINT OF THIS FIXTURE is the OTHER half of "the module dict is a snapshot
+# of what RAN". Its sibling, module_conditional_binding.eigs, gates which
+# bindings a module CREATES. Nothing asked whether the module FINISHES.
+#
+# The AOT splices a module's statements into the program, so a module top-level
+# `return` became a bare `return 0` in main -- returning from the WHOLE PROGRAM,
+# before the module dict was even constructed. Both halves were silent:
+#
+#   VM   ["a"] / 1 / null          AOT   NO OUTPUT AT ALL, rc 0, empty build log
+#
+# and the dict the code would have built invents `b`, which is the round-10 bug
+# reached by a second road. `if` and `return` are each individually emittable,
+# so nothing else in the compiler refused it.
+#
+# Measured cost of refusing: 0 of the 77 stdlib modules.
+#
+# A `return` at the MAIN program's top level is a different thing and is still
+# supported -- there it really does mean "end the program", which is what the
+# emitted `return 0` does. t101_toplevel_return.eigs gates that side.
+
+import _r1_mod
+print of (keys of _r1_mod)
+print of _r1_mod.a
+print of _r1_mod.b

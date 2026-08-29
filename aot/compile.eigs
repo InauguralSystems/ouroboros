@@ -1821,6 +1821,30 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
         s is s + (emit_stmts of [node[2], ind + "    ", nm, bt, minits, lg])
         return s + ind + "}\n"
     if t == "return":
+        if (G_CUR_FN[0]) == "<module>":
+            # A `return` at the PROGRAM's top level ends the program with
+            # exit 0 and DISCARDS the value. Emitting the function-return path
+            # here made the discarded value the process exit status, and
+            # skipped main's epilogue:
+            #
+            #   ... / if n == 2: return 42 / print of "unreachable"
+            #   VM  exit 0        AOT  exit 42, stdout BYTE-IDENTICAL
+            #
+            # Found by the fixture written to assert this path was fine
+            # (ouroboros#146). Nothing in the suite had a top-level `return`
+            # at all, and stdout is identical, so only the exit-code half of
+            # the parity contract could ever have caught it.
+            #
+            # The expression is still evaluated — `return (f of 1)` must run
+            # `f` for its side effects — and then discarded. aot_shutdown is a
+            # no-op today, but it is main's designated epilogue and a bare C
+            # `return` jumped over it.
+            local tdv is ""
+            if (is_num_expr of [node[1], nm, bt]) == 1:
+                tdv is emit_num of [node[1], nm, bt, 0]
+            else:
+                tdv is emit_val of [node[1], nm, bt]
+            return ind + "{ (void)(" + tdv + "); aot_shutdown(__eigs_g); return 0; }\n"
         local rexpr is unwrap of node[1]
         if rexpr[0] == "ident":
             if bt[rexpr[1]] == 1:
@@ -5538,6 +5562,46 @@ define collect_cond_binds(node, bound, out) as:
         collect_cond_binds of [node[k], bound, out]
     return 0
 
+# Does the module END ITS OWN TOP LEVEL early with a `return`?
+#
+# The guard above models which top-level bindings a module CREATES. This is the
+# other half of "the dict is a snapshot of what RAN": a module top-level
+# `return` means the rest of the module DID NOT RUN, so every binding below it
+# is absent from the VM's dict.
+#
+# The AOT splices a module's statements into the program, so that `return`
+# became a bare `return 0` in main — which returns from the WHOLE PROGRAM,
+# before the dict is even constructed:
+#
+#   mI.eigs:  a is 1 / if a == 1: return 0 / b is 2
+#   VM        ["a"] then 1 then null          AOT   no output at all, rc 0
+#
+# Both halves are wrong and both are silent: the program is truncated at the
+# import, and the dict the code would have built invents `b`. `if` and `return`
+# are each individually emittable, so nothing else refuses it.
+#
+# Correct lowering exists — emit the module body as its own C function so its
+# `return` ends the module, then build the dict — but it is a real change to
+# the splice design, so this refuses instead of guessing (ouroboros#146).
+# Note a `return` in the MAIN program's top level is a different thing and
+# stays supported: there it does mean "end the program", which is what the
+# emitted `return 0` does.
+define module_has_toplevel_return(node) as:
+    if (type of node) != "list":
+        return 0
+    if (len of node) == 0:
+        return 0
+    local h is node[0]
+    if h == "func":
+        # a `return` inside a function body returns from the function
+        return 0
+    if h == "return":
+        return 1
+    for k in range of (len of node):
+        if (module_has_toplevel_return of (node[k])) == 1:
+            return 1
+    return 0
+
 
 # Names a module's statements can create or overwrite IN THE MERGED SCOPE: its
 # top-level bindings, plus every assignment target at any depth that is not a
@@ -5773,6 +5837,8 @@ define splice_module(mname, base, depth, out) as:
             collect_free_assigns of [["block", (mast[1])], {}, rset]
             # A module top-level binding made inside conditional control flow
             # cannot be represented: the dict is a snapshot of what RAN.
+            if (module_has_toplevel_return of ["block", (mast[1])]) == 1:
+                throw of ("AOT: module '" + mname + "' ends its own top level with a `return`. The AOT splices a module into the program, so that `return` would return from the whole program and skip building the module dict — silently, with no output at all. Refused rather than guessed (ouroboros#146).")
             local condb is {}
             module_cond_binds of [(mast[1]), {}, condb]
             local condk is keys of condb

@@ -1,0 +1,47 @@
+# A `return` at the MAIN program's top level — the ACCEPT side of ouroboros#146.
+#
+# THE POINT OF THIS FIXTURE is that no fixture in the suite had a top-level
+# `return` at all. When #146 refused a MODULE's top-level return, the reason it
+# is safe to keep the program's is that a program-level `return` really does
+# mean "end the program, exit 0, value discarded" — which is exactly what the
+# emitted C `return 0` in main does. That claim had zero coverage, so the
+# refusal could have been widened to cover this too and nothing would have
+# noticed the loss.
+#
+# Exit code is part of the contract here, not just stdout: the VM discards the
+# returned value and exits 0.
+
+print of "start"
+
+n is 0
+
+# a NOT-taken conditional return: an early exit that fires here would truncate
+# everything below, so this pins the branch as well as the return
+if n > 5:
+    print of "unreachable-1"
+    return 99
+
+# a `return` inside a loop body that is not reached, for the same reason
+for i in range of 3:
+    if i > 10:
+        return 7
+    print of i
+
+loop while n < 2:
+    n is n + 1
+print of n
+
+# The taken one. Three things are pinned here at once: everything after it must
+# NOT run; the exit code is 0 even though the returned value is 42; and the
+# returned EXPRESSION is still evaluated for its side effects before being
+# discarded, so `emitted` prints. A fix that simply dropped the value would
+# pass the exit-code check and lose the side effect.
+define emit_then(v) as:
+    print of "emitted"
+    return v
+
+if n == 2:
+    print of "returning"
+    return (emit_then of 42)
+
+print of "unreachable-2"
