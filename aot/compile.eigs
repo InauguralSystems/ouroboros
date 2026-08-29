@@ -5438,6 +5438,65 @@ define module_bindings(stmts) as:
 # see every scope. Deliberately a SUPERSET (references as well as bindings): a
 # program that merely reads a name the module defines can reach the module's
 # private state, which the VM refuses with "undefined variable".
+# Names a module's statements can create or overwrite IN THE MERGED SCOPE:
+# its top-level bindings, plus every assignment target at any depth that is not
+# a parameter, a `local`, or a loop variable. EigenScript's `is` is
+# outward-mutable, so a bare `ctr is 99` inside a module function writes the
+# module's global — and after splicing, the PROGRAM's global of that name.
+#
+# This is the set a collision guard must compare against to be SOUND. Measured
+# across the 77 stdlib modules: median 10 such names per module, 892 distinct,
+# and 56 of 77 include something as common as `i`, `n`, `key`, `result` or
+# `val`. So the sound guard refuses most programs that import anything — which
+# is the point being recorded here rather than worked around: a name-comparison
+# guard over a splice cannot be both sound and useful, and the fix is to
+# NAMESPACE the module (ouroboros#141) so no comparison is needed.
+# Loud-and-limited beats silent-and-wrong until that lands.
+define collect_free_assigns(node, bound, out) as:
+    if (type of node) != "list":
+        return 0
+    if (len of node) == 0:
+        return 0
+    local h is node[0]
+    if h == "func":
+        local b2 is {}
+        local bk is keys of bound
+        for bi in range of (len of bk):
+            b2[(bk[bi])] is 1
+        local ps is node[2]
+        for pk in range of (len of ps):
+            b2[(ps[pk])] is 1
+        collect_local_decls of [node[3], b2]
+        collect_free_assigns of [node[3], b2, out]
+        return 0
+    if h == "assign":
+        if (len of node) < 4:
+            if bound[node[1]] != 1:
+                out[node[1]] is 1
+        collect_free_assigns of [node[2], bound, out]
+        return 0
+    for k in range of (len of node):
+        collect_free_assigns of [node[k], bound, out]
+    return 0
+
+# `local` declarations and loop variables inside a body — these do NOT merge.
+# Collected for the whole body rather than from their declaration onward, which
+# is the emitter's own approximation of `local`'s order-sensitivity.
+define collect_local_decls(node, bound) as:
+    if (type of node) != "list":
+        return 0
+    if (len of node) == 0:
+        return 0
+    if node[0] == "assign":
+        if (len of node) >= 4:
+            bound[node[1]] is 1
+    if (node[0] == "for") or (node[0] == "catch"):
+        if (type of node[1]) == "str":
+            bound[node[1]] is 1
+    for k in range of (len of node):
+        collect_local_decls of [node[k], bound]
+    return 0
+
 # Module names the given tree imports, at any depth.
 define collect_import_names(node, out) as:
     if (type of node) != "list":
@@ -5574,10 +5633,24 @@ define splice_static_loads(blk, base, depth) as:
             # `keys of linalg` was 46 against the VM's 29, and `linalg.mag`
             # answered 5 where the VM correctly says "cannot call null".
             local mb is module_bindings of (mast[1])
+            # SOUND merge set: the module's top-level bindings are what the
+            # DICT is built from, but the GUARD must also see everything the
+            # module's bodies can write into the merged scope — including the
+            # TRANSITIVE modules `mst` carries. Two arms were missed by using
+            # `mb` for both: a transitively imported module's bindings were
+            # never compared against the program (VM 1, AOT 7), and a module's
+            # nested `ctr is 99` was structurally invisible (VM 99/1, AOT 99/99)
+            # — both silent, both rc=0 with a zero-byte log.
+            local merge is {}
+            local mbk is module_bindings of mst
+            for mi in range of (len of mbk):
+                merge[(mbk[mi])] is 1
+            collect_free_assigns of [["block", mst], {}, merge]
             local prior is {}
             collect_names_deep of [["block", stmts], prior]
-            for bi in range of (len of mb):
-                local bn is mb[bi]
+            local mergek is keys of merge
+            for bi in range of (len of mergek):
+                local bn is mergek[bi]
                 # A name that is itself an imported MODULE name is not a
                 # collision: both sides denote the same module dict, and the
                 # import cache binds it once. phugoid/modes.eigs imports both
