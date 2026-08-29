@@ -151,10 +151,17 @@ loop while _ck < (len of _c_libc):
 define cn(name) as:
     if (type of name) != "str":
         throw of ("AOT: cn on a non-string name: " + (str of name))
-    if (has_key of [g_c_kw, name]) == 1:
-        # uu_ not u_: glibc <sys/types.h> typedefs the BSD u_int/u_char/...
-        return "uu_" + name
-    return name
+    # PREFIX EVERYTHING. The old form reserved a LIST of names — C keywords,
+    # then libc identifiers when `import` made lib/complex.eigs's `div` collide
+    # with stdlib.h. A blind critic then found log1p, strdup, abort, strtok,
+    # strncpy, strrchr, expm1, random, feof, fflush... a blacklist leaks, which
+    # is the rule this repo already states for gates and which the list was
+    # violating. A prefix closes the class instead of enumerating it: no user
+    # name can collide with libc, a C keyword, or the runtime's own aot_*/eig_*
+    # symbols. Any emission site that forgot cn now fails LOUDLY at C compile
+    # time rather than silently calling the wrong function — which is how the
+    # two sites that did forget were found.
+    return "eig_" + name
 
 define has_interrogate(node) as:
     if (type of node) != "list":
@@ -1012,8 +1019,11 @@ define slice_arg_parts(argnode, nm, bt) as:
         local hi is "aot_buf_len(" + (cn of bnm) + ")"
         if n[3] != null:
             hi is emit_num of [n[3], nm, bt, 0]
-        return [bnm, lo, hi]
-    return [n[1], "0", "aot_buf_len(" + (cn of n[1]) + ")"]
+        # [0] is a C NAME, so it is mangled like every other emitted name —
+        # [2] already was, and the asymmetry meant every consumer emitted the
+        # raw buffer name (`aot_dot(a, b)` against a declared `eig_a`).
+        return [(cn of bnm), lo, hi]
+    return [(cn of n[1]), "0", "aot_buf_len(" + (cn of n[1]) + ")"]
 
 define emit_num(node, nm, bt, raw) as:
     local t is node[0]
@@ -1137,7 +1147,7 @@ define emit_num(node, nm, bt, raw) as:
                 local db is unwrap of delems[1]
                 if (da[0] == "ident") and (db[0] == "ident"):
                     if (bt[da[1]] == 1) and (bt[db[1]] == 1):
-                        return "aot_dot(" + da[1] + ", " + db[1] + ")"
+                        return "aot_dot(" + (cn of da[1]) + ", " + (cn of db[1]) + ")"
                 if (da[0] == "slice") or (db[0] == "slice"):
                     local pa is slice_arg_parts of [delems[0], nm, bt]
                     local pb is slice_arg_parts of [delems[1], nm, bt]
@@ -1145,14 +1155,14 @@ define emit_num(node, nm, bt, raw) as:
             if callee[1] == "sum":
                 local sa is unwrap of node[2]
                 if (sa[0] == "ident") and (bt[sa[1]] == 1):
-                    return "aot_sum(" + sa[1] + ")"
+                    return "aot_sum(" + (cn of sa[1]) + ")"
                 if sa[0] == "slice":
                     local ps is slice_arg_parts of [node[2], nm, bt]
                     return "aot_sum_range(" + ps[0] + ", " + ps[1] + ", " + ps[2] + ")"
             if callee[1] == "norm":
                 local na is unwrap of node[2]
                 if (na[0] == "ident") and (bt[na[1]] == 1):
-                    return "aot_norm(" + na[1] + ")"
+                    return "aot_norm(" + (cn of na[1]) + ")"
                 if na[0] == "slice":
                     local pn is slice_arg_parts of [node[2], nm, bt]
                     return "aot_norm_range(" + pn[0] + ", " + pn[1] + ", " + pn[2] + ")"
@@ -1438,7 +1448,7 @@ define emit_tensor(node, nm, bt) as:
         local tgt is unwrap of n[1]
         local dval is ""
         if (tgt[0] == "ident") and (g_dict[tgt[1]] == 1):
-            dval is tgt[1]
+            dval is cn of tgt[1]
         else:
             dval is emit_val of [n[1], nm, bt]
         return "aot_treg(aot_tensor_field(" + dval + ", \"" + (c_escape of n[2]) + "\"))"
@@ -1814,10 +1824,10 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
         local rexpr is unwrap of node[1]
         if rexpr[0] == "ident":
             if bt[rexpr[1]] == 1:
-                return emit_return of ["Value*", rexpr[1], ind, ""]
+                return emit_return of ["Value*", (cn of rexpr[1]), ind, ""]
             # tensor return: serialize to a Value, then free the frame pool.
             if g_tensor[rexpr[1]] == 1:
-                return emit_return of ["Value*", "aot_tensor_to_value(" + rexpr[1] + ")", ind, "aot_tframe_leave(_tmark);"]
+                return emit_return of ["Value*", "aot_tensor_to_value(" + (cn of rexpr[1]) + ")", ind, "aot_tframe_leave(_tmark);"]
         # numeric return -> a C double; anything else (list/str/dict/non-numeric)
         # is a boxed Value*. Coerce the emitted value to the function's declared
         # return type (g_ret_type) so the C is type-correct even when the body's
@@ -2313,7 +2323,7 @@ define emit_vec(node, ctr, raw) as:
     if t == "ident":
         if n[1] == ctr:
             return "aot_viota(_vi)"
-        return "aot_vset(" + n[1] + ")"
+        return "aot_vset(" + (cn of n[1]) + ")"
     local op is n[1]
     local a is emit_vec of [n[2], ctr, raw]
     local b is emit_vec of [n[3], ctr, raw]
@@ -2522,15 +2532,15 @@ define emit_term_ov(node, O, nm, bt, guard) as:
     if t == "num":
         return "aot_vset(" + (str of n[1]) + ")"
     if t == "ident":
-        return "aot_vset((double)" + n[1] + ")"
+        return "aot_vset((double)" + (cn of n[1]) + ")"
     if t == "index":
         local tg is unwrap of n[1]
         if (name_in_expr of [n[2], O]) == 1:
             local base is extract_o_base of [n[2], O]
             return "aot_vload(_pv_" + tg[1] + " + " + (emit_int of base) + " + " + O + ")"
         if (is_int_expr of n[2]) == 1:
-            return "aot_vset(aot_buf_get_i(" + tg[1] + ", " + (emit_int of n[2]) + "))"
-        return "aot_vset(aot_buf_get(" + tg[1] + ", " + (emit_num of [n[2], nm, bt, 0]) + "))"
+            return "aot_vset(aot_buf_get_i(" + (cn of tg[1]) + ", " + (emit_int of n[2]) + "))"
+        return "aot_vset(aot_buf_get(" + (cn of tg[1]) + ", " + (emit_num of [n[2], nm, bt, 0]) + "))"
     local op is n[1]
     local a is emit_term_ov of [n[2], O, nm, bt, guard]
     local b is emit_term_ov of [n[3], O, nm, bt, guard]
@@ -4010,7 +4020,7 @@ define emit_args(node, fname, nm, bt) as:
                 # at runtime (e.g. an env-stored list element) is read from the
                 # env.
                 if (bt[be[1]] == 1) or (g_genp[be[1]] == 1):
-                    s is s + be[1]
+                    s is s + (cn of be[1])
                 else:
                     s is s + (env_readb of be[1])
             elif be[0] == "call":
@@ -4039,7 +4049,7 @@ define emit_args(node, fname, nm, bt) as:
                 # name (NOT in the env — the env read would silently fetch
                 # null); otherwise read the env BORROWED.
                 if (bt[te[1]] == 1) or (g_dict[te[1]] == 1) or (g_genp[te[1]] == 1):
-                    s is s + te[1]
+                    s is s + (cn of te[1])
                 else:
                     s is s + (env_readb of te[1])
             else:
@@ -5407,11 +5417,53 @@ define module_bindings(stmts) as:
             nm2 is u[1]
         elif u[0] == "assign":
             nm2 is u[1]
+        elif u[0] == "import":
+            # an import binds the module name as a top-level binding, and the
+            # VM's dict carries it: `(keys of linalg)[0]` is "complex".
+            nm2 is u[1]
         if nm2 != null:
             if seen[nm2] != 1:
                 seen[nm2] is 1
                 append of [names, nm2]
     return names
+
+# Every name the program BINDS or REFERENCES, at any depth. The first version
+# of the import collision guard walked only top-level statements, so a binding
+# made inside a function body — or an `if` body, or a loop — was invisible to
+# it while still hitting the same global the spliced module occupies:
+#
+#   define reset() as: counter is 999      VM 0, 1     AOT 999, 1000
+#
+# with rc=0 and an empty build log. Splicing merges scopes, so the guard has to
+# see every scope. Deliberately a SUPERSET (references as well as bindings): a
+# program that merely reads a name the module defines can reach the module's
+# private state, which the VM refuses with "undefined variable".
+define collect_names_deep(node, out) as:
+    if (type of node) != "list":
+        return 0
+    if (len of node) == 0:
+        return 0
+    local h is node[0]
+    if h == "ident":
+        out[node[1]] is 1
+        return 0
+    if h == "assign":
+        out[node[1]] is 1
+    if h == "func":
+        out[node[1]] is 1
+        local ps is node[2]
+        for pk in range of (len of ps):
+            out[(ps[pk])] is 1
+    for k in range of (len of node):
+        collect_names_deep of [node[k], out]
+    return 0
+
+# Module top-level names already spliced in this compilation, so a SECOND
+# module sharing a name with the first is caught too — `prior` alone compared
+# against the original program only, and two modules both defining `state`
+# merged silently (the dict snapshot stayed right while the function went
+# wrong, which is the worst possible shape for it).
+G_MODNAMES is {}
 
 define splice_static_loads(blk, base, depth) as:
     if depth > 16:
@@ -5457,12 +5509,30 @@ define splice_static_loads(blk, base, depth) as:
             # the VM's separate module env while the names are disjoint. A
             # collision would be a silent wrong answer, so it is a loud
             # refusal — the F-OURO-23 rule.
-            local mb is module_bindings of mst
-            local prior is module_bindings of stmts
+            # From the module's OWN parsed statements, NOT the spliced ones.
+            # `mst` has transitive imports already inlined, so building the
+            # dict from it leaked the INNER module's bindings — and the
+            # compiler-internal __imp_* stash — into the outer module's dict:
+            # `keys of linalg` was 46 against the VM's 29, and `linalg.mag`
+            # answered 5 where the VM correctly says "cannot call null".
+            local mb is module_bindings of (mast[1])
+            local prior is {}
+            collect_names_deep of [["block", stmts], prior]
             for bi in range of (len of mb):
-                for pi in range of (len of prior):
-                    if (mb[bi]) == (prior[pi]):
-                        throw of ("AOT: import '" + mname + "' binds '" + (mb[bi]) + "', which the importing program also binds — the AOT splices module top-levels into one scope, so this would silently merge them")
+                local bn is mb[bi]
+                # A name that is itself an imported MODULE name is not a
+                # collision: both sides denote the same module dict, and the
+                # import cache binds it once. phugoid/modes.eigs imports both
+                # linalg and complex, and linalg imports complex — so `complex`
+                # appears in linalg's bindings AND in the program, which the
+                # first version of this guard refused despite the program being
+                # verified byte-exact.
+                if (bn != mname) and (G_IMPORTED[bn] != 1):
+                    if prior[bn] == 1:
+                        throw of ("AOT: import '" + mname + "' binds '" + bn + "', which the importing program also uses. The AOT splices module top-levels into ONE scope, so the two would silently merge — the VM gives the module its own env. Rename one, or see ouroboros#141 (namespaced module splicing).")
+                    if G_MODNAMES[bn] == 1:
+                        throw of ("AOT: import '" + mname + "' binds '" + bn + "', which another imported module already binds — splicing would silently merge them (ouroboros#141).")
+                    G_MODNAMES[bn] is 1
             for k in range of (len of mst):
                 append of [out, mst[k]]
             local pairs is []
