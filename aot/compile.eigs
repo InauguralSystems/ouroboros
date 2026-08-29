@@ -1679,7 +1679,26 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
             # reads, where a C-var write WOULD go stale — still refused.
             if g_observed == 1:
                 throw of ("AOT: rebinding generic parameter '" + name + "' in an observed program is not supported (env-boxed reads would see the stale incoming value)")
-            return ind + name + " = " + (emit_val of [node[2], nm, bt]) + ";\n"
+            # cn of name, NOT the raw name. The parameter is declared
+            # `Value* eig_x` in the signature and this line wrote `x`:
+            #
+            #   define f(x) as: if (type of x) == "str": x is "z" / print of x
+            #   VM  z / 0, rc 0      AOT  gcc "'x' undeclared", NO BINARY
+            #
+            # which is the exact shape the comment above says this arm exists to
+            # support (#86's `line is trim of line`). Introduced when `cn`
+            # mangled only a C-keyword allowlist, so it was correct then; #121
+            # turned `cn` into prefix-everything and its commit message claimed
+            # the prefix "turned latent bugs LOUD: SIX more emission sites were
+            # still writing the raw name" and that the name class was CLOSED. A
+            # seventh survived, because six were found by running the corpus and
+            # nothing in the corpus rebinds a type-dispatched parameter.
+            #
+            # Enumerated rather than claimed this time: every other
+            # concatenation of a bare name in this file puts it INSIDE a C
+            # string literal (an env key, correct by design). This was the only
+            # site emitting one in C IDENTIFIER position.
+            return ind + (cn of name) + " = " + (emit_val of [node[2], nm, bt]) + ";\n"
         if g_boxshadow[name] == 1:
             # boxed module-shadow (#86, F-OURO-35): the `local` decl binds
             # the per-call frame env; a plain write goes wherever the VM's

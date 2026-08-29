@@ -19,9 +19,19 @@
 # where the name lives.
 #
 # EVERY OTHER FIXTURE IN THIS FAMILY IS UNOBSERVED, which is why 123/123 stayed
-# green. The observer trigger below is what makes this program observed, and it
-# is load-bearing: delete `converged of q` and the fixture passes against the
-# broken emitter.
+# green. What makes this program observed are the TWO `converged of` calls
+# below, and BOTH are load-bearing — one per storage regime, because the two
+# failure modes live in different scopes.
+#
+# Measured against the broken emitter, rather than asserted:
+#   delete `converged of q` only          -> STILL FAILS (build, 'eig_top_m')
+#   delete `converged of top_q` only      -> still fails (the frame-local half)
+#   delete BOTH                           -> passes; the fixture is defused
+#
+# An earlier version of this header said deleting `converged of q` alone
+# defuses it. That was wrong, and wrong in the dangerous direction: someone
+# checking the claim would have found the fixture still red and concluded the
+# guard was fine. A "load-bearing" note is itself a claim and has to be run.
 
 define g(y) as:
     if (type of y) == "str":
