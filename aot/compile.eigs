@@ -260,9 +260,10 @@ g_func_names is {}
 # disagree with arg_class about what counts as evidence.
 g_boxed_arg is {}
 # fn name -> {"<param index>": 1} for parameters the body computes with -- i.e.
-# exactly the parameters the numeric pin restores to num. Recomputed each
-# fixpoint round by widen_ptypes and read by arg_gen_grounded, so the stability
-# test and the pin cannot disagree about what "pinnable" means.
+# exactly the parameters the numeric pin restores to num. Computed once by
+# widen_ptypes (find_numeric_use_direct is purely syntactic, so it cannot change
+# across fixpoint rounds) and read by arg_gen_grounded, so the stability test and
+# the pin cannot disagree about what "pinnable" means.
 g_pinned is {}
 # Functions with NO return statement, which yield null (the VM's fall-off-the-
 # end rule). Seeded before ptype inference because arg_class needs it there and
@@ -4152,22 +4153,31 @@ define widen_ptypes(funcs, rest) as:
     # 40 rounds: each round can advance a chain by only one hop in the
     # worst (reverse definition) order, and consumer call graphs are deep
     # (EigenMiniSat's is ~200 functions).
+    # Pins are computed ONCE, outside the loop. A comment here used to say they
+    # were "recomputed EVERY round from the CURRENT classes ... a param passed
+    # into a callee's num param counts as a numeric use, so pins must dissolve
+    # as that callee widens", crediting t58's `passthru`. That is false, and was
+    # disproved by execution rather than by reading: find_numeric_use_direct is
+    # purely SYNTACTIC over the function body -- it reads no ptypes and no
+    # g_funcs, and its own contract is that it does not count "passed to a
+    # numeric param" -- so g_pinned came out bit-identical on all 40 rounds.
+    # Hoisting it changes the emitted C for 0 of the 118 corpus programs, t58
+    # included, and removes F x P recursive body walks x 40 from a compiler
+    # already tracked as quadratic (#85).
+    #
+    # The claim had also been COPIED onto g_pinned's own declaration when that
+    # global was added, which is how a false comment earns a second home.
+    g_pinned is {}
+    for k0 in range of (len of funcs):
+        local fn0 is funcs[k0]
+        local pins is {}
+        for p0 in range of (len of fn0[2]):
+            if (find_numeric_use_direct of [fn0[3], (fn0[2])[p0]]) == 1:
+                pins[(str of p0)] is 1
+        g_pinned[fn0[1]] is pins
     local round is 0
     loop while round < 40:
         local changed is 0
-        # Pins are recomputed EVERY round from the CURRENT classes: a
-        # param passed into a callee's num param counts as a numeric use,
-        # so pins must dissolve as that callee widens. Computing them once
-        # up front froze pass-through params numeric forever (t58's
-        # `passthru`).
-        g_pinned is {}
-        for k0 in range of (len of funcs):
-            local fn0 is funcs[k0]
-            local pins is {}
-            for p0 in range of (len of fn0[2]):
-                if (find_numeric_use_direct of [fn0[3], (fn0[2])[p0]]) == 1:
-                    pins[(str of p0)] is 1
-            g_pinned[fn0[1]] is pins
         # snapshot pinned classes so a widening cannot violate them
         for k in range of (len of funcs):
             local fn2 is funcs[k]
