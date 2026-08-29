@@ -254,6 +254,9 @@ define ic_new(field) as:
 # is_tensor_call can tell a user-defined matmul/add/relu (which shadows the
 # tensor builtin) from the builtin, regardless of definition order.
 g_func_names is {}
+# (callee name)#(param index) -> 1 when some call site passes a void call in
+# that position. Defeats the numeric pin, which asks only about the body.
+g_void_arg is {}
 # Functions with NO return statement, which yield null (the VM's fall-off-the-
 # end rule). Seeded before ptype inference because arg_class needs it there and
 # g_funcs[]["ret"] is not available yet — see the seeding site for why.
@@ -1177,6 +1180,17 @@ define emit_num(node, nm, bt, raw) as:
                 # VM sqrt guards (sqrt of negative -> NaN -> 0).
                 return "num_guard(sqrt(" + (emit_num of [node[2], nm, bt, 0]) + "))"
             if g_funcs[callee[1]] != null:
+                if g_func_void[callee[1]] == 1:
+                    # Every other arm of emit_num refuses loudly on a
+                    # non-numeric node; this one emitted a raw C call, so a
+                    # void callee produced `invalid use of void expression`
+                    # from gcc -- a build failure with no `AOT:` diagnostic
+                    # naming the construct, which is worse than a wrong answer
+                    # because nothing points at the source. Four sites now
+                    # agree that a void call yields null; this is the backstop
+                    # for a FIFTH that has not been found yet, converting any
+                    # remaining hole from invalid C into a refusal.
+                    throw of ("AOT: '" + callee[1] + "' has no return statement, so it yields null (the VM's fall-off-the-end rule), and this position requires a number")
                 return emit_call_num of [node, nm, bt]
             # builtin call in a numeric context (#65 inc. 2): emit the boxed
             # call (emit_val mirrors the VM's arg packing, incl. the one call
@@ -3794,6 +3808,14 @@ define local_gen_map_seeded(body, seed) as:
                         if g_funcs[rc[1]] != null:
                             if ((g_funcs[rc[1]])["ret"]) == "Value*":
                                 isgen is 1
+                            if g_func_void[rc[1]] == 1:
+                                # a function with no return yields null, which
+                                # is boxed. Testing only "Value*" missed it:
+                                #   x is (shout of "a") / g of x
+                                #   VM  a / null, rc 0
+                                #   AOT a, then "non-numeric value in a numeric
+                                #       context at <module>: name x", rc 1
+                                isgen is 1
                         elif BOXED_RET_BUILTINS[rc[1]] == 1:
                             # a BUILTIN with a known non-numeric return
                             # (EigenMiniSat's `text is read_text of path`,
@@ -3866,6 +3888,44 @@ define for_var_gen_scan(node, out) as:
             out[node[1]] is "gen"
     for k in range of (len of node):
         for_var_gen_scan of [node[k], out]
+    return 0
+
+# Record every (callee, parameter index) that some call site fills with a call
+# to a function that has NO return statement. Mirrors widen_scan's argument
+# unpacking exactly (#405: a bare literal list IS the argument list; a
+# paren-marked 3-slot list is one argument; `f of null` is the zero-arg idiom
+# and constrains nothing) -- the two must agree about which element lands in
+# which parameter, or this map points at the wrong index.
+define void_arg_scan(node) as:
+    if (type of node) != "list":
+        return 0
+    if (len of node) == 0:
+        return 0
+    if node[0] == "call":
+        local vcallee is unwrap of node[1]
+        if vcallee[0] == "ident":
+            if g_func_names[vcallee[1]] == 1:
+                local varg is unwrap of node[2]
+                local velems is []
+                local vskip is 0
+                if varg[0] == "null":
+                    vskip is 1
+                elif (varg[0] == "list") and ((len of varg) == 3):
+                    velems is [varg]
+                elif varg[0] == "list":
+                    velems is varg[1]
+                else:
+                    velems is [varg]
+                if vskip == 0:
+                    for vk in range of (len of velems):
+                        local vek is unwrap of (velems[vk])
+                        if vek[0] == "call":
+                            local vic is unwrap of (vek[1])
+                            if vic[0] == "ident":
+                                if g_func_void[vic[1]] == 1:
+                                    g_void_arg[(vcallee[1]) + "#" + (str of vk)] is 1
+    for vk2 in range of (len of node):
+        void_arg_scan of (node[vk2])
     return 0
 
 # Scan one function body for calls, widening callee params. Returns 1 if
@@ -4054,7 +4114,24 @@ define widen_ptypes(funcs, rest) as:
             local pins3 is pinned[fn3[1]]
             for p in range of (len of pt3):
                 if (pins3[(str of p)] == 1) and ((pt3[p]) == "gen"):
-                    pt3[p] is "num"
+                    # ...unless some call site passes a VOID CALL here. The pin
+                    # asks only what the BODY does; a body that computes with
+                    # its parameter pins it numeric and silently discarded
+                    # arg_class's boxed verdict, so the parameter went back to
+                    # `double` and the emitted C was eig_g(eig_shout(...)) --
+                    # a void expression where a double is required, failing the
+                    # BUILD with a gcc error and no AOT diagnostic:
+                    #
+                    #   define g(n) as: if n == null: ... else: print of (n * 2)
+                    #   g of 5 / g of (shout of "a")
+                    #   VM  10 / a / nothing, rc 0     AOT  no binary
+                    #
+                    # The guard in the body is exactly why such a program is
+                    # correct in the VM, and exactly what makes the pin wrong
+                    # here: the parameter is numeric on one path and null on
+                    # another, which is the boxed case.
+                    if g_void_arg[(fn3[1]) + "#" + (str of p)] != 1:
+                        pt3[p] is "num"
         if changed == 0:
             round is 40
         round is round + 1
@@ -5173,6 +5250,14 @@ define emit_program(ast) as:
         collect_return_nodes of [(funcs[k])[3], vrets]
         if (len of vrets) == 0:
             g_func_void[(funcs[k])[1]] is 1
+    # Which (function, parameter index) pairs receive a VOID CALL at some call
+    # site. Static and computed once -- a call site does not change under the
+    # ptype fixpoint -- and consulted where the numeric pin would otherwise
+    # discard arg_class's boxed verdict. See the pin site for what that cost.
+    g_void_arg is {}
+    for k in range of (len of funcs):
+        void_arg_scan of ((funcs[k])[3])
+    void_arg_scan of rest
     for k in range of (len of funcs):
         local fn is funcs[k]
         local pt is func_ptypes of fn

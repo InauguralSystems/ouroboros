@@ -28,10 +28,21 @@
 #                       `eig_g(eig_shout(...))` -- a void expression where a
 #                       double is required. gcc rejected the build outright:
 #                       no binary, and no `AOT:` diagnostic naming the cause.
+#   the numeric PIN     which discarded arg_class's answer whenever the callee
+#                       computes with the parameter anywhere in its body --
+#                       so the site above was taught and then overridden.
+#   widen_scan's        a void result parked in a LOCAL was not boxed evidence
+#   local classifier    either; it tested only `ret == "Value*"`.
 #
-# An earlier version of this comment claimed "all three shapes are here", which
-# was an overclaim against a shape space nobody had enumerated -- the fourth
-# was found the next round.
+# Two earlier versions of this comment overclaimed and both were caught by the
+# next round's review. One said "all three shapes are here" against a shape
+# space nobody had enumerated; the other said the `adds`/`takes_two` pair below
+# makes a fix that "simply boxes every argument" fail, which was tested and is
+# FALSE -- boxing every call argument, and boxing every argument outright, both
+# leave this fixture byte-identical. Boxing is semantics-preserving, so no
+# output diff can catch it; that mutant is a PERFORMANCE regression and needs a
+# benchmark, not a parity fixture. The pair stays because it exercises a
+# numeric and a void argument in one call, which is worth covering on its own.
 
 define shout(m) as:
     print of m
@@ -87,3 +98,30 @@ define takes_two(p, q) as:
     print of q
 
 takes_two of [(shout of "arg-1"), (adds of 41)]
+
+# The callee COMPUTES with its parameter, which pins it numeric. That pin used
+# to win over the boxed verdict above, so this is the shape that fails to BUILD
+# rather than merely printing the wrong thing. The `n == null` guard is why the
+# program is correct in the VM and is exactly what makes the pin wrong.
+define guarded(n) as:
+    if n == null:
+        print of "guarded-null"
+    else:
+        print of (n * 2)
+
+guarded of 5
+guarded of (shout of "pinned-arg")
+
+# A void result parked in a LOCAL, then passed on: the local must be boxed
+# evidence too. This one built and then died at the checked unbox.
+#
+# `solo_taker` is called from exactly ONE site and that site passes the local,
+# so the local classifier is the only evidence about its parameter. Routing it
+# through `takes_it` instead proved nothing: `takes_it` is already boxed by its
+# direct void-call site above, so reverting the local fix left the fixture
+# green. A shared callee hides the very thing this case is for.
+define solo_taker(p) as:
+    print of p
+
+solo is (shout of "via-local")
+solo_taker of solo
