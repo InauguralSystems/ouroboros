@@ -1,0 +1,44 @@
+# A variable bound to `null`, passed to a parameter that is guarded then
+# computed with.
+#
+# THE POINT OF THIS FIXTURE is that this is the PLAINEST instance of the boxed-
+# value class, and it was the one missing. `local_gen_map_seeded` listed
+# str/dict/list as boxed RHS kinds and omitted `null` — while the dict-field map
+# twenty lines below counts a `null` field value as boxed, and the void-call arm
+# above it is commented "yields null, which is boxed". Same file, same pass,
+# opposite verdicts on the same value.
+#
+#   VM   null-arm                                  rc 0
+#   AOT  builds clean, NO stdout at all, then
+#        "non-numeric value in a numeric context at <module>: name n (type null)"
+#                                                   rc 1
+#
+# The asymmetry is the tell: routing the same null through a list element
+# (`rows is [null]` / `r is rows[0]` / `g of r`) MATCHED, because an index RHS
+# IS boxed evidence. Only the direct spelling was missing.
+#
+# Blast radius when fixed: 0 of 120 corpus programs change their emitted C, so
+# the suite could not have moved on this — the fixture is the only thing that
+# will notice a regression.
+
+define g(y) as:
+    if y == null:
+        print of "null-arm"
+    else:
+        print of (y * 2)
+    return 0
+
+n is null
+z is g of n
+print of z
+
+# the same parameter fed a real number at another site, so a fix that just
+# boxes everything still has to carry the numeric path
+m is 21
+print of (g of m)
+
+# and the list-element route, which already worked — kept so a regression there
+# is caught in the same place as its sibling
+rows is [null]
+r is rows[0]
+print of (g of r)

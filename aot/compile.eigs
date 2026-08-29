@@ -260,7 +260,7 @@ g_func_names is {}
 # disagree with arg_class about what counts as evidence.
 g_boxed_arg is {}
 # fn name -> {"<param index>": 1} for parameters the body computes with -- i.e.
-# exactly the parameters the numeric pin restores to num. Computed once by
+# exactly the parameters the numeric pin restores to num. Computed ONCE by
 # widen_ptypes (find_numeric_use_direct is purely syntactic, so it cannot change
 # across fixpoint rounds) and read by arg_gen_grounded, so the stability test and
 # the pin cannot disagree about what "pinnable" means.
@@ -3808,7 +3808,21 @@ define local_gen_map_seeded(body, seed) as:
         for j in range of (len of rhss):
             local r is unwrap of rhss[j]
             if (len of r) > 0:
-                if (r[0] == "str") or (r[0] == "dict") or (r[0] == "list"):
+                if (r[0] == "str") or (r[0] == "dict") or (r[0] == "list") or (r[0] == "null"):
+                    # `null` belongs in this list and its absence was the
+                    # plainest instance of the whole boxed-value class:
+                    #
+                    #   n is null / g of n     (g guards on null, then computes)
+                    #   VM   null-arm, rc 0
+                    #   AOT  builds clean, NO stdout, then "non-numeric value in
+                    #        a numeric context at <module>: name n (type null)"
+                    #
+                    # The same file contradicted itself: the dict-field map
+                    # below counts a `null` field value as boxed, and the
+                    # void-call arm above is commented "yields null, which is
+                    # boxed". Only the plainest spelling was missing, so
+                    # `rows is [null] / r is rows[0] / g of r` MATCHED while a
+                    # bare `n is null` did not.
                     isgen is 1
                 # An INDEX read is boxed evidence (#86). `rom_path is argv[0]`
                 # yields a str, but an index node was not evidence of anything,
@@ -4161,9 +4175,16 @@ define widen_ptypes(funcs, rest) as:
     # purely SYNTACTIC over the function body -- it reads no ptypes and no
     # g_funcs, and its own contract is that it does not count "passed to a
     # numeric param" -- so g_pinned came out bit-identical on all 40 rounds.
-    # Hoisting it changes the emitted C for 0 of the 118 corpus programs, t58
-    # included, and removes F x P recursive body walks x 40 from a compiler
-    # already tracked as quadratic (#85).
+    # Hoisting it changes the emitted C for 0 of 154 programs, t58 included.
+    #
+    # The saving is (rounds - 1) x F x P, NOT "x 40" as this comment first
+    # claimed. A round census over 147 programs: the fixpoint runs ONE round on
+    # 134 of them, two on 9, three on 4 -- the loop exits on `changed == 0`, so
+    # most programs never re-enter it. That also means the 0-differing result is
+    # itself mostly vacuous: 134 of 147 programs execute the loop body once and
+    # CANNOT distinguish the hoist, so the 13 multi-round programs are the only
+    # ones carrying that evidence. Both numbers are worth stating honestly --
+    # the correction to a false comment had a false number of its own.
     #
     # The claim had also been COPIED onto g_pinned's own declaration when that
     # global was added, which is how a false comment earns a second home.
@@ -4309,6 +4330,22 @@ define emit_args(node, fname, nm, bt) as:
                 # null); otherwise read the env BORROWED.
                 if (bt[te[1]] == 1) or (g_dict[te[1]] == 1) or (g_genp[te[1]] == 1):
                     s is s + (cn of te[1])
+                elif nm[te[1]] == 1:
+                    # A NUMERIC C variable is not in the env either -- the same
+                    # hazard the line above names for buffers, one type over.
+                    # Passing one to a boxed parameter emitted an env read for a
+                    # name that only exists as a C double:
+                    #
+                    #   n is null / m is 21 / g of n / g of m
+                    #   VM   null-arm / 42       AOT  ... then "undefined
+                    #                                 variable 'm'", rc 1
+                    #
+                    # Only reachable once a parameter is boxed on evidence from
+                    # ANOTHER call site, which is why it surfaced the moment
+                    # `null` became boxed evidence: the two call sites disagree
+                    # about the C type and the boxed one wins. Owned-and-leaked
+                    # like the non-ident fallback below -- one-shot process.
+                    s is s + "make_num(" + (cn of te[1]) + ")"
                 else:
                     s is s + (env_readb of te[1])
             else:
