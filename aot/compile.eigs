@@ -787,15 +787,31 @@ define infer_int(stmts, params, nm, bt) as:
     return iv
 
 define collect_assigns_stmt(node, acc) as:
-    # Tolerate a non-statement node. lift_nested recurses into ANY list element,
-    # so the "statements after this define" suffix it accumulates can carry a
-    # condition expression or an empty else-body. This walker is also called on
-    # arbitrary sublists elsewhere; crashing on one is never the right answer.
+    # lift_nested_at accumulates the statements that follow a nested define in
+    # every enclosing scope, and some of those elements are whole BLOCKS rather
+    # than statements -- descending into an `if`'s then-branch appends node[3],
+    # the else-branch, as ONE element; descending into a `match` case appends
+    # the remaining [pattern, body] pairs.
+    #
+    # The first version of this guard returned null for anything that did not
+    # match a statement tag, which CONVERTED A CRASH INTO A SILENT MISS at the
+    # very call site that motivated it: every assignment in a sibling block
+    # became invisible, so the capture-rebind refusal still shipped the stale
+    # snapshot it was written to catch --
+    #
+    #   define inner in the then-branch, `x is 7` in the else-branch, both
+    #   re-entered by a loop:  VM 8   AOT 101   both build, both rc 0
+    #
+    # A block is recognisable: its first element is a LIST (a statement or a
+    # pattern), never a string tag. Descend into it.
     if (type of node) != "list":
         return null
     if (len of node) == 0:
         return null
     local t is node[0]
+    if (type of t) == "list":
+        collect_assigns of [node, acc]
+        return null
     if t == "_line":
         collect_assigns_stmt of [node[2], acc]
         return null
@@ -5375,7 +5391,11 @@ define lift_nested(node, bound, out_funcs) as:
 #   VM 7   AOT 100   both build, both rc 0
 #
 # "After the definition" is a property of the enclosing FUNCTION, not of the
-# block the define happens to sit in.
+# block the define happens to sit in -- but saying that is not the same as
+# achieving it. The first version threaded the suffix correctly and then lost
+# the sibling blocks inside it, because collect_assigns_stmt discarded any
+# element that was not a statement. It was accurate about intent and false
+# about behaviour for a whole round.
 define lift_nested_at(node, bound, out_funcs, outer_after) as:
     if (type of node) != "list":
         return 0

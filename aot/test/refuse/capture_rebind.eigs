@@ -26,6 +26,12 @@
 # invisible — the bug was fully alive behind the guard written to close it, on
 # the most ordinary shape there is. "After the definition" is a property of the
 # enclosing FUNCTION, not of the block the define happens to occupy.
+#
+# That took TWO rounds to actually achieve. The first fix threaded the suffix
+# down the recursion correctly, and then the walker it handed the suffix to
+# discarded every element that was not a statement — and a sibling block (an
+# else-branch, a later `match` case) arrives as exactly that. The sibling shape
+# below is the one that stayed broken behind the corrected comment.
 define f(y) as:
     local x is 100
     if y == 0:
