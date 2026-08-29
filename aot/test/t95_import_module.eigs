@@ -1,0 +1,49 @@
+# `import <module>` — ouroboros#121.
+#
+# THE POINT OF THIS FIXTURE is that the AOT had no emit case for `import` at
+# all, which made the ENTIRE STANDARD LIBRARY unreachable: 12 of the 43
+# programs the envelope census still refused died here, including five of
+# phugoid's eight, and it stacked on #140 (a module is a dict of functions, so
+# calling through it also needed a non-name callee).
+#
+# The semantics were PROBED against the VM rather than read off the source,
+# and all four probed properties are exercised below:
+#
+#   1. the binding is a DICT of the module's top-level bindings, VARIABLES and
+#      functions alike, in SOURCE ORDER;
+#   2. the module's own top level runs, ONCE;
+#   3. the dict is a SNAPSHOT — reading a module variable through it gives the
+#      value at import time, even after a module function has changed it —
+#      while the functions stay bound to the module's LIVE state;
+#   4. a second import does not re-run the module and rebinds the same dict
+#      OBJECT, so a mutation made through the dict survives it.
+#
+# Uses the real stdlib so the resolution chain is exercised, not just a
+# module sitting beside the program.
+
+import complex
+
+a is [3.0, 4.0]
+b is [1.0, 2.0]
+
+print of (complex.mag of a)
+print of ((complex.add of [a, b])[0])
+print of ((complex.add of [a, b])[1])
+print of ((complex.mul of [a, b])[0])
+print of ((complex.conj of a)[1])
+
+# the module binding is a dict of the module's top-level bindings
+print of (type of complex)
+
+# a second import must not re-run the module or lose state
+import complex
+print of (complex.mag of b)
+
+# module functions used through the dict inside a loop — the callee expression
+# is re-evaluated per call and must keep resolving
+i is 0
+acc is 0.0
+loop while i < 20:
+    acc is acc + (complex.mag of [i, i])
+    i is i + 1
+print of acc

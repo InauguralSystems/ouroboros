@@ -59,7 +59,7 @@ for repo in "$ROOT"/*/; do
     printf '%s' "$f" | grep -qE "$SKIP_PATH_RE" && continue
     rel="${f#"$ROOT"/}"
     set +e
-    EIGS_DIR="$EIGS_SRC" timeout "$TIMEOUT" "$EIG" "$COMPILE" "$f" >/dev/null 2>"$tmp/err"
+    EIGS_DIR="$EIGS_SRC" timeout "$TIMEOUT" "$EIG" "$COMPILE" "$f" "$EIGS_SRC" >/dev/null 2>"$tmp/err"
     rc=$?
     set -e
     if [ $rc -eq 0 ]; then

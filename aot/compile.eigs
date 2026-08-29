@@ -136,6 +136,17 @@ g_traced is 0
 # Only C keywords that are NOT EigenScript keywords can reach here (the
 # parsers reject `while`/`for`/`if`/... as identifiers on both sides).
 g_c_kw is {"auto": 1, "char": 1, "const": 1, "default": 1, "do": 1, "double": 1, "enum": 1, "extern": 1, "float": 1, "goto": 1, "inline": 1, "int": 1, "long": 1, "register": 1, "restrict": 1, "short": 1, "signed": 1, "sizeof": 1, "static": 1, "struct": 1, "switch": 1, "typedef": 1, "union": 1, "unsigned": 1, "void": 1, "volatile": 1, "main": 1}
+# C KEYWORDS are not enough: the generated C includes <math.h>, <stdlib.h>,
+# <string.h> and <stdio.h>, so a user function named `div` collides with a
+# libc DECLARATION and gcc rejects it ("conflicting types for 'div'") even
+# though ours is static. Rare in a hand-written program, unavoidable once
+# `import` splices stdlib modules in — lib/complex.eigs defines `div` (#121).
+# The Bessel names (y0/y1/j0/j1/yn/jn) are the classic surprise.
+_c_libc is ["div", "ldiv", "lldiv", "abs", "labs", "llabs", "exit", "atexit", "malloc", "calloc", "realloc", "free", "rand", "srand", "qsort", "bsearch", "atoi", "atof", "atol", "strtod", "strtol", "getenv", "system", "fabs", "floor", "ceil", "round", "trunc", "sqrt", "cbrt", "pow", "exp", "exp2", "log", "log2", "log10", "sin", "cos", "tan", "asin", "acos", "atan", "atan2", "sinh", "cosh", "tanh", "hypot", "fmod", "fmin", "fmax", "fma", "modf", "frexp", "ldexp", "erf", "erfc", "tgamma", "lgamma", "remainder", "nearbyint", "rint", "copysign", "y0", "y1", "yn", "j0", "j1", "jn", "strlen", "strcpy", "strcat", "strcmp", "strncmp", "strchr", "strstr", "memcpy", "memset", "memmove", "memcmp", "index", "rindex", "printf", "fprintf", "sprintf", "snprintf", "scanf", "fopen", "fclose", "fread", "fwrite", "fseek", "ftell", "remove", "rename", "puts", "perror", "read", "write", "open", "close", "link", "unlink", "time", "clock", "sleep", "stat", "kill", "signal"]
+_ck is 0
+loop while _ck < (len of _c_libc):
+    g_c_kw[(_c_libc[_ck])] is 1
+    _ck is _ck + 1
 
 define cn(name) as:
     if (type of name) != "str":
@@ -1025,15 +1036,25 @@ define emit_num(node, nm, bt, raw) as:
         # context is a VM runtime error (`u & 1`, `w[v]` with v a buffer) — and
         # it is NOT in the env, so the boxed fallback below would silently read
         # null (aot_num -> 0.0, a wrong number). Fail loudly instead.
-        if (bt[node[1]] == 1) or (g_dict[node[1]] == 1) or (g_tensor[node[1]] == 1) or (g_genp[node[1]] == 1):
-            local why is "genp"
-            if bt[node[1]] == 1:
-                why is "buf"
+        if (bt[node[1]] == 1) or (g_dict[node[1]] == 1) or (g_tensor[node[1]] == 1):
+            local why is "buf"
             if g_dict[node[1]] == 1:
                 why is "dict"
             if g_tensor[node[1]] == 1:
                 why is "tensor"
+            # A buffer, dict or tensor is NEVER a number, in any execution, so
+            # this is wrong at BUILD time and refusing is right.
             throw of ("AOT: Value-typed name '" + node[1] + "' (" + why + ", in " + (G_CUR_FN[0]) + ") read in a numeric context (the VM raises here)")
+        if g_genp[node[1]] == 1:
+            # A GENERIC parameter is different in kind (#135): it can hold a
+            # number at runtime, and refusing at build time rejected programs
+            # the VM runs. It is a C Value*, not in the env, so the boxed
+            # fallback below would read null and coerce to 0.0 — which is why
+            # this used to refuse. Read the C variable and unbox it CHECKED
+            # instead: correct when it holds a number, loud exactly where the
+            # VM raises when it does not. Borrowed — a parameter is not ours
+            # to consume.
+            return "aot_num_ck_bat(" + (cn of node[1]) + ", \"" + (c_escape of (G_CUR_FN[0])) + ": name " + (c_escape of node[1]) + "\")"
         # not a declared C numeric: an env-boxed name in a numeric context
         # (e.g. a for-in loop var indexing a buffer, #70) — read it boxed.
         # CHECKED (#65 inc. 2): the VM raises when a non-number reaches an
@@ -1150,7 +1171,11 @@ define emit_num(node, nm, bt, raw) as:
             # is_num_expr claims, so this can't recurse through emit_val's
             # is_num_expr head.
             return "aot_num_ck_at(" + (emit_val of [node, nm, bt]) + ", \"" + (c_escape of (G_CUR_FN[0])) + ": builtin " + (c_escape of callee[1]) + "\")"
-        throw of "AOT: emit_num unexpected call"
+        # A callee that is an EXPRESSION, in a NUMERIC context (#121/#140):
+        # `complex.mag of a` inside arithmetic. emit_val handles the boxed
+        # form; here the result is REQUIRED numeric, exactly as the builtin
+        # arm above requires it — the VM raises otherwise.
+        return "aot_num_ck_at(" + (emit_val of [node, nm, bt]) + ", \"" + (c_escape of (G_CUR_FN[0])) + ": value-callee call\")"
     if t == "binop":
         # whole expression proven integer -> native long arithmetic, no guard
         if (is_int_expr of node) == 1:
@@ -1375,7 +1400,11 @@ define emit_val(node, nm, bt) as:
         # -> direct native C call.
         if g_funcs[callee[1]] != null:
             if (g_funcs[callee[1]])["ret"] == "Value*":
-                return (callee[1]) + "(" + (emit_args of [node, callee[1], nm, bt]) + ")"
+                # cn, not the raw name — see the void-call site: two of these
+                # emitted the UNMANGLED name while the definition was mangled,
+                # which only surfaced once `import` brought in a module
+                # defining `div` (#121).
+                return (cn of callee[1]) + "(" + (emit_args of [node, callee[1], nm, bt]) + ")"
         # Builtin calls mirror the VM's arg packing (one call rule, #405): a
         # bare literal list IS the argument list — 1 element passes that
         # element RAW (`buf_from_list of [[bytes]]` hands the builtin the
@@ -1728,7 +1757,10 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
         if callee[0] == "ident":
             if g_funcs[callee[1]] != null:
                 if (g_funcs[callee[1]])["ret"] == "void":
-                    return ind + callee[1] + "(" + (emit_args of [node, callee[1], nm, bt]) + ");\n"
+                    # cn, not the raw name: a user function whose name collides
+                    # with a C identifier is emitted mangled everywhere else, and
+                    # this site would have called the unmangled one (#121).
+                    return ind + (cn of callee[1]) + "(" + (emit_args of [node, callee[1], nm, bt]) + ");\n"
         return ind + "{ Value* _r = " + (emit_val of [node, nm, bt]) + "; if (_r) val_decref(_r); }\n"
     if t == "if":
         local s is ind + "if (" + (emit_cond of [node[1], nm, bt]) + ") {\n"
@@ -5341,6 +5373,46 @@ define _lf_target(st) as:
         return null
     return a[1]
 
+# `import NAME` if `st` is one, else null.
+define _imp_target(st) as:
+    local u is unwrap of st
+    if u[0] != "import":
+        return null
+    return u[1]
+
+# Stdlib root, passed as argv[2] by build.sh and the envelope census. Absent
+# when compile.eigs is invoked by hand, in which case only project-local
+# modules resolve and a stdlib import stays a loud refusal rather than a
+# silently-wrong resolution.
+G_STDLIB is [""]
+# Modules already spliced in this compilation. The VM caches imports: a second
+# `import M` does NOT re-run the module and rebinds the name to the SAME dict
+# object, so a mutation the program made to that dict survives. Splicing twice
+# would instead redefine every function (a C redefinition error) and re-run the
+# module's top level. First import stashes the dict in __imp_M; a repeat import
+# rebinds from the stash, which is the cached-object semantics exactly.
+G_IMPORTED is {}
+
+# Top-level binding names of a module, in SOURCE ORDER, first occurrence wins.
+# That order is the contract: `keys of <module>` was probed against the VM and
+# returns bindings in the order the module creates them, variables and
+# functions interleaved.
+define module_bindings(stmts) as:
+    local names is []
+    local seen is {}
+    for i in range of (len of stmts):
+        local u is unwrap of stmts[i]
+        local nm2 is null
+        if u[0] == "func":
+            nm2 is u[1]
+        elif u[0] == "assign":
+            nm2 is u[1]
+        if nm2 != null:
+            if seen[nm2] != 1:
+                seen[nm2] is 1
+                append of [names, nm2]
+    return names
+
 define splice_static_loads(blk, base, depth) as:
     if depth > 16:
         throw of "AOT: load_file nesting deeper than 16 — cyclic load?"
@@ -5348,41 +5420,101 @@ define splice_static_loads(blk, base, depth) as:
     local stmts is blk[1]
     for i in range of (len of stmts):
         local st is stmts[i]
-        local path is _lf_target of st
-        if path == null:
-            append of [out, st]
+        local mname is _imp_target of st
+        if mname != null:
+            if G_IMPORTED[mname] == 1:
+                append of [out, ["assign", mname, ["ident", "__imp_" + mname]]]
+                continue
+            # ---- `import NAME` (ouroboros#121) --------------------------
+            # Probed against the VM rather than read off the source: the
+            # binding is a DICT holding a SNAPSHOT of the module's top-level
+            # bindings in source order — variables by value, functions as
+            # values — the module's own top-level runs ONCE, and the module's
+            # state stays live behind those functions (mymod.counter reads 0
+            # while mymod.bump keeps accumulating). Splicing the module's
+            # statements here and then binding a dict of `["ident", name]`
+            # reproduces all three: emit_val already turns a function ident
+            # into make_builtin(__wrap_...), and a variable ident into its
+            # value at that point, which IS the snapshot.
+            local mpath is (_lf_dirname of base) + mname + ".eigs"
+            # read_text answers an EMPTY STRING, not null, for a missing file
+            # — checking only for null made the stdlib fallback unreachable and
+            # produced an EMPTY module dict (every call through it then died
+            # with "cannot call null"). The load_file arm below already tests
+            # both, which is how this was caught.
+            local msrc is read_text of mpath
+            if (msrc == null) or ((len of msrc) == 0):
+                if (G_STDLIB[0]) != "":
+                    mpath is (G_STDLIB[0]) + "/lib/" + mname + ".eigs"
+                    msrc is read_text of mpath
+            if (msrc == null) or ((len of msrc) == 0):
+                throw of ("AOT: import '" + mname + "' not found (looked beside the program, then in the stdlib lib/). Pass the stdlib root as argv[2] if this is a stdlib module.")
+            local mast is eigen_parse of (eigen_tokenize of msrc)
+            local msp is splice_static_loads of [mast, mpath, depth + 1]
+            local mst is msp[1]
+            # Collision check BEFORE splicing. Splicing merges the module's
+            # top-level names into the program's, which is only equivalent to
+            # the VM's separate module env while the names are disjoint. A
+            # collision would be a silent wrong answer, so it is a loud
+            # refusal — the F-OURO-23 rule.
+            local mb is module_bindings of mst
+            local prior is module_bindings of stmts
+            for bi in range of (len of mb):
+                for pi in range of (len of prior):
+                    if (mb[bi]) == (prior[pi]):
+                        throw of ("AOT: import '" + mname + "' binds '" + (mb[bi]) + "', which the importing program also binds — the AOT splices module top-levels into one scope, so this would silently merge them")
+            for k in range of (len of mst):
+                append of [out, mst[k]]
+            local pairs is []
+            for bi in range of (len of mb):
+                append of [pairs, [(mb[bi]), ["ident", (mb[bi])]]]
+            append of [out, ["assign", mname, ["dict", pairs]]]
+            append of [out, ["assign", "__imp_" + mname, ["ident", mname]]]
+            G_IMPORTED[mname] is 1
         else:
-            # BEST-EFFORT, and that is the design rather than a shortcut.
-            # The VM resolves load_file through a CHAIN: script-dir first,
-            # then the exe-dir stdlib step (g_exe_dir/../<path>, which is how
-            # `load_file of "lib/int_vector.eigs"` finds the stdlib). This
-            # pass can only resolve the script-dir step — it has no idea what
-            # the built binary's exe dir will be — so anything it cannot read
-            # STAYS a runtime call and behaves exactly as it does today.
-            #
-            # Caught by t76_load_file_paths, which exercises both prongs: the
-            # first version threw on an unresolvable path and turned a passing
-            # stdlib load into a build failure.
-            local full is (_lf_dirname of base) + path
-            local csrc is read_text of full
-            if csrc == null:
-                append of [out, st]
-            elif (len of csrc) == 0:
+            local path is _lf_target of st
+            if path == null:
                 append of [out, st]
             else:
-                local cast is eigen_parse of (eigen_tokenize of csrc)
-                local sp is splice_static_loads of [cast, full, depth + 1]
-                local cs is sp[1]
-                for k in range of (len of cs):
-                    append of [out, cs[k]]
+                # BEST-EFFORT, and that is the design rather than a shortcut.
+                # The VM resolves load_file through a CHAIN: script-dir first,
+                # then the exe-dir stdlib step (g_exe_dir/../<path>, which is how
+                # `load_file of "lib/int_vector.eigs"` finds the stdlib). This
+                # pass can only resolve the script-dir step — it has no idea what
+                # the built binary's exe dir will be — so anything it cannot read
+                # STAYS a runtime call and behaves exactly as it does today.
+                #
+                # Caught by t76_load_file_paths, which exercises both prongs: the
+                # first version threw on an unresolvable path and turned a passing
+                # stdlib load into a build failure.
+                local full is (_lf_dirname of base) + path
+                local csrc is read_text of full
+                if csrc == null:
+                    append of [out, st]
+                elif (len of csrc) == 0:
+                    append of [out, st]
+                else:
+                    local cast is eigen_parse of (eigen_tokenize of csrc)
+                    local sp is splice_static_loads of [cast, full, depth + 1]
+                    local cs is sp[1]
+                    for k in range of (len of cs):
+                        append of [out, cs[k]]
     return ["block", out]
 
 # ---- driver ----
 argv is args of null
 src is read_text of argv[0]
-if (len of argv) > 1:
-    if argv[1] == "--dump-inference":
+ai is 1
+loop while ai < (len of argv):
+    if argv[ai] == "--dump-inference":
         g_dump is 1
+    else:
+        # stdlib root for `import` resolution (#121); build.sh and the
+        # envelope census pass it. Absent when invoked by hand, in which case
+        # only project-local modules resolve and a stdlib import refuses
+        # loudly rather than resolving to the wrong thing.
+        G_STDLIB[0] is argv[ai]
+    ai is ai + 1
 toks is eigen_tokenize of src
 ast is eigen_parse of toks
 ast is splice_static_loads of [ast, argv[0], 0]

@@ -82,5 +82,8 @@ trap 'rm -f "$GEN"' EXIT
 PROG_DIR="$(cd "$(dirname "$PROG")" && pwd -P)"
 SRC_ABS="$(cd "$SRC" && pwd -P)"
 PDEFS="-DAOT_SCRIPT_DIR='\"$PROG_DIR\"' -DAOT_EXE_DIR='\"$SRC_ABS\"'"
-"$EIG" compile.eigs "$PROG" > "$GEN"
+# argv[2] is the stdlib root, used by compile.eigs to resolve `import` of a
+# stdlib module (#121). Project-local modules resolve beside the program and
+# do not need it.
+"$EIG" compile.eigs "$PROG" "$EIGS_DIR" > "$GEN"
 eval gcc $CFLAGS $DEFS $PDEFS -I. -I"$SRC" "$GEN" "$LIB" -lm -lpthread -o "$OUT"
