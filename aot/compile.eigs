@@ -5410,8 +5410,25 @@ G_IMPORTED is {}
 define module_bindings(stmts) as:
     local names is []
     local seen is {}
+    module_bindings_walk of [stmts, names, seen]
+    return names
+
+# Walks module-level statements in SOURCE ORDER, descending into control-flow
+# bodies but NOT into `func` bodies. A binding made inside a module-level `if`
+# is a real top-level binding — the VM's dict has it — and walking only the
+# immediate statement list dropped it: `keys of M` lost the name and `M.b` read
+# NULL, a wrong VALUE rather than a missing key. A binding made inside a
+# FUNCTION body is different: the dict is a snapshot taken at import time,
+# before any function has run, so that name does not exist yet.
+define module_bindings_walk(stmts, names, seen) as:
+    if (type of stmts) != "list":
+        return 0
     for i in range of (len of stmts):
         local u is unwrap of stmts[i]
+        if (type of u) != "list":
+            return 0
+        if (len of u) == 0:
+            return 0
         local nm2 is null
         if u[0] == "func":
             nm2 is u[1]
@@ -5425,7 +5442,13 @@ define module_bindings(stmts) as:
             if seen[nm2] != 1:
                 seen[nm2] is 1
                 append of [names, nm2]
-    return names
+        if u[0] != "func":
+            # descend into control-flow bodies (if/elif/else, loop, match) but
+            # never into a function body
+            for k in range of (len of u):
+                if (type of u[k]) == "list":
+                    module_bindings_walk of [u[k], names, seen]
+    return 0
 
 
 # Names a module's statements can create or overwrite IN THE MERGED SCOPE: its
@@ -5527,22 +5550,22 @@ define rename_ast(node, ren, shadow) as:
         if ren[node[1]] != null:
             return ["ident", ren[node[1]]]
         return node
-    if h == "block":
-        # `local` shadows from its own statement ONWARD, not for the whole
-        # enclosing body, so statements are walked in order with a growing
-        # map. A whole-body drop was the round-8 regression: a module global
-        # that was also a `for` variable further down lost its rename and wrote
-        # the PROGRAM's global (VM 3/1/100, AOT 3/0/2, rc 0, zero-byte log).
-        local sh2 is copy_map of shadow
-        local bo is []
-        local bs is node[1]
-        for bk in range of (len of bs):
-            local u is unwrap of bs[bk]
-            if u[0] == "assign":
-                if (len of u) >= 4:
-                    sh2[u[1]] is (G_MODPFX[0]) + "bnd__" + u[1]
-            append of [bo, (rename_ast of [bs[bk], ren, sh2])]
-        return ["block", bo]
+    # NO `block` ARM, deliberately. One was written here to make `local`
+    # shadowing occurrence-scoped, and it was DEAD: _p_parse_block returns a
+    # BARE statement list, not ["block", stmts] — the only producer of a block
+    # node is eigen_parse's whole-program wrapper, and splice_module renames one
+    # statement at a time. The commit that added it claimed occurrence-scoped
+    # `local` handling as a feature; the code never ran.
+    #
+    # So module `local` binders are NOT renamed. That is currently safe rather
+    # than merely untested: a module `local` colliding with a program global is
+    # handled by the emitter's own g_locshadow/g_boxshadow machinery, which
+    # either block-scopes it to a C local or refuses loudly ("`local X`
+    # shadowing a module binding is not supported"). A review round built three
+    # such collisions — a list global, a num global, and a self-referencing RHS
+    # — and every one was handled correctly. If `local` renaming is ever wanted,
+    # it needs a statement-list walker driven from the known body positions,
+    # not a node-kind arm.
     if h == "assign":
         local an is node[1]
         if shadow[an] != null:
