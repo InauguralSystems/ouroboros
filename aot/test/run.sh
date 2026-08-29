@@ -6,6 +6,8 @@ EIG="${EIGS:-../../EigenScript/src/eigenscript}"
 fail=0
 for prog in test/*.eigs; do
   name=$(basename "$prog")
+  # `_`-prefixed files are companion MODULES for import fixtures, not tests.
+  case "$name" in _*) continue;; esac
   bin=$(mktemp /tmp/aot_test.XXXXXX)
   why=""
   if ! bash build.sh "$prog" "$bin" >/tmp/aot_build.log 2>&1; then

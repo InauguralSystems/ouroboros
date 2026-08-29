@@ -1,0 +1,19 @@
+# `import` gives a module its own scope — ouroboros#141.
+#
+# THE POINT OF THIS FIXTURE is that the AOT SPLICES a module's statements into
+# the program, so nothing separates their scopes by construction. It first
+# shipped with a name-comparison GUARD, which four blind-critic rounds found
+# four distinct holes in — this program was one of them, and it was SILENT:
+# the program binds `counter` inside a function body, which the guard's
+# top-level-only walk could not see, and the module's private state was
+# overwritten. VM 0/1, AOT 999/1000, build rc=0, zero-byte log.
+#
+# The guard is gone. Module bindings are now renamed to `<M>__<name>`, so the
+# collision cannot exist and there is nothing to compare. This fixture is the
+# regression: it must MATCH the VM, not be refused.
+import _mod_priv
+define reset() as:
+    counter is 999
+    return 0
+x is reset of null
+print of (_mod_priv.bump of null)

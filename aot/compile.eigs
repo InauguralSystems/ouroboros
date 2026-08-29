@@ -5427,31 +5427,13 @@ define module_bindings(stmts) as:
                 append of [names, nm2]
     return names
 
-# Every name the program BINDS or REFERENCES, at any depth. The first version
-# of the import collision guard walked only top-level statements, so a binding
-# made inside a function body — or an `if` body, or a loop — was invisible to
-# it while still hitting the same global the spliced module occupies:
-#
-#   define reset() as: counter is 999      VM 0, 1     AOT 999, 1000
-#
-# with rc=0 and an empty build log. Splicing merges scopes, so the guard has to
-# see every scope. Deliberately a SUPERSET (references as well as bindings): a
-# program that merely reads a name the module defines can reach the module's
-# private state, which the VM refuses with "undefined variable".
-# Names a module's statements can create or overwrite IN THE MERGED SCOPE:
-# its top-level bindings, plus every assignment target at any depth that is not
-# a parameter, a `local`, or a loop variable. EigenScript's `is` is
-# outward-mutable, so a bare `ctr is 99` inside a module function writes the
-# module's global — and after splicing, the PROGRAM's global of that name.
-#
-# This is the set a collision guard must compare against to be SOUND. Measured
-# across the 77 stdlib modules: median 10 such names per module, 892 distinct,
-# and 56 of 77 include something as common as `i`, `n`, `key`, `result` or
-# `val`. So the sound guard refuses most programs that import anything — which
-# is the point being recorded here rather than worked around: a name-comparison
-# guard over a splice cannot be both sound and useful, and the fix is to
-# NAMESPACE the module (ouroboros#141) so no comparison is needed.
-# Loud-and-limited beats silent-and-wrong until that lands.
+
+# Names a module's statements can create or overwrite IN THE MERGED SCOPE: its
+# top-level bindings, plus every assignment target at any depth that is not a
+# parameter, a `local`, or a loop variable. `is` is outward-mutable, so a bare
+# `ctr is 99` inside a module function writes the module's global — measured
+# across the 77 stdlib modules: 66 do it, 892 distinct names, median 10 each.
+# This is the set the namespacing renamer must rewrite.
 define collect_free_assigns(node, bound, out) as:
     if (type of node) != "list":
         return 0
@@ -5466,8 +5448,14 @@ define collect_free_assigns(node, bound, out) as:
         local ps is node[2]
         for pk in range of (len of ps):
             b2[(ps[pk])] is 1
-        collect_local_decls of [node[3], b2]
-        collect_free_assigns of [node[3], b2, out]
+        local fk is 3
+        loop while fk < (len of node):
+            collect_local_decls of [node[fk], b2]
+            fk is fk + 1
+        fk is 3
+        loop while fk < (len of node):
+            collect_free_assigns of [node[fk], b2, out]
+            fk is fk + 1
         return 0
     if h == "assign":
         if (len of node) < 4:
@@ -5479,9 +5467,10 @@ define collect_free_assigns(node, bound, out) as:
         collect_free_assigns of [node[k], bound, out]
     return 0
 
-# `local` declarations and loop variables inside a body — these do NOT merge.
-# Collected for the whole body rather than from their declaration onward, which
-# is the emitter's own approximation of `local`'s order-sensitivity.
+# `local` declarations, loop variables and catch names inside a body — these do
+# NOT merge outward. Collected for the whole body rather than from their
+# declaration onward, which is the emitter's own approximation of `local`'s
+# order-sensitivity.
 define collect_local_decls(node, bound) as:
     if (type of node) != "list":
         return 0
@@ -5497,54 +5486,155 @@ define collect_local_decls(node, bound) as:
         collect_local_decls of [node[k], bound]
     return 0
 
-# Module names the given tree imports, at any depth.
-define collect_import_names(node, out) as:
-    if (type of node) != "list":
+define module_shadow_names(stmts, out) as:
+    if (type of stmts) != "list":
         return 0
-    if (len of node) == 0:
+    if (len of stmts) == 0:
         return 0
-    if node[0] == "import":
-        out[node[1]] is 1
-        return 0
-    for k in range of (len of node):
-        collect_import_names of [node[k], out]
-    return 0
-
-define collect_names_deep(node, out) as:
-    if (type of node) != "list":
-        return 0
-    if (len of node) == 0:
-        return 0
-    local h is node[0]
-    if h == "ident":
-        out[node[1]] is 1
-        return 0
-    if h == "assign":
-        out[node[1]] is 1
-    if h == "func":
-        out[node[1]] is 1
-        local ps is node[2]
+    if stmts[0] == "func":
+        local ps is stmts[2]
         for pk in range of (len of ps):
             out[(ps[pk])] is 1
-    # Binder forms whose name is a raw STRING, not an ["ident", ...] node, so
-    # the ident arm above cannot see them. None could be turned into a
-    # divergence when this was written — `for` matched the VM on both the
-    # unboxed and boxed paths, and try/destructure have no emit case so they
-    # refuse before the guard matters — but they are binders, and a guard that
-    # is a superset everywhere else should not have holes here.
-    if (h == "for") or (h == "catch") or (h == "listcomp") or (h == "lambda"):
-        if (type of node[1]) == "str":
-            out[node[1]] is 1
-    for k in range of (len of node):
-        collect_names_deep of [node[k], out]
+    if stmts[0] == "assign":
+        if (len of stmts) >= 4:
+            out[stmts[1]] is 1
+    if (stmts[0] == "for") or (stmts[0] == "catch"):
+        if (type of stmts[1]) == "str":
+            out[stmts[1]] is 1
+    for k in range of (len of stmts):
+        module_shadow_names of [stmts[k], out]
     return 0
 
-# Module top-level names already spliced in this compilation, so a SECOND
-# module sharing a name with the first is caught too — `prior` alone compared
-# against the original program only, and two modules both defining `state`
-# merged silently (the dict snapshot stayed right while the function went
-# wrong, which is the worst possible shape for it).
-G_MODNAMES is {}
+# ---- MODULE NAMESPACING (ouroboros#141) -----------------------------------
+# Rename every name a module can create in the merged scope to `<M>__<name>`,
+# so splicing cannot collide with the program and no guard is needed.
+#
+# Only two node shapes carry a name that must move: an `ident` reference, and
+# the name slot of `assign`/`func`. Every OTHER binder — `for` variables,
+# parameters, `catch` names — and every non-name string — `dot` field names,
+# `dict` keys — is a bare string in the AST, so a walker that rewrites only
+# those two shapes leaves them alone by construction rather than by a special
+# case per shape.
+define rename_ast(node, ren) as:
+    if (type of node) != "list":
+        return node
+    if (len of node) == 0:
+        return node
+    local h is node[0]
+    if h == "ident":
+        if ren[node[1]] != null:
+            return ["ident", ren[node[1]]]
+        return node
+    if h == "assign":
+        local an is node[1]
+        if ren[an] != null:
+            an is ren[an]
+        if (len of node) >= 4:
+            return ["assign", an, (rename_ast of [node[2], ren]), node[3]]
+        return ["assign", an, (rename_ast of [node[2], ren])]
+    if h == "func":
+        local fn2 is node[1]
+        if ren[fn2] != null:
+            fn2 is ren[fn2]
+        # SCOPE: a name bound INSIDE this function — parameter, `local`, loop or
+        # catch variable — is not the module global, so references to it here
+        # must not be renamed. Without this the renamer is unusable: a name that
+        # is a free global write in one function is routinely a PARAMETER in
+        # another, and linalg tripped it immediately.
+        local fbind is {}
+        local fps is node[2]
+        for fpk in range of (len of fps):
+            fbind[(fps[fpk])] is 1
+        local fki is 3
+        loop while fki < (len of node):
+            module_shadow_names of [node[fki], fbind]
+            fki is fki + 1
+        local ren2 is {}
+        local rk2 is keys of ren
+        for rj in range of (len of rk2):
+            if fbind[(rk2[rj])] != 1:
+                ren2[(rk2[rj])] is ren[(rk2[rj])]
+        local out2 is ["func", fn2, node[2]]
+        local ki is 3
+        loop while ki < (len of node):
+            append of [out2, (rename_ast of [node[ki], ren2])]
+            ki is ki + 1
+        return out2
+    local out is []
+    for k in range of (len of node):
+        append of [out, (rename_ast of [node[k], ren])]
+    return out
+
+# Ensure module `mname` is spliced into `out` exactly once, under its own
+# `<M>__` prefix, leaving its snapshot dict at __moddict_<M>. Binding a NAME
+# for it is the caller's job: a program-level import binds the plain name, a
+# module's own import binds that module's renamed name.
+define splice_module(mname, base, depth, out) as:
+        # ---- `import NAME` (#121), NAMESPACED (#141) -------------------
+        # Splice the module ONCE under its own prefix and bind a snapshot
+        # dict, canonically as __moddict_<M>. Any later import of the same
+        # module — by the program or by another module — rebinds from that,
+        # which is the VM's module-cache identity.
+        #
+        # Renaming removes the whole collision problem rather than guarding
+        # it: four review rounds found four distinct arms of a name-
+        # comparison guard, and the measurement that ended it is that `is`
+        # is outward-mutable, so 66 of 77 stdlib modules write a free name
+        # from inside a function body (892 distinct, median 10 each, 56 of
+        # them names as common as `i`/`n`/`key`/`result`). A sound guard
+        # refuses nearly everything; a precise one has holes. Prefixed
+        # names cannot collide, so there is nothing left to compare.
+        if G_IMPORTED[mname] != 1:
+            local mpath is (_lf_dirname of base) + mname + ".eigs"
+            local msrc is read_text of mpath
+            if (msrc == null) or ((len of msrc) == 0):
+                if (G_STDLIB[0]) != "":
+                    mpath is (G_STDLIB[0]) + "/lib/" + mname + ".eigs"
+                    msrc is read_text of mpath
+            if (msrc == null) or ((len of msrc) == 0):
+                throw of ("AOT: import '" + mname + "' not found (looked beside the program, then in the stdlib lib/)")
+            local mast is eigen_parse of (eigen_tokenize of msrc)
+            # The rename set: every name the module can create in the merged
+            # scope — top-level bindings plus free assignment targets at any
+            # depth. Top-level alone is NOT enough; a module's bare
+            # `ctr is 99` inside a function body is not a top-level binding
+            # and was a silent divergence (VM 99/1, AOT 99/99).
+            local rset is {}
+            local rtop is module_bindings of (mast[1])
+            for ri in range of (len of rtop):
+                rset[(rtop[ri])] is 1
+            collect_free_assigns of [["block", (mast[1])], {}, rset]
+            # Parameters and locals are not renamed, so a module that
+            # shadows one of its own module names cannot be handled by an
+            # unconditional rename. Refuse it loudly. (1 of 77 stdlib
+            # modules: tensor.eigs shadows `scale`.)
+            local rk is keys of rset
+            local ren is {}
+            for ri in range of (len of rk):
+                ren[(rk[ri])] is mname + "__" + (rk[ri])
+            # Mark BEFORE recursing so an import cycle terminates.
+            G_IMPORTED[mname] is 1
+            local mstmts is (mast[1])
+            local mout is []
+            for mk in range of (len of mstmts):
+                local mst1 is mstmts[mk]
+                local inner is _imp_target of mst1
+                if inner != null:
+                    # The module's own import. Splice the inner module under
+                    # ITS prefix and bind THIS module's renamed name for it.
+                    # Recursing through splice_static_loads here was wrong:
+                    # that path also emits the module's PLAIN name binding,
+                    # which is correct only for a program-level import — as
+                    # a nested one it bound `complex` globally and clobbered
+                    # the importing program's own `complex`.
+                    splice_module of [inner, mpath, depth + 1, out]
+                    append of [out, ["assign", (ren[inner]), ["ident", "__moddict_" + inner]]]
+                else:
+                    append of [out, (rename_ast of [mst1, ren])]
+            local pairs is []
+            for ri in range of (len of rtop):
+                append of [pairs, [(rtop[ri]), ["ident", (ren[(rtop[ri])])]]]
+            append of [out, ["assign", "__moddict_" + mname, ["dict", pairs]]]
 
 define splice_static_loads(blk, base, depth) as:
     if depth > 16:
@@ -5555,123 +5645,8 @@ define splice_static_loads(blk, base, depth) as:
         local st is stmts[i]
         local mname is _imp_target of st
         if mname != null:
-            if G_IMPORTED[mname] == 1:
-                append of [out, ["assign", mname, ["ident", "__imp_" + mname]]]
-                continue
-            # ---- `import NAME` (ouroboros#121) --------------------------
-            # Probed against the VM rather than read off the source: the
-            # binding is a DICT holding a SNAPSHOT of the module's top-level
-            # bindings in source order — variables by value, functions as
-            # values — the module's own top-level runs ONCE, and the module's
-            # state stays live behind those functions (mymod.counter reads 0
-            # while mymod.bump keeps accumulating). Splicing the module's
-            # statements here and then binding a dict of `["ident", name]`
-            # reproduces all three: emit_val already turns a function ident
-            # into make_builtin(__wrap_...), and a variable ident into its
-            # value at that point, which IS the snapshot.
-            local mpath is (_lf_dirname of base) + mname + ".eigs"
-            # read_text answers an EMPTY STRING, not null, for a missing file
-            # — checking only for null made the stdlib fallback unreachable and
-            # produced an EMPTY module dict (every call through it then died
-            # with "cannot call null"). The load_file arm below already tests
-            # both, which is how this was caught.
-            local msrc is read_text of mpath
-            if (msrc == null) or ((len of msrc) == 0):
-                if (G_STDLIB[0]) != "":
-                    mpath is (G_STDLIB[0]) + "/lib/" + mname + ".eigs"
-                    msrc is read_text of mpath
-            if (msrc == null) or ((len of msrc) == 0):
-                throw of ("AOT: import '" + mname + "' not found (looked beside the program, then in the stdlib lib/). Pass the stdlib root as argv[2] if this is a stdlib module.")
-            local mast is eigen_parse of (eigen_tokenize of msrc)
-            # The exemption below must mean "THE IMPORTING PROGRAM ITSELF
-            # imports this name", so derive it from the program's own import
-            # statements rather than from G_IMPORTED. Two failures bracket it.
-            # Testing G_IMPORTED after the recursive splice exempted names the
-            # program never imported, because the recursion registers the
-            # module's OWN transitive imports first:
-            #
-            #     complex is 7          VM  7
-            #     import linalg         AOT {"add": <builtin>, ...}
-            #     print of complex      build rc=0, empty log
-            #
-            # linalg imports complex, so by the time the guard asked, the very
-            # import it was guarding against had registered itself. Snapshotting
-            # G_IMPORTED *before* the recursion then failed the other way:
-            # phugoid/modes.eigs imports linalg BEFORE complex, so at that point
-            # it had not imported complex yet and was refused. Scanning the
-            # program's statements answers both — order-independent, and blind
-            # to the module's transitive imports.
-            local pre_imp is {}
-            collect_import_names of [["block", stmts], pre_imp]
-            # ...and what the MODULE imports. The exemption must hold only when
-            # BOTH sides bind the name via `import`, which is the one case where
-            # they provably denote the same spliced module dict. Testing the
-            # program's side alone exempts by NAME rather than by KIND, and the
-            # real stdlib reaches it: `lib/list.eigs` binds `map` with a
-            # `define`, so `import map` + `import list` skipped the guard and
-            # the splice clobbered the program's module dict —
-            #
-            #     import my        (my.eigs:  val is 5)      VM  5
-            #     import mx        (mx.eigs:  my is {...})   AOT 99
-            #     print of my.val                            both rc=0, empty log
-            #
-            # Skipping also dropped the G_MODNAMES registration, so the name was
-            # not even recorded for the next module's check.
-            local mod_imp is {}
-            collect_import_names of [["block", (mast[1])], mod_imp]
-            local msp is splice_static_loads of [mast, mpath, depth + 1]
-            local mst is msp[1]
-            # Collision check BEFORE splicing. Splicing merges the module's
-            # top-level names into the program's, which is only equivalent to
-            # the VM's separate module env while the names are disjoint. A
-            # collision would be a silent wrong answer, so it is a loud
-            # refusal — the F-OURO-23 rule.
-            # From the module's OWN parsed statements, NOT the spliced ones.
-            # `mst` has transitive imports already inlined, so building the
-            # dict from it leaked the INNER module's bindings — and the
-            # compiler-internal __imp_* stash — into the outer module's dict:
-            # `keys of linalg` was 46 against the VM's 29, and `linalg.mag`
-            # answered 5 where the VM correctly says "cannot call null".
-            local mb is module_bindings of (mast[1])
-            # SOUND merge set: the module's top-level bindings are what the
-            # DICT is built from, but the GUARD must also see everything the
-            # module's bodies can write into the merged scope — including the
-            # TRANSITIVE modules `mst` carries. Two arms were missed by using
-            # `mb` for both: a transitively imported module's bindings were
-            # never compared against the program (VM 1, AOT 7), and a module's
-            # nested `ctr is 99` was structurally invisible (VM 99/1, AOT 99/99)
-            # — both silent, both rc=0 with a zero-byte log.
-            local merge is {}
-            local mbk is module_bindings of mst
-            for mi in range of (len of mbk):
-                merge[(mbk[mi])] is 1
-            collect_free_assigns of [["block", mst], {}, merge]
-            local prior is {}
-            collect_names_deep of [["block", stmts], prior]
-            local mergek is keys of merge
-            for bi in range of (len of mergek):
-                local bn is mergek[bi]
-                # A name that is itself an imported MODULE name is not a
-                # collision: both sides denote the same module dict, and the
-                # import cache binds it once. phugoid/modes.eigs imports both
-                # linalg and complex, and linalg imports complex — so `complex`
-                # appears in linalg's bindings AND in the program, which the
-                # first version of this guard refused despite the program being
-                # verified byte-exact.
-                if (bn != mname) and ((pre_imp[bn] != 1) or (mod_imp[bn] != 1)):
-                    if prior[bn] == 1:
-                        throw of ("AOT: import '" + mname + "' binds '" + bn + "', which the importing program also uses. The AOT splices module top-levels into ONE scope, so the two would silently merge — the VM gives the module its own env. Rename one, or see ouroboros#141 (namespaced module splicing).")
-                    if G_MODNAMES[bn] == 1:
-                        throw of ("AOT: import '" + mname + "' binds '" + bn + "', which another imported module already binds — splicing would silently merge them (ouroboros#141).")
-                    G_MODNAMES[bn] is 1
-            for k in range of (len of mst):
-                append of [out, mst[k]]
-            local pairs is []
-            for bi in range of (len of mb):
-                append of [pairs, [(mb[bi]), ["ident", (mb[bi])]]]
-            append of [out, ["assign", mname, ["dict", pairs]]]
-            append of [out, ["assign", "__imp_" + mname, ["ident", mname]]]
-            G_IMPORTED[mname] is 1
+            splice_module of [mname, base, depth, out]
+            append of [out, ["assign", mname, ["ident", "__moddict_" + mname]]]
         else:
             local path is _lf_target of st
             if path == null:

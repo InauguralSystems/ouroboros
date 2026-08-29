@@ -1,0 +1,13 @@
+# Two modules with the same top-level binding — ouroboros#141.
+#
+# THE POINT OF THIS FIXTURE is the worst shape a splice divergence took: with
+# both modules merged into one scope, the module DICTS stayed correct (100 and
+# 200, snapshots taken at different points) while both FUNCTIONS read the
+# merged global. So the obvious check passed and the behaviour was wrong.
+#
+# Namespacing makes it impossible: `_mod_a`'s bindings are `_mod_a__*` and
+# `_mod_b`'s are `_mod_b__*`. Must MATCH the VM.
+import _mod_a
+import _mod_b
+print of (_mod_a.aget of null)
+print of (_mod_b.bget of null)
