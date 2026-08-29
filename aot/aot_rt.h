@@ -1923,6 +1923,17 @@ static Value *aot_call_name(Env *g, const char *name, Value *arg) {
     return res;
 }
 
+/* One `match` case comparison (#140 follow-on). The VM compiles match as
+ * compare-and-jump using ordinary equality, so a non-numeric subject is just
+ * values_equal. The PATTERN is owned (emit_val's result) and consumed here;
+ * the SUBJECT is borrowed, because it is compared against every pattern in
+ * turn and released once by the caller. */
+static inline int aot_match_eq(Value *subj, Value *pat) {
+    int e = values_equal(subj, pat);
+    val_decref(pat);
+    return e;
+}
+
 /* Borrowed element k of a value-wrapper's argument list (#140). For arity 1
  * the builtin convention hands the value itself as __a; for arity > 1 it hands
  * a LIST, and user functions take boxed parameters BORROWED (see emit_args),

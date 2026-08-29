@@ -1878,13 +1878,73 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
         # Needed because ouroboros#129 compiles static load_file targets, which
         # pulls modules into the AOT envelope that were previously interpreted
         # — DMG's src/opcodes.eigs dispatches registers with five of these.
-        # NUMERIC subjects only; anything else refuses loudly rather than
-        # emitting a comparison whose semantics were never checked.
-        if (is_num_expr of [node[1], nm, bt]) != 1:
-            throw of "AOT: `match` on a non-numeric subject is not supported"
+        # #129 shipped NUMERIC subjects only, refusing anything else rather
+        # than emitting a comparison whose semantics were unchecked. That was
+        # the right call then and the wrong limit to keep: the VM compiles
+        # match as compare-and-jump over ORDINARY EQUALITY, so a string or
+        # list subject is ordinary EigenScript — and the refusal blocked all
+        # ten of Tidepool's programs, whose config parsing matches on strings.
+        # Both arms are emitted below; this guard is gone.
         local mcases is node[2]
         local msub is "__m" + (str of g_match_n)
         g_match_n is g_match_n + 1
+        # Is EVERY pattern numeric, and the subject too? Then the whole match
+        # is a C double compare chain. Otherwise take the boxed path — the VM
+        # compiles match as compare-and-jump over ordinary equality, so a
+        # string or list subject is perfectly legal and used to be refused
+        # ("`match` case pattern must be numeric"), which blocked all ten of
+        # Tidepool's programs.
+        local mallnum is 1
+        if (is_num_expr of [node[1], nm, bt]) != 1:
+            mallnum is 0
+        local mq is 0
+        loop while mq < (len of mcases):
+            if (mcases[mq])[0] != null:
+                if (is_num_expr of [(mcases[mq])[0], nm, bt]) != 1:
+                    mallnum is 0
+            mq is mq + 1
+        if mallnum == 0:
+            # Two phases: SELECT, then run. The subject is released before any
+            # body executes, so a `return` inside a case body cannot leak it —
+            # the numeric path has no such hazard because its subject is a
+            # plain double.
+            local bsel is ind + "{ Value* " + msub + " = " + (emit_val of [node[1], nm, bt]) + "; int " + msub + "c = 0;\n"
+            local bk is 0
+            local bfirst is 1
+            local bwild is 0
+            loop while bk < (len of mcases):
+                local bpat is (mcases[bk])[0]
+                if bpat == null:
+                    bwild is 1
+                else:
+                    local bkw is "if"
+                    if bfirst == 0:
+                        bkw is "else if"
+                    bsel is bsel + ind + "    " + bkw + " (aot_match_eq(" + msub + ", " + (emit_val of [bpat, nm, bt]) + ")) " + msub + "c = " + (str of (bk + 1)) + ";\n"
+                    bfirst is 0
+                bk is bk + 1
+            bsel is bsel + ind + "    val_decref(" + msub + ");\n"
+            local brun is ""
+            local rfirst is 1
+            bk is 0
+            loop while bk < (len of mcases):
+                if (mcases[bk])[0] != null:
+                    local rkw is "if"
+                    if rfirst == 0:
+                        rkw is "else if"
+                    brun is brun + ind + "    " + rkw + " (" + msub + "c == " + (str of (bk + 1)) + ") {\n" + (emit_stmts of [(mcases[bk])[1], ind + "        ", nm, bt, minits, gf]) + ind + "    }\n"
+                    rfirst is 0
+                bk is bk + 1
+            if bwild == 1:
+                bk is 0
+                loop while bk < (len of mcases):
+                    if (mcases[bk])[0] == null:
+                        local wkw is "else {"
+                        if rfirst == 1:
+                            wkw is "if (1) {"
+                        brun is brun + ind + "    " + wkw + "\n" + (emit_stmts of [(mcases[bk])[1], ind + "        ", nm, bt, minits, gf]) + ind + "    }\n"
+                    bk is bk + 1
+            return bsel + brun + ind + "}\n"
         local mout is ind + "{ double " + msub + " = " + (emit_num of [node[1], nm, bt, 0]) + ";\n"
         local mfirst is 1
         local mi is 0
