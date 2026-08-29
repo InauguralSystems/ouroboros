@@ -4330,9 +4330,27 @@ define emit_args(node, fname, nm, bt) as:
                 # null); otherwise read the env BORROWED.
                 if (bt[te[1]] == 1) or (g_dict[te[1]] == 1) or (g_genp[te[1]] == 1):
                     s is s + (cn of te[1])
-                elif nm[te[1]] == 1:
+                elif (nm[te[1]] == 1) and (g_observed == 0):
                     # A NUMERIC C variable is not in the env either -- the same
                     # hazard the line above names for buffers, one type over.
+                    #
+                    # THE g_observed GUARD IS LOAD-BEARING and was missing when
+                    # this arm was written. `nm[x] == 1` means "inferred
+                    # numeric", NOT "is a live C double": under g_observed
+                    # numeric names live in the ENV (aot_observe_num), which is
+                    # the invariant emit_num states on its own ident arm and
+                    # which the module decl loop enforces by emitting no
+                    # `static double` at all. Asserting the opposite produced a
+                    # SILENT WRONG VALUE -- a frame local declared `double
+                    # eig_m = 0` and never written, so the call passed
+                    # make_num(0):
+                    #
+                    #   VM  hi / 0 / 42 / ...     AOT  hi / 0 / 0 / ...
+                    #   both rc 0, no diagnostic
+                    #
+                    # and at module scope, where no decl exists, a gcc error on
+                    # an undeclared `eig_m`. Under g_observed the env read below
+                    # is correct, because that is where the value actually is.
                     # Passing one to a boxed parameter emitted an env read for a
                     # name that only exists as a C double:
                     #

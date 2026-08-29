@@ -1,0 +1,55 @@
+# A numeric name passed to a boxed parameter, in an OBSERVED program.
+#
+# THE POINT OF THIS FIXTURE is that `nm[x] == 1` means "inferred numeric", NOT
+# "is a live C double" — and the storage regime decides which. Under g_observed
+# numeric variables live in the ENV (aot_observe_num), not in C doubles; the
+# module decl loop emits no `static double` for them at all, and emit_num's own
+# ident arm opens by saying so.
+#
+# An emit_args arm that boxes `make_num(eig_x)` is therefore right in one regime
+# and wrong in the other. Written without the g_observed guard it produced a
+# SILENT WRONG VALUE — a frame local declared `double eig_m = 0` and never
+# written, because the assignment went to the env:
+#
+#   VM   hi / 0 / 42 / 0 / 0 / 0
+#   AOT  hi / 0 /  0 / 0 / 0 / 0        both rc 0, no diagnostic
+#
+# and at module scope, where no declaration exists at all, a gcc error on an
+# undeclared `eig_m` — the same fault, loud instead of silent, decided only by
+# where the name lives.
+#
+# EVERY OTHER FIXTURE IN THIS FAMILY IS UNOBSERVED, which is why 123/123 stayed
+# green. The observer trigger below is what makes this program observed, and it
+# is load-bearing: delete `converged of q` and the fixture passes against the
+# broken emitter.
+
+define g(y) as:
+    if (type of y) == "str":
+        print of y
+    else:
+        print of (y * 2)
+    return 0
+
+define h(k) as:
+    # a FRAME local: declared as a C double that is never written under
+    # g_observed, so the silent-wrong form
+    local m is k + 20
+    local s is "hi"
+    print of (g of s)
+    print of (g of m)
+    local q is m
+    q is q + 1
+    print of (converged of q)
+    return 0
+
+print of (h of 1)
+
+# and the MODULE-scope form, which has no declaration at all and failed the
+# build rather than answering wrongly
+top_s is "hello"
+print of (g of top_s)
+top_m is 21
+print of (g of top_m)
+top_q is 1
+top_q is 2
+print of (converged of top_q)
