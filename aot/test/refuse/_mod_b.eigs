@@ -1,0 +1,3 @@
+state is 200
+define bget() as:
+    return state

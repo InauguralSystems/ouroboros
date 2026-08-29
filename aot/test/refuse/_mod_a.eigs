@@ -1,0 +1,3 @@
+state is 100
+define aget() as:
+    return state

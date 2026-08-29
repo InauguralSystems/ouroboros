@@ -172,4 +172,66 @@ if [ "$bench_n" -eq 0 ]; then
 else
   echo "--- bench tier: $bench_n program(s) build-checked ---"
 fi
+# ---- REFUSAL TIER (ouroboros#112) ----------------------------------------
+# The parity tiers above can only assert that a program COMPILES AND MATCHES.
+# A program the AOT is supposed to REJECT reads to them as BUILD FAIL, so every
+# loud envelope guard in the compiler had no test at all — and it showed: two
+# consecutive blind-critic rounds on the `import` work found real defects in
+# guards, one of them a silent wrong answer against the real stdlib, with the
+# whole 108-program suite green through both.
+#
+# Each test/refuse/*.eigs carries `# EXPECT: <substring>` on a line of its own.
+# The contract is three-part, and the third part is what makes it a test of the
+# ENVELOPE rather than of a broken program:
+#   1. the AOT must REFUSE it (transpile exits nonzero);
+#   2. the refusal must CONTAIN the expected substring — a guard that fires for
+#      the wrong reason is not a passing guard;
+#   3. the VM must RUN it (rc 0). Otherwise the program is simply invalid and
+#      proves nothing about the AOT's envelope.
+# Zero matches is a FAIL, as in the bench tier: a moved directory must go red,
+# never green-by-absence.
+# EIG may be a relative path, and the VM check below runs from the test's own
+# directory — so resolve it once, absolutely. Getting this wrong produced
+# rc=127 for every test and a tier that failed for the wrong reason.
+EIG_ABS=$(cd "$(dirname "$EIG")" && pwd)/$(basename "$EIG")
+refuse_n=0
+for prog in test/refuse/*.eigs; do
+  [ -e "$prog" ] || continue
+  name=$(basename "$prog")
+  # `_`-prefixed files are companion MODULES for the tests, not tests.
+  case "$name" in _*) continue;; esac
+  refuse_n=$((refuse_n + 1))
+  want=$(grep -m1 '^# EXPECT:' "$prog" | sed 's/^# EXPECT:[[:space:]]*//')
+  if [ -z "$want" ]; then
+    echo "FAIL: refuse $name (no '# EXPECT:' line — the tier cannot tell a correct refusal from any refusal)"
+    fail=1; continue
+  fi
+  # (3) the VM must accept it, from the program's own directory so its
+  # load_file/import resolution matches what the AOT sees.
+  ( cd "$(dirname "$prog")" && timeout 60 "$EIG_ABS" "$(basename "$prog")" ) >/dev/null 2>&1
+  vm_rc=$?
+  if [ "$vm_rc" -ne 0 ]; then
+    echo "FAIL: refuse $name (the VM does not run it, rc=$vm_rc — this tests a broken program, not the envelope)"
+    fail=1; continue
+  fi
+  EIGS_DIR="${EIGS_DIR:-../../EigenScript}" timeout 120 "$EIG" compile.eigs "$prog" "${EIGS_DIR:-../../EigenScript}" >/dev/null 2>/tmp/aot_refuse.log
+  if [ $? -eq 0 ]; then
+    echo "FAIL: refuse $name (the AOT ACCEPTED a program it must reject — the guard is gone or unreachable)"
+    fail=1
+  elif ! grep -qF "$want" /tmp/aot_refuse.log; then
+    echo "FAIL: refuse $name (refused, but not for the stated reason)"
+    echo "  want: $want"
+    echo "  got : $(grep -m1 -v '^[[:space:]]*$' /tmp/aot_refuse.log | cut -c1-100)"
+    fail=1
+  else
+    echo "PASS: refuse $name"
+  fi
+done
+if [ "$refuse_n" -eq 0 ]; then
+  echo "FAIL: refusal tier examined ZERO programs (test/refuse/*.eigs matched nothing — the gate is vacuous)"
+  fail=1
+else
+  echo "--- refusal tier: $refuse_n guard(s) exercised ---"
+fi
+
 [ "$fail" -eq 0 ] && echo "--- all AOT parity tests passed ---" || exit 1

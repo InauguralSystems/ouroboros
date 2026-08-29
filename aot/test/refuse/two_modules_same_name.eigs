@@ -1,0 +1,12 @@
+# EXPECT: which another imported module already binds
+#
+# Two modules with a top-level binding of the same name. The VM gives each its
+# own env and both getters answer correctly; splicing merges them into one
+# global. The shape this had before the guard is the worst a divergence can
+# take: the module DICTS stayed correct (100 and 200, snapshots taken at
+# different points) while the FUNCTIONS both read the merged global — so the
+# obvious check passes and the actual behaviour is wrong.
+import _mod_a
+import _mod_b
+print of (_mod_a.aget of null)
+print of (_mod_b.bget of null)
