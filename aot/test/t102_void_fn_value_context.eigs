@@ -125,3 +125,21 @@ define solo_taker(p) as:
 
 solo is (shout of "via-local")
 solo_taker of solo
+
+# THE CROSSING. The two cases above -- a pinned callee, and a void result in a
+# local -- were each covered and never combined, and the fix for each was blind
+# to the other: one scan recognised a direct void CALL in argument position, the
+# other classified the LOCAL, and neither told the pin about an ident carrying a
+# void result. Every gate stayed green because `guarded` was only ever fed a
+# direct call and `solo` was only ever fed to a callee that does not compute
+# with its parameter.
+#
+# A fixture holding both ingredients separately is not coverage of their
+# interaction. This line is the interaction.
+crossed is (shout of "crossed")
+guarded of crossed
+
+# and one hop further out: the argument is a call to a function that is boxed
+# BECAUSE of the void rule, not a void call itself. This reached gcc as
+# "incompatible type for argument 1", no binary and no `AOT:` diagnostic.
+guarded of (wrap of "wrapped-arg")

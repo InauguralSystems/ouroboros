@@ -254,9 +254,11 @@ define ic_new(field) as:
 # is_tensor_call can tell a user-defined matmul/add/relu (which shadows the
 # tensor builtin) from the builtin, regardless of definition order.
 g_func_names is {}
-# (callee name)#(param index) -> 1 when some call site passes a void call in
-# that position. Defeats the numeric pin, which asks only about the body.
-g_void_arg is {}
+# (callee name)#(param index) -> 1 when widen_scan widened that parameter
+# because arg_class called the argument boxed. Defeats the numeric pin, which
+# asks only what the BODY does. Populated at the widening site so it cannot
+# disagree with arg_class about what counts as evidence.
+g_boxed_arg is {}
 # Functions with NO return statement, which yield null (the VM's fall-off-the-
 # end rule). Seeded before ptype inference because arg_class needs it there and
 # g_funcs[]["ret"] is not available yet — see the seeding site for why.
@@ -3712,6 +3714,20 @@ define arg_class(node, caller_pt, caller_params, caller_locals) as:
         if vac[0] == "ident":
             if g_func_void[vac[1]] == 1:
                 return "gen"
+            # A user function declared Value* returns a boxed value, which is
+            # the same evidence. Returning "unknown" for it left
+            # `guarded of (passthru of "x")` -- where passthru is `return
+            # (shout of m)`, so Value* precisely BECAUSE of the void rule --
+            # reaching gcc as "incompatible type for argument 1 of
+            # 'eig_guarded'": no binary and no `AOT:` diagnostic, against a VM
+            # that runs it at rc 0. ret is computed for every function before
+            # widen_ptypes runs, so it is available here; a callee not yet in
+            # g_funcs (first pass, later definition) stays unknown and the
+            # fixpoint revisits it.
+            local vcf is g_funcs[vac[1]]
+            if vcf != null:
+                if (vcf["ret"]) == "Value*":
+                    return "gen"
         return "unknown"
     if t == "ident":
         for k in range of (len of caller_params):
@@ -3896,38 +3912,6 @@ define for_var_gen_scan(node, out) as:
 # paren-marked 3-slot list is one argument; `f of null` is the zero-arg idiom
 # and constrains nothing) -- the two must agree about which element lands in
 # which parameter, or this map points at the wrong index.
-define void_arg_scan(node) as:
-    if (type of node) != "list":
-        return 0
-    if (len of node) == 0:
-        return 0
-    if node[0] == "call":
-        local vcallee is unwrap of node[1]
-        if vcallee[0] == "ident":
-            if g_func_names[vcallee[1]] == 1:
-                local varg is unwrap of node[2]
-                local velems is []
-                local vskip is 0
-                if varg[0] == "null":
-                    vskip is 1
-                elif (varg[0] == "list") and ((len of varg) == 3):
-                    velems is [varg]
-                elif varg[0] == "list":
-                    velems is varg[1]
-                else:
-                    velems is [varg]
-                if vskip == 0:
-                    for vk in range of (len of velems):
-                        local vek is unwrap of (velems[vk])
-                        if vek[0] == "call":
-                            local vic is unwrap of (vek[1])
-                            if vic[0] == "ident":
-                                if g_func_void[vic[1]] == 1:
-                                    g_void_arg[(vcallee[1]) + "#" + (str of vk)] is 1
-    for vk2 in range of (len of node):
-        void_arg_scan of (node[vk2])
-    return 0
-
 # Scan one function body for calls, widening callee params. Returns 1 if
 # anything changed.
 define widen_scan(node, caller_pt, caller_params, caller_locals) as:
@@ -3961,6 +3945,22 @@ define widen_scan(node, caller_pt, caller_params, caller_locals) as:
                                 if (arg_class of [elems[k], caller_pt, caller_params, caller_locals]) == "gen":
                                     cpt[k] is "gen"
                                     changed is 1
+                                    # Record the evidence HERE, where arg_class
+                                    # is actually consulted. Two earlier rounds
+                                    # each added a separate scan to tell the pin
+                                    # about boxed arguments -- one for a direct
+                                    # void call, one for a local bound to one --
+                                    # and the pair failed on the intersection
+                                    # (`solo is (shout of "a")` passed to a
+                                    # callee that computes with its parameter):
+                                    # each scan enumerated evidence kinds, and
+                                    # the enumerations disagreed with arg_class
+                                    # and with each other. Recorded at the
+                                    # consult site they cannot disagree, and a
+                                    # THIRD evidence kind (a call to a Value*-
+                                    # returning function) is covered without
+                                    # anyone having to think of it.
+                                    g_boxed_arg[(callee[1]) + "#" + (str of k)] is 1
     for k2 in range of (len of node):
         if (widen_scan of [node[k2], caller_pt, caller_params, caller_locals]) == 1:
             changed is 1
@@ -4130,7 +4130,7 @@ define widen_ptypes(funcs, rest) as:
                     # correct in the VM, and exactly what makes the pin wrong
                     # here: the parameter is numeric on one path and null on
                     # another, which is the boxed case.
-                    if g_void_arg[(fn3[1]) + "#" + (str of p)] != 1:
+                    if g_boxed_arg[(fn3[1]) + "#" + (str of p)] != 1:
                         pt3[p] is "num"
         if changed == 0:
             round is 40
@@ -5254,10 +5254,7 @@ define emit_program(ast) as:
     # site. Static and computed once -- a call site does not change under the
     # ptype fixpoint -- and consulted where the numeric pin would otherwise
     # discard arg_class's boxed verdict. See the pin site for what that cost.
-    g_void_arg is {}
-    for k in range of (len of funcs):
-        void_arg_scan of ((funcs[k])[3])
-    void_arg_scan of rest
+    g_boxed_arg is {}
     for k in range of (len of funcs):
         local fn is funcs[k]
         local pt is func_ptypes of fn
