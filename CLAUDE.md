@@ -1,10 +1,36 @@
 # CLAUDE.md — ouroboros working guide
 
 Two compilers live here, both written in EigenScript, both judged by the
-same rule: **the bytecode VM is the byte-exact oracle.** A divergence is a
-bug in THIS repo, never the VM — reproduce it minimally, fix at the root,
-add a differential test. The single worst outcome is a silent wrong
-number; a loud throw always beats a coercing guess.
+same rule: **the bytecode VM is the byte-exact oracle.** A divergence is
+resolved by matching the VM — reproduce it minimally, fix at the root, add
+a differential test. The single worst outcome is a silent wrong number; a
+loud throw always beats a coercing guess.
+
+**But the oracle is not the authority on what the language SHOULD do.**
+This file used to say a divergence is "a bug in THIS repo, never the VM",
+and that sentence is wrong in one specific and recurring case: when the AOT
+cannot compile a construct because the VM's rule is not a property of the
+source. Then the finding is a LANGUAGE finding, and it goes upstream.
+
+Every other consumer repo stresses the language by USING it; the AOT
+stresses it by having to know what a construct means before running it.
+That catches a different class — rules that are perfectly well-defined
+dynamically and undefined statically — and pre-v1 with no external
+consumers, the answer to that class may be to change the VM.
+
+Bought over 14 blind-critic rounds on the import/splice roads (#141/#146,
+upstream EigenScript#1056). The tell is that the same file means different
+things depending on how it was REACHED. Measured: `for q in range of 2: /
+inner is 5 / print of inner` prints 5 as a main program, prints 5 when
+`load_file`d, and dies "undefined variable" when `import`ed; top-level
+`return` has three meanings on the same three roads. Fourteen rounds
+resolved every finding by matching or refusing, and never once asked
+whether the rule being matched was right — because this file said not to.
+
+So: match the VM by default, and it stays the oracle for every ordinary
+divergence. But when matching it forces a REFUSAL — when the honest answer
+is "this cannot be compiled, only interpreted" — that is the signal to
+write the upstream issue instead of only the guard.
 
 ## Layout
 

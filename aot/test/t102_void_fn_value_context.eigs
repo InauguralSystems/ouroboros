@@ -1,0 +1,56 @@
+# A function with NO return statement, called where a VALUE is wanted.
+#
+# THE POINT OF THIS FIXTURE is that the common shape of this call was always
+# right and the uncommon ones were always wrong, which is why it survived. A
+# void function called as a STATEMENT compiles to a direct C call; called in a
+# value context it fell through to the BUILTIN emission path, which resolves
+# the name dynamically out of the env — and a user function is a `static` C
+# function that is never in the env, so the lookup always failed:
+#
+#   VM   prints, yields null, rc 0
+#   AOT  aot: undefined function 'shout', rc 1
+#
+# The VM's rule is that a function falling off its end yields null, so the call
+# still happens and answers null.
+#
+# The fix needed BOTH inferences to agree. func_ret_type asks
+# return_node_is_boxed and the return emitter asks is_num_expr; teaching only
+# the emitter left `wrap` below declared `double` while its body produced a
+# null, which then died at the checked unbox with a different message and the
+# same rc 1. Each of the three call shapes below failed differently, so all
+# three are here.
+
+define shout(m) as:
+    print of m
+
+define counts(n) as:
+    # no return either, but reached with a numeric argument
+    print of (n * 2)
+
+define wrap(m) as:
+    # value context inside a FUNCTION body — the shape that exposed the
+    # declared-type/emission disagreement
+    return (shout of m)
+
+define wrap_num(n) as:
+    return (counts of n)
+
+# the statement form, which was always correct — kept so a fix that broke it
+# cannot pass
+shout of "as-statement"
+
+# value context in an ASSIGNMENT
+y is (shout of "in-assign")
+print of y
+
+# value context through a function return
+print of (wrap of "via-wrap")
+print of (wrap_num of 21)
+
+# the void result used where a value is genuinely consumed
+vals is [(shout of "in-list"), 1]
+print of vals
+
+# and compared, which forces it through the boxed path
+if (shout of "in-cond") == null:
+    print of "null-as-expected"

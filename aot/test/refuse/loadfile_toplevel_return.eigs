@@ -1,4 +1,4 @@
-# EXPECT: ends its own top level with a `return`
+# EXPECT: load_file target
 #
 # THE POINT OF THIS FIXTURE is that `return` at a file's top level means THREE
 # different things depending on which road the file arrived by, and the third

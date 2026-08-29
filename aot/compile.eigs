@@ -1415,6 +1415,31 @@ define emit_val(node, nm, bt) as:
                 # which only surfaced once `import` brought in a module
                 # defining `div` (#121).
                 return (cn of callee[1]) + "(" + (emit_args of [node, callee[1], nm, bt]) + ")"
+            if (g_funcs[callee[1]])["ret"] == "void":
+                # A function with NO return statement is emitted as a C `void`
+                # function (func_ret_type), so it has no value form — and this
+                # site used to fall through to the BUILTIN path below, which
+                # resolves the name dynamically out of the env. A user function
+                # is a `static` C function and is never in the env, so the
+                # lookup always failed:
+                #
+                #   define shout(m) as: print of m
+                #   y is (shout of "x")
+                #   VM   prints x, y is null, rc 0
+                #   AOT  aot: undefined function 'shout', rc 1
+                #
+                # The VM's rule is that a function that falls off its end
+                # yields null, so the call still happens and answers null. The
+                # statement-context call site already special-cases void; only
+                # the value-context one was missing it. Three shapes were
+                # affected — this in an assignment, in a `return`, and in a
+                # top-level `return` — which is why it survived: none of them
+                # is the common `shout of "x"` statement form, which compiles
+                # to a direct C call and was always right.
+                #
+                # The wrapper generator solves the identical problem the same
+                # way: `{ wcall; return make_null(); }`.
+                return "({ " + (cn of callee[1]) + "(" + (emit_args of [node, callee[1], nm, bt]) + "); make_null(); })"
         # Builtin calls mirror the VM's arg packing (one call rule, #405): a
         # bare literal list IS the argument list — 1 element passes that
         # element RAW (`buf_from_list of [[bytes]]` hands the builtin the
@@ -2998,6 +3023,27 @@ define collect_return_nodes(node, out) as:
 # emission agree.
 define return_node_is_boxed(rnode, fbt, ftt, rba, fgen, fdict) as:
     local re is unwrap of rnode
+    # `return (f of x)` where f has NO return statement. The VM's rule is that
+    # such a function yields null, so this return is boxed. Without this the
+    # two inferences disagree: func_ret_type asks return_node_is_boxed (which
+    # said "not boxed" -> declare double) while the return EMITTER asks
+    # is_num_expr (which correctly says "not numeric" -> emit a Value*), and
+    # the mismatch met at the checked unbox:
+    #
+    #   define shout(m) as: print of m
+    #   define wrap(m) as: return (shout of m)
+    #   VM   prints, then null, rc 0
+    #   AOT  "non-numeric value in a numeric context at wrap: return", rc 1
+    #
+    # This is the hazard CLAUDE.md names — when the declared type and the
+    # emission cannot share one inference, they must agree at the boundary.
+    # Here they can share it: both now call a void user fn non-numeric.
+    if re[0] == "call":
+        local rc1 is unwrap of re[1]
+        if rc1[0] == "ident":
+            if g_funcs[rc1[1]] != null:
+                if (g_funcs[rc1[1]])["ret"] == "void":
+                    return 1
     if re[0] == "ident":
         if fbt[re[1]] == 1:
             return 1
