@@ -10,15 +10,21 @@
 #
 #   descending into every body INVENTED one from a NOT-TAKEN `else` — `M.z`
 #   read 0, a default-initialised global, so a plausible NUMBER rather than a
-#   null. It also picked up `for`-body names the VM does not have at all,
-#   because a `for` body gets its own env.
+#   null.
 #
 # Both were silent, rc 0, zero-byte build log. So the case is refused instead.
-# Only the immediate top level and `unobserved:` are unconditionally executed.
+# Only the immediate top level and `unobserved:` are unconditionally executed;
+# WHICH bodies leak was measured against the VM rather than reasoned about, and
+# a `for` body turned out not to leak at all, so refusing on `for` — which the
+# first version of this guard did — was refusing programs that were fine.
 #
-# Measured cost of refusing: 3 of the 77 stdlib modules (pkg, test_runner,
-# ui_draw). This fixture is the first one written against a limit rather than
-# a bug, and it exists so the limit cannot silently become a guess again.
+# The module deliberately opens with a `define`; see the comment there.
+#
+# Measured cost of refusing: 1 of the 77 stdlib modules (test_runner). This
+# fixture is the first one written against a limit rather than a bug, and it
+# exists so the limit cannot silently become a guess again — see
+# t100_module_accepted_shapes.eigs for the other half, which gates the shapes
+# the guard must ACCEPT.
 
 import _q1_mod
 print of (keys of _q1_mod)

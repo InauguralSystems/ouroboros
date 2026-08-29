@@ -5426,9 +5426,9 @@ define module_bindings_walk(stmts, names, seen) as:
     for i in range of (len of stmts):
         local u is unwrap of stmts[i]
         if (type of u) != "list":
-            return 0
+            continue
         if (len of u) == 0:
-            return 0
+            continue
         local nm2 is null
         if u[0] == "func":
             nm2 is u[1]
@@ -5459,37 +5459,83 @@ define module_bindings_walk(stmts, names, seen) as:
 # does not have at all because a `for` body gets its own env.
 #
 # Only the immediate top level and `unobserved:` are unconditionally executed.
-# Everything else is refused rather than guessed. Measured cost: 3 of the 77
-# stdlib modules (pkg, test_runner, ui_draw).
-define module_has_conditional_binding(stmts, out) as:
+# Everything else is refused rather than guessed.
+#
+# WHICH bodies leak was MEASURED against the VM, not reasoned from "`if`
+# creates no scope". A module `a is 1 / <body> / b is 2` imported and probed
+# with `keys of M` gives:
+#
+#   if / loop while / try / match case    leak — `inner` is in the dict
+#   for                                   does NOT — ["a", "b"], `M.inner` null
+#
+# so a `for` body can never create a top-level binding, and the first version
+# of this guard, which refused on `for`, was refusing programs that were
+# always fine. Same measurement settled two more: a `local` inside a top-level
+# `if` DOES leak (so `local` is not exempt), and a `define` inside one does
+# too (so a nested `func` is a binding to report, not a subtree to skip).
+#
+# A conditional assignment is only a problem when it is the name's FIRST
+# binding. `x is 1` at the top level followed by `if c: x is 2` gives the same
+# dict either way, so `bound` carries the names already bound at the immediate
+# top level IN SOURCE ORDER and a re-assignment of one is not reported. Order
+# matters as well as membership: binding conditionally BEFORE the top-level
+# assignment changes where the key lands in `keys of M`, so only names bound
+# EARLIER in source count.
+#
+# MEASURED cost across the 77 stdlib modules, by transpiling `import M` for
+# each: 1 refused here — test_runner, whose `in_tests` is genuinely first bound
+# inside an `if`. An earlier comment claimed 3 (pkg, test_runner, ui_draw); that
+# number came out of the broken scan and only ever applied to one of the three.
+# pkg and ui_draw refuse for unrelated reasons that fire earlier (an internal
+# index error in find_buf_param_use; `cannot emit statement node 'try'`).
+#
+# The two halves of this guard are load-bearing TOGETHER. pkg's `rest is []`
+# then `if ...: rest is argv[1:]`, and ui_draw's `_has_text_metrics is 0` then
+# a `try:` that reassigns it, are exactly the re-assignment shape — so fixing
+# only the aborted scan, without the `bound` rule, would have converted a
+# silent wrong answer into a FALSE REFUSAL of two real stdlib modules.
+define module_cond_binds(stmts, bound, out) as:
     if (type of stmts) != "list":
         return 0
     for i in range of (len of stmts):
         local u is unwrap of stmts[i]
         if (type of u) != "list":
-            return 0
+            continue
         if (len of u) == 0:
-            return 0
-        if u[0] == "func":
-            return 0
-        if u[0] == "unobserved":
-            module_has_conditional_binding of [u[1], out]
-        elif (u[0] == "if") or (u[0] == "loop") or (u[0] == "for") or (u[0] == "try") or (u[0] == "match"):
-            collect_cond_binds of [u, out]
+            continue
+        local h is u[0]
+        if h == "unobserved":
+            module_cond_binds of [u[1], bound, out]
+        elif (h == "if") or (h == "loop") or (h == "try") or (h == "match"):
+            collect_cond_binds of [u, bound, out]
+        # A `func`/`assign`/`import` here is an immediate top-level binding, so
+        # it joins `bound` and is NOT scanned. It must not `return` — a module
+        # that declares a function before its conditional binding is the normal
+        # shape, and aborting the scan at the first `define` put pkg (define
+        # line 54, conditional binding line 573) and ui_draw (line 10 / line 35)
+        # straight back into the dropped-binding bug this guard exists to catch.
+        if (h == "func") or (h == "assign") or (h == "import"):
+            bound[(u[1])] is 1
     return 0
 
-define collect_cond_binds(node, out) as:
+define collect_cond_binds(node, bound, out) as:
     if (type of node) != "list":
         return 0
     if (len of node) == 0:
         return 0
-    if node[0] == "func":
+    local h is node[0]
+    if h == "for":
+        # a `for` body has its own env: nothing inside it reaches the module
         return 0
-    if node[0] == "assign":
-        if (len of node) < 4:
-            out[node[1]] is 1
+    if h == "func":
+        if bound[(node[1])] != 1:
+            out[(node[1])] is 1
+        return 0
+    if h == "assign":
+        if bound[(node[1])] != 1:
+            out[(node[1])] is 1
     for k in range of (len of node):
-        collect_cond_binds of [node[k], out]
+        collect_cond_binds of [node[k], bound, out]
     return 0
 
 
@@ -5725,12 +5771,10 @@ define splice_module(mname, base, depth, out) as:
             for ri in range of (len of rtop):
                 rset[(rtop[ri])] is 1
             collect_free_assigns of [["block", (mast[1])], {}, rset]
-            # Parameters and locals are not renamed, so a module that
-            # shadows one of its own module names cannot be handled by an
             # A module top-level binding made inside conditional control flow
             # cannot be represented: the dict is a snapshot of what RAN.
             local condb is {}
-            module_has_conditional_binding of [(mast[1]), condb]
+            module_cond_binds of [(mast[1]), {}, condb]
             local condk is keys of condb
             if (len of condk) > 0:
                 throw of ("AOT: module '" + mname + "' creates the top-level binding '" + (condk[0]) + "' inside conditional control flow. The module dict is a snapshot of what RAN, and the AOT builds it statically — including it invents a key the VM does not have, omitting it drops one the VM does. Refused rather than guessed (ouroboros#141).")

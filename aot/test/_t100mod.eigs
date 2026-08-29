@@ -1,0 +1,31 @@
+# Every shape the conditional-binding guard must ACCEPT.
+a is 1
+
+# a `for` body has its own env, so nothing here reaches the module dict.
+# Measured: `keys of M` is ["a", ...] with no `qv`/`floop`, and `M.floop` is
+# null. The first guard refused this module outright.
+for qv in range of 2:
+    floop is 5
+
+# re-assigning an ALREADY top-level name inside an `if` is not a new binding:
+# the dict is identical whichever way the branch goes.
+if a == 1:
+    a is 2
+
+# same, through a loop and a match
+b is 10
+loop while b < 12:
+    b is b + 1
+match a:
+    case 2:
+        b is 99
+
+define g() as:
+    # a function body binds nothing at import time — the dict is a snapshot
+    # taken before any function has run
+    hidden is 7
+    return hidden
+
+# `unobserved:` always executes, so this IS a top-level binding
+unobserved:
+    u1 is 3
