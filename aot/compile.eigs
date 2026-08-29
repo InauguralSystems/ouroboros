@@ -259,6 +259,11 @@ g_func_names is {}
 # asks only what the BODY does. Populated at the widening site so it cannot
 # disagree with arg_class about what counts as evidence.
 g_boxed_arg is {}
+# fn name -> {"<param index>": 1} for parameters the body computes with -- i.e.
+# exactly the parameters the numeric pin restores to num. Recomputed each
+# fixpoint round by widen_ptypes and read by arg_gen_grounded, so the stability
+# test and the pin cannot disagree about what "pinnable" means.
+g_pinned is {}
 # Functions with NO return statement, which yield null (the VM's fall-off-the-
 # end rule). Seeded before ptype inference because arg_class needs it there and
 # g_funcs[]["ret"] is not available yet — see the seeding site for why.
@@ -3951,6 +3956,28 @@ define arg_gen_grounded(node, caller_pt, caller_params, caller_locals, caller_fn
                 if (gc == "dict") or (gc == "buf") or (gc == "tensor"):
                     return 1
                 if gc == "gen":
+                    # Ask the PIN's own predicate. g_boxed_arg is a SUFFICIENT
+                    # condition for the pin sparing a parameter, never a
+                    # necessary one -- the necessary and sufficient condition is
+                    # that the pin does not fire at all. Testing the proxy
+                    # declared this verdict revocable and then never revoked it:
+                    #
+                    #   define f(x) as: g of x        (f never computes with x)
+                    #   rows is [null] / f of (rows[0])
+                    #   VM 'n' rc 0, parent 'n' rc 0
+                    #   HEAD~1  builds clean, then "non-numeric value in a
+                    #           numeric context at f: name x (type null)", rc 1
+                    #
+                    # `f of (rows[0])` is an index node, which arg_class calls
+                    # "unknown", so f#0 never gets a record -- yet x IS stable:
+                    # find_numeric_use_direct(f, x) is 0, so the pin can never
+                    # touch it. Testing the pin directly is also the only
+                    # version that survives `pinned` later being computed
+                    # differently; a downstream side-map would silently drift.
+                    local gpin is g_pinned[caller_fn]
+                    if gpin != null:
+                        if gpin[(str of gk)] != 1:
+                            return 1
                     if g_boxed_arg[caller_fn + "#" + (str of gk)] == 1:
                         return 1
                 return 0
@@ -4133,14 +4160,14 @@ define widen_ptypes(funcs, rest) as:
         # so pins must dissolve as that callee widens. Computing them once
         # up front froze pass-through params numeric forever (t58's
         # `passthru`).
-        local pinned is {}
+        g_pinned is {}
         for k0 in range of (len of funcs):
             local fn0 is funcs[k0]
             local pins is {}
             for p0 in range of (len of fn0[2]):
                 if (find_numeric_use_direct of [fn0[3], (fn0[2])[p0]]) == 1:
                     pins[(str of p0)] is 1
-            pinned[fn0[1]] is pins
+            g_pinned[fn0[1]] is pins
         # snapshot pinned classes so a widening cannot violate them
         for k in range of (len of funcs):
             local fn2 is funcs[k]
@@ -4165,7 +4192,7 @@ define widen_ptypes(funcs, rest) as:
         for k in range of (len of funcs):
             local fn3 is funcs[k]
             local pt3 is (g_funcs[fn3[1]])["ptypes"]
-            local pins3 is pinned[fn3[1]]
+            local pins3 is g_pinned[fn3[1]]
             for p in range of (len of pt3):
                 if (pins3[(str of p)] == 1) and ((pt3[p]) == "gen"):
                     # ...unless some call site passes a VOID CALL here. The pin
