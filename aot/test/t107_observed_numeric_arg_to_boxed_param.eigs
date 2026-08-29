@@ -25,8 +25,15 @@
 #
 # Measured against the broken emitter, rather than asserted:
 #   delete `converged of q` only          -> STILL FAILS (build, 'eig_top_m')
-#   delete `converged of top_q` only      -> still fails (the frame-local half)
+#   delete `converged of top_q` only      -> STILL FAILS (build, 'eig_top_m')
 #   delete BOTH                           -> passes; the fixture is defused
+#
+# Note what the rows actually show: EITHER trigger alone keeps the whole program
+# observed (g_observed is a whole-program flag), so the module-scope failure
+# fires in both single-deletion rows and the frame-local failure never shows
+# independently. An earlier version of this table labelled row 2 "the
+# frame-local half", which was a guess about the mechanism written next to a
+# measured result — the verdicts were right and the attribution was invented.
 #
 # An earlier version of this header said deleting `converged of q` alone
 # defuses it. That was wrong, and wrong in the dangerous direction: someone

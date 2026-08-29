@@ -1694,10 +1694,20 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
             # seventh survived, because six were found by running the corpus and
             # nothing in the corpus rebinds a type-dispatched parameter.
             #
-            # Enumerated rather than claimed this time: every other
-            # concatenation of a bare name in this file puts it INSIDE a C
-            # string literal (an env key, correct by design). This was the only
-            # site emitting one in C IDENTIFIER position.
+            # Enumerated rather than claimed -- and the first version of THIS
+            # comment was still wrong, caught by one grep in the next review.
+            # It said this was "the only site emitting a name in C IDENTIFIER
+            # position"; the `for` arm builds `"_it_" + fvar`, `"_n_" + fvar`
+            # and `"_k_" + fvar` from raw source names too. Those are safe
+            # because the same expression also DECLARES them, which is the
+            # property that actually matters:
+            #
+            #   this was the only site emitting an identifier it does not also
+            #   declare.
+            #
+            # A claim made checkable is not a claim checked. This one was
+            # designed to be verifiable with a single grep and still shipped
+            # false.
             return ind + (cn of name) + " = " + (emit_val of [node[2], nm, bt]) + ";\n"
         if g_boxshadow[name] == 1:
             # boxed module-shadow (#86, F-OURO-35): the `local` decl binds
@@ -1988,7 +1998,24 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
             else:
                 fo is fo + ind + "    " + (cn of fvar) + " = aot_num_ck_at(aot_iter_get(" + itv + ", " + kv + "), \"" + (c_escape of (G_CUR_FN[0])) + ": for-in " + (c_escape of fvar) + "\");\n"
         else:
-            if (g_lowerloc == 1) and (g_envloc[fvar] == 1):
+            if g_genp[fvar] == 1:
+                # A generic PARAMETER as the loop binder. Every read of a genp
+                # takes the C variable, so an env write here is invisible to the
+                # body -- it read the incoming argument on every iteration, and
+                # also left a module-global binding the VM scopes to the frame:
+                #
+                #   define f(x) as: for x in [1,2,3]: print of x
+                #   f of 5     VM  1 / 2 / 3      AOT  5 / 5 / 5
+                #   both build, both rc 0, no diagnostic
+                #
+                # The rebind arm's comment enumerates the READERS of a genp and
+                # concludes the C variable is authoritative; it did not
+                # enumerate the WRITERS, and this is the second one. Assigning
+                # the C variable is also the right post-loop semantics: measured,
+                # a `for` binder over an existing binding OVERWRITES it and the
+                # value persists (VM prints 3 after the loop, not the incoming 5).
+                fo is fo + ind + "    " + (cn of fvar) + " = aot_iter_get(" + itv + ", " + kv + ");\n"
+            elif (g_lowerloc == 1) and (g_envloc[fvar] == 1):
                 fo is fo + ind + "    aot_lv_set(&" + (lv of fvar) + ", aot_iter_get(" + itv + ", " + kv + "));\n"
             else:
                 fo is fo + ind + "    aot_set(" + (envc of fvar) + ", \"" + fvar + "\", aot_iter_get(" + itv + ", " + kv + "));\n"
