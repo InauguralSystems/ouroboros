@@ -5438,6 +5438,19 @@ define module_bindings(stmts) as:
 # see every scope. Deliberately a SUPERSET (references as well as bindings): a
 # program that merely reads a name the module defines can reach the module's
 # private state, which the VM refuses with "undefined variable".
+# Module names the given tree imports, at any depth.
+define collect_import_names(node, out) as:
+    if (type of node) != "list":
+        return 0
+    if (len of node) == 0:
+        return 0
+    if node[0] == "import":
+        out[node[1]] is 1
+        return 0
+    for k in range of (len of node):
+        collect_import_names of [node[k], out]
+    return 0
+
 define collect_names_deep(node, out) as:
     if (type of node) != "list":
         return 0
@@ -5454,6 +5467,15 @@ define collect_names_deep(node, out) as:
         local ps is node[2]
         for pk in range of (len of ps):
             out[(ps[pk])] is 1
+    # Binder forms whose name is a raw STRING, not an ["ident", ...] node, so
+    # the ident arm above cannot see them. None could be turned into a
+    # divergence when this was written — `for` matched the VM on both the
+    # unboxed and boxed paths, and try/destructure have no emit case so they
+    # refuse before the guard matters — but they are binders, and a guard that
+    # is a superset everywhere else should not have holes here.
+    if (h == "for") or (h == "catch") or (h == "listcomp") or (h == "lambda"):
+        if (type of node[1]) == "str":
+            out[node[1]] is 1
     for k in range of (len of node):
         collect_names_deep of [node[k], out]
     return 0
@@ -5502,6 +5524,26 @@ define splice_static_loads(blk, base, depth) as:
             if (msrc == null) or ((len of msrc) == 0):
                 throw of ("AOT: import '" + mname + "' not found (looked beside the program, then in the stdlib lib/). Pass the stdlib root as argv[2] if this is a stdlib module.")
             local mast is eigen_parse of (eigen_tokenize of msrc)
+            # The exemption below must mean "THE IMPORTING PROGRAM ITSELF
+            # imports this name", so derive it from the program's own import
+            # statements rather than from G_IMPORTED. Two failures bracket it.
+            # Testing G_IMPORTED after the recursive splice exempted names the
+            # program never imported, because the recursion registers the
+            # module's OWN transitive imports first:
+            #
+            #     complex is 7          VM  7
+            #     import linalg         AOT {"add": <builtin>, ...}
+            #     print of complex      build rc=0, empty log
+            #
+            # linalg imports complex, so by the time the guard asked, the very
+            # import it was guarding against had registered itself. Snapshotting
+            # G_IMPORTED *before* the recursion then failed the other way:
+            # phugoid/modes.eigs imports linalg BEFORE complex, so at that point
+            # it had not imported complex yet and was refused. Scanning the
+            # program's statements answers both — order-independent, and blind
+            # to the module's transitive imports.
+            local pre_imp is {}
+            collect_import_names of [["block", stmts], pre_imp]
             local msp is splice_static_loads of [mast, mpath, depth + 1]
             local mst is msp[1]
             # Collision check BEFORE splicing. Splicing merges the module's
@@ -5527,7 +5569,7 @@ define splice_static_loads(blk, base, depth) as:
                 # appears in linalg's bindings AND in the program, which the
                 # first version of this guard refused despite the program being
                 # verified byte-exact.
-                if (bn != mname) and (G_IMPORTED[bn] != 1):
+                if (bn != mname) and (pre_imp[bn] != 1):
                     if prior[bn] == 1:
                         throw of ("AOT: import '" + mname + "' binds '" + bn + "', which the importing program also uses. The AOT splices module top-levels into ONE scope, so the two would silently merge — the VM gives the module its own env. Rename one, or see ouroboros#141 (namespaced module splicing).")
                     if G_MODNAMES[bn] == 1:
