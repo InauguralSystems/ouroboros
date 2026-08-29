@@ -3914,7 +3914,52 @@ define for_var_gen_scan(node, out) as:
 # which parameter, or this map points at the wrong index.
 # Scan one function body for calls, widening callee params. Returns 1 if
 # anything changed.
-define widen_scan(node, caller_pt, caller_params, caller_locals) as:
+# Is arg_class's "gen" verdict on this argument GROUNDED -- true independently
+# of a class the numeric pin can revoke?
+#
+# This is the distinction three consecutive fixes missed. g_boxed_arg is
+# MONOTONE (set once, never cleared) but arg_class's ident arm reads caller_pt,
+# and the pin's demotion is the one NON-monotone step in the fixpoint. Storing a
+# transient verdict permanently is unsound in principle, and produced a silent
+# wrong answer in practice:
+#
+#   define f(x) as: print of (x * 10) / g of x
+#   define g(y) as: if y == null: takes_dict of y ... else: print of (y * 2)
+#   f of 3
+#
+# In round 1 `f`'s x is still gen (find_gen_param_use saw `g of x` at a gen
+# position), so arg_class said gen and g#0 was recorded boxed. The pin then
+# demoted x back to num and SPARED y. Caller passes a C double, callee expects
+# Value*, and emit_args fell through to an env lookup for a name that only
+# exists as a C local:
+#
+#   VM   30 / 6, rc 0      AOT  builds clean, prints 30, then
+#                               "undefined variable 'x'", rc 1
+#
+# Literals, void calls and Value*-returning calls are stable -- nothing can
+# revoke them. A local is stable: the pin only touches parameters. A parameter
+# is stable only when its own class cannot be demoted (dict/buf/tensor are never
+# pinned) or when it is itself backed by grounded evidence.
+define arg_gen_grounded(node, caller_pt, caller_params, caller_locals, caller_fn) as:
+    local ge is unwrap of node
+    if (len of ge) == 0:
+        return 0
+    if ge[0] == "ident":
+        for gk in range of (len of caller_params):
+            if (caller_params[gk]) == ge[1]:
+                local gc is caller_pt[gk]
+                if (gc == "dict") or (gc == "buf") or (gc == "tensor"):
+                    return 1
+                if gc == "gen":
+                    if g_boxed_arg[caller_fn + "#" + (str of gk)] == 1:
+                        return 1
+                return 0
+        if caller_locals[ge[1]] == "gen":
+            return 1
+        return 0
+    return 1
+
+define widen_scan(node, caller_pt, caller_params, caller_locals, caller_fn) as:
     if (type of node) != "list":
         return 0
     if (len of node) == 0:
@@ -3964,13 +4009,14 @@ define widen_scan(node, caller_pt, caller_params, caller_locals) as:
                             # program buying another round.
                             local acls is arg_class of [elems[k], caller_pt, caller_params, caller_locals]
                             if acls == "gen":
-                                g_boxed_arg[(callee[1]) + "#" + (str of k)] is 1
+                                if (arg_gen_grounded of [elems[k], caller_pt, caller_params, caller_locals, caller_fn]) == 1:
+                                    g_boxed_arg[(callee[1]) + "#" + (str of k)] is 1
                             if (cpt[k]) == "num":
                                 if acls == "gen":
                                     cpt[k] is "gen"
                                     changed is 1
     for k2 in range of (len of node):
-        if (widen_scan of [node[k2], caller_pt, caller_params, caller_locals]) == 1:
+        if (widen_scan of [node[k2], caller_pt, caller_params, caller_locals, caller_fn]) == 1:
             changed is 1
     return changed
 
@@ -4111,9 +4157,9 @@ define widen_ptypes(funcs, rest) as:
             for p2 in range of (len of fn2[2]):
                 if ((pt2s[p2]) == "gen") or ((pt2s[p2]) == "dict"):
                     seed2[((fn2[2])[p2])] is "gen"
-            if (widen_scan of [fn2[3], pt2s, fn2[2], local_gen_map_for_seeded of [fn2[1], fn2[3], seed2]]) == 1:
+            if (widen_scan of [fn2[3], pt2s, fn2[2], local_gen_map_for_seeded of [fn2[1], fn2[3], seed2], fn2[1]]) == 1:
                 changed is 1
-        if (widen_scan of [rest, [], [], local_gen_map_for of ["<module>", rest]]) == 1:
+        if (widen_scan of [rest, [], [], local_gen_map_for of ["<module>", rest], "<module>"]) == 1:
             changed is 1
         # restore any param the body proves numeric (pin wins over widening)
         for k in range of (len of funcs):
