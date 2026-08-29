@@ -3941,26 +3941,34 @@ define widen_scan(node, caller_pt, caller_params, caller_locals) as:
                     local cpt is cf["ptypes"]
                     for k in range of (len of elems):
                         if k < (len of cpt):
+                            # Consult arg_class UNCONDITIONALLY and widen
+                            # conditionally, not the other way round. Gating
+                            # the consult on `cpt[k] == "num"` meant a
+                            # parameter that body inference had ALREADY called
+                            # gen never recorded its evidence -- and the pin,
+                            # which only asks what the body computes with, then
+                            # demoted it to double:
+                            #
+                            #   define guarded3(n) as:
+                            #       if n == null: takes_dict of n ... else: print of (n * 2)
+                            #   guarded3 of 5 / guarded3 of (shout of 7)
+                            #   VM  10 / 7 / guarded3-null, rc 0
+                            #   AOT build FAILS (the backstop refuses)
+                            #
+                            # and it was hidden by the fixpoint: with no other
+                            # widening in the program `changed` stays 0, the
+                            # loop exits after the demotion, and there is no
+                            # second round in which the now-num parameter would
+                            # be widened and recorded. Correctness must not
+                            # depend on an unrelated widening elsewhere in the
+                            # program buying another round.
+                            local acls is arg_class of [elems[k], caller_pt, caller_params, caller_locals]
+                            if acls == "gen":
+                                g_boxed_arg[(callee[1]) + "#" + (str of k)] is 1
                             if (cpt[k]) == "num":
-                                if (arg_class of [elems[k], caller_pt, caller_params, caller_locals]) == "gen":
+                                if acls == "gen":
                                     cpt[k] is "gen"
                                     changed is 1
-                                    # Record the evidence HERE, where arg_class
-                                    # is actually consulted. Two earlier rounds
-                                    # each added a separate scan to tell the pin
-                                    # about boxed arguments -- one for a direct
-                                    # void call, one for a local bound to one --
-                                    # and the pair failed on the intersection
-                                    # (`solo is (shout of "a")` passed to a
-                                    # callee that computes with its parameter):
-                                    # each scan enumerated evidence kinds, and
-                                    # the enumerations disagreed with arg_class
-                                    # and with each other. Recorded at the
-                                    # consult site they cannot disagree, and a
-                                    # THIRD evidence kind (a call to a Value*-
-                                    # returning function) is covered without
-                                    # anyone having to think of it.
-                                    g_boxed_arg[(callee[1]) + "#" + (str of k)] is 1
     for k2 in range of (len of node):
         if (widen_scan of [node[k2], caller_pt, caller_params, caller_locals]) == 1:
             changed is 1
