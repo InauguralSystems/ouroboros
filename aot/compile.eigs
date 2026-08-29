@@ -1694,20 +1694,21 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
             # seventh survived, because six were found by running the corpus and
             # nothing in the corpus rebinds a type-dispatched parameter.
             #
-            # Enumerated rather than claimed -- and the first version of THIS
-            # comment was still wrong, caught by one grep in the next review.
-            # It said this was "the only site emitting a name in C IDENTIFIER
-            # position"; the `for` arm builds `"_it_" + fvar`, `"_n_" + fvar`
-            # and `"_k_" + fvar` from raw source names too. Those are safe
-            # because the same expression also DECLARES them, which is the
-            # property that actually matters:
+            # NO ENUMERATION CLAIM HERE, deliberately. Three consecutive
+            # versions of one were written at this spot and all three were
+            # false, each caught by the next review's single grep:
             #
-            #   this was the only site emitting an identifier it does not also
-            #   declare.
+            #   "the only site emitting a name in C IDENTIFIER position"
+            #     -- the `for` arm builds "_it_"/"_n_"/"_k_" + fvar too
+            #   "the only site emitting an identifier it does not also declare"
+            #     -- line ~2017 (added by the commit that wrote this) emits
+            #        `cn of fvar` for a genp, declared by the signature
             #
-            # A claim made checkable is not a claim checked. This one was
-            # designed to be verifiable with a single grep and still shipped
-            # false.
+            # The pattern is the point: a summary of "where else could this be
+            # wrong" is a claim about code nobody re-derived, and it decays into
+            # false reassurance faster than the code decays. The fixture is the
+            # durable half; if the class needs to be re-checked, re-run the
+            # grep, do not read a sentence about it.
             return ind + (cn of name) + " = " + (emit_val of [node[2], nm, bt]) + ";\n"
         if g_boxshadow[name] == 1:
             # boxed module-shadow (#86, F-OURO-35): the `local` decl binds
@@ -5321,6 +5322,20 @@ define rename_idents(node, rmap) as:
 # Lift every nested func in `node` (a stmt list or block), given the
 # ENCLOSING function's bound-name dict. Appends lifted fns to out_funcs
 # and replaces each define stmt with a capbind, in place.
+# Names bound by a `for` binder anywhere in these statements. A binder is a
+# rebind for capture purposes -- HEAD's own genp for-binder writes the C
+# variable, which a snapshot capture never sees.
+define collect_for_binders(node, out) as:
+    if (type of node) != "list":
+        return 0
+    if (len of node) == 0:
+        return 0
+    if node[0] == "for":
+        out[node[1]] is 1
+    for fk in range of (len of node):
+        collect_for_binders of [node[fk], out]
+    return 0
+
 define lift_nested(node, bound, out_funcs) as:
     if (type of node) != "list":
         return 0
@@ -5345,6 +5360,30 @@ define lift_nested(node, bound, out_funcs) as:
                 for p in range of (len of fparams):
                     own[(fparams[p])] is 1
                 local nested_assigns is collect_assigns of [fbody, {}]
+                # Statements AFTER this define in the enclosing body. A capture
+                # is a value SNAPSHOT taken HERE, so a later rebind of a
+                # captured name is invisible to the nested function:
+                #
+                #   local x is 100 / define inner(d) as: print of x / x is 7
+                #   print of (inner of 1)
+                #   VM  7      AOT  100      both build, both rc 0
+                #
+                # The comment above this pass claimed such captures "throw".
+                # They did not -- no such throw was ever written -- and it also
+                # scoped the hazard to NUMERIC captures, which is wrong too: a
+                # string rebind snapshots identically (VM "b", AOT "a"). What
+                # the comment gets right is the other half, that mutation
+                # THROUGH a capture stays live, because the Value is aliased:
+                # `x[0] is 9` matches. Rebinding the NAME is the broken case,
+                # and it is now refused rather than described.
+                local after_stmts is []
+                local ak is k + 1
+                loop while ak < (len of node):
+                    append of [after_stmts, node[ak]]
+                    ak is ak + 1
+                local after_assigns is collect_assigns of [after_stmts, {}]
+                local after_binders is {}
+                collect_for_binders of [after_stmts, after_binders]
                 local caps is []
                 local rmap is {}
                 local bnames is keys of bound
@@ -5353,6 +5392,8 @@ define lift_nested(node, bound, out_funcs) as:
                     if (own[cand] != 1) and ((uses_ident of [fbody, cand]) == 1):
                         if nested_assigns[cand] != null:
                             throw of ("AOT: nested define '" + fname + "' assigns enclosing name '" + cand + "' (outward mutation is out of envelope)")
+                        if (after_assigns[cand] != null) or (after_binders[cand] == 1):
+                            throw of ("AOT: nested define '" + fname + "' captures '" + cand + "', which the enclosing function rebinds after this definition. The capture is a value snapshot taken at the definition, so the nested function would keep reading the old value while the VM reads the new one. Refused rather than answering with a stale value.")
                         local mangled is "__cap" + (str of (G_LIFT_N[0])) + "_" + cand
                         G_LIFT_N[0] is G_LIFT_N[0] + 1
                         append of [caps, [cand, mangled]]

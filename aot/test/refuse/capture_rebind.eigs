@@ -1,0 +1,32 @@
+# EXPECT: rebinds after this definition
+#
+# A nested `define` capturing a name the enclosing function later REBINDS.
+#
+# THE POINT OF THIS FIXTURE is that the lift pass's own design comment claimed
+# this case throws — "Numeric captures would SNAPSHOT (env copy of a double),
+# so they throw" — and no such throw was ever written. The capture is bound at
+# the definition site, so a later rebind is invisible:
+#
+#   local x is 100 / define inner(d) as: print of x / x is 7 / inner of 1
+#   VM   7        AOT  100        both build, both rc 0, no diagnostic
+#
+# The comment was also wrong about the SCOPE of the hazard. It said numeric
+# captures; a string rebind snapshots identically (VM "b", AOT "a"). What it
+# gets right is the other half — mutation THROUGH a capture stays live, because
+# the Value is aliased — which is why `box[0] is 9` is not refused and is
+# covered by its sibling parity fixture.
+#
+# THE SUITE HAD ZERO NESTED-DEFINE FIXTURES when this was found, which is how
+# 125/125 stayed green over it. A `for` binder counts as a rebind too: HEAD's
+# own genp binder writes the C variable, which a snapshot capture never sees.
+
+define f(y) as:
+    local x is 100
+    define inner(d) as:
+        print of x
+        return 0
+    x is 7
+    print of (inner of 1)
+    return 0
+
+print of (f of 0)
