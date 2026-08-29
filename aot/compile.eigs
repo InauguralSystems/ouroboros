@@ -254,6 +254,10 @@ define ic_new(field) as:
 # is_tensor_call can tell a user-defined matmul/add/relu (which shadows the
 # tensor builtin) from the builtin, regardless of definition order.
 g_func_names is {}
+# Functions with NO return statement, which yield null (the VM's fall-off-the-
+# end rule). Seeded before ptype inference because arg_class needs it there and
+# g_funcs[]["ret"] is not available yet — see the seeding site for why.
+g_func_void is {}
 # name -> the definition's computed C signature ("static RET name(TYPED ARGS)"),
 # recorded by emit_function; forward protos are derived from THESE so proto and
 # definition share one inference authority and can't disagree (#74 — the old
@@ -3678,6 +3682,23 @@ define arg_class(node, caller_pt, caller_params, caller_locals) as:
             return "gen"
     if t == "num":
         return "num"
+    if t == "call":
+        # `g of (shout of "a")` where `shout` has no return. The VM binds null
+        # to g's parameter and prints "null"; the AOT inferred `g` numeric from
+        # this site contributing NO constraint, declared `double eig_n`, and
+        # emitted `eig_g(eig_shout(...))` — a C void expression where a double
+        # is required, so gcc failed the build outright:
+        #
+        #   VM   a / null, rc 0     AOT  "invalid use of void expression", no binary
+        #
+        # That is worse than a wrong answer: it is not an `AOT:` refusal, so it
+        # carries no diagnostic naming the construct. A void call yields null,
+        # which is boxed evidence exactly like a str or list argument.
+        local vac is unwrap of e[1]
+        if vac[0] == "ident":
+            if g_func_void[vac[1]] == 1:
+                return "gen"
+        return "unknown"
     if t == "ident":
         for k in range of (len of caller_params):
             if (caller_params[k]) == e[1]:
@@ -5139,6 +5160,19 @@ define emit_program(ast) as:
     for k in range of (len of funcs):
         collect_fn_value_refs of [(funcs[k])[3], g_func_names, g_fnval_params]
     collect_fn_value_refs of [rest, g_func_names, g_fnval_params]
+    # Which functions have NO return statement, and so yield null under the
+    # VM's fall-off-the-end rule. This is what `ret == "void"` means later, but
+    # it is available EARLIER and without circularity: emptiness of
+    # collect_return_nodes depends on no type information, whereas g_funcs[
+    # ]["ret"] is computed from ptypes and so cannot be consulted while ptypes
+    # are still being inferred. arg_class needs it there — a void call in an
+    # argument position is boxed evidence about the callee's parameter.
+    g_func_void is {}
+    for k in range of (len of funcs):
+        local vrets is []
+        collect_return_nodes of [(funcs[k])[3], vrets]
+        if (len of vrets) == 0:
+            g_func_void[(funcs[k])[1]] is 1
     for k in range of (len of funcs):
         local fn is funcs[k]
         local pt is func_ptypes of fn

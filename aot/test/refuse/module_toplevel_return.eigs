@@ -1,4 +1,4 @@
-# EXPECT: ends its own top level with a `return`
+# EXPECT: splices a module into the program
 #
 # THE POINT OF THIS FIXTURE is the OTHER half of "the module dict is a snapshot
 # of what RAN". Its sibling, module_conditional_binding.eigs, gates which

@@ -13,12 +13,25 @@
 # The VM's rule is that a function falling off its end yields null, so the call
 # still happens and answers null.
 #
-# The fix needed BOTH inferences to agree. func_ret_type asks
-# return_node_is_boxed and the return emitter asks is_num_expr; teaching only
-# the emitter left `wrap` below declared `double` while its body produced a
-# null, which then died at the checked unbox with a different message and the
-# same rc 1. Each of the three call shapes below failed differently, so all
-# three are here.
+# THREE SITES had to agree, and each was found by a separate review round
+# rather than by enumerating the shape space -- so do not read the list below
+# as complete, read it as what has been caught:
+#
+#   emit_val            the boxed value form, `({ f(...); make_null(); })`
+#   return_node_is_boxed the DECLARED type. Teaching only the emitter left
+#                       `wrap` declared `double` while its body produced a
+#                       null, dying at the checked unbox with a different
+#                       message and the same rc 1.
+#   arg_class           the CALLER's parameter inference. A void call in an
+#                       argument position contributed no constraint, so the
+#                       callee was declared `double` and the emitted C was
+#                       `eig_g(eig_shout(...))` -- a void expression where a
+#                       double is required. gcc rejected the build outright:
+#                       no binary, and no `AOT:` diagnostic naming the cause.
+#
+# An earlier version of this comment claimed "all three shapes are here", which
+# was an overclaim against a shape space nobody had enumerated -- the fourth
+# was found the next round.
 
 define shout(m) as:
     print of m
@@ -54,3 +67,23 @@ print of vals
 # and compared, which forces it through the boxed path
 if (shout of "in-cond") == null:
     print of "null-as-expected"
+
+# ARGUMENT position: the callee's parameter must be inferred BOXED from this
+# site. `takes_it` has nothing else to type its parameter, so if a void call
+# contributes no constraint the parameter defaults to double and the generated
+# C does not compile at all.
+define takes_it(n) as:
+    print of n
+
+takes_it of (shout of "as-argument")
+
+# the same, one level indirect, and mixed with a genuinely numeric call so a
+# fix that simply boxes every argument is caught by the numeric side
+define adds(a) as:
+    return a + 1
+
+define takes_two(p, q) as:
+    print of p
+    print of q
+
+takes_two of [(shout of "arg-1"), (adds of 41)]
