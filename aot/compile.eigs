@@ -5451,9 +5451,26 @@ define lift_nested_at(node, bound, out_funcs, outer_after) as:
                 local bnames is keys of bound
                 for b in range of (len of bnames):
                     local cand is bnames[b]
-                    if (own[cand] != 1) and ((uses_ident of [fbody, cand]) == 1):
+                    if own[cand] != 1:
+                        # OUTWARD MUTATION IS CHECKED FIRST AND WITHOUT THE READ
+                        # GATE. `uses_ident` matches only ["ident", name], but an
+                        # assignment target is a BARE STRING at node[1] -- so a
+                        # nested define that only WRITES an enclosing name looked
+                        # like it did not mention it at all, and the guard could
+                        # not fire on its own headline case:
+                        #
+                        #   local x is 100
+                        #   define b(d) as: x is 7 / return d
+                        #   ... return x
+                        #   VM 7   AOT 100   both build, both rc 0
+                        #
+                        # The write went to a fresh C local in the lifted
+                        # function, because the name never entered rmap either.
+                        # Adding a single READ of x to the same define makes it
+                        # refuse correctly, which is what isolates the gate.
                         if nested_assigns[cand] != null:
                             throw of ("AOT: nested define '" + fname + "' assigns enclosing name '" + cand + "' (outward mutation is out of envelope)")
+                    if (own[cand] != 1) and ((uses_ident of [fbody, cand]) == 1):
                         if (after_assigns[cand] != null) or (after_binders[cand] == 1):
                             throw of ("AOT: nested define '" + fname + "' captures '" + cand + "', which the enclosing function rebinds after this definition. The capture is a value snapshot taken at the definition, so the nested function would keep reading the old value while the VM reads the new one. Refused rather than answering with a stale value.")
                         local mangled is "__cap" + (str of (G_LIFT_N[0])) + "_" + cand
