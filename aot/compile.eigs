@@ -5442,12 +5442,54 @@ define module_bindings_walk(stmts, names, seen) as:
             if seen[nm2] != 1:
                 seen[nm2] is 1
                 append of [names, nm2]
-        if u[0] != "func":
-            # descend into control-flow bodies (if/elif/else, loop, match) but
-            # never into a function body
-            for k in range of (len of u):
-                if (type of u[k]) == "list":
-                    module_bindings_walk of [u[k], names, seen]
+        if u[0] == "unobserved":
+            # `unobserved:` always executes, so bindings inside it are real
+            # top-level bindings. It is the ONLY nested position that is.
+            module_bindings_walk of [u[1], names, seen]
+    return 0
+
+# Does the module create a top-level binding inside CONDITIONAL control flow?
+#
+# The module dict is a SNAPSHOT OF WHAT RAN, and a static walk cannot know
+# that. Two rounds proved it from both sides with the same walker: collecting
+# only the immediate statement list DROPPED a binding made in a taken `if`
+# (`M.b` read null); descending into every body INVENTED one from a not-taken
+# `else` (`M.z` read 0 — a default-initialised global, so a plausible NUMBER
+# rather than a null). Descending also picked up `for`-body names, which the VM
+# does not have at all because a `for` body gets its own env.
+#
+# Only the immediate top level and `unobserved:` are unconditionally executed.
+# Everything else is refused rather than guessed. Measured cost: 3 of the 77
+# stdlib modules (pkg, test_runner, ui_draw).
+define module_has_conditional_binding(stmts, out) as:
+    if (type of stmts) != "list":
+        return 0
+    for i in range of (len of stmts):
+        local u is unwrap of stmts[i]
+        if (type of u) != "list":
+            return 0
+        if (len of u) == 0:
+            return 0
+        if u[0] == "func":
+            return 0
+        if u[0] == "unobserved":
+            module_has_conditional_binding of [u[1], out]
+        elif (u[0] == "if") or (u[0] == "loop") or (u[0] == "for") or (u[0] == "try") or (u[0] == "match"):
+            collect_cond_binds of [u, out]
+    return 0
+
+define collect_cond_binds(node, out) as:
+    if (type of node) != "list":
+        return 0
+    if (len of node) == 0:
+        return 0
+    if node[0] == "func":
+        return 0
+    if node[0] == "assign":
+        if (len of node) < 4:
+            out[node[1]] is 1
+    for k in range of (len of node):
+        collect_cond_binds of [node[k], out]
     return 0
 
 
@@ -5685,8 +5727,13 @@ define splice_module(mname, base, depth, out) as:
             collect_free_assigns of [["block", (mast[1])], {}, rset]
             # Parameters and locals are not renamed, so a module that
             # shadows one of its own module names cannot be handled by an
-            # unconditional rename. Refuse it loudly. (1 of 77 stdlib
-            # modules: tensor.eigs shadows `scale`.)
+            # A module top-level binding made inside conditional control flow
+            # cannot be represented: the dict is a snapshot of what RAN.
+            local condb is {}
+            module_has_conditional_binding of [(mast[1]), condb]
+            local condk is keys of condb
+            if (len of condk) > 0:
+                throw of ("AOT: module '" + mname + "' creates the top-level binding '" + (condk[0]) + "' inside conditional control flow. The module dict is a snapshot of what RAN, and the AOT builds it statically — including it invents a key the VM does not have, omitting it drops one the VM does. Refused rather than guessed (ouroboros#141).")
             local rk is keys of rset
             local ren is {}
             for ri in range of (len of rk):

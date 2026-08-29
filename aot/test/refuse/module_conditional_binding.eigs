@@ -1,0 +1,25 @@
+# EXPECT: inside conditional control flow
+#
+# THE POINT OF THIS FIXTURE is a limit that two review rounds proved cannot be
+# guessed. A module's dict is a SNAPSHOT OF WHAT RAN; the AOT builds it
+# statically, and a static walk cannot know which branch executed. The same
+# walker was wrong from both sides:
+#
+#   collecting only the immediate statement list DROPPED a binding made in a
+#   TAKEN `if` — `keys of M` lost it and `M.b` read null;
+#
+#   descending into every body INVENTED one from a NOT-TAKEN `else` — `M.z`
+#   read 0, a default-initialised global, so a plausible NUMBER rather than a
+#   null. It also picked up `for`-body names the VM does not have at all,
+#   because a `for` body gets its own env.
+#
+# Both were silent, rc 0, zero-byte build log. So the case is refused instead.
+# Only the immediate top level and `unobserved:` are unconditionally executed.
+#
+# Measured cost of refusing: 3 of the 77 stdlib modules (pkg, test_runner,
+# ui_draw). This fixture is the first one written against a limit rather than
+# a bug, and it exists so the limit cannot silently become a guess again.
+
+import _q1_mod
+print of (keys of _q1_mod)
+print of _q1_mod.a
