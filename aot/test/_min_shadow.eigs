@@ -1,0 +1,9 @@
+ctr is 0
+define bump(n) as:
+    ctr is ctr + 1
+    local t is 0
+    for ctr in range of n:
+        t is t + 1
+    return t
+define get() as:
+    return ctr

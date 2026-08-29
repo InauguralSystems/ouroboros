@@ -5515,55 +5515,111 @@ define module_shadow_names(stmts, out) as:
 # `dict` keys — is a bare string in the AST, so a walker that rewrites only
 # those two shapes leaves them alone by construction rather than by a special
 # case per shape.
-define rename_ast(node, ren) as:
+define rename_ast(node, ren, shadow) as:
     if (type of node) != "list":
         return node
     if (len of node) == 0:
         return node
     local h is node[0]
     if h == "ident":
+        if shadow[node[1]] != null:
+            return ["ident", shadow[node[1]]]
         if ren[node[1]] != null:
             return ["ident", ren[node[1]]]
         return node
+    if h == "block":
+        # `local` shadows from its own statement ONWARD, not for the whole
+        # enclosing body, so statements are walked in order with a growing
+        # map. A whole-body drop was the round-8 regression: a module global
+        # that was also a `for` variable further down lost its rename and wrote
+        # the PROGRAM's global (VM 3/1/100, AOT 3/0/2, rc 0, zero-byte log).
+        local sh2 is copy_map of shadow
+        local bo is []
+        local bs is node[1]
+        for bk in range of (len of bs):
+            local u is unwrap of bs[bk]
+            if u[0] == "assign":
+                if (len of u) >= 4:
+                    sh2[u[1]] is (G_MODPFX[0]) + "bnd__" + u[1]
+            append of [bo, (rename_ast of [bs[bk], ren, sh2])]
+        return ["block", bo]
     if h == "assign":
         local an is node[1]
-        if ren[an] != null:
+        if shadow[an] != null:
+            an is shadow[an]
+        elif ren[an] != null:
             an is ren[an]
         if (len of node) >= 4:
-            return ["assign", an, (rename_ast of [node[2], ren]), node[3]]
-        return ["assign", an, (rename_ast of [node[2], ren])]
+            return ["assign", an, (rename_ast of [node[2], ren, shadow]), node[3]]
+        return ["assign", an, (rename_ast of [node[2], ren, shadow])]
     if h == "func":
         local fn2 is node[1]
         if ren[fn2] != null:
             fn2 is ren[fn2]
-        # SCOPE: a name bound INSIDE this function — parameter, `local`, loop or
-        # catch variable — is not the module global, so references to it here
-        # must not be renamed. Without this the renamer is unusable: a name that
-        # is a free global write in one function is routinely a PARAMETER in
-        # another, and linalg tripped it immediately.
-        local fbind is {}
+        # BINDERS ARE RENAMED TOO, not merely excluded. A module's parameter,
+        # `local` or loop variable still lands in the merged scope when the
+        # emitter gives it env storage, so leaving it alone left a live
+        # collision with the program. Alpha-renaming a bound name together with
+        # its in-scope references is always semantics-preserving, and doing it
+        # uniformly means no name of the module's can reach the program at all.
+        local sh3 is copy_map of shadow
         local fps is node[2]
+        local nps is []
         for fpk in range of (len of fps):
-            fbind[(fps[fpk])] is 1
-        local fki is 3
-        loop while fki < (len of node):
-            module_shadow_names of [node[fki], fbind]
-            fki is fki + 1
-        local ren2 is {}
-        local rk2 is keys of ren
-        for rj in range of (len of rk2):
-            if fbind[(rk2[rj])] != 1:
-                ren2[(rk2[rj])] is ren[(rk2[rj])]
-        local out2 is ["func", fn2, node[2]]
+            sh3[(fps[fpk])] is (G_MODPFX[0]) + "bnd__" + (fps[fpk])
+            append of [nps, (G_MODPFX[0]) + "bnd__" + (fps[fpk])]
+        local out2 is ["func", fn2, nps]
         local ki is 3
         loop while ki < (len of node):
-            append of [out2, (rename_ast of [node[ki], ren2])]
+            append of [out2, (rename_ast of [node[ki], ren, sh3])]
             ki is ki + 1
         return out2
+    if h == "for":
+        # ["for", var, iter, body] — the variable binds the BODY only; the
+        # iterable is evaluated in the enclosing scope.
+        local sh4 is copy_map of shadow
+        local nv is node[1]
+        if (type of node[1]) == "str":
+            nv is (G_MODPFX[0]) + "bnd__" + node[1]
+            sh4[node[1]] is nv
+        return ["for", nv, (rename_ast of [node[2], ren, shadow]), (rename_ast of [node[3], ren, sh4])]
+    if h == "try":
+        # ["try", try_body, err_name, catch_body] — the binder is in slot 2,
+        # not slot 1. The earlier helpers tested for a "catch" node this
+        # frontend never produces: dead code that looked like coverage.
+        local sh5 is copy_map of shadow
+        local ne is node[2]
+        if (type of node[2]) == "str":
+            ne is (G_MODPFX[0]) + "bnd__" + node[2]
+            sh5[node[2]] is ne
+        return ["try", (rename_ast of [node[1], ren, shadow]), ne, (rename_ast of [node[3], ren, sh5])]
+    if h == "listcomp":
+        # ["listcomp", expr, var, iter, filter] — the variable binds the
+        # element expression and the filter, not the iterable.
+        local sh6 is copy_map of shadow
+        local lv is node[2]
+        if (type of node[2]) == "str":
+            lv is (G_MODPFX[0]) + "bnd__" + node[2]
+            sh6[node[2]] is lv
+        return ["listcomp", (rename_ast of [node[1], ren, sh6]), lv, (rename_ast of [node[3], ren, shadow]), (rename_ast of [node[4], ren, sh6])]
     local out is []
     for k in range of (len of node):
-        append of [out, (rename_ast of [node[k], ren])]
+        append of [out, (rename_ast of [node[k], ren, shadow])]
     return out
+
+# Prefix of the module currently being renamed, read by the binder arms above.
+# Binders take `<M>__bnd__<name>`, DISTINCT from a module global's `<M>__<name>`:
+# renaming both to the same string makes a loop variable clobber the module
+# global it shares a name with — `for ctr` over a module that also has a global
+# `ctr` returned 2 where the VM returns 1.
+G_MODPFX is [""]
+
+define copy_map(m) as:
+    local c is {}
+    local ks is keys of m
+    for i in range of (len of ks):
+        c[(ks[i])] is m[(ks[i])]
+    return c
 
 # Ensure module `mname` is spliced into `out` exactly once, under its own
 # `<M>__` prefix, leaving its snapshot dict at __moddict_<M>. Binding a NAME
@@ -5614,8 +5670,9 @@ define splice_module(mname, base, depth, out) as:
                 ren[(rk[ri])] is mname + "__" + (rk[ri])
             # Mark BEFORE recursing so an import cycle terminates.
             G_IMPORTED[mname] is 1
+            # Prefix for this module's binders, read by rename_ast's binder arms.
+            G_MODPFX[0] is mname + "__"
             local mstmts is (mast[1])
-            local mout is []
             for mk in range of (len of mstmts):
                 local mst1 is mstmts[mk]
                 local inner is _imp_target of mst1
@@ -5630,7 +5687,7 @@ define splice_module(mname, base, depth, out) as:
                     splice_module of [inner, mpath, depth + 1, out]
                     append of [out, ["assign", (ren[inner]), ["ident", "__moddict_" + inner]]]
                 else:
-                    append of [out, (rename_ast of [mst1, ren])]
+                    append of [out, (rename_ast of [mst1, ren, {}])]
             local pairs is []
             for ri in range of (len of rtop):
                 append of [pairs, [(rtop[ri]), ["ident", (ren[(rtop[ri])])]]]

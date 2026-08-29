@@ -1,0 +1,28 @@
+# A module whose loop variable shares a name with its own global, and with the
+# program's — ouroboros#141.
+#
+# THE POINT OF THIS FIXTURE is the renamer's scope handling, which was wrong
+# twice in one round and silently both times.
+#
+#   v1  dropped a name from the rename map if it was bound ANYWHERE in a
+#       function body. `ctr` is a module global at one statement and a `for`
+#       variable three lines later, so the global lost its rename and wrote the
+#       PROGRAM's `ctr`: VM 3/1/100 against AOT 3/0/2, rc 0, zero-byte log —
+#       exactly the bug the collision guard had been deleted to remove.
+#   v2  renamed binders to the SAME string as module globals, so the loop
+#       variable clobbered the global it shared a name with: AOT 3/2/100.
+#
+# Binders now take `<M>__bnd__<name>`, distinct from a global's `<M>__<name>`,
+# and shadowing is occurrence-scoped: `local` shadows from its own statement
+# onward, a `for` variable binds its body only, a `try` binder its catch body
+# only.
+#
+# Three separate things must hold at once, which is why all three are printed:
+# the module's function returns the right value, the module's own global is
+# untouched by its loop, and the program's identically-named global survives.
+
+ctr is 100
+import _min_shadow
+print of (_min_shadow.bump of 3)
+print of (_min_shadow.get of [])
+print of ctr
