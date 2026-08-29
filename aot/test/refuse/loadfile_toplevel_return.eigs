@@ -1,0 +1,31 @@
+# EXPECT: ends its own top level with a `return`
+#
+# THE POINT OF THIS FIXTURE is that `return` at a file's top level means THREE
+# different things depending on which road the file arrived by, and the third
+# road was the one left unguarded:
+#
+#   main program      end the program, exit 0, value discarded
+#   imported module   end the module; bindings below it never exist
+#   load_file target  end THAT FILE only, yield its value to the call, and the
+#                     CALLER CONTINUES
+#
+# Splicing collapses all three into "end the program":
+#
+#   VM   main-start / inc-start / main-end      AOT   main-start / inc-start
+#
+# This predates the #146 emission change — but that change made it QUIETER, not
+# louder. The old code emitted `return 7` from main, so the binary exited 7
+# against the VM's 0 and the suite's exit-code contract caught it. Emitting
+# exit-0 left stdout as the only difference, which is precisely the silent class
+# #146 existed to remove. A fix that improves one road can degrade another to
+# below the gate's resolution.
+#
+# Measured cost of refusing: 0 of the 55 literal load_file targets across the
+# ecosystem (371 references).
+#
+# The over-firing side is already gated by t76_load_file_paths, whose target
+# has two `return`s inside `define` bodies and must keep splicing.
+
+print of "main-start"
+load_file of "_lfret.eigs"
+print of "main-end"

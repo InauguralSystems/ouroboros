@@ -5908,6 +5908,28 @@ define splice_static_loads(blk, base, depth) as:
                     append of [out, st]
                 else:
                     local cast is eigen_parse of (eigen_tokenize of csrc)
+                    # A THIRD `return` semantics, and the one that was left
+                    # unguarded. `return` at the top level of a load_file'd
+                    # target ends THAT FILE only and yields its value to the
+                    # load_file call; the program continues. The module case
+                    # ends the module; the main-program case ends the program.
+                    # Splicing the target into main collapses all three into
+                    # "end the program":
+                    #
+                    #   inc.eigs   print "inc-start" / return 7 / print "inc-after"
+                    #   main.eigs  print "main-start" / load_file "inc.eigs" / print "main-end"
+                    #   VM   main-start inc-start main-end      AOT  main-start inc-start
+                    #
+                    # This predates the #146 emission change, but that change
+                    # made it QUIETER rather than louder: the old code emitted
+                    # `return 7` from main, so the binary exited 7 against the
+                    # VM's 0 and the suite's exit-code contract would have
+                    # caught it. Emitting exit-0 left stdout as the only
+                    # difference — the exact silent class #146 was about.
+                    # Measured cost of refusing: 0 of the 55 literal load_file
+                    # targets in the ecosystem (371 references).
+                    if (module_has_toplevel_return of cast) == 1:
+                        throw of ("AOT: load_file target '" + path + "' ends its own top level with a `return`. In the VM that ends only the loaded file and the caller continues; the AOT splices the target into the program, where it would end the WHOLE program. Refused rather than guessed (ouroboros#146).")
                     local sp is splice_static_loads of [cast, full, depth + 1]
                     local cs is sp[1]
                     for k in range of (len of cs):
