@@ -5544,6 +5544,22 @@ define splice_static_loads(blk, base, depth) as:
             # to the module's transitive imports.
             local pre_imp is {}
             collect_import_names of [["block", stmts], pre_imp]
+            # ...and what the MODULE imports. The exemption must hold only when
+            # BOTH sides bind the name via `import`, which is the one case where
+            # they provably denote the same spliced module dict. Testing the
+            # program's side alone exempts by NAME rather than by KIND, and the
+            # real stdlib reaches it: `lib/list.eigs` binds `map` with a
+            # `define`, so `import map` + `import list` skipped the guard and
+            # the splice clobbered the program's module dict —
+            #
+            #     import my        (my.eigs:  val is 5)      VM  5
+            #     import mx        (mx.eigs:  my is {...})   AOT 99
+            #     print of my.val                            both rc=0, empty log
+            #
+            # Skipping also dropped the G_MODNAMES registration, so the name was
+            # not even recorded for the next module's check.
+            local mod_imp is {}
+            collect_import_names of [["block", (mast[1])], mod_imp]
             local msp is splice_static_loads of [mast, mpath, depth + 1]
             local mst is msp[1]
             # Collision check BEFORE splicing. Splicing merges the module's
@@ -5569,7 +5585,7 @@ define splice_static_loads(blk, base, depth) as:
                 # appears in linalg's bindings AND in the program, which the
                 # first version of this guard refused despite the program being
                 # verified byte-exact.
-                if (bn != mname) and (pre_imp[bn] != 1):
+                if (bn != mname) and ((pre_imp[bn] != 1) or (mod_imp[bn] != 1)):
                     if prior[bn] == 1:
                         throw of ("AOT: import '" + mname + "' binds '" + bn + "', which the importing program also uses. The AOT splices module top-levels into ONE scope, so the two would silently merge — the VM gives the module its own env. Rename one, or see ouroboros#141 (namespaced module splicing).")
                     if G_MODNAMES[bn] == 1:
