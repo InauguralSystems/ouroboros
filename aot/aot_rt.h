@@ -939,10 +939,24 @@ static Value *aot_report(Env *e, const char *name) {
  * and independent of any flag, stamping each entry with g_trace_current_line —
  * which the emitter sets per source line, mirroring OP_LINE. Numeric values
  * only for now; an unknown/one-assignment name yields 0 (as the VM's miss). */
-/* Boxed sibling: the tape's slot carries the Value (slot_from_value), exactly
- * as the VM's OP_TRACE path records a non-numeric assignment. Borrows val. */
+/* Boxed sibling of aot_trace_assign. Genuinely borrows val -- which means
+ * slot_from_value is EXACTLY the wrong constructor: it TAKES OWNERSHIP,
+ * collapsing (freeing) a numeric box. The first version used it anyway, under
+ * a comment saying "Borrows val", and the traced+observed boxed store then
+ * freed the box one line before aot_observe_val increfed it -- the SAME
+ * consume-use-after-free caught in aot_observe_val the round before, rebuilt
+ * by the same author in the sibling function the fixture did not reach
+ * (t112 has no interrogate, so g_traced was 0 there). Symptom, all silent:
+ *
+ *   ... prev of a / report of a / diverging of a
+ *   VM  130 / diverging / 1        AOT  10 / moving / 0     both rc 0
+ *
+ * Wrap by hand exactly as vm.c's dot-read does, per its own NOTE: num ->
+ * slot_from_num, heap -> slot_from_heap (borrow, no incref), null -> null. */
 static void aot_trace_assign_val(const char *name, Value *val) {
-    trace_assign(name, slot_from_value(val));
+    if (!val || val->type == VAL_NULL) { EigsSlot s0 = slot_null(); trace_assign(name, s0); return; }
+    if (val->type == VAL_NUM) { trace_assign(name, slot_from_num(val->data.num)); return; }
+    trace_assign(name, slot_from_heap(val));
 }
 static void aot_trace_assign(const char *name, double v) {
     EigsSlot s; s.d = v;
