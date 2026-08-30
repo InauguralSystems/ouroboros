@@ -15,7 +15,12 @@
 # a tape fixture happened to combine the shadow with a binder — two wrongs had
 # coincided in the only shape anyone had tested.
 #
-# Sixth context-dependent scoping row sent to EigenScript#1056.
+# Sixth context-dependent scoping row sent to EigenScript#1056. The next
+# review measured the rule to be GENERAL -- a function-body binder over any
+# module-bound name loop-scopes (the plain-module-global row had been silently
+# wrong since for-unboxing existed) -- so the guard now keys on module-bound-
+# ness, not parameter-ness, and its sibling module_global_forbinder.eigs pins
+# the row that was never a parameter at all.
 
 x is 5
 

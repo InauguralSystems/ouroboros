@@ -2120,9 +2120,16 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
             fo is fo + ind + "  double " + (cn of fvar) + " = 0;\n"
         fo is fo + ind + "  long " + nv + " = aot_iter_len(" + itv + ");\n"
         fo is fo + ind + "  for (long " + kv + " = 0; " + kv + " < " + nv + "; " + kv + "++) {\n"
-        if (g_cur_params[fvar] == 1) and (g_module_names[fvar] == 1):
-            # A for binder over a PARAM THAT SHADOWS A MODULE NAME. Measured on
-            # the VM, the binder's post-loop persistence depends on that shadow:
+        if ((G_CUR_FN[0]) != "<module>") and (g_module_names[fvar] == 1):
+            # A for binder INSIDE A FUNCTION over ANY MODULE-BOUND NAME. This
+            # started as a params-only refusal and the next review measured the
+            # rule to be general: the VM loop-scopes a function-body binder
+            # whenever the name is module-bound -- param shadow, local shadow,
+            # or a PLAIN module global (`for x in ...` with `x is 5` at module
+            # scope and no local: VM returns/leaves 5, the AOT persisted 8,
+            # silent, pre-existing). Three guards that are secretly one rule
+            # will each be wrong at their seams; this is the one rule.
+            # Measured for the param case:
             #
             #   define f(x) as: for x in [7,8]: ... / return x
             #   f of 1  ->  8 with no module x        (binder persists in param)
@@ -2131,7 +2138,7 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
             # One C variable cannot do both, and the divergence predates the
             # tape work (untraced m2: VM 1|5, AOT 8|5, both rc 0, silent).
             # Refused rather than answering with either wrong half.
-            throw of ("AOT: '" + fvar + "' is a for binder over a parameter that shadows a module binding. The VM loop-scopes the binder in that configuration and persists it otherwise; one C variable cannot express both (see EigenScript#1056).")
+            throw of ("AOT: '" + fvar + "' is a for binder inside a function over a name that shadows a module binding. The VM loop-scopes a function-body binder whenever its name is module-bound (parameter, local, or the module global itself) and persists it otherwise; one C variable cannot express both (see EigenScript#1056).")
         if g_forunbox[fvar] != null:
             # unboxed: bind the C double directly — no env write, no boxed
             # read-back in the body. A buffer iterable reads elementwise
@@ -2142,18 +2149,12 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
                 fo is fo + ind + "    " + (cn of fvar) + " = aot_buf_get_i(" + itv + ", " + kv + ");\n"
             else:
                 fo is fo + ind + "    " + (cn of fvar) + " = aot_num_ck_at(aot_iter_get(" + itv + ", " + kv + "), \"" + (c_escape of (G_CUR_FN[0])) + ": for-in " + (c_escape of fvar) + "\");\n"
-            # THE SEVENTH TAPE WRITE SITE, and the one that falsified "never a
-            # parameter". Measured: a for-binder store records on the VM's tape
-            # in EVERY scope -- module, function, and over a PARAMETER of the
-            # current function -- while a param ASSIGNMENT never does. The
-            # write-set rule is per-SITE, not per-name:
-            #
-            #   x is 0 / for x in [1,2,3]: ... / print of (prev of x)
-            #   VM  2 (binder writes on tape; binding loop-scoped)   AOT  null
-            #
-            # so this traces unconditionally on the name, g_cur_params ignored.
-            if g_traced == 1:
-                fo is fo + ind + "    aot_trace_assign(\"" + fvar + "\", " + (cn of fvar) + ");\n"
+            # NO trace call in this arm, and the first version had one -- dead:
+            # g_forunbox is populated only when g_traced == 0, so a traced
+            # program never reaches the unboxed arm and its binder traces from
+            # the env/C-var arms below. "All four binder arms now trace" was
+            # false for this one; the claim is corrected here rather than the
+            # dead code kept to make it look true.
         else:
             if g_genp[fvar] == 1:
                 # A generic PARAMETER as the loop binder. Every read of a genp
@@ -2175,12 +2176,21 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
                 if g_traced == 1:
                     # see the unboxed arm: binder stores trace in every scope
                     fo is fo + ind + "    aot_trace_assign_val(\"" + fvar + "\", " + (cn of fvar) + ");\n"
-            elif g_cur_params[fvar] == 1:
-                # a NUMERIC parameter as binder, in a regime where unboxing is
-                # off (traced/observed). The param lives in a C double and every
-                # read takes it; the terminal env arm wrote __eigs_g and the
-                # post-loop read returned the incoming argument (VM 8, AOT 1).
-                # Same class as the genp arm above, one type over.
+            elif (g_cur_params[fvar] == 1) and (g_observed == 0):
+                # a NUMERIC parameter as binder, where unboxing is off because
+                # the program is TRACED. The param lives in a C double and
+                # every read takes it; the terminal env arm wrote __eigs_g and
+                # the post-loop read returned the incoming argument (VM 8,
+                # AOT 1). Same class as the genp arm above, one type over.
+                #
+                # g_observed == 0 IS LOAD-BEARING: an OBSERVED function routes
+                # its params through the global env BY NAME (Part 2a -- entry
+                # seeds aot_set(__eigs_g, "p", ...) and every read is a
+                # named_ic env read), so there the C-var write is a DEAD STORE
+                # and the terminal env arm below is the correct one. The first
+                # version of this arm fired in both regimes and regressed an
+                # observed program its parent compiled byte-exact (VM 8,
+                # AOT 1) -- the same storage-mismatch class, mirrored.
                 fo is fo + ind + "    " + (cn of fvar) + " = aot_num_ck_at(aot_iter_get(" + itv + ", " + kv + "), \"" + (c_escape of (G_CUR_FN[0])) + ": for-in " + (c_escape of fvar) + "\");\n"
                 if g_traced == 1:
                     fo is fo + ind + "    aot_trace_assign(\"" + fvar + "\", " + (cn of fvar) + ");\n"
