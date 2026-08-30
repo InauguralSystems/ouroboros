@@ -5489,25 +5489,6 @@ define lift_nested_at(node, bound, out_funcs, outer_after) as:
                                 # it one position over.
                                 if (uses_ident of [(lst[2]), dname]) == 1:
                                     dominates is 0
-                                # ...and a `for` binder over the declared name
-                                # anywhere in the body refuses. MEASURED, the
-                                # VM's binder scoping depends on both nesting
-                                # depth and binding kind: over a nested
-                                # define's `local` it is LOOP-SCOPED (x stays
-                                # 7 after the loop); over the same local in a
-                                # top-level define it PERSISTS (x is 2); over
-                                # a nested define's parameter it persists too.
-                                # The AOT emits one C local either way, so the
-                                # nested-local case silently diverged (VM 15,
-                                # AOT 10, both rc 0) -- and for the enclosing-
-                                # name variant the exemption train had turned
-                                # HEAD~2's loud refusal into that silence.
-                                # Fourth road-dependence instance upstreamed
-                                # to EigenScript#1056.
-                                local fb2 is {}
-                                collect_for_binders of [fbody, fb2]
-                                if fb2[dname] == 1:
-                                    throw of ("AOT: nested define '" + fname + "' declares 'local " + dname + "' and also uses '" + dname + "' as a for binder. Inside a nested define the VM loop-scopes that binder while the AOT would reuse one C variable, so the post-loop value diverges. Refused rather than answering with the wrong one (EigenScript#1056).")
                                 if dominates == 1:
                                     own[dname] is 1
                 local nested_assigns is collect_assigns of [fbody, {}]
@@ -5568,6 +5549,37 @@ define lift_nested_at(node, bound, out_funcs, outer_after) as:
                         G_LIFT_N[0] is G_LIFT_N[0] + 1
                         append of [caps, [cand, mangled]]
                         rmap[cand] is mangled
+                # A `for` binder in a NESTED define is loop-scoped by the VM
+                # over EVERY binding kind except the define's own parameter --
+                # measured, one row at a time:
+                #
+                #   binder over the define's `local`      VM loop-scopes (15)
+                #   binder over a plain `is` binding      VM loop-scopes (15)
+                #   binder over a CAPTURED enclosing name VM loop-scopes (108)
+                #   binder over a module GLOBAL           VM loop-scopes; the
+                #                                         AOT clobbered it
+                #   binder over a fresh name, read after  VM dies rc 1; AOT ran
+                #   binder over the define's PARAMETER    persists (parity)
+                #
+                # The first guard here keyed on BINDING KIND ("a dominating
+                # top-level local") and the VM's rule keys on DEPTH -- deleting
+                # the word `local` from the guard's own fixture evaded it, and
+                # four more spellings each diverged silently (worst: VM 108 /
+                # AOT 305 through a capture, and a clobbered global). One check
+                # keyed on the right axis subsumes all of them: any binder
+                # whose name is not a parameter refuses. Same top-level-vs-
+                # nested asymmetry as the rest of EigenScript#1056.
+                local nfb is {}
+                collect_for_binders of [fbody, nfb]
+                local nfk is keys of nfb
+                for nfi in range of (len of nfk):
+                    local nfn is nfk[nfi]
+                    local isparam is 0
+                    for nfp in range of (len of fparams):
+                        if (fparams[nfp]) == nfn:
+                            isparam is 1
+                    if isparam == 0:
+                        throw of ("AOT: nested define '" + fname + "' uses '" + nfn + "' as a for binder. Inside a nested define the VM loop-scopes that binder (for every binding kind except a parameter) while the AOT would reuse one C variable, so the post-loop value diverges. Refused rather than answering with the wrong one (EigenScript#1056).")
                 rename_idents of [fbody, rmap]
                 append of [out_funcs, ["func", fname, fparams, fbody]]
                 g_func_names[fname] is 1

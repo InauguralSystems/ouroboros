@@ -52,3 +52,17 @@ define accum(total) as:
     return (helper of 3) + total
 
 print of (accum of 1)
+
+define iter(seed) as:
+    define step(d) as:
+        # a for binder over the define's own PARAMETER: the one binding kind
+        # where the VM persists the binder (parity with the single-C-variable
+        # emission), so this must stay compilable — a guard that refused every
+        # binder in a nested define would take it out.
+        local acc is 0
+        for d in [1, 2]:
+            acc is acc + d
+        return d + acc
+    return step of seed
+
+print of (iter of 5)

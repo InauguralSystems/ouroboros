@@ -2,8 +2,14 @@
 #
 # A nested define that declares `local x` and also uses x as a `for` binder.
 #
-# THE POINT OF THIS FIXTURE is a VM scoping rule that depends on BOTH nesting
-# depth and binding kind, measured rather than assumed:
+# THE POINT OF THIS FIXTURE is a VM scoping rule that depends on nesting depth
+# and binding kind — and the first guard written from it keyed on the WRONG
+# AXIS. It refused "a dominating top-level local used as a binder"; the VM's
+# rule is that in a nested define the binder is loop-scoped for EVERY binding
+# kind except a parameter. Deleting the word `local` from this very fixture
+# evaded that guard (its sibling covers the plain-`is` spelling now), and four
+# more spellings diverged silently — through a capture (VM 108 / AOT 305) and
+# over a module global, which the AOT clobbered. Measured rows:
 #
 #   binder over a `local` in a NESTED define     loop-scoped  (x stays 7 after)
 #   binder over the same local, TOP-LEVEL define persists     (x becomes 2)
