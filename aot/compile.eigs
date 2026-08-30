@@ -1838,8 +1838,15 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
                     o3 is o3 + ind + "aot_trace_assign(\"" + name + "\", " + (emit_num of [node[2], nm, bt, 0]) + ");\n"
                 o3 is o3 + ind + "aot_observe_num(__eigs_g, \"" + name + "\", " + (emit_num of [node[2], nm, bt, 0]) + ");\n"
                 return o3
+            if g_traced == 1:
+                # traced but UNOBSERVED: the numeric store to a demoted name
+                # still records on the tape (staged through a temp so the RHS
+                # is emitted once)
+                return ind + "{ double __tv = " + (emit_num of [node[2], nm, bt, 0]) + "; aot_trace_assign(\"" + name + "\", __tv); " + (env_write_num of [name, "__tv"]) + " }\n"
             return ind + (env_write_num of [name, (emit_num of [node[2], nm, bt, 0])]) + "\n"
         if (g_lowerloc == 1) and (g_envloc[name] == 1):
+            if g_traced == 1:
+                return ind + "{ Value* __tv = " + (emit_val of [node[2], nm, bt]) + "; aot_trace_assign_val(\"" + name + "\", __tv); aot_lv_set(&" + (lv of name) + ", __tv); }\n"
             return ind + "aot_lv_set(&" + (lv of name) + ", " + (emit_val of [node[2], nm, bt]) + ");\n"
         if g_observed == 1:
             # A BOXED assign in an observed program must still observe. This
@@ -1856,6 +1863,19 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
                 return ova
             return ind + "aot_observe_val(" + (envc of name) + ", \"" + name + "\", " + (emit_val of [node[2], nm, bt]) + ");\n"
         local wc is ic_cache of 0
+        if g_traced == 1:
+            # traced but UNOBSERVED boxed store. Round 36's fixture filled the
+            # {temporal} x {boxed} x {OBSERVED} corner and its commit claimed
+            # the intersection closed; the unobserved corner was still empty
+            # and still broken -- a four-line program showed it:
+            #
+            #   s is "alpha" / s is "beta" / print of (prev of s)
+            #   VM  alpha        AOT  null       both rc 0
+            #
+            # The boxed path had never traced at all; only the numeric path
+            # carried aot_trace_assign. A claim that an intersection is closed
+            # must name every axis it was closed along.
+            return ind + "{ " + wc[0] + "Value* __tv = " + (emit_val of [node[2], nm, bt]) + "; aot_trace_assign_val(\"" + name + "\", __tv); aot_set_ic(" + (envc of name) + ", \"" + name + "\", " + wc[1] + ", __tv); }\n"
         return ind + "{ " + wc[0] + "aot_set_ic(" + (envc of name) + ", \"" + name + "\", " + wc[1] + ", " + (emit_val of [node[2], nm, bt]) + "); }\n"
     if t == "index_assign":
         # Compound form (`l[i] += e`, 5th elem = base op) is not lowered here

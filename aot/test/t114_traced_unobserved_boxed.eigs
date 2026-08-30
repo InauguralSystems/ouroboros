@@ -1,0 +1,44 @@
+# Temporal reads of BOXED values in an UNOBSERVED program — the corner round 36
+# claimed closed and did not.
+#
+# THE POINT OF THIS FIXTURE is that an intersection has as many corners as
+# axes. Round 36's fixture filled {temporal} x {boxed} x {OBSERVED} and its
+# commit said "the intersection was empty, t113 fills it" — but the unobserved
+# corner stayed empty, and a four-line program showed it:
+#
+#   s is "alpha" / s is "beta" / print of (prev of s)
+#   VM  alpha        AOT  null        both build, both rc 0
+#
+# The boxed assign path had NEVER traced: only the numeric path carried
+# aot_trace_assign. Three arms needed the call — the terminal boxed store, the
+# lowered-local store, and the numeric-RHS-to-demoted-name store — each staged
+# through a temp so the RHS is emitted once. A claim that an intersection is
+# closed must name every axis it was closed along.
+
+s is "alpha"
+s is "beta"
+print of (prev of s)
+
+# the lowered-local arm, inside a function
+define f(k) as:
+    local t is "aa"
+    t is "bb"
+    print of (prev of t)
+    return 0
+
+print of (f of 1)
+
+# a container: the tape's heap borrow must survive the reassignment that frees
+# the old value (history increfs the borrowed slot)
+d is {"k": 1}
+d is {"k": 2}
+print of ((prev of d)["k"])
+
+# and the demoted-numeric arm: a name that later holds a string is off the
+# numeric class, so its numeric assigns take the env_write_num path
+m is 5
+m is 6
+print of (prev of m)
+m is "end"
+print of (prev of m)
+print of "done"
