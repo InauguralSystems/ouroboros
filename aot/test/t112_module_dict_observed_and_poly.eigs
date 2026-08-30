@@ -1,0 +1,37 @@
+# Module-dict call sites crossing two other strata: observer instrumentation
+# and argument-evidence collection — ouroboros round 35 (the dry-check round).
+#
+# THE POINT OF THIS FIXTURE is that nine rounds of guards on one pass proved
+# nothing about COMPOSITION. Both halves here are single-stratum-green:
+# imports worked, observers worked, and their crossing was silently wrong in
+# two independent ways.
+#
+# HALF 1 — a module-dict call RHS feeding an observed variable. The call
+# demoted `a` off the numeric class, the boxed store recorded nothing, and
+# every predicate answered from an empty window: VM 1, AOT 0, both rc 0. The
+# fix routes observed boxed assigns through aot_observe_val, built on the
+# runtime's own observer_slot_update. Its first version had a use-after-free
+# (the store consumes the value; slot_from_value collapses numerics) whose
+# symptom was NOT a crash: trajectories agreed for four samples and split on
+# the fifth, because the freed box's bytes still looked like a number.
+#
+# HALF 2 — a polymorphic argument through the dict. `M.announce of "hi"`
+# contributed no argument evidence (widen_scan resolved only ident callees),
+# so the parameter stayed numeric and the wrapper died at runtime on the
+# string: VM rc 0, AOT rc 1. After splicing, `M.fn` statically names `M__fn`,
+# and the resolution is sound even if the dict is mutated at runtime — extra
+# widening evidence only boxes, and boxing is semantics-preserving.
+
+import _t112m
+
+a is 100.0
+a is _t112m.step of a
+a is _t112m.step of a
+a is _t112m.step of a
+a is _t112m.step of a
+print of (report of a)
+print of (diverging of a)
+
+_t112m.announce of 7
+_t112m.announce of "hi"
+print of "done"

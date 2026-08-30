@@ -1826,9 +1826,35 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
                 asn is asn + ind + "aot_trace_assign(\"" + name + "\", " + (cn of name) + ");\n"
             return asn
         if (is_num_expr of [node[2], nm, bt]) == 1:
+            if g_observed == 1:
+                # a numeric RHS to a DEMOTED name (nm[name] != 1, e.g. after a
+                # module-dict call elsewhere demoted it) still must observe --
+                # this arm was the third unobserved store in the same family,
+                # found by reading the emitted C: `a is 100.0` went through
+                # aot_set_num_ic while the later boxed assigns observed, so the
+                # window was short one entry.
+                local o3 is ""
+                if g_traced == 1:
+                    o3 is o3 + ind + "aot_trace_assign(\"" + name + "\", " + (emit_num of [node[2], nm, bt, 0]) + ");\n"
+                o3 is o3 + ind + "aot_observe_num(__eigs_g, \"" + name + "\", " + (emit_num of [node[2], nm, bt, 0]) + ");\n"
+                return o3
             return ind + (env_write_num of [name, (emit_num of [node[2], nm, bt, 0])]) + "\n"
         if (g_lowerloc == 1) and (g_envloc[name] == 1):
             return ind + "aot_lv_set(&" + (lv of name) + ", " + (emit_val of [node[2], nm, bt]) + ");\n"
+        if g_observed == 1:
+            # A BOXED assign in an observed program must still observe. This
+            # path is reached when a name is demoted off the numeric class --
+            # measured: `a is M.step of a` four times, then `diverging of a`:
+            # VM 1, AOT 0, both rc 0, because aot_set_ic stored the value and
+            # updated no slot, so every predicate answered from an empty
+            # window. aot_observe_val is the boxed sibling of aot_observe_num,
+            # built on the runtime's own observer_slot_update, so containers
+            # walk entropy exactly as the VM does.
+            local ova is ""
+            if g_traced == 1:
+                ova is ova + ind + "{ Value* __ov = " + (emit_val of [node[2], nm, bt]) + "; aot_trace_assign_val(\"" + name + "\", __ov); aot_observe_val(" + (envc of name) + ", \"" + name + "\", __ov); }\n"
+                return ova
+            return ind + "aot_observe_val(" + (envc of name) + ", \"" + name + "\", " + (emit_val of [node[2], nm, bt]) + ");\n"
         local wc is ic_cache of 0
         return ind + "{ " + wc[0] + "aot_set_ic(" + (envc of name) + ", \"" + name + "\", " + wc[1] + ", " + (emit_val of [node[2], nm, bt]) + "); }\n"
     if t == "index_assign":
@@ -4091,6 +4117,27 @@ define widen_scan(node, caller_pt, caller_params, caller_locals, caller_fn) as:
     local changed is 0
     if node[0] == "call":
         local callee is unwrap of node[1]
+        # A dot-callee over an IMPORTED MODULE resolves statically: after
+        # splicing, `M.fn` names the renamed function `M__fn`, whose wrapper
+        # will coerce arguments against the inferred ptypes -- so a call site
+        # spelled through the dict must contribute the same argument evidence
+        # as a named call, or the evidence is silently lost:
+        #
+        #   _x2m.announce of 7 / _x2m.announce of "hi"
+        #   VM  7 / hi / done, rc 0
+        #   AOT builds, prints 7, then "non-numeric value in a numeric context
+        #       at _x2m__announce parameter (type str)", rc 1
+        #
+        # Sound even if the program mutates the dict at runtime: extra widening
+        # evidence only ever BOXES a parameter, and boxing is semantics-
+        # preserving (measured, round 16) -- the cost of a stale resolution is
+        # performance, never a wrong answer.
+        if callee[0] == "dot":
+            local dmt is unwrap of callee[1]
+            if dmt[0] == "ident":
+                if G_IMPORTED[dmt[1]] == 1:
+                    if g_funcs[(dmt[1]) + "__" + callee[2]] != null:
+                        callee is ["ident", (dmt[1]) + "__" + callee[2]]
         if callee[0] == "ident":
             local cf is g_funcs[callee[1]]
             if cf != null:

@@ -816,6 +816,37 @@ static inline double aot_norm_range(Value *A, double sa, double ea) {
  * predicates (converged/stable/...) read that last-observer's slot — exactly
  * CASE(PREDICATE). Both call the runtime's observer fns, so the VM stays the
  * oracle. (Unboxing is off for observed programs — observation needs the slot.) */
+/* Boxed sibling of aot_observe_num: same store + slot update + last-observer,
+ * via the runtime's own observer_slot_update, which handles every value type
+ * (containers walk entropy exactly as the VM does — it IS the VM's updater).
+ * Added when a module-dict call RHS demoted an observed variable off the
+ * numeric class: the boxed store recorded nothing, the history stayed empty,
+ * and every predicate answered from an empty window (VM 1 / AOT 0, both rc 0).
+ * Takes ownership of val, like the set it replaces. */
+static void aot_observe_val(Env *e, const char *name, Value *val) {
+    /* Hold a ref across the store: env_set_local_owned consumes val, and for a
+     * numeric Value slot_from_value collapses it -- reading it afterwards for
+     * the observer update was use-after-free. The symptom was subtle, not a
+     * crash: trajectories agreed for four samples and split on the fifth (VM
+     * `diverging`, AOT `moving`), because the freed box's bytes still LOOKED
+     * like a plausible number. */
+    val_incref(val);
+    env_set_local_owned(e, name, val);
+    if (g_unobserved_depth != 0) { val_decref(val); return; }
+    int oidx = -1, odepth = 0;
+    Env *oe = env_resolve_chain(e, name, env_hash_name(name), &oidx, &odepth);
+    if (oe && oidx >= 0) {
+        observer_slot_update(oe, oidx, val);
+        g_last_obs_slot_env = oe;
+        g_last_obs_slot_idx = oidx;
+        if (g_trace_obs_hist) {
+            const ObserverSlot *os = &oe->obs[oidx];
+            trace_record_obs(name, os->entropy, os->dH, os->last_entropy);
+        }
+    }
+    val_decref(val);
+}
+
 static void aot_observe_num(Env *e, const char *name, double val) {
     env_set_local_owned(e, name, make_num(val));
     if (g_unobserved_depth != 0) return;
@@ -908,6 +939,11 @@ static Value *aot_report(Env *e, const char *name) {
  * and independent of any flag, stamping each entry with g_trace_current_line —
  * which the emitter sets per source line, mirroring OP_LINE. Numeric values
  * only for now; an unknown/one-assignment name yields 0 (as the VM's miss). */
+/* Boxed sibling: the tape's slot carries the Value (slot_from_value), exactly
+ * as the VM's OP_TRACE path records a non-numeric assignment. Borrows val. */
+static void aot_trace_assign_val(const char *name, Value *val) {
+    trace_assign(name, slot_from_value(val));
+}
 static void aot_trace_assign(const char *name, double v) {
     EigsSlot s; s.d = v;
     trace_assign(name, s);
