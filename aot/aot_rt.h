@@ -965,7 +965,21 @@ static void aot_trace_assign(const char *name, double v) {
 /* The query result is polymorphic — a number, a string (`who`), or `null` on a
  * miss — so route the slot through slot_to_value (exactly like the VM's
  * INTERROGATE_NAMED_AT) rather than assuming a double, then drop the slot's ref. */
+/* Compile-time-known "undefined variable" raise, in Value* position: the VM's
+ * exact error for a module-scope interrogate of a never-module-bound name. */
+static Value *aot_undefined_name(const char *name) {
+    rt_error(EK_UNDEFINED_NAME, 0, "undefined variable '%s'", name);
+    return NULL; /* unreachable */
+}
 static Value *aot_prev_val(const char *name) {
+    /* NO env bound-check here, deliberately -- and one was added and reverted.
+     * The VM does require the name bound in scope before the tape is read
+     * (`prev of t` of a returned function's local raises "undefined
+     * variable"), but an env resolve is the WRONG instrument: traced-only
+     * numeric variables live in C doubles, not the env, so the check raised on
+     * every unboxed temporal variable and broke t33/t36 at runtime. Boundness
+     * is a compile-time fact; the emitter decides it (g_module_names) and
+     * emits aot_undefined_name for the unbound case. */
     EigsSlot out;
     if (trace_query_prev(name, &out)) {
         Value *v = slot_to_value(out);

@@ -41,4 +41,29 @@ m is 6
 print of (prev of m)
 m is "end"
 print of (prev of m)
+
+# CROSS-FUNCTION: the VM's tape is process-global and NAME-KEYED, so an
+# assignment inside an interrogate-free function lands in the same history a
+# module-level `prev of` reads. g_traced was derived per function, making the
+# write-set scope-local:
+#
+#   define g(k) as: local s is "one" / s is "two" ... / g of 1 / s is "three"
+#   print of (prev of s):   VM  two        AOT  null      both rc 0
+#
+# Tracing is now program-wide: any interrogate anywhere makes every function
+# trace. (A function local SHADOWING a module name refuses loudly under the
+# pre-existing temporal-shadow guard -- correct, since the name-keyed tape
+# genuinely merges those histories.)
+w is "zero"
+
+define gg(k) as:
+    # an OUTWARD write to the module-bound w -- no local declaration, so the
+    # store crosses the frame and must land on the tape (a local SHADOWING a
+    # module name refuses loudly instead, under the temporal-shadow guard)
+    w is "two"
+    return 0
+
+print of (gg of 1)
+w is "three"
+print of (prev of w)
 print of "done"

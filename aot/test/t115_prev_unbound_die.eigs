@@ -1,0 +1,22 @@
+# `prev of` a name that exists ONLY as a function's local — both sides must DIE.
+#
+# THE POINT OF THIS FIXTURE is a leak the runtime cannot see. Part 2a routes a
+# temporal function's locals through the GLOBAL env and no env-removal API
+# exists, so after the function returns its local is still resolvable there —
+# indistinguishable from a real module binding. The VM raises "undefined
+# variable 't'" (the tape holds history under the name, but the READ requires
+# the binding in scope); the first AOT answered "one" from the tape, rc 0.
+#
+# The fix is compile-time: a module-scope `prev` of a name never bound at
+# module scope emits the VM's exact raise. Residual corner, accepted and
+# stated in the emitter: one temporal function interrogating ANOTHER's leaked
+# local still diverges — unfixable without an env-removal API upstream.
+
+define g(k) as:
+    local t is "one"
+    t is "two"
+    return 0
+
+print of (g of 1)
+print of (prev of t)
+print of "unreachable"

@@ -126,6 +126,26 @@ define uses_observer(ast) as:
 # When set, every numeric assignment is recorded on the trace tape (independent
 # of the env, so temporal vars stay unboxed) and each source line is stamped.
 g_traced is 0
+# Program-wide temporal flag. The VM's tape is PROCESS-GLOBAL and name-keyed:
+# an assignment inside an interrogate-free function still lands in the same
+# name history a module-level `prev of` reads. Deriving g_traced per function
+# made the write-set scope-local -- an 8-line program showed it:
+#
+#   define g(k) as: local s is "one" / s is "two" / return 0
+#   g of 1 / s is "three" / print of (prev of s)
+#   VM  two        AOT  null        both rc 0
+#
+# so if ANY interrogate exists in the program, every function traces.
+g_prog_traced is 0
+# Names bound at MODULE scope (top-level assigns at any depth in the module
+# body, plus function names). A module-scope interrogate of a name outside this
+# set always raises "undefined variable" in the VM -- the tape may hold history
+# under that name (it is name-keyed and cross-scope), but the read requires the
+# binding. Needed because Part-2a routes temporal-function locals through the
+# GLOBAL env and there is no env-removal API, so a returned function's local
+# leaks into __eigs_g and a runtime resolve cannot tell it from a real module
+# binding.
+g_module_names is {}
 # ---- #67: C-keyword identifier mangling -----------------------------------
 # A user identifier that is a C keyword (`double`, `int`, `static`, ...) is
 # legal EigenScript but invalid as a C identifier, so gen.c failed to compile.
@@ -1318,6 +1338,18 @@ define emit_val(node, nm, bt) as:
                 throw of "AOT: the `when <n>` interrogative qualifier is not supported"
         if iat == null:
             if ik == 6:
+                if ((G_CUR_FN[0]) == "<module>") and (g_module_names[ie[1]] != 1):
+                    # A module-scope `prev` of a name never bound at module
+                    # scope ALWAYS raises in the VM, even when the name-keyed
+                    # tape holds history from some function's local. A runtime
+                    # resolve cannot catch this: temporal-function locals are
+                    # routed through the global env (Part 2a) and leak there
+                    # after return, indistinguishable from a real binding.
+                    # Residual corner, accepted and stated: one temporal
+                    # function interrogating ANOTHER's leaked local still
+                    # diverges (VM raises, we answer) -- rarer than this shape
+                    # and unfixable without an env-removal API upstream.
+                    return "aot_undefined_name(\"" + ie[1] + "\")"
                 return "aot_prev_val(\"" + ie[1] + "\")"
             throw of "AOT: temporal interrogative without `at` only supports `prev`"
         # The at-form addresses a NAMED binding; a non-ident operand has no
@@ -1845,8 +1877,11 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
                 return ind + "{ double __tv = " + (emit_num of [node[2], nm, bt, 0]) + "; aot_trace_assign(\"" + name + "\", __tv); " + (env_write_num of [name, "__tv"]) + " }\n"
             return ind + (env_write_num of [name, (emit_num of [node[2], nm, bt, 0])]) + "\n"
         if (g_lowerloc == 1) and (g_envloc[name] == 1):
-            if g_traced == 1:
-                return ind + "{ Value* __tv = " + (emit_val of [node[2], nm, bt]) + "; aot_trace_assign_val(\"" + name + "\", __tv); aot_lv_set(&" + (lv of name) + ", __tv); }\n"
+            # No traced arm here, ON PURPOSE. One was added and reviewed dead:
+            # g_envloc is populated only when g_traced == 0 and g_observed == 0,
+            # so g_lowerloc && g_traced is contradictory and the arm could never
+            # execute. A traced program's locals stay env-resident, and traced
+            # boxed stores go through the terminal arm below.
             return ind + "aot_lv_set(&" + (lv of name) + ", " + (emit_val of [node[2], nm, bt]) + ");\n"
         if g_observed == 1:
             # A BOXED assign in an observed program must still observe. This
@@ -4888,7 +4923,7 @@ define emit_function(fn, finfo, gnm, gbt) as:
     local _save_otr is g_obs_traced
     local _save_ret is g_ret_type
     g_ret_type is finfo["ret"]
-    g_traced is has_interrogate of body
+    g_traced is g_prog_traced
     g_obs_traced is has_obs_interrogate of body
     g_observed is 0
     if (uses_observer of body) == 1:
@@ -5672,8 +5707,22 @@ define emit_program(ast) as:
     local stmts is ast
     if ast[0] == "block":
         stmts is ast[1]
-    # Temporal programs: record numeric assignments on the trace tape.
-    g_traced is has_interrogate of ast
+    # Temporal programs: record assignments on the trace tape. PROGRAM-wide:
+    # see g_prog_traced's declaration for the cross-scope divergence that
+    # per-function derivation caused.
+    g_prog_traced is has_interrogate of ast
+    g_traced is g_prog_traced
+    g_module_names is {}
+    if g_prog_traced == 1:
+        local mn_a is collect_assigns of [stmts, {}]
+        local mn_k is keys of mn_a
+        for mi in range of (len of mn_k):
+            g_module_names[(mn_k[mi])] is 1
+        for mi2 in range of (len of stmts):
+            local mnu is unwrap of stmts[mi2]
+            if ((type of mnu) == "list") and ((len of mnu) > 0):
+                if mnu[0] == "func":
+                    g_module_names[(mnu[1])] is 1
     # where/why/how need the observer snapshot -> force observed (boxed) + obs-trace.
     g_obs_traced is has_obs_interrogate of ast
     # Observer programs: numeric vars are env-boxed + observed (no unboxing).
