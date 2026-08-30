@@ -1,0 +1,28 @@
+# EXPECT: as a for binder
+#
+# A nested define that declares `local x` and also uses x as a `for` binder.
+#
+# THE POINT OF THIS FIXTURE is a VM scoping rule that depends on BOTH nesting
+# depth and binding kind, measured rather than assumed:
+#
+#   binder over a `local` in a NESTED define     loop-scoped  (x stays 7 after)
+#   binder over the same local, TOP-LEVEL define persists     (x becomes 2)
+#   binder over a nested define's PARAMETER      persists
+#
+# The AOT emits one C variable in every case, so the nested-local shape
+# silently diverged: VM 15, AOT 10, both build, both rc 0. Worse, for the
+# variant with an enclosing `local x` two commits earlier had REFUSED loudly —
+# the local-shadow exemption train converted a loud refusal into silence.
+#
+# Same text, three meanings by context: the fourth road-dependence instance
+# this loop has sent upstream (EigenScript#1056).
+
+define f(y) as:
+    define b(d) as:
+        local x is 7
+        for x in [1, 2]:
+            d is d + x
+        return d + x
+    return b of 5
+
+print of (f of 0)

@@ -5489,6 +5489,25 @@ define lift_nested_at(node, bound, out_funcs, outer_after) as:
                                 # it one position over.
                                 if (uses_ident of [(lst[2]), dname]) == 1:
                                     dominates is 0
+                                # ...and a `for` binder over the declared name
+                                # anywhere in the body refuses. MEASURED, the
+                                # VM's binder scoping depends on both nesting
+                                # depth and binding kind: over a nested
+                                # define's `local` it is LOOP-SCOPED (x stays
+                                # 7 after the loop); over the same local in a
+                                # top-level define it PERSISTS (x is 2); over
+                                # a nested define's parameter it persists too.
+                                # The AOT emits one C local either way, so the
+                                # nested-local case silently diverged (VM 15,
+                                # AOT 10, both rc 0) -- and for the enclosing-
+                                # name variant the exemption train had turned
+                                # HEAD~2's loud refusal into that silence.
+                                # Fourth road-dependence instance upstreamed
+                                # to EigenScript#1056.
+                                local fb2 is {}
+                                collect_for_binders of [fbody, fb2]
+                                if fb2[dname] == 1:
+                                    throw of ("AOT: nested define '" + fname + "' declares 'local " + dname + "' and also uses '" + dname + "' as a for binder. Inside a nested define the VM loop-scopes that binder while the AOT would reuse one C variable, so the post-loop value diverges. Refused rather than answering with the wrong one (EigenScript#1056).")
                                 if dominates == 1:
                                     own[dname] is 1
                 local nested_assigns is collect_assigns of [fbody, {}]
