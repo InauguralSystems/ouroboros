@@ -5432,21 +5432,65 @@ define lift_nested_at(node, bound, out_funcs, outer_after) as:
                 #   VM 101, and HEAD~1 compiled it byte-exact; the guard then
                 #   refused it outright.
                 #
-                # TOP LEVEL ONLY, and that restriction is load-bearing: `local`
-                # is not block-scoped inside a function body, so a CONDITIONAL
-                # declaration followed by a bare write really does reach
-                # outward. Measured --
+                # TOP LEVEL, AND IT MUST DOMINATE EVERY USE. Top-level-ness
+                # alone is necessary and NOT sufficient -- the first version of
+                # this exemption checked only that, and a declaration then
+                # retroactively legalised writes that ran BEFORE it:
+                #
+                #   define b(d) as: x is 1 / local x is 2 / return d
+                #   VM 6 (outer x clobbered)   AOT 105 (outer x untouched)
+                #   both build, both rc 0 -- and HEAD~1 had REFUSED it loudly
+                #
+                # and a READ before the declaration was worse: the capture
+                # refusal shares this map, so admitting the name suppressed the
+                # capture and the lifted function read its own not-yet-assigned
+                # C local (VM 100, AOT 0).
+                #
+                # The conditional case is the same principle: a declaration
+                # inside an `if` dominates nothing. Measured --
                 #
                 #   define b(d) as: if d == 1: local x is 7 / x is 5
                 #   b of 1 -> outer x untouched;  b of 0 -> outer x CLOBBERED
                 #
-                # -- so a conditionally-declared name must keep refusing.
+                # -- so it stays refused, now for a stated reason rather than a
+                # positional coincidence.
                 for lp in range of (len of fbody):
                     local lst is unwrap of fbody[lp]
                     if (type of lst) == "list":
                         if (len of lst) >= 4:
                             if lst[0] == "assign":
-                                own[(lst[1])] is 1
+                                local dname is lst[1]
+                                # every statement BEFORE this one, at any depth
+                                local pre is []
+                                local pq is 0
+                                loop while pq < lp:
+                                    append of [pre, fbody[pq]]
+                                    pq is pq + 1
+                                local pre_assigns is collect_assigns of [pre, {}]
+                                local dominates is 1
+                                if pre_assigns[dname] != null:
+                                    dominates is 0
+                                for pr in range of (len of pre):
+                                    if (uses_ident of [pre[pr], dname]) == 1:
+                                        dominates is 0
+                                # ...and the declaration's OWN INITIALIZER. A
+                                # declaration does not dominate a read inside
+                                # itself: `local x is x + 1` reads the ENCLOSING
+                                # x on the right before binding the inner one.
+                                # Scanning only the preceding statements let it
+                                # through and the capture was suppressed:
+                                #
+                                #   VM 101    AOT 1    both build, both rc 0
+                                #
+                                # emitted as `long eig_x = 0; eig_x = eig_x + 1;`
+                                # -- the enclosing 100 never captured. This was
+                                # the SECOND order bug in this exemption, and
+                                # the first fix for the order bug reintroduced
+                                # it one position over.
+                                if (uses_ident of [(lst[2]), dname]) == 1:
+                                    dominates is 0
+                                if dominates == 1:
+                                    own[dname] is 1
                 local nested_assigns is collect_assigns of [fbody, {}]
                 # Statements AFTER this define in the enclosing body. A capture
                 # is a value SNAPSHOT taken HERE, so a later rebind of a

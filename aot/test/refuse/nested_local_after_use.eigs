@@ -1,0 +1,31 @@
+# EXPECT: assigns enclosing name
+#
+# A `local` declaration that comes AFTER a write to the same name.
+#
+# THE POINT OF THIS FIXTURE is that "top level" was necessary and NOT sufficient,
+# and the exemption written with only that condition let a declaration
+# retroactively legalise a write that had already run:
+#
+#   define b(d) as: x is 1 / local x is 2 / return d
+#   VM   6     (the outer x really was clobbered)
+#   AOT  105   (the outer x untouched)      both build, both rc 0
+#
+# The previous compiler REFUSED this program loudly. The exemption meant to stop
+# a false refusal reintroduced the silent wrong answer the guard exists for —
+# through the guard's own escape hatch.
+#
+# The rule is DOMINANCE, not position: a declaration only makes the name the
+# define's own if it precedes every use of that name in the body. Its sibling
+# nested_conditional_local.eigs is the same principle one level out — a
+# declaration inside an `if` dominates nothing.
+
+define f(y) as:
+    local x is 100
+    define b(d) as:
+        x is 1
+        local x is 2
+        return d
+    local r is b of 5
+    return x + r
+
+print of (f of 0)

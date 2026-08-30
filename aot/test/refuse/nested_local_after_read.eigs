@@ -1,0 +1,37 @@
+# EXPECT: assigns enclosing name
+#
+# A `local` declaration that comes AFTER a READ of the same name.
+#
+# THE POINT OF THIS FIXTURE is that `own` is shared with the CAPTURE refusal, so
+# widening it to fix a false outward-mutation refusal silently suppressed a
+# capture — and the lifted function then read its own not-yet-assigned C local:
+#
+#   define b(d) as: print of x / local x is 7 / return d
+#   VM   100 then 105        AOT  0 then 105        both build, both rc 0
+#
+# That is worse than the write shape its sibling covers: the write at least
+# produced a plausible number, this reads a slot that was never written.
+#
+# It is also the reason a fix aimed at one refusal has to be checked against the
+# other: both read the same `own` map, and nothing in the outward-mutation path
+# hints that a capture decision depends on it.
+#
+# WHICH GUARD FIRES: the bug was a suppressed CAPTURE, but the refusal that
+# catches it is the OUTWARD-MUTATION one — once the declaration no longer
+# dominates, `local x is 7` is just an assignment to an enclosing name, and that
+# check runs first. The first version of this header asserted a capture refusal
+# and the refusal tier's substring contract FAILED it — the gate catching a
+# false claim about its own subject. The correction was then lost once, because
+# it rode in the same compound command as a cd that failed, and the suite
+# failed on it a second time before it landed.
+
+define f(y) as:
+    local x is 100
+    define b(d) as:
+        print of x
+        local x is 7
+        return d
+    local r is b of 5
+    return x + r
+
+print of (f of 0)

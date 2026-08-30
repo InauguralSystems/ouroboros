@@ -1,0 +1,33 @@
+# EXPECT: assigns enclosing name
+#
+# `local x is x + 1` — the declaration's own initializer reads the ENCLOSING x.
+#
+# THE POINT OF THIS FIXTURE is that this was the SECOND ordering bug in one
+# exemption, and the fix for the first reintroduced it one position over. The
+# dominance test scanned every statement BEFORE the declaration and not the
+# declaration itself — but a declaration does not dominate a read inside itself:
+# the right-hand side is evaluated against the enclosing binding, before the
+# inner name exists.
+#
+#   VM   101       AOT  1       both build, both rc 0
+#
+# emitted as `long eig_x = 0; eig_x = eig_x + 1;` — the enclosing 100 is never
+# captured, so the increment runs against a zero-initialised C local.
+#
+# The three fixtures in this family are one rule seen from three sides:
+#   nested_conditional_local   a declaration inside `if` dominates nothing
+#   nested_local_after_use     a declaration does not dominate what precedes it
+#   nested_local_self_reference a declaration does not dominate ITSELF
+#
+# Written as three cases rather than one because each was found separately, and
+# the first two were each believed to close the class when they landed.
+
+define f(y) as:
+    local x is 100
+    define b(d) as:
+        local x is x + 1
+        return x
+    local r is b of 5
+    return r
+
+print of (f of 0)
