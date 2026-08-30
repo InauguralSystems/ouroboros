@@ -154,6 +154,25 @@ g_module_names is {}
 # shadows a module name injected a phantom entry into the module name's history
 # (VM prev null, AOT prev 5, both rc 0).
 g_cur_params is {}
+# Names that appear as an interrogate operand anywhere in the program. The VM
+# loop-scopes a function-body binder over an INTERROGATED name exactly as it
+# does over a module-bound one (measured: `for p in [7,8]` with `prev of p`
+# after the loop -- VM post-loop p is the incoming 1, tape holds 7,8), so the
+# binder-scoping decision needs this set alongside g_module_names.
+g_interrogated_names is {}
+
+define collect_interrogated(node, out) as:
+    if (type of node) != "list":
+        return 0
+    if (len of node) == 0:
+        return 0
+    if node[0] == "interrogate":
+        local iop is unwrap of node[2]
+        if iop[0] == "ident":
+            out[(iop[1])] is 1
+    for k in range of (len of node):
+        collect_interrogated of [node[k], out]
+    return 0
 
 # g_traced, minus parameter targets: the tape write-set predicate.
 define traced_name(name) as:
@@ -2120,26 +2139,41 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
             fo is fo + ind + "  double " + (cn of fvar) + " = 0;\n"
         fo is fo + ind + "  long " + nv + " = aot_iter_len(" + itv + ");\n"
         fo is fo + ind + "  for (long " + kv + " = 0; " + kv + " < " + nv + "; " + kv + "++) {\n"
+        local lscope is 0
         if ((G_CUR_FN[0]) != "<module>") and (g_module_names[fvar] == 1):
-            # A for binder INSIDE A FUNCTION over ANY MODULE-BOUND NAME. This
-            # started as a params-only refusal and the next review measured the
-            # rule to be general: the VM loop-scopes a function-body binder
-            # whenever the name is module-bound -- param shadow, local shadow,
-            # or a PLAIN module global (`for x in ...` with `x is 5` at module
-            # scope and no local: VM returns/leaves 5, the AOT persisted 8,
-            # silent, pre-existing). Three guards that are secretly one rule
-            # will each be wrong at their seams; this is the one rule.
-            # Measured for the param case:
+            lscope is 1
+        if ((G_CUR_FN[0]) != "<module>") and (g_interrogated_names[fvar] == 1):
+            lscope is 1
+        if lscope == 1:
+            # A function-body binder the VM LOOP-SCOPES: its name is
+            # module-bound (param shadow, local shadow, or the plain module
+            # global -- measured, all three), or INTERROGATED anywhere
+            # (measured: `for p in [7,8]` with a post-loop `prev of p` leaves
+            # p at the incoming value while the tape holds 7,8).
             #
-            #   define f(x) as: for x in [7,8]: ... / return x
-            #   f of 1  ->  8 with no module x        (binder persists in param)
-            #   f of 1  ->  1 with `x is 5` at module (binder loop-scoped!)
+            # The first version REFUSED this configuration -- and evicted DMG
+            # from the envelope: `i is 1` in its argv parsing collides with
+            # `for i in range of 23040` inside a render function, so the
+            # flagship consumer (5.70 MHz, 136% of real hardware) stopped
+            # AOT-compiling, visible only as one census row. Loop-scoping is
+            # EMITTABLE, not just refusable: DECLARING the same C name inside
+            # the loop body makes C's own block scoping do exactly the VM's
+            # chain walk (the #109 numeric-shadow move). Body reads hit the
+            # block-local, post-loop reads hit the outer binding, and the
+            # binder store still traces (tape writes record in every scope).
             #
-            # One C variable cannot do both, and the divergence predates the
-            # tape work (untraced m2: VM 1|5, AOT 8|5, both rc 0, silent).
-            # Refused rather than answering with either wrong half.
-            throw of ("AOT: '" + fvar + "' is a for binder inside a function over a name that shadows a module binding. The VM loop-scopes a function-body binder whenever its name is module-bound (parameter, local, or the module global itself) and persists it otherwise; one C variable cannot express both (see EigenScript#1056).")
-        if g_forunbox[fvar] != null:
+            # NUMERIC only. A boxed binder would need per-iteration decrefs
+            # threaded past `break`, and an OBSERVED program's body reads
+            # resolve through the env, which a C block-local cannot shadow --
+            # both refuse rather than answer wrongly.
+            if g_observed == 1:
+                throw of ("AOT: '" + fvar + "' is a loop-scoped for binder (module-bound or interrogated name) in an OBSERVED program; observed reads resolve through the env, which a block-scoped C variable cannot shadow (see EigenScript#1056).")
+            if bt[fvar] == 1:
+                throw of ("AOT: '" + fvar + "' is a loop-scoped for binder over a BOXED binding; per-iteration ownership past break is not emitted yet (see EigenScript#1056).")
+            fo is fo + ind + "    double " + (cn of fvar) + " = aot_num_ck_at(aot_iter_get(" + itv + ", " + kv + "), \"" + (c_escape of (G_CUR_FN[0])) + ": for-in " + (c_escape of fvar) + "\");\n"
+            if g_traced == 1:
+                fo is fo + ind + "    aot_trace_assign(\"" + fvar + "\", " + (cn of fvar) + ");\n"
+        if (lscope == 0) and (g_forunbox[fvar] != null):
             # unboxed: bind the C double directly — no env write, no boxed
             # read-back in the body. A buffer iterable reads elementwise
             # (aot_buf_get_i); anything else takes the materialized element
@@ -2155,7 +2189,7 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
             # the env/C-var arms below. "All four binder arms now trace" was
             # false for this one; the claim is corrected here rather than the
             # dead code kept to make it look true.
-        else:
+        elif lscope == 0:
             if g_genp[fvar] == 1:
                 # A generic PARAMETER as the loop binder. Every read of a genp
                 # takes the C variable, so an env write here is invisible to the
@@ -5783,6 +5817,8 @@ define emit_program(ast) as:
     # per-function derivation caused.
     g_prog_traced is has_interrogate of ast
     g_traced is g_prog_traced
+    g_interrogated_names is {}
+    collect_interrogated of [ast, g_interrogated_names]
     g_module_names is {}
     if 1 == 1:
         local mn_a is collect_assigns of [stmts, {}]

@@ -1,4 +1,15 @@
-# EXPECT: shadows a module binding
+# PARITY fixture, converted FROM a refusal — the best ending a guard can have.
+#
+# This file spent one round in refuse/: the VM loop-scopes a function-body
+# binder over a module-bound name, and the guard refused what one flat C
+# variable could not express. The next review showed the refusal EVICTED DMG
+# from the envelope (`i is 1` at module scope vs `for i in range of 23040` in
+# a render function — the census dropped 87→86 and the flip was the flagship).
+# Loop-scoping was emittable all along: DECLARING the same C name inside the
+# loop body makes C block scoping reproduce the VM's chain walk, the #109
+# numeric-shadow move. The rows below were silently wrong at main, refused for
+# one round, and are now simply ANSWERED.
+#
 #
 # A function-body `for` binder over a PLAIN module global — no parameter, no
 # local declaration, just the module's own name used as a binder inside a
