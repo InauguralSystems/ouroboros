@@ -80,4 +80,28 @@ define pf(px) as:
 
 print of (pf of 1)
 print of (prev of px)
+
+# ...but a FOR BINDER's store records in EVERY scope, parameters included --
+# the write-set rule is per-SITE, not per-name. Measured: the VM puts binder
+# writes 1,2,3 on x's history (prev = 2) while loop-scoping the binding itself
+# (post-loop x = 0). Round 39's rule as first stated -- "never a parameter" --
+# was one row short, and the row inverts it at this site.
+fx is 0
+for fx in [1, 2, 3]:
+    fy is fx
+print of fx
+print of (prev of fx)
+
+# a binder over a NON-shadowing parameter: persists (VM 8) and its writes are
+# on the tape. In the traced regime the param lives in a C double while the
+# terminal binder arm wrote the ENV -- post-loop read returned the incoming 1.
+# (A binder over a param that SHADOWS a module name refuses loudly instead:
+# measured, the VM loop-scopes the binder exactly when the shadow exists, and
+# one C variable cannot express both halves.)
+define pfor(pz) as:
+    for pz in [7, 8]:
+        local q is pz
+    return pz
+
+print of (pfor of 1)
 print of "done"
