@@ -66,4 +66,18 @@ define gg(k) as:
 print of (gg of 1)
 w is "three"
 print of (prev of w)
+
+# PARAMETER stores never reach the tape. The VM's write-set is locals and
+# module bindings; `define f(x) as: x is 7` leaves x's name history untouched
+# even when x shadows a module binding. Program-wide tracing briefly injected
+# the param rebind into module-x's history (VM prev null, AOT prev 5, both
+# rc 0) — the over-recording mirror of the under-recording it fixed.
+px is 5
+
+define pf(px) as:
+    px is 7
+    return 0
+
+print of (pf of 1)
+print of (prev of px)
 print of "done"

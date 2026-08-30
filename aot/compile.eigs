@@ -146,6 +146,22 @@ g_prog_traced is 0
 # leaks into __eigs_g and a runtime resolve cannot tell it from a real module
 # binding.
 g_module_names is {}
+# The CURRENT function's parameter names, set by emit_function and cleared for
+# the module body. The VM's tape records locals and module bindings and NEVER a
+# parameter store -- `define f(x) as: x is 7` leaves x's name history untouched
+# -- so every trace emission gates on this. Program-wide tracing made the
+# distinction load-bearing: an untraced function rebinding a parameter that
+# shadows a module name injected a phantom entry into the module name's history
+# (VM prev null, AOT prev 5, both rc 0).
+g_cur_params is {}
+
+# g_traced, minus parameter targets: the tape write-set predicate.
+define traced_name(name) as:
+    if g_traced != 1:
+        return 0
+    if g_cur_params[name] == 1:
+        return 0
+    return 1
 # ---- #67: C-keyword identifier mangling -----------------------------------
 # A user identifier that is a C keyword (`double`, `int`, `static`, ...) is
 # legal EigenScript but invalid as a C identifier, so gen.c failed to compile.
@@ -1826,7 +1842,7 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
                 # trace entry FIRST (creates the history slot), then observe --
                 # so aot_observe_num's trace_record_obs stamps THIS entry's
                 # entropy/dH for `where/why/how is x at L`.
-                if g_traced == 1:
+                if (traced_name of name) == 1:
                     oa is oa + ind + "aot_trace_assign(\"" + name + "\", " + orhs + ");\n"
                 oa is oa + ind + "aot_observe_num(__eigs_g, \"" + name + "\", " + orhs + ");\n"
                 return oa
@@ -1854,7 +1870,7 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
                 return ind + sty + " " + (cn of name) + " = " + srhs + ";\n"
             local asn is ind + (cn of name) + " = " + (emit_num of [node[2], nm, bt, raw]) + ";\n"
             # temporal: record the new value on the trace tape (prev / at-line)
-            if g_traced == 1:
+            if (traced_name of name) == 1:
                 asn is asn + ind + "aot_trace_assign(\"" + name + "\", " + (cn of name) + ");\n"
             return asn
         if (is_num_expr of [node[2], nm, bt]) == 1:
@@ -1866,11 +1882,11 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
                 # aot_set_num_ic while the later boxed assigns observed, so the
                 # window was short one entry.
                 local o3 is ""
-                if g_traced == 1:
+                if (traced_name of name) == 1:
                     o3 is o3 + ind + "aot_trace_assign(\"" + name + "\", " + (emit_num of [node[2], nm, bt, 0]) + ");\n"
                 o3 is o3 + ind + "aot_observe_num(__eigs_g, \"" + name + "\", " + (emit_num of [node[2], nm, bt, 0]) + ");\n"
                 return o3
-            if g_traced == 1:
+            if (traced_name of name) == 1:
                 # traced but UNOBSERVED: the numeric store to a demoted name
                 # still records on the tape (staged through a temp so the RHS
                 # is emitted once)
@@ -1893,12 +1909,12 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
             # built on the runtime's own observer_slot_update, so containers
             # walk entropy exactly as the VM does.
             local ova is ""
-            if g_traced == 1:
+            if (traced_name of name) == 1:
                 ova is ova + ind + "{ Value* __ov = " + (emit_val of [node[2], nm, bt]) + "; aot_trace_assign_val(\"" + name + "\", __ov); aot_observe_val(" + (envc of name) + ", \"" + name + "\", __ov); }\n"
                 return ova
             return ind + "aot_observe_val(" + (envc of name) + ", \"" + name + "\", " + (emit_val of [node[2], nm, bt]) + ");\n"
         local wc is ic_cache of 0
-        if g_traced == 1:
+        if (traced_name of name) == 1:
             # traced but UNOBSERVED boxed store. Round 36's fixture filled the
             # {temporal} x {boxed} x {OBSERVED} corner and its commit claimed
             # the intersection closed; the unobserved corner was still empty
@@ -4924,6 +4940,9 @@ define emit_function(fn, finfo, gnm, gbt) as:
     local _save_ret is g_ret_type
     g_ret_type is finfo["ret"]
     g_traced is g_prog_traced
+    g_cur_params is {}
+    for cp in range of (len of (fn[2])):
+        g_cur_params[((fn[2])[cp])] is 1
     g_obs_traced is has_obs_interrogate of body
     g_observed is 0
     if (uses_observer of body) == 1:
@@ -6001,6 +6020,7 @@ define emit_program(ast) as:
     # name (that stale label sent an earlier debugging session chasing
     # `lbd_activity_key` for a failure that was in main).
     G_CUR_FN[0] is "<module>"
+    g_cur_params is {}
     # module scope has no shadows (a module-level `local` IS the module
     # binding) — clear the last function's maps before emitting main.
     g_locshadow is {}
