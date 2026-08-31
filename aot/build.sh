@@ -27,11 +27,16 @@ if [ ! -f "$PROG" ]; then
   echo "build.sh: source file not found: $PROG" >&2
   exit 1
 fi
+EMPTY_STANDIN=""
 if [ ! -s "$PROG" ]; then
-  EMPTY_STANDIN="$(mktemp --suffix=.eigs)"
+  # mktemp without --suffix (GNU-only); compile.eigs reads by path, no
+  # extension needed. NO trap here: bash keeps ONE EXIT trap, and the later
+  # `trap ... $GEN` REPLACED this one, leaking a stand-in per empty build --
+  # found by counting /tmp before and after, with the previous round's leaked
+  # file still sitting there as evidence. The stand-in rides the GEN trap.
+  EMPTY_STANDIN="$(mktemp)"
   printf '# empty source (build.sh stand-in; see the existence check above)\n' > "$EMPTY_STANDIN"
   PROG="$EMPTY_STANDIN"
-  trap 'rm -f "$EMPTY_STANDIN"' EXIT
 fi
 # EIGENSCRIPT_VERSION must survive the eval'd gcc line as a C string: the
 # escaped inner quotes get eaten by eval, leaving a bare identifier — harmless
@@ -97,7 +102,7 @@ fi
 # cached runtime lib on every target change. aot_rt.h is header-only into
 # GEN, so the define reaches the one TU that reads it.
 GEN="$(mktemp /tmp/aot_gen.XXXXXX.c)"
-trap 'rm -f "$GEN"' EXIT
+trap 'rm -f "$GEN"; [ -n "$EMPTY_STANDIN" ] && rm -f "$EMPTY_STANDIN"' EXIT
 PROG_DIR="$(cd "$(dirname "$PROG")" && pwd -P)"
 SRC_ABS="$(cd "$SRC" && pwd -P)"
 PDEFS="-DAOT_SCRIPT_DIR='\"$PROG_DIR\"' -DAOT_EXE_DIR='\"$SRC_ABS\"'"

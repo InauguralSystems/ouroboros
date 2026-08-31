@@ -1,0 +1,18 @@
+# CRLF line endings end-to-end -- ouroboros round 46 (fresh seam: byte-level
+# lexing through the dual parsers; no earlier round probed it).
+#
+# THE POINT OF THIS FIXTURE is frontend-vs-canonical-lexer drift: parser.c
+# skips CR exactly when the next byte is LF (lexer.c #880), and frontend.eigs
+# rejected every CR -- so any Windows-edited source ran on the VM and refused
+# to build. A LONE CR stays an error on BOTH sides; the mirror is the pair
+# rule, not "CR is whitespace". This file itself is CRLF-ended, which is the
+# whole test.
+x is 2
+print of x
+if x > 1:
+    print of "crlf-body"
+
+define f(k) as:
+    return k + 1
+
+print of (f of x)

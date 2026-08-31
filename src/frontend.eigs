@@ -127,8 +127,15 @@ define eigen_tokenize(source) as:
                             line is line + 1
                         at_line_start is 1
                         continue
-                # Skip blank lines
+                # Skip blank lines. #880 mirror: a CRLF blank line -- swallow
+                # the CR so the "\n" below sees an empty line. The C lexer
+                # skips CR ONLY when the next byte is LF (lexer.c:265,308); a
+                # lone CR stays an error on both sides, measured before
+                # writing this -- CRLF sources ran on the VM and died here.
                 blank_line is 0
+                if (pos + 1) < src_len:
+                    if ((char_at of [source, pos]) == "\r") and ((char_at of [source, pos + 1]) == "\n"):
+                        pos is pos + 1
                 if pos < src_len:
                     if (char_at of [source, pos]) == "\n":
                         pos is pos + 1
@@ -160,10 +167,16 @@ define eigen_tokenize(source) as:
         if (at_line_start == 0) and (pos < src_len):
             c is char_at of [source, pos]
             handled is 0
-            # Skip inline spaces
+            # Skip inline spaces. CR is space ONLY as the CR of a CRLF pair
+            # (lexer.c:308 mirrors: ' ' | '\t' | '\r'+LF); skipping a lone CR
+            # here would over-accept what the C lexer rejects.
             if (_is_space of c) == 1:
                 pos is pos + 1
                 handled is 1
+            if (handled == 0) and (c == "\r") and ((pos + 1) < src_len):
+                if (char_at of [source, pos + 1]) == "\n":
+                    pos is pos + 1
+                    handled is 1
             # Comments
             if (handled == 0) and (c == "#"):
                 commenting is 1
