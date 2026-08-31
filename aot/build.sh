@@ -14,12 +14,20 @@ EIG="${EIGS:-$EIGS_DIR/src/eigenscript}"
 SRC="$EIGS_DIR/src"
 PROG="$1"
 OUT="${2:-./a.out}"
-# Input validation lives in the DRIVER now (compile.eigs uses file_exists for
-# the oracle's exact three-way split: missing/unreadable refuse by name, empty
-# compiles to the empty program it genuinely is). This spot used to hold a
-# bash [ -f ]/[ -s ] split plus a mktemp stand-in for empty files, justified
-# by a comment claiming "no existence builtin exists" -- that premise was
-# false, and a review round measured file_exists doing the split natively.
+# [ -f ] IS the oracle's admission predicate -- bash's -f tests S_ISREG,
+# which is exactly what the runtime's read_file_util requires (#314: any
+# non-regular file is "cannot read file", rc 1). This check was deleted once
+# as part of a "kludge" (the mktemp stand-in beside it WAS a kludge; the -f
+# itself was the only precise regular-file test in the toolchain) and a
+# review round then measured /dev/null compiling silently to the empty
+# program. The drivers keep best-effort guards (file_exists + is_dir) for
+# direct callers, but those cannot see the non-regular class -- read_text
+# collapses a refused device file and an empty regular file to the same "" --
+# until an is_file builtin exists upstream.
+if [ ! -f "$PROG" ]; then
+  echo "build.sh: not a regular source file: $PROG" >&2
+  exit 1
+fi
 # EIGENSCRIPT_VERSION must survive the eval'd gcc line as a C string: the
 # escaped inner quotes get eaten by eval, leaving a bare identifier — harmless
 # while only stringified, a build break once code compares it (trace.c #411).

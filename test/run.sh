@@ -223,6 +223,23 @@ must_reject 'for x of [1, 2]:
 # equal. Now bootstrap.eigs proves the rebinding executed (sentinels) and
 # executes the self-compiled test program between markers; here we diff that
 # block against the C evaluator running the same file directly.
+echo "--- driver-input tier (missing/dir/empty vs the C oracle) ---"
+# Round 53 planted the file_exists guard out and BOTH suites stayed green: the
+# round-45/51/52/53 driver-input adjudications lived only in comments. Three
+# probes per driver, exit codes against the oracle's contract. (The
+# non-regular-file class -- /dev/null, fifos -- is a stated residual pending
+# upstream is_file, EigenScript#1058; not probed here because the drivers
+# cannot pass it yet.)
+di_fail=0
+: > /tmp/ouro_di_empty.eigs
+timeout 20 "$EIGS" ouroboros.eigs /tmp/ouro_di_missing_$$.eigs >/dev/null 2>&1; [ $? -eq 1 ] || { echo "FAIL: driver-input self-host missing (want rc 1)"; di_fail=1; }
+timeout 20 "$EIGS" ouroboros.eigs /tmp >/dev/null 2>&1; [ $? -eq 1 ] || { echo "FAIL: driver-input self-host dir (want rc 1)"; di_fail=1; }
+timeout 20 "$EIGS" ouroboros.eigs /tmp/ouro_di_empty.eigs >/dev/null 2>&1; [ $? -eq 0 ] || { echo "FAIL: driver-input self-host empty (want rc 0 -- the oracle runs an empty file)"; di_fail=1; }
+timeout 60 "$EIGS" aot/compile.eigs /tmp/ouro_di_missing_$$.eigs . >/dev/null 2>&1; [ $? -eq 1 ] || { echo "FAIL: driver-input aot missing (want rc 1)"; di_fail=1; }
+timeout 60 "$EIGS" aot/compile.eigs /tmp . >/dev/null 2>&1; [ $? -eq 1 ] || { echo "FAIL: driver-input aot dir (want rc 1)"; di_fail=1; }
+rm -f /tmp/ouro_di_empty.eigs
+if [ "$di_fail" -eq 0 ]; then echo "PASS: driver-input tier (5 probes)"; else fail=1; fi
+
 echo "--- bootstrap (full self-host: front-end + codegen, byte-exact fixed point) ---"
 # timeout + hang-fails-by-name, the same discipline the parity and reject
 # tiers got one round earlier; this was the last frontend invocation without it

@@ -25,11 +25,18 @@ else:
         # guard lumped the two -- the exact over-refusal a review round had
         # already adjudicated on the AOT driver -- because read_text returns
         # "" for both and a comment claimed "no existence builtin exists".
-        # That premise was FALSE: file_exists was in the runtime all along and
-        # performs the oracle's exact three-way split (missing 0, chmod-000
-        # unreadable 0, empty-readable 1). Measured, all four edge inputs now
-        # match the oracle: missing rc 1, unreadable rc 1, directory rc 1,
-        # empty rc 0.
+        # That premise was FALSE: file_exists was in the runtime all along
+        # (missing 0, chmod-000 unreadable 0, empty-readable 1). A LATER round
+        # then falsified this comment's own "all edges match" claim: the
+        # oracle's real contract is S_ISREG (read_file_util, #314), and
+        # file_exists is an fopen probe -- /dev/null, /dev/zero, and fifos
+        # with writers pass these guards, read as "" (read_file_util refuses
+        # them, collapsing them into the empty-file answer), and ran rc 0
+        # where the oracle dies rc 1. RESIDUAL, stated not hidden: without an
+        # is_file (S_ISREG) builtin upstream, this driver cannot separate a
+        # refused device file from a genuinely empty regular file. build.sh's
+        # [ -f ] is the precise test and covers the build path; direct driver
+        # callers keep the best-effort guard.
         throw of ("ouroboros: cannot read source file '" + (argv[0]) + "'")
     source is read_text of argv[0]
     ouro_run of source
