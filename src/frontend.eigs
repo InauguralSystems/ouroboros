@@ -776,10 +776,16 @@ define _p_parse_block(p) as:
             _p_skip_newlines of p
         _p_advance of p
     else:
-        # Single-line block
-        stmt is _p_parse_statement of p
-        if stmt != null:
-            append of [stmts, stmt]
+        # NO single-line arm, and one lived here for the frontend's whole
+        # life. parser.c requires an indent after EVERY colon header --
+        # `if 1 == 1: print of x` is "expected indent, got identifier" -- and
+        # this arm parsed the NEXT LINE as the body instead, so a colon header
+        # with an unindented follower ran (rc 0, wrong tree possible) where
+        # the oracle dies rc 1. The worst measured shape parsed a SAME-INDENT
+        # `print` as the body of the `if` above it. Silent over-acceptance in
+        # the parser, one level above the two lexer mirrors of the previous
+        # round; registered in reject_one alongside them.
+        throw of ("ouroboros: expected indent after ':' block header (line " + (str of ((_p_cur of p)[2])) + ")")
     return stmts
 
 define _p_parse_statement(p) as:

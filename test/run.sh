@@ -92,6 +92,16 @@ reject_one() {
 # order and silently ACCEPTED this program (rc 0, ran it), the exact
 # over-acceptance rot this tier exists to catch -- and the tier only catches
 # it now because the case is registered.
+# Round 48: parser.c requires an indent after EVERY colon header; the
+# frontend's "single-line block" arm parsed the NEXT LINE as the body instead,
+# so both of these ran (rc 0) where the oracle dies "expected indent". The
+# second is the worst shape: a SAME-INDENT line swallowed as the body of the
+# `if` above it.
+reject_one 'if 1 == 1:
+print of 3'
+reject_one 'if 1 == 1:
+	if 1 == 1:
+	print of 1'
 reject_one 'if 1 == 1:
 	 	print of 1
          print of 2
