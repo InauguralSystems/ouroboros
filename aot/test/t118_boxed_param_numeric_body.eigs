@@ -1,0 +1,31 @@
+# A parameter whose CALLER evidence says boxed and whose BODY says numeric —
+# the shape that broke DMG's BUILD while the census said "yes".
+#
+# THE POINT OF THIS FIXTURE is the difference between the two halves of the
+# envelope claim. `iei`'s second write is an index read, so it is boxed
+# evidence; the call site makes f's `idx` a Value* parameter. The body then
+# increments idx, and the seeded numeric inference classified it numeric FROM
+# ITS OWN ASSIGNMENTS — the merge overwrote the ptype's verdict, the signature
+# said `Value* eig_idx` while every body emission said double, and gcc
+# rejected the C. No binary, no AOT: diagnostic.
+#
+# That is the CLAUDE.md hazard verbatim (declared type and emission must share
+# one inference), and it is how DMG — the flagship, 5.70 MHz, 136% of real
+# hardware — sat "in the envelope" by census while failing to build: the
+# census TRANSPILES, and its own header warns that transpiles is not compiles.
+# This fixture builds and runs, so the suite carries what the census cannot.
+
+define f(events, idx, cap) as:
+    applied is 0
+    loop while idx < (len of events):
+        applied is applied + 1
+        idx is idx + 1
+    return [idx, applied]
+
+evs is [1, 2]
+iei is 0
+r is f of [evs, iei, 10]
+iei is r[0]
+print of iei
+r is f of [evs, iei, 10]
+print of (r[1])

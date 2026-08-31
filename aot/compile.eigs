@@ -829,8 +829,18 @@ define is_counter(v, rhss) as:
 define infer_int(stmts, params, nm, bt) as:
     local iv is {}
     for p in range of (len of params):
-        if (uses_int_forcing of [stmts, params[p]]) == 1:
-            iv[params[p]] is 1
+        # ...but never a param the numeric map calls BOXED. Int-forcing keyed
+        # on USE alone (`events[idx]` forces idx), so a Value* parameter --
+        # boxed by caller evidence -- got int-typed and every emission wrote
+        # the bare C name into arithmetic: `make_num((eig_idx + 1))` on a
+        # Value*, gcc rejects, no binary, no diagnostic. Third inference pass
+        # to disagree with the declared type in one session; the rule is the
+        # CLAUDE.md one and it applies to every pass separately: declared type
+        # and emission must share ONE inference. nm is that inference here --
+        # it already carries the ptype verdict via the merge guard upstream.
+        if nm[params[p]] == 1:
+            if (uses_int_forcing of [stmts, params[p]]) == 1:
+                iv[params[p]] is 1
     local assigns is collect_assigns of [stmts, {}]
     local names is keys of assigns
     for k in range of (len of names):
@@ -5029,6 +5039,13 @@ define emit_function(fn, finfo, gnm, gbt) as:
     g_cur_params is {}
     for cp in range of (len of (fn[2])):
         g_cur_params[((fn[2])[cp])] is 1
+    # The interrogated-name set is PER-SCOPE, measured after a round shipped it
+    # program-wide: a never-called ghost function interrogating `p` was
+    # loop-scoping every other function's `p` binder (VM 8, AOT 1, silent) --
+    # the VM's rule keys on interrogates in the SAME function. Rebuilt here
+    # from this function's own body; emit_program restores the module set.
+    g_interrogated_names is {}
+    collect_interrogated of [body, g_interrogated_names]
     g_obs_traced is has_obs_interrogate of body
     g_observed is 0
     if (uses_observer of body) == 1:
@@ -5214,7 +5231,23 @@ define emit_function(fn, finfo, gnm, gbt) as:
     local lnk is keys of lnm
     for k in range of (len of lnk):
         if (lnm[lnk[k]] == 1) and (fbt[lnk[k]] != 1) and (g_tensor[lnk[k]] != 1):
-            fnm[lnk[k]] is 1
+            # ...but NEVER re-promote a parameter whose ptype is boxed. The
+            # seeded inference classifies from body assignments alone, so a
+            # gen/Value* param that the body increments (`idx is idx + 1`)
+            # came back "numeric" and this merge overwrote the ptype's 0 --
+            # the signature said `Value* eig_idx` while every body emission
+            # said double, and gcc rejected the C. That is the CLAUDE.md
+            # hazard verbatim: declared type and emission must share one
+            # inference, and this line was where they stopped sharing. It is
+            # also what broke DMG's BUILD while the census said "yes" -- the
+            # census transpiles, its own header warns it does not compile.
+            local lparam_boxed is 0
+            for lpk in range of (len of params):
+                if (params[lpk]) == lnk[k]:
+                    if (ptypes[lpk]) != "num":
+                        lparam_boxed is 1
+            if lparam_boxed == 0:
+                fnm[lnk[k]] is 1
     # integer names for this scope (params forced + int-by-assignment locals);
     # sets g_int, which is_int_expr/emit_num/emit_stmt read while emitting. In an
     # OBSERVED function, numerics are env-boxed (routed through aot_get/observe),
@@ -5819,6 +5852,9 @@ define emit_program(ast) as:
     g_traced is g_prog_traced
     g_interrogated_names is {}
     collect_interrogated of [ast, g_interrogated_names]
+    # (this whole-AST set only decides g_prog_traced-adjacent behavior during
+    # module emission; each function rebuilds its own PER-SCOPE set, and main's
+    # body is re-scanned below after the function partition)
     g_module_names is {}
     if 1 == 1:
         local mn_a is collect_assigns of [stmts, {}]
@@ -6109,6 +6145,10 @@ define emit_program(ast) as:
     # `lbd_activity_key` for a failure that was in main).
     G_CUR_FN[0] is "<module>"
     g_cur_params is {}
+    # restore the MODULE body's own interrogated set (each emit_function call
+    # above replaced it with that function's per-scope set)
+    g_interrogated_names is {}
+    collect_interrogated of [["block", rest], g_interrogated_names]
     # module scope has no shadows (a module-level `local` IS the module
     # binding) — clear the last function's maps before emitting main.
     g_locshadow is {}
