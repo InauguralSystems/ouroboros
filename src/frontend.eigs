@@ -770,15 +770,18 @@ define _p_parse_block(p) as:
             _p_skip_newlines of p
             if (_p_peek_type of p) == "dedent":
                 return stmts
-            local _bb is p[1]
             stmt is _p_parse_statement of p
             if stmt != null:
                 append of [stmts, stmt]
             _p_skip_newlines of p
-            if (p[1] == _bb) and ((_p_peek_type of p) != "dedent") and ((_p_peek_type of p) != "eof"):
-                # the same no-progress guard as eigen_parse (parser.c mirrors
-                # it in parse_block too)
-                throw of ("ouroboros: unexpected token '" + (str of (_p_peek_type of p)) + "' in block (line " + (str of ((_p_cur of p)[2])) + ")")
+            # NO no-progress guard here, and one was added and reviewed DEAD:
+            # _p_parse_statement returns null-without-advancing only on dedent
+            # and eof, and this loop's own conditions exit on both before any
+            # guard could fire -- so a copy of eigen_parse's guard was
+            # unreachable, and "both loops carry it" was an overstatement.
+            # eigen_parse is the loop with no such exits; the guard lives
+            # there, and this comment exists so the dead copy is not re-added
+            # for symmetry.
         _p_advance of p
     else:
         # NO single-line arm, and one lived here for the frontend's whole

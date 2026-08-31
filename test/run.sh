@@ -38,8 +38,13 @@ echo "--- behavioral parity (self-hosted vs C evaluator) ---"
 for prog in test/programs/*.eigs; do
   n=$((n+1))
   name="$(basename "$prog")"
-  ref="$("$EIGS" "$prog" 2>/dev/null)"; ref_rc=$?
-  got="$("$EIGS" ouroboros.eigs "$prog" 2>/dev/null)"; got_rc=$?
+  ref="$(timeout 120 "$EIGS" "$prog" 2>/dev/null)"; ref_rc=$?
+  got="$(timeout 120 "$EIGS" ouroboros.eigs "$prog" 2>/dev/null)"; got_rc=$?
+  # 124/137 = timeout kill; a HANG on either side fails by name (see
+  # reject_one's incident: rc 124 is nonzero and read as a pass)
+  if [ "$ref_rc" -eq 124 ] || [ "$ref_rc" -eq 137 ] || [ "$got_rc" -eq 124 ] || [ "$got_rc" -eq 137 ]; then
+    echo "FAIL: $name HUNG (ref=$ref_rc got=$got_rc)"; fail=1; continue
+  fi
   case "$name" in
     *_err.eigs)
       if [ "$ref_rc" -eq 0 ]; then
@@ -81,9 +86,20 @@ reject_one() {
   # match block holding a non-case statement (the C parser's no-progress guard
   # was never mirrored) -- and this tier could not have registered that case
   # without hanging itself.
-  if timeout 20 "$EIGS" /tmp/ouro_reject.eigs >/dev/null 2>&1; then
+  # rc 124/137 is a TIMEOUT KILL, and it is nonzero -- the first version of
+  # this timeout let a HANGING parser fall into the else-branch as "PASS:
+  # rejected", so the hang case's own regression gate was green with the
+  # no-progress guard reverted (proven by plant). A hang must FAIL BY NAME on
+  # either arm; "rejected" means exited nonzero under its own power.
+  timeout 20 "$EIGS" /tmp/ouro_reject.eigs >/dev/null 2>&1; c_rc=$?
+  timeout 20 "$EIGS" ouroboros.eigs /tmp/ouro_reject.eigs >/dev/null 2>&1; f_rc=$?
+  if [ "$c_rc" -eq 124 ] || [ "$c_rc" -eq 137 ]; then
+    echo "FAIL: C oracle HUNG on [$(printf '%s' "$1" | tr '\n' ';')]"; fail=1
+  elif [ "$f_rc" -eq 124 ] || [ "$f_rc" -eq 137 ]; then
+    echo "FAIL: frontend HUNG on [$(printf '%s' "$1" | tr '\n' ';')]"; fail=1
+  elif [ "$c_rc" -eq 0 ]; then
     echo "FAIL: C oracle accepted [$(printf '%s' "$1" | tr '\n' ';')] (reject case is stale)"; fail=1
-  elif timeout 20 "$EIGS" ouroboros.eigs /tmp/ouro_reject.eigs >/dev/null 2>&1; then
+  elif [ "$f_rc" -eq 0 ]; then
     echo "FAIL: accepted [$(printf '%s' "$1" | tr '\n' ';')] (should reject)"; fail=1
   else
     echo "PASS: rejected [$(printf '%s' "$1" | tr '\n' ';')]"
@@ -154,9 +170,13 @@ l[0] += 1 4'
 echo "--- must_reject (both sides must die at run time) ---"
 must_reject() {
   printf '%s\n' "$1" > /tmp/ouro_must_reject.eigs
-  c_out="$("$EIGS" /tmp/ouro_must_reject.eigs 2>/dev/null)"; c_rc=$?
-  o_out="$("$EIGS" ouroboros.eigs /tmp/ouro_must_reject.eigs 2>/dev/null)"; o_rc=$?
-  if [ "$c_rc" -eq 0 ]; then
+  c_out="$(timeout 20 "$EIGS" /tmp/ouro_must_reject.eigs 2>/dev/null)"; c_rc=$?
+  o_out="$(timeout 20 "$EIGS" ouroboros.eigs /tmp/ouro_must_reject.eigs 2>/dev/null)"; o_rc=$?
+  # 124/137 = timeout kill: a HANG must fail by name (see reject_one -- its
+  # first timeout let rc 124 read as a pass)
+  if [ "$c_rc" -eq 124 ] || [ "$c_rc" -eq 137 ] || [ "$o_rc" -eq 124 ] || [ "$o_rc" -eq 137 ]; then
+    echo "FAIL: must_reject HUNG [$(printf '%s' "$1" | tr '\n' ';')] (c=$c_rc o=$o_rc)"; fail=1
+  elif [ "$c_rc" -eq 0 ]; then
     echo "FAIL: must_reject case is stale — C oracle ACCEPTS [$(printf '%s' "$1" | tr '\n' ';')]"; fail=1
   elif [ "$o_rc" -eq 0 ]; then
     echo "FAIL: must_reject: ouroboros ACCEPTS [$(printf '%s' "$1" | tr '\n' ';')] (C oracle rejects, rc=$c_rc)"; fail=1
