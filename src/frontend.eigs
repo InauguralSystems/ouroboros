@@ -770,10 +770,15 @@ define _p_parse_block(p) as:
             _p_skip_newlines of p
             if (_p_peek_type of p) == "dedent":
                 return stmts
+            local _bb is p[1]
             stmt is _p_parse_statement of p
             if stmt != null:
                 append of [stmts, stmt]
             _p_skip_newlines of p
+            if (p[1] == _bb) and ((_p_peek_type of p) != "dedent") and ((_p_peek_type of p) != "eof"):
+                # the same no-progress guard as eigen_parse (parser.c mirrors
+                # it in parse_block too)
+                throw of ("ouroboros: unexpected token '" + (str of (_p_peek_type of p)) + "' in block (line " + (str of ((_p_cur of p)[2])) + ")")
         _p_advance of p
     else:
         # NO single-line arm, and one lived here for the frontend's whole
@@ -1607,10 +1612,22 @@ define eigen_parse(tokens) as:
     stmts is []
     _p_skip_newlines of p
     loop while (_p_peek_type of p) != "eof":
+        local _before is p[1]
         stmt is _p_parse_statement of p
         if stmt != null:
             append of [stmts, stmt]
         _p_skip_newlines of p
+        if (p[1] == _before) and ((_p_peek_type of p) != "eof"):
+            # THE NO-PROGRESS GUARD, mirrored from parser.c's parse() --
+            # `if (p.pos == before) { g_parse_errors++; p_advance(&p); }` --
+            # and never carried over. Without it, any token parse_statement
+            # returns null on without consuming (a dedent leaked by a match
+            # block holding a non-case statement) spun this loop FOREVER:
+            # the oracle exits rc 1 with "parse error(s) -- aborting" and the
+            # frontend burned a core on `match 1: / print of 1`, on both
+            # shared-frontend consumers. The frontend's error convention is
+            # throw-on-first, so the mirror throws where the C counts.
+            throw of ("ouroboros: unexpected token '" + (str of (_p_peek_type of p)) + "' at top level (line " + (str of ((_p_cur of p)[2])) + ")")
     return ["block", stmts]
 
 # ============================================================

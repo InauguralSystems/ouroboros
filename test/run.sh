@@ -76,9 +76,14 @@ done
 echo "--- reject (front-end raises where the C parser/lexer raises) ---"
 reject_one() {
   printf '%s\n' "$1" > /tmp/ouro_reject.eigs
-  if "$EIGS" /tmp/ouro_reject.eigs >/dev/null 2>&1; then
+  # timeout on BOTH invocations: a reject case that HANGS a parser must fail
+  # the tier, not the suite. Round 49 found the frontend spinning forever on a
+  # match block holding a non-case statement (the C parser's no-progress guard
+  # was never mirrored) -- and this tier could not have registered that case
+  # without hanging itself.
+  if timeout 20 "$EIGS" /tmp/ouro_reject.eigs >/dev/null 2>&1; then
     echo "FAIL: C oracle accepted [$(printf '%s' "$1" | tr '\n' ';')] (reject case is stale)"; fail=1
-  elif "$EIGS" ouroboros.eigs /tmp/ouro_reject.eigs >/dev/null 2>&1; then
+  elif timeout 20 "$EIGS" ouroboros.eigs /tmp/ouro_reject.eigs >/dev/null 2>&1; then
     echo "FAIL: accepted [$(printf '%s' "$1" | tr '\n' ';')] (should reject)"; fail=1
   else
     echo "PASS: rejected [$(printf '%s' "$1" | tr '\n' ';')]"
@@ -97,6 +102,12 @@ reject_one() {
 # so both of these ran (rc 0) where the oracle dies "expected indent". The
 # second is the worst shape: a SAME-INDENT line swallowed as the body of the
 # `if` above it.
+# Round 49: the no-progress guard (parser.c parse()/parse_block) -- a match
+# block holding a non-case statement leaked a dedent nobody consumed, and the
+# frontend spun FOREVER where the oracle exits rc 1. Registered only after
+# reject_one grew its timeout; without one this line would hang the suite.
+reject_one 'match 1:
+	print of 1'
 reject_one 'if 1 == 1:
 print of 3'
 reject_one 'if 1 == 1:
