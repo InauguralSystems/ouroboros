@@ -225,8 +225,13 @@ must_reject 'for x of [1, 2]:
 # block against the C evaluator running the same file directly.
 echo "--- driver-input tier (missing/dir/empty vs the C oracle) ---"
 # Round 53 planted the file_exists guard out and BOTH suites stayed green: the
-# round-45/51/52/53 driver-input adjudications lived only in comments. Three
-# probes per driver, exit codes against the oracle's contract. (The
+# round-45/51/52/53 driver-input adjudications lived only in comments. Probes
+# with exit codes against the oracle's contract -- and each side needs a
+# want-rc-0 CANARY: round 54 planted a compile.eigs that could not run at all
+# and the tier stayed green, because a parse error supplies rc 1 to a
+# want-rc-1 probe for the wrong reason. An earlier version of this comment
+# also said "three probes per driver" when it was 3+2 -- the comment-vs-
+# mechanism class this tier exists to prosecute. (The
 # non-regular-file class -- /dev/null, fifos -- is a stated residual pending
 # upstream is_file, EigenScript#1058; not probed here because the drivers
 # cannot pass it yet.)
@@ -237,8 +242,13 @@ timeout 20 "$EIGS" ouroboros.eigs /tmp >/dev/null 2>&1; [ $? -eq 1 ] || { echo "
 timeout 20 "$EIGS" ouroboros.eigs /tmp/ouro_di_empty.eigs >/dev/null 2>&1; [ $? -eq 0 ] || { echo "FAIL: driver-input self-host empty (want rc 0 -- the oracle runs an empty file)"; di_fail=1; }
 timeout 60 "$EIGS" aot/compile.eigs /tmp/ouro_di_missing_$$.eigs . >/dev/null 2>&1; [ $? -eq 1 ] || { echo "FAIL: driver-input aot missing (want rc 1)"; di_fail=1; }
 timeout 60 "$EIGS" aot/compile.eigs /tmp . >/dev/null 2>&1; [ $? -eq 1 ] || { echo "FAIL: driver-input aot dir (want rc 1)"; di_fail=1; }
+# the aot side's want-rc-0 canary: transpiling an EMPTY file must SUCCEED
+# (round-51 adjudication: an empty file is a valid program). This is also the
+# probe that catches a driver too broken to run -- without it, a compile.eigs
+# with a parse error on line 1 passes both rc-1 probes above.
+timeout 60 "$EIGS" aot/compile.eigs /tmp/ouro_di_empty.eigs . >/dev/null 2>&1; [ $? -eq 0 ] || { echo "FAIL: driver-input aot empty (want rc 0 -- an empty file is a valid program)"; di_fail=1; }
 rm -f /tmp/ouro_di_empty.eigs
-if [ "$di_fail" -eq 0 ]; then echo "PASS: driver-input tier (5 probes)"; else fail=1; fi
+if [ "$di_fail" -eq 0 ]; then echo "PASS: driver-input tier (6 probes)"; else fail=1; fi
 
 echo "--- bootstrap (full self-host: front-end + codegen, byte-exact fixed point) ---"
 # timeout + hang-fails-by-name, the same discipline the parity and reject
