@@ -227,6 +227,16 @@ define eigen_tokenize(source) as:
                                     buf is buf + "\n"
                                 elif esc == "t":
                                     buf is buf + "\t"
+                                elif esc == "r":
+                                    # lexer.c:361 decodes \r; this table never
+                                    # did, and the first line of OUR OWN SOURCE
+                                    # to use "\r" exposed it: self-compiled,
+                                    # the comparison became c == "r" and the
+                                    # stage-2 lexer ate any lone identifier r
+                                    # before a newline ("return r" lost its
+                                    # operand). The bootstrap fixed point is
+                                    # the gate that caught it.
+                                    buf is buf + "\r"
                                 elif esc == "\\":
                                     buf is buf + "\\"
                                 elif esc == "\"":
@@ -327,6 +337,9 @@ define eigen_tokenize(source) as:
                             buf is buf + "\n"
                         elif esc == "t":
                             buf is buf + "\t"
+                        elif esc == "r":
+                            # see the f-string site: lexer.c:361 parity
+                            buf is buf + "\r"
                         elif esc == "\\":
                             buf is buf + "\\"
                         elif esc == "\"":

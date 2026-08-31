@@ -1,0 +1,4 @@
+# t120 is a CRLF fixture -- its line endings ARE the test. Without this,
+# autocrlf normalizes it to LF on the next checkout and the fixture silently
+# tests nothing (git warned exactly that at the commit that added it).
+aot/test/t120_crlf_source.eigs -text
