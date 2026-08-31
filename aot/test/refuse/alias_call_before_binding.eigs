@@ -1,0 +1,22 @@
+# EXPECT: does not provably precede
+#
+# Round 58's slide keeps this shape refused: the alias mention `w is f`
+# slides f's first-use forward to the next CALL-BEARING statement, which
+# here is the dead if arm containing `x is w of []` -- before the binding.
+# Invocation through any alias or table still requires executing a
+# statement that performs a call, so the slide can never pass over a
+# statement that could reach the function.
+#
+# Envelope shape: the VM RUNS this (rc 0, prints 11 -- the guarded call
+# never executes, so the binding always precedes every executed call), but
+# statement order cannot prove it.
+
+define f() as:
+    v is v + 1
+    return v
+
+w is f
+if 1 == 2:
+    x is w of []
+v is 10
+print of (w of [])

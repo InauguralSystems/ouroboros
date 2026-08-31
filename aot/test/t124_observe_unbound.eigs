@@ -1,0 +1,9 @@
+# Round 58: pins the observe carve-out in the top-level order guard.
+# `observe of v` on an UNBOUND name is VM-tolerated (rc 0, silent no-op --
+# while `print of v` in the same position dies rc 1; filed upstream as a
+# silent-tolerance divergence), so a bare-ident observe argument is not a
+# use for the order guard. The guard's first version refused this VM-valid
+# program, evicting an observer form that was previously in the envelope.
+observe of v
+v is 2
+print of v

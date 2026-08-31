@@ -939,6 +939,24 @@ define collect_idents_all(node, acc) as:
         collect_idents_all of [node[k], acc]
     return 0
 
+define has_call_node(node) as:
+    # Does this subtree contain any call? Used by the first-use SLIDE: a
+    # top-level statement can invoke a function -- directly or through any
+    # alias/table/chain -- only while executing a statement that performs a
+    # call, so a pure-data mention's first-use slides forward to the next
+    # call-bearing statement (round 58: `w is f` before `v is 10` evicted
+    # the module-scope function-table idiom; the mention cannot invoke).
+    if (type of node) != "list":
+        return 0
+    if (len of node) == 0:
+        return 0
+    if node[0] == "call":
+        return 1
+    for k in range of (len of node):
+        if (has_call_node of [node[k]]) == 1:
+            return 1
+    return 0
+
 define collect_uses_scoped(node, acc) as:
     # Idents USED at module scope under one top-level statement. Two scope
     # holes are deliberate and must stay: `func` bodies do not execute at the
@@ -966,6 +984,23 @@ define collect_uses_scoped(node, acc) as:
         return 0
     if t == "for":
         collect_uses_scoped of [node[2], acc]
+        return 0
+    if t == "call":
+        # `observe of v` on an UNBOUND name is VM-tolerated (measured round
+        # 58: rc 0, silent no-op, while `print of v` in the same position
+        # dies rc 1 -- filed upstream as a silent-tolerance divergence), so a
+        # BARE-ident observe argument is not a use for the order guard. Any
+        # other argument shape evaluates its expression and dies like any
+        # read, and is walked normally.
+        local cal is unwrap of node[1]
+        if ((type of cal) == "list") and ((len of cal) > 0):
+            if (cal[0] == "ident") and (cal[1] == "observe"):
+                local oarg is unwrap of node[2]
+                if ((type of oarg) == "list") and ((len of oarg) > 0):
+                    if oarg[0] == "ident":
+                        return 0
+        for ck in range of (len of node):
+            collect_uses_scoped of [node[ck], acc]
         return 0
     for k in range of (len of node):
         collect_uses_scoped of [node[k], acc]
@@ -5582,7 +5617,13 @@ define emit_function(fn, finfo, gnm, gbt) as:
             if (_lmk[v] != 1) and (isparam == 0):
                 local vg_fb is g_first_bind[v]
                 local vg_fu is g_first_use[name]
-                if (vg_fb == null) or ((vg_fu != null) and (vg_fb > vg_fu)):
+                # >= : a TIE (bind and first possible invocation in the SAME
+                # statement) cannot be ordered statically. Round 58 measured
+                # the strict > leaking a phantom write: `if (f of []) == 1:
+                # v is 5` -- the VM kills f's write with the call (rc 1,
+                # undefined variable), the AOT materialized it in the C
+                # global and PRINTED 99, rc 0.
+                if (vg_fb == null) or ((vg_fu != null) and (vg_fb >= vg_fu)):
                     throw of ("AOT: function '" + name + "' assigns module name '" + v + "' whose first module-level binding does not provably precede the function's first use. The VM's outward-write rule is checked at RUNTIME (a missing outer binding makes the write a function-local that dies with the call); this order cannot be answered statically, so it is refused (see the outward-write arm).")
             isglobal is 1
         if (g_module_names[v] == 1) and (_lmk[v] != 1) and (gnm[v] != 1) and (gbt[v] != 1) and (g_tensor[v] != 1) and (shadowed[v] != 1):
@@ -5597,7 +5638,8 @@ define emit_function(fn, finfo, gnm, gbt) as:
             # the only call chain was evicted.
             local v_fb is g_first_bind[v]
             local f_fu is g_first_use[name]
-            if (v_fb == null) or ((f_fu != null) and (v_fb > f_fu)):
+            # >= : ties refuse -- same rationale as the gnm/gbt arm above.
+            if (v_fb == null) or ((f_fu != null) and (v_fb >= f_fu)):
                 throw of ("AOT: function '" + name + "' assigns module name '" + v + "' whose first module-level binding does not provably precede the function's first use. The VM's outward-write rule is checked at RUNTIME (a missing outer binding makes the write a function-local that dies with the call); this order cannot be answered statically, so it is refused (see the outward-write arm).")
             # A module-bound name assigned in the body WITHOUT a `local`
             # marker is an OUTWARD write -- `is` updates the existing outer
@@ -6013,6 +6055,24 @@ define emit_program(ast) as:
         local mn_k is keys of mn_a
         for mi in range of (len of mn_k):
             g_module_names[(mn_k[mi])] is 1
+        # tl_call[i] = statement i can perform a call when executed (func
+        # defs cannot -- their bodies do not run at the define statement).
+        # A function's first-use is the first call-bearing statement AT OR
+        # AFTER its first top-level mention: a pure-data mention (`w is f`,
+        # `table is [f]`) cannot invoke anything, so it SLIDES forward --
+        # invocation through any alias or chain still requires executing a
+        # statement that contains a call. Round 58 measured the pre-slide
+        # rule evicting the module-scope function-table idiom (table built
+        # above the data globals its handlers write; VM prints 11, AOT
+        # refused) while the alias-call-before-bind shape stays refused.
+        local tl_call is []
+        for hci in range of (len of stmts):
+            local hcn is unwrap of stmts[hci]
+            local hcv is 0
+            if ((type of hcn) == "list") and ((len of hcn) > 0):
+                if hcn[0] != "func":
+                    hcv is has_call_node of [hcn]
+            tl_call is (append of [tl_call, hcv])
         for mi2 in range of (len of stmts):
             local mnu is unwrap of stmts[mi2]
             if ((type of mnu) == "list") and ((len of mnu) > 0):
@@ -6025,7 +6085,11 @@ define emit_program(ast) as:
                             if ((type of fuu) == "list") and ((len of fuu) > 0):
                                 if fuu[0] != "func":
                                     if (uses_ident of [stmts[fui], fnm2]) == 1:
-                                        g_first_use[fnm2] is fui
+                                        local sld is fui
+                                        loop while (sld < (len of stmts)) and (tl_call[sld] != 1):
+                                            sld is sld + 1
+                                        if sld < (len of stmts):
+                                            g_first_use[fnm2] is sld
         # Transitive closure: min-propagate first-use through function-body
         # mentions until fixpoint. A function whose closed first-use is still
         # null is unreachable from the top level -- its writes never execute,
