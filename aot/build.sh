@@ -14,6 +14,25 @@ EIG="${EIGS:-$EIGS_DIR/src/eigenscript}"
 SRC="$EIGS_DIR/src"
 PROG="$1"
 OUT="${2:-./a.out}"
+# Existence and emptiness are BASH's job, not the driver's: read_text returns
+# "" for a missing file AND for an empty one, and no existence builtin exists,
+# so the driver alone cannot tell them apart. It refuses both loudly (the
+# missing case once compiled to a valid empty binary -- the silentest failure
+# in the toolchain). Here the two split precisely:
+#   missing  -> a named error, rc 1 (below)
+#   empty    -> a VALID program the VM runs (prints nothing, rc 0), so feed
+#               the driver a comment-only stand-in with identical semantics.
+#               A review round proved the refusal over-fired on exactly this.
+if [ ! -f "$PROG" ]; then
+  echo "build.sh: source file not found: $PROG" >&2
+  exit 1
+fi
+if [ ! -s "$PROG" ]; then
+  EMPTY_STANDIN="$(mktemp --suffix=.eigs)"
+  printf '# empty source (build.sh stand-in; see the existence check above)\n' > "$EMPTY_STANDIN"
+  PROG="$EMPTY_STANDIN"
+  trap 'rm -f "$EMPTY_STANDIN"' EXIT
+fi
 # EIGENSCRIPT_VERSION must survive the eval'd gcc line as a C string: the
 # escaped inner quotes get eaten by eval, leaving a bare identifier — harmless
 # while only stringified, a build break once code compares it (trace.c #411).
