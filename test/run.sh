@@ -224,8 +224,13 @@ must_reject 'for x of [1, 2]:
 # executes the self-compiled test program between markers; here we diff that
 # block against the C evaluator running the same file directly.
 echo "--- bootstrap (full self-host: front-end + codegen, byte-exact fixed point) ---"
-boot_out="$("$EIGS" test/bootstrap.eigs 2>/dev/null)"; boot_rc=$?
-prog_ref="$("$EIGS" test/bootstrap_prog.eigs 2>/dev/null)"; prog_rc=$?
+# timeout + hang-fails-by-name, the same discipline the parity and reject
+# tiers got one round earlier; this was the last frontend invocation without it
+boot_out="$(timeout 300 "$EIGS" test/bootstrap.eigs 2>/dev/null)"; boot_rc=$?
+prog_ref="$(timeout 120 "$EIGS" test/bootstrap_prog.eigs 2>/dev/null)"; prog_rc=$?
+if [ "$boot_rc" -eq 124 ] || [ "$boot_rc" -eq 137 ] || [ "$prog_rc" -eq 124 ] || [ "$prog_rc" -eq 137 ]; then
+  echo "FAIL: bootstrap HUNG (boot=$boot_rc prog=$prog_rc)"; fail=1
+fi
 prog_got="$(printf '%s\n' "$boot_out" \
   | sed -n '/^== bootstrap-prog-begin ==$/,/^== bootstrap-prog-end ==$/p' | sed '1d;$d')"
 if [ "$boot_rc" -ne 0 ] || ! printf '%s\n' "$boot_out" | grep -q "PASS"; then

@@ -14,4 +14,10 @@ if (len of argv) < 1:
     print of "usage: eigenscript ouroboros.eigs <source.eigs>"
 else:
     source is read_text of argv[0]
+    if (source == null) or ((len of source) == 0):
+        # read_text returns "" for a MISSING file as well as an empty one --
+        # the class the AOT driver was guarded against in an earlier round --
+        # and this driver silently exited 0 on an unreadable path where the C
+        # oracle dies "cannot read file". Same refusal, same reason.
+        throw of ("ouroboros: cannot read source file '" + (argv[0]) + "' (missing or empty)")
     ouro_run of source
