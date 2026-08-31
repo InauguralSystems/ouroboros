@@ -5241,6 +5241,12 @@ define emit_function(fn, finfo, gnm, gbt) as:
             # inference, and this line was where they stopped sharing. It is
             # also what broke DMG's BUILD while the census said "yes" -- the
             # census transpiles, its own header warns it does not compile.
+            if (g_module_names[lnk[k]] == 1) and (gnm[lnk[k]] != 1) and (gbt[lnk[k]] != 1) and (g_tensor[lnk[k]] != 1) and (_lmk[lnk[k]] != 1):
+                # same rule as the decl loop below: a DEMOTED module binding
+                # written outward must not be numeric-promoted from its own
+                # body assignments, or the emission writes a C variable that
+                # was (correctly) never declared
+                continue
             local lparam_boxed is 0
             for lpk in range of (len of params):
                 if (params[lpk]) == lnk[k]:
@@ -5502,6 +5508,27 @@ define emit_function(fn, finfo, gnm, gbt) as:
                 isparam is 1
         local isglobal is 0
         if (gnm[v] == 1) or (gbt[v] == 1):
+            isglobal is 1
+        if (g_module_names[v] == 1) and (_lmk[v] != 1) and (gnm[v] != 1) and (gbt[v] != 1) and (g_tensor[v] != 1) and (shadowed[v] != 1):
+            # A module-bound name assigned in the body WITHOUT a `local`
+            # marker is an OUTWARD write -- `is` updates the existing outer
+            # binding -- even when the module binding is DEMOTED off the
+            # numeric class (a later `v is "str"` at module scope). The old
+            # test recognized only numeric (gnm) and buffer (gbt) globals, so
+            # a demoted global's outward RMW got a fresh zeroed body local:
+            #
+            #   v is 1 / define bump(k) as: v is v + k / ... / v is "str"
+            #   bump of 2:  VM 3, AOT 2 -- and the module v never moved
+            #
+            # both rc 0, silent, inside the claimed envelope. With no decl and
+            # no numeric promotion, reads take env_read_num and writes take
+            # the terminal env arm -- the module binding, as the VM does.
+            #
+            # SCOPED to genuinely demoted bindings: numeric (gnm), buffer
+            # (gbt), and tensor globals keep their existing arms -- the first
+            # version fired for ANY module name and broke t38's tensor body
+            # decl (undeclared identifier; the suite gate refused the push).
+            # A buffer-shadow (shadowed[v]) also keeps its local decl.
             isglobal is 1
         # a local that shadows a global buffer is declared locally, not skipped.
         if shadowed[v] == 1:

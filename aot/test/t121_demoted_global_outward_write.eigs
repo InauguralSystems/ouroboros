@@ -1,0 +1,42 @@
+# Outward read-modify-write of a module global that a LATER statement demotes
+# off the numeric class — the first silent-wrong compiler find in 12 rounds,
+# surfaced by a sweep into territory the fuzzer is structurally blind to (its
+# generators emit no outward writes, no demotion, no `local`).
+#
+# `v is "str"` at the END demotes module v to env-resident storage. The
+# function-body classification recognized only numeric (gnm) and buffer (gbt)
+# globals, so the body's outward `v is v + k` got a fresh zeroed C local:
+#
+#   bump of 2:   VM 3, AOT 2      and the module v never moved (VM 3, AOT 1)
+#   both rc 0, silent, inside the claimed envelope
+#
+# The rule: a module-bound name assigned WITHOUT a `local` marker is an
+# outward write whatever the binding's class — no body decl, no numeric
+# promotion; reads take env_read_num, writes take the terminal env arm.
+# A `local`-marked name stays a true body local (the last case below).
+
+v is 1
+
+define bump(k) as:
+    v is v + k
+    return v
+
+print of (bump of 2)
+x is bump of 2
+print of v
+
+v is "str"
+print of v
+
+w is 1
+
+define shadowed(k) as:
+    # `local` marker: a TRUE body local; module w must not move
+    local w is 10
+    w is w + k
+    return w
+
+print of (shadowed of 2)
+print of w
+w is "demoted-too"
+print of w
