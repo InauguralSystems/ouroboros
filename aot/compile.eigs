@@ -146,6 +146,14 @@ g_prog_traced is 0
 # leaks into __eigs_g and a runtime resolve cannot tell it from a real module
 # binding.
 g_module_names is {}
+# Module-scope declarations for the outward-arm ORDER data (filled by
+# emit_program). These MUST be declared here: an `is` inside emit_program with
+# no pre-existing module binding creates a function-local that dies with the
+# call -- the exact runtime outward-write rule the order guard enforces, and
+# the first version of the guard demonstrated it on its own author
+# ("undefined variable 'g_first_bind'" from emit_function).
+g_first_bind is {}
+g_first_use is {}
 # The CURRENT function's parameter names, set by emit_function and cleared for
 # the module body. The VM's tape records locals and module bindings and NEVER a
 # parameter store -- `define f(x) as: x is 7` leaves x's name history untouched
@@ -5510,6 +5518,15 @@ define emit_function(fn, finfo, gnm, gbt) as:
         if (gnm[v] == 1) or (gbt[v] == 1):
             isglobal is 1
         if (g_module_names[v] == 1) and (_lmk[v] != 1) and (gnm[v] != 1) and (gbt[v] != 1) and (g_tensor[v] != 1) and (shadowed[v] != 1):
+            # ORDER GUARD (see g_first_bind's declaration): outward routing is
+            # only sound when the module binding provably exists before every
+            # top-level use of this function. Late-bound or unknowable order
+            # refuses loudly -- the VM would create a doomed function-local,
+            # and routing outward manufactured a binding it never makes.
+            local v_fb is g_first_bind[v]
+            local f_fu is g_first_use[name]
+            if (v_fb == null) or (f_fu == null) or (v_fb > f_fu):
+                throw of ("AOT: function '" + name + "' assigns module name '" + v + "' whose first module-level binding does not provably precede the function's first use. The VM's outward-write rule is checked at RUNTIME (a missing outer binding makes the write a function-local that dies with the call); this order cannot be answered statically, so it is refused (see the outward-write arm).")
             # A module-bound name assigned in the body WITHOUT a `local`
             # marker is an OUTWARD write -- `is` updates the existing outer
             # binding -- even when the module binding is DEMOTED off the
@@ -5883,6 +5900,24 @@ define emit_program(ast) as:
     # module emission; each function rebuilds its own PER-SCOPE set, and main's
     # body is re-scanned below after the function partition)
     g_module_names is {}
+    # Order matters: the VM's outward-write rule is RUNTIME -- `is` updates an
+    # outer binding only if it EXISTS AT THAT MOMENT, else it creates a
+    # function-local that dies with the call. g_module_names alone is
+    # order-blind, and an arm keyed on it manufactured a module binding the
+    # VM never creates (a function writing v, called before module v is ever
+    # bound: VM rc 1 "undefined variable", the arm made it print 5, rc 0).
+    # g_first_bind[name] = index of the first top-level assignment;
+    # g_first_use[fname] = index of the first top-level statement mentioning
+    # the function. The outward arm applies only when the binding provably
+    # precedes every top-level use of the function; otherwise it refuses.
+    g_first_bind is {}
+    g_first_use is {}
+    for fbi in range of (len of stmts):
+        local fbu is unwrap of stmts[fbi]
+        if ((type of fbu) == "list") and ((len of fbu) > 0):
+            if fbu[0] == "assign":
+                if g_first_bind[(fbu[1])] == null:
+                    g_first_bind[(fbu[1])] is fbi
     if 1 == 1:
         local mn_a is collect_assigns of [stmts, {}]
         local mn_k is keys of mn_a
@@ -5893,6 +5928,14 @@ define emit_program(ast) as:
             if ((type of mnu) == "list") and ((len of mnu) > 0):
                 if mnu[0] == "func":
                     g_module_names[(mnu[1])] is 1
+                    local fnm2 is mnu[1]
+                    for fui in range of (len of stmts):
+                        if g_first_use[fnm2] == null:
+                            local fuu is unwrap of stmts[fui]
+                            if ((type of fuu) == "list") and ((len of fuu) > 0):
+                                if fuu[0] != "func":
+                                    if (uses_ident of [stmts[fui], fnm2]) == 1:
+                                        g_first_use[fnm2] is fui
     # where/why/how need the observer snapshot -> force observed (boxed) + obs-trace.
     g_obs_traced is has_obs_interrogate of ast
     # Observer programs: numeric vars are env-boxed + observed (no unboxing).

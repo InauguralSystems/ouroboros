@@ -1,0 +1,37 @@
+# EXPECT: does not provably precede
+#
+# A function assigns a module name whose first TOP-LEVEL binding comes after
+# a top-level statement that mentions the function — here a dead `if` arm.
+# The VM runs this fine (rc 0, prints 7): the guarded call never executes,
+# so by the time setit runs, module `v` exists and the write goes outward.
+#
+# The AOT's outward-write rule is static and conservative: the VM's real
+# rule is RUNTIME (`is` updates an outer binding only if it exists AT THAT
+# MOMENT, else it creates a function-local that dies with the call), and
+# g_first_bind/g_first_use can only compare top-level statement order. A
+# use it cannot prove safe is refused rather than answered — the arm's
+# order-blind first version MANUFACTURED the module binding and turned a
+# both-sides-die program into one that printed, rc 0.
+#
+# (The truly-broken variant — module `v` never bound at all — also refuses,
+# but the VM dies rc 1 on it, so it cannot live in this tier: refuse
+# fixtures test the envelope, programs the VM RUNS and the AOT declines.)
+#
+# The final `v is "s"` is LOAD-BEARING (verified by removing it): it demotes
+# `v` from a clean numeric global, and the outward arm only guards DEMOTED
+# module names — a clean numeric global takes the ordinary global path,
+# which is order-correct, and this same program without that line compiles
+# and matches.
+
+define setit(k) as:
+    v is k
+    return 0
+
+if 1 == 2:
+    x is setit of 5
+
+v is 0
+x is setit of 7
+print of v
+v is "s"
+print of v
