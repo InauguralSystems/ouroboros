@@ -1,0 +1,10 @@
+# #334's OTHER half — a string literal inside an f-string {expression} whose
+# text contains a brace. lexer.c copies the string wholesale so its braces are
+# text; the frontend's brace collector had no string case and cut at the `}`
+# inside the string ("unterminated string", rc 1, where the VM prints a}b).
+# The first mirror of #334 covered only the indent-dropping half; this program
+# pins the half that waited five months for an enumeration to find it.
+print of f"{"a}b"}"
+x is "}"
+print of f"open{"{"}close"
+print of f"{x}{x}"

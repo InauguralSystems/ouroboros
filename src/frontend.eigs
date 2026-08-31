@@ -105,18 +105,24 @@ define eigen_tokenize(source) as:
         if at_line_start == 1:
             at_line_start is 0
             if bracket_depth == 0:
+                # lexer.c:252-256 measures indent in THREE ordered runs --
+                # spaces, then tabs, then trailing spaces -- and STOPS: a tab
+                # after that demotes to inline whitespace. This loop used to
+                # count space/tab interleaved in any order, which silently
+                # ACCEPTED block structure the C lexer rejects ("unexpected
+                # indent", rc 1, vs the frontend running the program, rc 0 --
+                # the over-acceptance rot class reject_one exists to stop).
                 spaces is 0
-                counting is 1
-                loop while (pos < src_len) and (counting == 1):
-                    ch is char_at of [source, pos]
-                    if ch == " ":
-                        spaces is spaces + 1
-                        pos is pos + 1
-                    elif ch == "\t":
+                loop while (pos < src_len) and ((char_at of [source, pos]) == " "):
+                    spaces is spaces + 1
+                    pos is pos + 1
+                if (pos < src_len) and ((char_at of [source, pos]) == "\t"):
+                    loop while (pos < src_len) and ((char_at of [source, pos]) == "\t"):
                         spaces is spaces + 4
                         pos is pos + 1
-                    else:
-                        counting is 0
+                    loop while (pos < src_len) and ((char_at of [source, pos]) == " "):
+                        spaces is spaces + 1
+                        pos is pos + 1
                 # Skip comment lines
                 if pos < src_len:
                     if (char_at of [source, pos]) == "#":
@@ -271,7 +277,29 @@ define eigen_tokenize(source) as:
                             expr_buf is ""
                             loop while (pos < src_len) and (depth > 0):
                                 bc is char_at of [source, pos]
-                                if bc == "{":
+                                if bc == "\"":
+                                    # #334's OTHER half, never mirrored: a
+                                    # string literal inside {...} is copied
+                                    # wholesale so its braces are text --
+                                    # f"{"a}b"}" prints a}b on the VM and this
+                                    # collector cut at the } inside the string
+                                    # ("unterminated string", rc 1). Escapes
+                                    # ride through in pairs, exactly as
+                                    # lexer.c:400-410 does.
+                                    expr_buf is expr_buf + bc
+                                    pos is pos + 1
+                                    loop while (pos < src_len) and ((char_at of [source, pos]) != "\""):
+                                        local bsc is char_at of [source, pos]
+                                        if (bsc == "\\") and ((pos + 1) < src_len):
+                                            expr_buf is expr_buf + bsc
+                                            pos is pos + 1
+                                            bsc is char_at of [source, pos]
+                                        expr_buf is expr_buf + bsc
+                                        pos is pos + 1
+                                    if pos < src_len:
+                                        expr_buf is expr_buf + "\""
+                                        pos is pos + 1
+                                elif bc == "{":
                                     depth is depth + 1
                                     expr_buf is expr_buf + bc
                                     pos is pos + 1

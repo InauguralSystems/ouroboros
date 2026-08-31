@@ -85,6 +85,17 @@ reject_one() {
   fi
   rm -f /tmp/ouro_reject.eigs
 }
+# Round 47: the C lexer measures indent as spaces, then tabs, then trailing
+# spaces, and STOPS (lexer.c:252-256) -- a tab after that run is inline
+# whitespace, so TAB-SPACE-TAB indentation followed by a 9-space line is an
+# "unexpected indent" to the oracle. The frontend counted space/tab in any
+# order and silently ACCEPTED this program (rc 0, ran it), the exact
+# over-acceptance rot this tier exists to catch -- and the tier only catches
+# it now because the case is registered.
+reject_one 'if 1 == 1:
+	 	print of 1
+         print of 2
+print of 3'
 reject_one 'print of (3 @ 4)'
 reject_one 'print of (3 ` 4)'
 reject_one 'x is $5'
