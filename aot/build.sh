@@ -14,30 +14,12 @@ EIG="${EIGS:-$EIGS_DIR/src/eigenscript}"
 SRC="$EIGS_DIR/src"
 PROG="$1"
 OUT="${2:-./a.out}"
-# Existence and emptiness are BASH's job, not the driver's: read_text returns
-# "" for a missing file AND for an empty one, and no existence builtin exists,
-# so the driver alone cannot tell them apart. It refuses both loudly (the
-# missing case once compiled to a valid empty binary -- the silentest failure
-# in the toolchain). Here the two split precisely:
-#   missing  -> a named error, rc 1 (below)
-#   empty    -> a VALID program the VM runs (prints nothing, rc 0), so feed
-#               the driver a comment-only stand-in with identical semantics.
-#               A review round proved the refusal over-fired on exactly this.
-if [ ! -f "$PROG" ]; then
-  echo "build.sh: source file not found: $PROG" >&2
-  exit 1
-fi
-EMPTY_STANDIN=""
-if [ ! -s "$PROG" ]; then
-  # mktemp without --suffix (GNU-only); compile.eigs reads by path, no
-  # extension needed. NO trap here: bash keeps ONE EXIT trap, and the later
-  # `trap ... $GEN` REPLACED this one, leaking a stand-in per empty build --
-  # found by counting /tmp before and after, with the previous round's leaked
-  # file still sitting there as evidence. The stand-in rides the GEN trap.
-  EMPTY_STANDIN="$(mktemp)"
-  printf '# empty source (build.sh stand-in; see the existence check above)\n' > "$EMPTY_STANDIN"
-  PROG="$EMPTY_STANDIN"
-fi
+# Input validation lives in the DRIVER now (compile.eigs uses file_exists for
+# the oracle's exact three-way split: missing/unreadable refuse by name, empty
+# compiles to the empty program it genuinely is). This spot used to hold a
+# bash [ -f ]/[ -s ] split plus a mktemp stand-in for empty files, justified
+# by a comment claiming "no existence builtin exists" -- that premise was
+# false, and a review round measured file_exists doing the split natively.
 # EIGENSCRIPT_VERSION must survive the eval'd gcc line as a C string: the
 # escaped inner quotes get eaten by eval, leaving a bare identifier — harmless
 # while only stringified, a build break once code compares it (trace.c #411).
@@ -102,7 +84,7 @@ fi
 # cached runtime lib on every target change. aot_rt.h is header-only into
 # GEN, so the define reaches the one TU that reads it.
 GEN="$(mktemp /tmp/aot_gen.XXXXXX.c)"
-trap 'rm -f "$GEN"; [ -n "$EMPTY_STANDIN" ] && rm -f "$EMPTY_STANDIN"' EXIT
+trap 'rm -f "$GEN"' EXIT
 PROG_DIR="$(cd "$(dirname "$PROG")" && pwd -P)"
 SRC_ABS="$(cd "$SRC" && pwd -P)"
 PDEFS="-DAOT_SCRIPT_DIR='\"$PROG_DIR\"' -DAOT_EXE_DIR='\"$SRC_ABS\"'"

@@ -13,11 +13,23 @@ argv is args of null
 if (len of argv) < 1:
     print of "usage: eigenscript ouroboros.eigs <source.eigs>"
 else:
+    if (is_dir of argv[0]) == 1:
+        # a DIRECTORY passes file_exists (it is fopen("r"), which opens dirs
+        # on Linux) and read_text returns "" -- the oracle dies "cannot read
+        # file" rc 1, so refusing here is the match, and is_dir is the
+        # discriminator that separates it from a genuinely empty FILE.
+        throw of ("ouroboros: cannot read source file '" + (argv[0]) + "' (is a directory)")
+    if (file_exists of argv[0]) == 0:
+        # Missing/unreadable refuses (oracle rc 1); an EMPTY file is a VALID
+        # program the oracle runs to rc 0 silence. The first version of this
+        # guard lumped the two -- the exact over-refusal a review round had
+        # already adjudicated on the AOT driver -- because read_text returns
+        # "" for both and a comment claimed "no existence builtin exists".
+        # That premise was FALSE: file_exists was in the runtime all along and
+        # performs the oracle's exact three-way split (missing 0, chmod-000
+        # unreadable 0, empty-readable 1). Measured, all four edge inputs now
+        # match the oracle: missing rc 1, unreadable rc 1, directory rc 1,
+        # empty rc 0.
+        throw of ("ouroboros: cannot read source file '" + (argv[0]) + "'")
     source is read_text of argv[0]
-    if (source == null) or ((len of source) == 0):
-        # read_text returns "" for a MISSING file as well as an empty one --
-        # the class the AOT driver was guarded against in an earlier round --
-        # and this driver silently exited 0 on an unreadable path where the C
-        # oracle dies "cannot read file". Same refusal, same reason.
-        throw of ("ouroboros: cannot read source file '" + (argv[0]) + "' (missing or empty)")
     ouro_run of source

@@ -6787,15 +6787,23 @@ define splice_static_loads(blk, base, depth) as:
 # ---- driver ----
 argv is args of null
 src is read_text of argv[0]
-if (src == null) or ((len of src) == 0):
+if (is_dir of (argv[0])) == 1:
+    # see the self-host driver: a directory passes file_exists (fopen-based)
+    # and reads as "", while the oracle refuses it -- is_dir separates it from
+    # a genuinely empty file
+    throw of ("AOT: cannot read source file '" + (argv[0]) + "' (is a directory)")
+if (file_exists of (argv[0])) == 0:
     # read_text returns EMPTY STRING, not null, for a missing file -- the same
-    # gotcha the import fallback hit -- so the driver was compiling a
+    # gotcha the import fallback hit -- so the driver once compiled a
     # NONEXISTENT source file into a valid empty program: full C skeleton,
-    # empty main, rc 0, and a binary that runs and prints nothing. Found when
-    # a fixture written into the wrong directory "compiled" cleanly and its
-    # empty output was nearly read as a miscompilation. The silentest failure
-    # available; refuse it by name.
-    throw of ("AOT: cannot read source file '" + (argv[0]) + "' (missing or empty)")
+    # empty main, rc 0, a binary that runs and prints nothing. The first
+    # refusal lumped missing with EMPTY, and a review round proved the empty
+    # half over-fired (an empty file is a valid program the VM runs to rc 0);
+    # build.sh then carried a bash stand-in justified by "no existence builtin
+    # exists" -- which was FALSE, file_exists was in the runtime all along.
+    # The driver now does the three-way split itself: missing/unreadable
+    # refuse by name, empty compiles to the empty program it genuinely is.
+    throw of ("AOT: cannot read source file '" + (argv[0]) + "'")
 ai is 1
 loop while ai < (len of argv):
     if argv[ai] == "--dump-inference":
