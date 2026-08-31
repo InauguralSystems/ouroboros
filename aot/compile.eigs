@@ -6213,6 +6213,58 @@ define emit_program(ast) as:
         for j in range of (len of lan):
             lbound[(lan[j])] is 1
         lift_nested of [lf[3], lbound, funcs]
+    # (round 60) Lifted functions have no first-use identity: the order
+    # tables were built over top-level stmts BEFORE lifting, so a lifted
+    # function's null g_first_use read as "unreachable dead code, accept"
+    # and every order refusal was bypassed one nesting level down -- the
+    # round-58 tie shape came straight back through a nested writer (VM
+    # rc 1 "undefined variable"; AOT printed the phantom 99, rc 0).
+    # Re-run the first-use closure over the FINAL post-lift list: the
+    # encloser's body still contains the call to the lifted function, so
+    # ordinary mention propagation hands the lifted function its
+    # encloser's first-use. (Pre-lift, collect_idents_all already counted
+    # a nested define's mentions as the encloser's, so this re-run only
+    # NAMES the lifted functions -- it does not tighten existing edges.)
+    local cl2_mention is []
+    for ck2 in range of (len of funcs):
+        local mset2 is {}
+        collect_idents_all of [(funcs[ck2]), mset2]
+        cl2_mention is (append of [cl2_mention, mset2])
+    local cl2_changed is 1
+    loop while cl2_changed == 1:
+        cl2_changed is 0
+        for ca2 in range of (len of funcs):
+            local an2 is (funcs[ca2])[1]
+            for cb2 in range of (len of funcs):
+                if ca2 != cb2:
+                    local bn2 is (funcs[cb2])[1]
+                    if ((cl2_mention[cb2])[an2] == 1) and (g_first_use[bn2] != null):
+                        local bx2 is g_first_use[bn2]
+                        if (g_first_use[an2] == null) or (g_first_use[an2] > bx2):
+                            g_first_use[an2] is bx2
+                            cl2_changed is 1
+    # (round 60) Redefinitions and define/assign kind-flips previously died
+    # as raw gcc errors (redefinition of 'eig_f'; 'eig_v' redeclared as a
+    # different kind of symbol) -- loud but UNNAMED, failing the
+    # naming-the-real-reason half of the bar. Name them at the source.
+    local dupseen is {}
+    for dk2 in range of (len of funcs):
+        local dnm2 is (funcs[dk2])[1]
+        if dupseen[dnm2] == 1:
+            throw of ("AOT: function '" + dnm2 + "' is defined more than once (counting lifted nested defines). The VM rebinds the name at each define's execution point; one C function cannot express both bodies, so this is refused rather than silently picking one.")
+        dupseen[dnm2] is 1
+    # Scoped to UNOBSERVED programs: in an observed program module numerics
+    # are env-boxed, not C globals, so no colliding pair is emitted and the
+    # env lookup correctly makes the rebinding win over the function --
+    # t87_observer_named_fn is the standing witness (the suite gate refused
+    # this check's first, unscoped version for evicting it).
+    if g_observed != 1:
+        for dk3 in range of (len of stmts):
+            local dsn is unwrap of stmts[dk3]
+            if ((type of dsn) == "list") and ((len of dsn) > 0):
+                if dsn[0] == "assign":
+                    if dupseen[(dsn[1])] == 1:
+                        throw of ("AOT: module name '" + (dsn[1]) + "' is both a function definition and a plain top-level binding. The VM flips the name's kind at the assignment's execution point; a C function and a C global cannot share one name, so this is refused rather than emitting a colliding pair.")
     # Which functions are referenced as VALUES? Scan every function body and
     # the module-level statements, AFTER nested lifting so lifted bodies are
     # in `funcs`. Must run before the ptypes build below reads it.

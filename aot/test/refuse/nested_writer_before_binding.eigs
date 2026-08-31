@@ -1,0 +1,28 @@
+# EXPECT: does not provably precede
+#
+# Round 60: lifted nested defines had NO first-use identity -- the order
+# tables were built over top-level statements BEFORE lift_nested ran, so a
+# lifted function's null first-use read as "dead code, accept" and every
+# order refusal was bypassed one nesting level down. The round-58 tie
+# shape came straight back through a nested writer: VM rc 1 "undefined
+# variable", AOT printed the phantom 99, rc 0. The first-use closure now
+# re-runs over the final post-lift function list, where the encloser's
+# body mention of the lifted function propagates its first-use naturally.
+#
+# Envelope shape: the VM RUNS this (rc 0, prints 11 -- the dead if arm
+# never calls f, so by the time g's outward write runs, module v exists),
+# but statement order cannot prove it: f's first-use (the dead if) slides
+# nowhere, precedes v's binding, and g inherits it through the closure.
+
+define f() as:
+    define g() as:
+        v is v + 1
+        return 0
+    x is g of []
+    return 0
+
+if 1 == 2:
+    y is f of []
+v is 10
+y is f of []
+print of v
