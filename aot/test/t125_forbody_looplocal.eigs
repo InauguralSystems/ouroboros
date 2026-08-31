@@ -1,0 +1,12 @@
+# Round 59: pins the for-body exemption's REMAINING half. tmp is ASSIGNED
+# in the body, so it is loop-local (the VM's for-scope rule) and reads of
+# it inside the body are not module-scope uses -- the order guard must not
+# count them against the later module binding `tmp is 99`. This is the
+# false-refusal case the round-58 skip was protecting; round 59 narrowed
+# the skip to exactly this axis (binder + body-assigned names) after the
+# blanket version hid genuine reads.
+for i in range of 2:
+    tmp is i
+    print of tmp
+tmp is 99
+print of tmp

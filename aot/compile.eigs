@@ -983,7 +983,25 @@ define collect_uses_scoped(node, acc) as:
     if t == "func":
         return 0
     if t == "for":
+        # The body IS walked -- the round-58 blanket body skip was keyed on
+        # the wrong axis and round 59 measured it hiding genuine reads:
+        # `for i in range of 1: print of v / v is 3` -- VM rc 1 "undefined
+        # variable", AOT printed 0. The VM's for-scope rule exempts only
+        # names the loop itself BINDS (the binder and body-assigned names,
+        # which are loop-local); a name merely READ in a for body chains
+        # outward like any other read. So: walk the body into a scratch
+        # set, subtract the binder and the body's collect_assigns names
+        # (sharing that walker's axes, nested-for over-subtraction
+        # included), and keep the rest as module-scope uses.
         collect_uses_scoped of [node[2], acc]
+        local fbound is collect_assigns of [node[3], {}]
+        local facc is {}
+        collect_uses_scoped of [node[3], facc]
+        local fknames is keys of facc
+        for fk in range of (len of fknames):
+            local fkn is fknames[fk]
+            if (fbound[fkn] == null) and (fkn != node[1]):
+                acc[fkn] is 1
         return 0
     if t == "call":
         # `observe of v` on an UNBOUND name is VM-tolerated (measured round
