@@ -1,0 +1,22 @@
+# EXPECT: assigned before its top-level define
+#
+# Round 61: the observed-mode exemption on the kind-flip refusal was
+# ORDER-BLIND. t87_observer_named_fn pins only the define-first direction
+# (env misses fall back to the opaque band while the name is a function;
+# the env number wins after the assigns execute). In THIS direction the VM
+# rebinds the name to the FUNCTION at the define's execution point, but
+# compiled functions execute nothing at their statement position -- the
+# env kept the stale number and the AOT printed 4 where the VM prints
+# <fn f>, both rc 0. Silent-wrong, phantom stale value.
+#
+# Envelope shape: the VM RUNS this (rc 0, prints stab=0 then <fn f>).
+# Adjacent shapes whose only post-define uses are CALLS matched by
+# coincidence (calls emit direct C calls, not env reads) and are refused
+# by the same conservative rule.
+
+f is 3.0
+f is 4.0
+print of ("stab=" + (str of (stable of f)))
+define f() as:
+    return 9
+print of f
