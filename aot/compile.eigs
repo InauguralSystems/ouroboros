@@ -6787,6 +6787,15 @@ define splice_static_loads(blk, base, depth) as:
 # ---- driver ----
 argv is args of null
 src is read_text of argv[0]
+if (src == null) or ((len of src) == 0):
+    # read_text returns EMPTY STRING, not null, for a missing file -- the same
+    # gotcha the import fallback hit -- so the driver was compiling a
+    # NONEXISTENT source file into a valid empty program: full C skeleton,
+    # empty main, rc 0, and a binary that runs and prints nothing. Found when
+    # a fixture written into the wrong directory "compiled" cleanly and its
+    # empty output was nearly read as a miscompilation. The silentest failure
+    # available; refuse it by name.
+    throw of ("AOT: cannot read source file '" + (argv[0]) + "' (missing or empty)")
 ai is 1
 loop while ai < (len of argv):
     if argv[ai] == "--dump-inference":
