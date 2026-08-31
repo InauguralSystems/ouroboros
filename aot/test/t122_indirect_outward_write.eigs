@@ -1,0 +1,18 @@
+# Round 57: pins the first-use CLOSURE's acceptance. The writer `seta` is
+# never mentioned at the top level -- only `viab` is -- so before the
+# closure its first-use was null and the demoted arm refused this VALID
+# program (measured: over-broad eviction). The closure propagates viab's
+# top-level first-use to seta through the body-mention graph; the module
+# binding (v is 1) provably precedes it, so outward routing is sound and
+# the write must reach the module binding exactly as the VM's does.
+v is 1
+define seta(k) as:
+    v is v + k
+    return 0
+define viab(k) as:
+    x is seta of k
+    return 0
+y is viab of 4
+print of v
+v is "s"
+print of v

@@ -18,10 +18,11 @@
 # fixtures test the envelope, programs the VM RUNS and the AOT declines.)
 #
 # The final `v is "s"` is LOAD-BEARING (verified by removing it): it demotes
-# `v` from a clean numeric global, and the outward arm only guards DEMOTED
-# module names — a clean numeric global takes the ordinary global path,
-# which is order-correct, and this same program without that line compiles
-# and matches.
+# `v` off the clean numeric class, so this fixture exercises the DEMOTED
+# arm's guard. (This header once claimed the clean-numeric path was
+# "order-correct" — round 57 disproved that: the gnm arm had NO order guard
+# at all. It does now; gnm_outward_write_before_binding.eigs is the sibling
+# fixture that pins that arm.)
 
 define setit(k) as:
     v is k

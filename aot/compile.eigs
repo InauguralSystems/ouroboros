@@ -925,6 +925,52 @@ define collect_assigns(stmts, acc) as:
         collect_assigns_stmt of [stmts[i], acc]
     return acc
 
+define collect_idents_all(node, acc) as:
+    # Every ident mentioned anywhere under node, full descent (func bodies
+    # included -- a nested define's mentions count as the outer's, which is
+    # the conservative direction for the first-use closure below).
+    if (type of node) != "list":
+        return 0
+    if (len of node) == 0:
+        return 0
+    if node[0] == "ident":
+        acc[(node[1])] is 1
+    for k in range of (len of node):
+        collect_idents_all of [node[k], acc]
+    return 0
+
+define collect_uses_scoped(node, acc) as:
+    # Idents USED at module scope under one top-level statement. Two scope
+    # holes are deliberate and must stay: `func` bodies do not execute at the
+    # definition statement, and a `for` BODY is loop-scoped (a name assigned
+    # only there is loop-local -- descending would make `for i...: tmp is i /
+    # print of tmp / tmp is 99` a false refusal of a valid program). The for
+    # HEADER (iterable expr) is module scope and IS walked. `if`/`loop`/
+    # `match` bodies do not scope, so full descent there is correct.
+    if (type of node) != "list":
+        return 0
+    if (len of node) == 0:
+        return 0
+    local t is node[0]
+    if (type of t) == "list":
+        for bi in range of (len of node):
+            collect_uses_scoped of [node[bi], acc]
+        return 0
+    if t == "_line":
+        collect_uses_scoped of [node[2], acc]
+        return 0
+    if t == "ident":
+        acc[(node[1])] is 1
+        return 0
+    if t == "func":
+        return 0
+    if t == "for":
+        collect_uses_scoped of [node[2], acc]
+        return 0
+    for k in range of (len of node):
+        collect_uses_scoped of [node[k], acc]
+    return 0
+
 define infer_numeric(stmts, bt) as:
     local assigns is collect_assigns of [stmts, {}]
     local names is keys of assigns
@@ -5516,16 +5562,42 @@ define emit_function(fn, finfo, gnm, gbt) as:
                 isparam is 1
         local isglobal is 0
         if (gnm[v] == 1) or (gbt[v] == 1):
+            # ORDER GUARD, gnm/gbt arm. Round 57 measured that guarding only
+            # the demoted arm below reproduced the exact class the guard was
+            # built to kill, one arm over: a clean numeric global written by a
+            # function called before the module binding existed was routed
+            # outward unguarded (VM rc 1 "undefined variable"; AOT printed 5
+            # then 1, rc 0). The VM's outward-write rule is type-blind, so the
+            # guard must sit on every outward-routing arm, not one class.
+            #
+            # It must NOT fire for `local`-marked or param names: those write
+            # a binding that exists at every write, never an outward one --
+            # `local` statements emit their own inline block-scoped C decl
+            # (the C shadow does the routing; verified in the generated C)
+            # and params are C parameters. The guard's first version fired on
+            # bench checksum's `local n` inside _crc_init because module
+            # `n is 65536` came later in the file -- the suite's bench gate
+            # refused the push. The demoted arm already excludes _lmk;
+            # isglobal stays 1 here exactly as before the guard existed.
+            if (_lmk[v] != 1) and (isparam == 0):
+                local vg_fb is g_first_bind[v]
+                local vg_fu is g_first_use[name]
+                if (vg_fb == null) or ((vg_fu != null) and (vg_fb > vg_fu)):
+                    throw of ("AOT: function '" + name + "' assigns module name '" + v + "' whose first module-level binding does not provably precede the function's first use. The VM's outward-write rule is checked at RUNTIME (a missing outer binding makes the write a function-local that dies with the call); this order cannot be answered statically, so it is refused (see the outward-write arm).")
             isglobal is 1
         if (g_module_names[v] == 1) and (_lmk[v] != 1) and (gnm[v] != 1) and (gbt[v] != 1) and (g_tensor[v] != 1) and (shadowed[v] != 1):
-            # ORDER GUARD (see g_first_bind's declaration): outward routing is
-            # only sound when the module binding provably exists before every
-            # top-level use of this function. Late-bound or unknowable order
-            # refuses loudly -- the VM would create a doomed function-local,
-            # and routing outward manufactured a binding it never makes.
+            # ORDER GUARD, demoted arm (see g_first_bind's declaration):
+            # outward routing is only sound when the module binding provably
+            # exists before every statement that could transitively invoke
+            # this function. Since round 57's closure, a null first-use means
+            # UNREACHABLE from the top level (dead code, writes never
+            # execute) and is accepted -- the pre-closure null meant "only
+            # called from other functions" and refusing it was over-broad,
+            # measured: an indirect writer whose binding provably preceded
+            # the only call chain was evicted.
             local v_fb is g_first_bind[v]
             local f_fu is g_first_use[name]
-            if (v_fb == null) or (f_fu == null) or (v_fb > f_fu):
+            if (v_fb == null) or ((f_fu != null) and (v_fb > f_fu)):
                 throw of ("AOT: function '" + name + "' assigns module name '" + v + "' whose first module-level binding does not provably precede the function's first use. The VM's outward-write rule is checked at RUNTIME (a missing outer binding makes the write a function-local that dies with the call); this order cannot be answered statically, so it is refused (see the outward-write arm).")
             # A module-bound name assigned in the body WITHOUT a `local`
             # marker is an OUTWARD write -- `is` updates the existing outer
@@ -5906,16 +5978,34 @@ define emit_program(ast) as:
     # order-blind, and an arm keyed on it manufactured a module binding the
     # VM never creates (a function writing v, called before module v is ever
     # bound: VM rc 1 "undefined variable", the arm made it print 5, rc 0).
-    # g_first_bind[name] = index of the first top-level assignment;
-    # g_first_use[fname] = index of the first top-level statement mentioning
-    # the function. The outward arm applies only when the binding provably
-    # precedes every top-level use of the function; otherwise it refuses.
+    # g_first_bind[name] = index of the first top-level statement CONTAINING a
+    # binding of the name (per-statement collect_assigns, so a bind inside a
+    # top-level if/loop/match counts at that statement's index -- sharing
+    # collect_assigns' axes exactly, including its known #161 hole -- and a
+    # `define` binds the FUNCTION name at the define statement, because the
+    # VM binds function names when the define EXECUTES, not at parse).
+    # A bind inside a conditional is counted optimistically (the branch may
+    # not run at runtime); that residual is documented at the arm guard.
+    # g_first_use[fname] = earliest top-level statement that could
+    # TRANSITIVELY invoke the function: direct top-level mentions, closed
+    # over "function B's body mentions A, so A inherits B's first use".
+    # Round 57 measured both halves: without the closure a writer called
+    # only from another function had null first-use (indirect programs with
+    # the binding provably first were refused -- over-broad), and without
+    # per-arm coverage the clean-numeric (gnm) arm routed outward with NO
+    # order check at all (silent success, one arm over from round 56's fix).
+    # The guard applies to EVERY outward-routing arm; see the decl loop.
     g_first_bind is {}
     g_first_use is {}
     for fbi in range of (len of stmts):
+        local fba is collect_assigns of [[(stmts[fbi])], {}]
+        local fbk is keys of fba
+        for fbj in range of (len of fbk):
+            if g_first_bind[(fbk[fbj])] == null:
+                g_first_bind[(fbk[fbj])] is fbi
         local fbu is unwrap of stmts[fbi]
         if ((type of fbu) == "list") and ((len of fbu) > 0):
-            if fbu[0] == "assign":
+            if fbu[0] == "func":
                 if g_first_bind[(fbu[1])] == null:
                     g_first_bind[(fbu[1])] is fbi
     if 1 == 1:
@@ -5936,6 +6026,66 @@ define emit_program(ast) as:
                                 if fuu[0] != "func":
                                     if (uses_ident of [stmts[fui], fnm2]) == 1:
                                         g_first_use[fnm2] is fui
+        # Transitive closure: min-propagate first-use through function-body
+        # mentions until fixpoint. A function whose closed first-use is still
+        # null is unreachable from the top level -- its writes never execute,
+        # so the arm guard treats null-use as safe (dead code), NOT refusable.
+        local fdefs is []
+        for ci in range of (len of stmts):
+            local cnode is unwrap of stmts[ci]
+            if ((type of cnode) == "list") and ((len of cnode) > 0):
+                if cnode[0] == "func":
+                    fdefs is (append of [fdefs, cnode])
+        local fmention is []
+        for ci2 in range of (len of fdefs):
+            local mset is {}
+            collect_idents_all of [(fdefs[ci2]), mset]
+            fmention is (append of [fmention, mset])
+        local fchanged is 1
+        loop while fchanged == 1:
+            fchanged is 0
+            for ca in range of (len of fdefs):
+                local aname is (fdefs[ca])[1]
+                for cb in range of (len of fdefs):
+                    if ca != cb:
+                        local bname is (fdefs[cb])[1]
+                        if ((fmention[cb])[aname] == 1) and (g_first_use[bname] != null):
+                            local bidx is g_first_use[bname]
+                            if (g_first_use[aname] == null) or (g_first_use[aname] > bidx):
+                                g_first_use[aname] is bidx
+                                fchanged is 1
+    # TOP-LEVEL ORDER GUARD (round 57's root-cause probe): module globals are
+    # emitted as C globals live-at-zero from program start, but the VM's
+    # binding exists only from its first EXECUTED assignment -- `print of v /
+    # v is 1` dies rc 1 on the VM and printed 0 here. A top-level use that
+    # textually precedes the name's first top-level binding statement (or the
+    # first bind's own rhs reading the name it binds) is refused. The scan is
+    # scope-aware via collect_uses_scoped: for-BODY uses are skipped (loop-
+    # local names would false-refuse), func defs don't execute at their
+    # statement. Uses at the same index as a non-assign binding statement
+    # (bind and use inside one if/loop) cannot be ordered statically and are
+    # accepted -- the same conditional-bind optimism as the arm guard.
+    for tgi in range of (len of stmts):
+        local tgn is unwrap of stmts[tgi]
+        if ((type of tgn) == "list") and ((len of tgn) > 0):
+            if tgn[0] != "func":
+                local tgu is {}
+                if tgn[0] == "assign":
+                    collect_uses_scoped of [tgn[2], tgu]
+                else:
+                    collect_uses_scoped of [tgn, tgu]
+                local tguk is keys of tgu
+                for tgj in range of (len of tguk):
+                    local tgv is tguk[tgj]
+                    if g_module_names[tgv] == 1:
+                        local tfb is g_first_bind[tgv]
+                        local tbad is 0
+                        if (tfb != null) and (tgi < tfb):
+                            tbad is 1
+                        if (tfb != null) and (tgi == tfb) and (tgn[0] == "assign") and (tgn[1] == tgv):
+                            tbad is 1
+                        if tbad == 1:
+                            throw of ("AOT: top-level use of module name '" + tgv + "' precedes its first module-level binding. The VM binds a name when its assignment EXECUTES ('undefined variable' before that), but the AOT emits module globals as C globals live from program start; this order divergence cannot be answered statically, so it is refused (see the top-level order guard).")
     # where/why/how need the observer snapshot -> force observed (boxed) + obs-trace.
     g_obs_traced is has_obs_interrogate of ast
     # Observer programs: numeric vars are env-boxed + observed (no unboxing).

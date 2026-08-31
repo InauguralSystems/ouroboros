@@ -1,0 +1,27 @@
+# EXPECT: does not provably precede
+#
+# Round 57: the round-56 order guard sat only on the DEMOTED arm, and a
+# clean numeric module global took the gnm arm one line earlier with NO
+# order check -- the exact silent-success class the guard was built to
+# kill, one arm over (writer called before the module binding existed:
+# VM rc 1 "undefined variable", AOT printed 5 then 1, rc 0). The VM's
+# outward-write rule is type-blind, so the guard now sits on every
+# outward-routing arm.
+#
+# This is the envelope shape (the VM RUNS it, rc 0, prints 7): the dead
+# if-guarded call makes the order statically unprovable while at runtime
+# the binding always exists when the writer runs. `v` stays a clean
+# numeric global -- no demotion line -- so this fixture exercises the
+# gnm arm's guard specifically; its sibling fixture
+# outward_write_before_binding.eigs exercises the demoted arm's.
+
+define setnum(k) as:
+    v is k
+    return 0
+
+if 1 == 2:
+    x is setnum of 5
+
+v is 0
+x is setnum of 7
+print of v
