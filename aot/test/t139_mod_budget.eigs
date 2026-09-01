@@ -1,0 +1,23 @@
+# Round 75: the % arm of int_expr_bound is the grammar's one bound-
+# SHRINKING arm, and min(|a|,|b|) laundered an over-budget intermediate
+# through a small result -- with the budget checked only at the ROOT,
+# `(i*j) % 7` admitted while i*j > 2^53, where the exact long product
+# diverges from the VM's rounded double (AOT 6, VM 0, both rc 0), and
+# `(i*j*k) % 5` wraps 2^63 outright (UB; agreed by luck on one gcc).
+# The budget is now enforced per node by gating the binop OPERANDS --
+# every over-budget intermediate is someone's operand. Demoted, both
+# expressions compute in doubles exactly as the VM does.
+i is 1
+j is 3
+k is 7
+for a1 in range of 4000:
+    for a2 in range of 1000:
+        i is i + 29
+for b1 in range of 4000:
+    for b2 in range of 1000:
+        j is j + 23
+for c1 in range of 4000:
+    for c2 in range of 1000:
+        k is k + 19
+print of ((i * j) % 7)
+print of ((i * j * k) % 5)

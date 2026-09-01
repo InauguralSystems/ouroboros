@@ -782,11 +782,22 @@ define int_expr_bound(node) as:
             local br is int_expr_bound of n[3]
             if br == null:
                 return null
+            # (round 75) the budget is enforced per NODE, not only at the
+            # root: `%` is the grammar's one bound-SHRINKING arm, and
+            # min(|a|,|b|) laundered an over-budget intermediate through a
+            # small result -- `(i*j) % 7` admitted with i*j > 2^53, where
+            # the exact long product diverges from the VM's rounded double
+            # (printed 6 vs 0, both rc 0), and the three-factor variant
+            # wraps 2^63 outright (UB). Gating the OPERANDS closes it:
+            # every over-budget intermediate is someone's operand.
+            if (bl >= 9007199254740992) or (br >= 9007199254740992):
+                return null
             if (op == "+") or (op == "-"):
                 return bl + br
             if op == "*":
                 return bl * br
-            # %: |a % b| <= min(|a|, |b|)
+            # %: |a % b| <= min(|a|, |b|) -- magnitude-correct for negative
+            # operands under C truncated semantics too.
             if bl < br:
                 return bl
             return br
