@@ -96,6 +96,12 @@ g_mod_observed is 0
 # must use the observe-store (aot_observe_num/_val): module names routed
 # outward by the decl loop while g_mod_observed is set. Reset per function.
 g_outward_obs is {}
+# (round 64) Every name the CURRENT function could possibly bind (params,
+# body assigns, `local` marks, for-binders) — the never-bound half of the
+# `prev of` guard: a name in neither this set nor g_module_names is bound
+# NOWHERE the VM could resolve it, so `prev of` always raises there.
+# Rebuilt per function in emit_function.
+g_cur_bound is {}
 
 # Does this AST contain a bare observer predicate (converged/stable/...)?
 define has_predicate(node) as:
@@ -1506,10 +1512,23 @@ define emit_val(node, nm, bt) as:
                     # resolve cannot catch this: temporal-function locals are
                     # routed through the global env (Part 2a) and leak there
                     # after return, indistinguishable from a real binding.
-                    # Residual corner, accepted and stated: one temporal
-                    # function interrogating ANOTHER's leaked local still
-                    # diverges (VM raises, we answer) -- rarer than this shape
-                    # and unfixable without an env-removal API upstream.
+                    return "aot_undefined_name(\"" + ie[1] + "\")"
+                if ((G_CUR_FN[0]) != "<module>") and (g_module_names[ie[1]] != 1) and (g_cur_bound[(ie[1])] != 1):
+                    # (round 64) FUNCTION-scope half of the same guard --
+                    # its first version was scoped to module level only, and
+                    # a plain typo (`prev of p`, p bound NOWHERE) answered
+                    # null rc 0 where the VM raises rc 1. Statically
+                    # decidable: not a module name and not in this
+                    # function's possible-bind set (params, assigns, locals,
+                    # binders -- conservative-inclusive) means no scope the
+                    # VM resolves. This also covers names bound only in
+                    # OTHER functions' bodies (never in scope here).
+                    # Residual, restated: a temporal function interrogating
+                    # a name that IS bindable in scope but unbound on the
+                    # executed path (conditional assign; another temporal
+                    # fn's Part-2a leaked local sharing a module name)
+                    # still diverges -- runtime-resolve is blocked by the
+                    # Part 2a leak, unfixable without an env-removal API.
                     return "aot_undefined_name(\"" + ie[1] + "\")"
                 return "aot_prev_val(\"" + ie[1] + "\")"
             throw of "AOT: temporal interrogative without `at` only supports `prev`"
@@ -5259,6 +5278,21 @@ define emit_function(fn, finfo, gnm, gbt) as:
 
     local _lmk is {}
     collect_local_marked of [body, _lmk]
+    # (round 64) the never-bound set for the function-scope `prev of` guard:
+    # everything THIS function could possibly bind. Conservative-inclusive
+    # (conditional assigns and binders count as bound), so the guard only
+    # fires for names bound NOWHERE -- where the VM always raises.
+    g_cur_bound is {}
+    for cbp in range of (len of params):
+        g_cur_bound[(params[cbp])] is 1
+    local _cba is collect_assigns of [body, {}]
+    local _cbk is keys of _cba
+    for cbi in range of (len of _cbk):
+        g_cur_bound[(_cbk[cbi])] is 1
+    local _clk is keys of _lmk
+    for cbl in range of (len of _clk):
+        g_cur_bound[(_clk[cbl])] is 1
+    collect_for_binders of [body, g_cur_bound]
     local _lmn is keys of _lmk
     local _shcand is []
     local _bshcand is []

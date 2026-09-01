@@ -1,0 +1,14 @@
+# Round 64: the `prev of` undefined-name guard was scoped to MODULE level
+# only -- the per-scope-guard class, tenth sighting. `prev of p` inside a
+# function, p bound NOWHERE, answered null rc 0 where the VM raises
+# "undefined variable 'p'" rc 1: silent-wrong via a plain typo. The guard
+# now has a function-scope half keyed on the never-bound set (g_cur_bound:
+# params + body assigns + locals + for-binders, conservative-inclusive,
+# unioned with g_module_names) -- statically decidable, and it also covers
+# names bound only in OTHER functions' bodies (never in scope here).
+# Both sides die "undefined variable 'p'", equal codes (_err class).
+define a() as:
+    print of (prev of p)
+    return 0
+a of []
+print of "done"
