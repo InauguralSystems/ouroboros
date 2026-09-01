@@ -1939,6 +1939,14 @@ define emit_val(node, nm, bt) as:
         if (callee[1] == "dispatch") and (barg[0] == "list") and ((len of barg) == 2) and ((len of barg[1]) == 3):
             if (is_num_expr of [(barg[1])[1], nm, bt]) == 1:
                 return "aot_dispatch(" + (emit_val of [(barg[1])[0], nm, bt]) + ", " + (emit_num of [(barg[1])[1], nm, bt, 0]) + ", " + (emit_val of [(barg[1])[2], nm, bt]) + ")"
+        # (round 71) calling a name that is an UNBOXED C numeric: the env has
+        # no binding (the value lives in a C double/long), so the helper's
+        # env miss claimed "undefined function 'x'" -- a FALSE reason for a
+        # defined variable (the VM says "cannot call num"). The class is
+        # known statically; emit the VM's raise at the call's reachability
+        # (a dead-branch call stays rc 0, exactly as the VM's would).
+        if ((nm[(callee[1])] == 1) or (g_int[(callee[1])] == 1)) and (g_func_names[(callee[1])] != 1):
+            return "({ rt_error(EK_TYPE, g_trace_current_line, \"cannot call num\"); make_null(); })"
         if (barg[0] == "list") and ((len of barg) == 2) and ((len of barg[1]) == 1):
             local hc1 is ic_cache of 0
             return "({ " + hc1[0] + "aot_call_name_ic(__eigs_g, \"" + callee[1] + "\", " + (emit_val of [(barg[1])[0], nm, bt]) + ", " + hc1[1] + "); })"

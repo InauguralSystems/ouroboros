@@ -1906,17 +1906,29 @@ static void aot_dot_set(Value *target, const char *key, Value *val) {
     if (target) val_decref(target);
 }
 
-/* ---- for-loop iteration over a list/buffer (range materializes to a list) --- */
+/* ---- for-loop iteration over a list/buffer (range materializes to a list) ---
+ * Round 71: the first version conflated "not iterable" with "iterable of
+ * length 0" — a `for` over a runtime number/string/null/dict silently ran
+ * zero iterations and execution continued (VM: "'for' requires a list or
+ * buffer, got num", rc 1; AOT printed the untouched accumulator, rc 0 — a
+ * silent wrong number). The iterable's kind is a runtime fact (`xs[1]`),
+ * so no static refusal can stand in for this check. */
 static long aot_iter_len(Value *v) {
-    if (!v) return 0;
-    if (v->type == VAL_LIST)   return v->data.list.count;
-    if (v->type == VAL_BUFFER) return v->data.buffer.count;
-    return 0;
+    if (v) {
+        if (v->type == VAL_LIST)   return v->data.list.count;
+        if (v->type == VAL_BUFFER) return v->data.buffer.count;
+    }
+    rt_error(EK_TYPE, g_trace_current_line,
+             "'for' requires a list or buffer, got %s",
+             v ? val_type_name(v->type) : "null");
+    return 0; /* unreachable */
 }
 static Value *aot_iter_get(Value *v, long k) {   /* owned element k */
     if (v->type == VAL_LIST)   { Value *e = v->data.list.items[k]; val_incref(e); return e; }
     if (v->type == VAL_BUFFER) return make_num(v->data.buffer.data[k]);
-    return make_null();
+    rt_error(EK_TYPE, g_trace_current_line,
+             "'for' requires a list or buffer, got %s", val_type_name(v->type));
+    return make_null(); /* unreachable */
 }
 
 /* Same as aot_call_name with the callee resolution cached per site. The AOT
@@ -1972,6 +1984,14 @@ static Value *aot_dispatch(Value *table, double key, Value *ctx) {
 static Value *aot_call_name(Env *g, const char *name, Value *arg) {
     Value *fn = env_get(g, name);
     if (!fn) { fprintf(stderr, "aot: undefined function '%s'\n", name); exit(1); }
+    /* Round 71: the non-callable guard aot_call_value already had, mirrored
+     * here (the round-70 sibling-asymmetry pattern). call_eigs_fn returns
+     * make_null() for a non-FN/non-BUILTIN with NO error flag, so calling a
+     * string through an alias printed null, rc 0, where the VM raises
+     * "cannot call str" rc 1. */
+    if (fn->type != VAL_BUILTIN && fn->type != VAL_FN)
+        rt_error(EK_TYPE, g_trace_current_line, "cannot call %s",
+                 val_type_name(fn->type));
     Value *res;
     if (fn->type == VAL_BUILTIN) res = fn->data.builtin(arg);
     else                         res = call_eigs_fn(fn, arg);
@@ -2057,6 +2077,10 @@ static Value *aot_call_name_ic(Env *g, const char *name, Value *arg, AotNameIC *
     EigsSlot *sp = aot_name_slot(g, name, c);
     Value *fn = sp ? aot_slot_value(sp) : NULL;
     if (!fn) { fprintf(stderr, "aot: undefined function '%s'\n", name); exit(1); }
+    /* Round 71: non-callable guard, see aot_call_name. */
+    if (fn->type != VAL_BUILTIN && fn->type != VAL_FN)
+        rt_error(EK_TYPE, g_trace_current_line, "cannot call %s",
+                 val_type_name(fn->type));
     Value *res;
     if (fn->type == VAL_BUILTIN) res = fn->data.builtin(arg);
     else                         res = call_eigs_fn(fn, arg);

@@ -1,0 +1,13 @@
+# Round 71: aot_call_name/_ic lacked the non-callable guard their sibling
+# aot_call_value already had (the round-70 sibling-asymmetry pattern) --
+# call_eigs_fn returns null with NO error flag for a non-FN, so calling a
+# string through an alias printed null, rc 0, where the VM raises "cannot
+# call str" rc 1. The unboxed-numeric variant died with a FALSE reason
+# ("undefined function 'x'" for a defined variable); the emitter now
+# emits the VM's own "cannot call num" for statically-known numeric
+# callees, at the call's reachability. _err class: both die, equal codes.
+x is "hello"
+g is x
+print of "before"
+z is g of 1
+print of z
