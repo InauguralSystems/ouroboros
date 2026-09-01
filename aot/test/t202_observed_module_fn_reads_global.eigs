@@ -1,0 +1,40 @@
+# (round 108, #189) In an OBSERVED program module numerics live in the env
+# with no C global, but every non-observing function was seeded to read
+# them as file-scope C statics -- gcc 'eig_shared' undeclared, no AOT:
+# line, on six lines. Varied: the read in a return, in arithmetic with a
+# param, as a call argument, in a condition, in a loop bound, an
+# int-forced global, and a global read by TWO functions; the observed
+# function reading the same global is the Part-2a control, and the
+# module's own observer verdict pins that the env store is intact.
+shared is 7
+limit is 3
+define f() as:
+    return shared + 1
+define g(k) as:
+    local acc is 0
+    for i in range of limit:
+        acc is acc + shared * k
+    return acc
+define h(k) as:
+    if shared > k:
+        return "big"
+    return "small"
+define pr() as:
+    print of shared
+define obs_reader() as:
+    local v is shared
+    r is report of v
+    return v * 2
+b is 1
+b is 1
+rr is report of b
+print of rr
+print of (f of null)
+print of (g of 2)
+print of (h of 3)
+print of (h of 9)
+pr of null
+print of (obs_reader of null)
+shared is 8
+print of (f of null)
+print of (report of shared)

@@ -6597,10 +6597,26 @@ define emit_function(fn, finfo, gnm, gbt) as:
     local fbt is {}
     # seed with module globals so functions can read them (file-scope in C);
     # params/locals shadow same-named globals below.
+    #
+    # (round 108, #189) NOT in an observed program. There, module numerics
+    # are env-boxed and observed with NO file-scope C global (the module
+    # decl loop is gated g_observed == 0), so seeding them here made every
+    # read in a non-observing function a raw `eig_v` reference to a name
+    # that does not exist -- gcc 'eig_shared' undeclared, no AOT: line, on
+    # a six-line program (`shared is 7 / define f() as: return shared + 1 /
+    # b is 1 / rr is report of b / print of (f of null)`). Round 63 named
+    # the WRITE half of this and refused it; this is the read half it
+    # called "a residual". Unseeded, the ident arm reads the env by name
+    # (env_read_num -> aot_get_num_named_ic), which is where the observed
+    # store put the value. An observed function (g_observed == 1) keeps
+    # the seed: Part 2a already routes its reads through the env.
     local gn is keys of gnm
     for k in range of (len of gn):
         if gnm[gn[k]] == 1:
-            fnm[gn[k]] is 1
+            if (g_mod_observed == 1) and (g_observed == 0):
+                fnm[gn[k]] is 0
+            else:
+                fnm[gn[k]] is 1
     local gb is keys of gbt
     for k in range of (len of gb):
         if gbt[gb[k]] == 1:
