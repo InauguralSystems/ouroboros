@@ -1,0 +1,16 @@
+# Round 79: vec_loop's own BOUND, three holes at one site. (a) A
+# bound reading a buffer the loop WRITES went stale in the hoisted
+# _n -- the VM re-evaluates the condition every iteration (VM exits
+# after one iteration when b[0] shrinks; the hoist ran three) -- now
+# the round-78 index-shape-blind rule covers the bound and demotes
+# to scalar.
+b is buffer of 10
+b[0] is 3
+b[1] is 9
+i is 0
+loop while i < b[0]:
+    b[i] is 1
+    i is i + 1
+print of i
+print of b[1]
+print of b[2]

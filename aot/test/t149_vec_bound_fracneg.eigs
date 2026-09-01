@@ -1,0 +1,21 @@
+# Round 79 (b,c): fractional bounds truncated ((long)2.5 ran 2
+# iterations where the VM's i < 2.5 runs 3) and NEGATIVE bounds
+# force-assigned the counter to the bound (-3) where the VM never
+# enters and leaves it at 0. The hoist is now ceil-and-clamp, which
+# matches the VM's 0-base/step-1 iteration count and final counter
+# for every bound sign and fraction.
+b is buffer of 10
+n is 2.5
+i is 0
+loop while i < n:
+    b[i] is 1
+    i is i + 1
+print of i
+print of b[2]
+c is buffer of 10
+m is 0 - 3
+j is 0
+loop while j < m:
+    c[j] is 1
+    j is j + 1
+print of j

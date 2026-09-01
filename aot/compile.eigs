@@ -905,15 +905,26 @@ define is_counter(v, rhss) as:
     # counter stepped by 1e9 for 100 iterations reaches 1e11 with every
     # individual assignment passing the old guard, and `i * i` wrapped the
     # signed long (VM 1e+22; AOT 1.86e+18, both rc 0 -- silent wrong
-    # number, and UB). The sound static bound exists because the VM itself
-    # caps CUMULATIVE loop iterations at 1e8 (EigenScript #772), so a
-    # counter's value never exceeds |base| + |step| * 1e8. Requiring that
-    # quantity under 3e9 keeps every pairwise product under 2^63 (3e9
-    # squared = 9e18 < 9.22e18). Step-1 counters from small bases (the
-    # matmul shape) and strided counters from 0 stay int; big steps or big
-    # bases demote to the double path, which is what the VM computes.
-    # Residual, stated: index-forced PARAMS have no static bound and their
-    # products can still wrap (#163's ledger).
+    # number, and UB). |base| + |step| * 1e8 under 3e9 keeps every
+    # pairwise product under 2^63.
+    #
+    # (round 79 correction) The 1e8 trip-count anchor cited EigenScript
+    # #772 as an unconditional VM loop cap -- FALSE at the current pin:
+    # #772 REMOVED the unconditional cap (it fires only under an armed
+    # sandbox budget, vm.c ~1889). So this bound is a HEURISTIC admission
+    # gate, not a proof. The actual load-bearing defenses, probed past
+    # the assumed bound (a counter run to 9.28e9 then squared -- SAME):
+    # value-context int reads and int subexpressions are CAST to double
+    # (round 74), so products compute as the VM does; int-context
+    # consumers are bounds-checked indexes, aot_imod (exact in long to
+    # 2^63), or the 2^53-budgeted grammar. A counter exceeding the
+    # assumed bound would need ~3e14 iterations before any admitted long
+    # op could diverge from the exact-double range -- hours of runtime --
+    # and the oracle polices the corner. Step-1 counters from small bases
+    # (the matmul shape) and strided counters from 0 stay int; big steps
+    # or big bases demote to the double path, which is what the VM
+    # computes. Residual, stated: index-forced PARAMS have no static
+    # bound and their products can still wrap (#163's ledger).
     local cmaxbase is 0
     local cmaxstep is 0
     for j in range of (len of rhss):
@@ -3213,6 +3224,16 @@ define vec_loop(loopnode, nm, bt) as:
     for dchk in range of (len of assigns):
         if (reads_written_offset of [(assigns[dchk])["val"], ctr, wbufs]) == 1:
             return null
+    # (round 79) the BOUND gets the round-78 rule too: emit_vectorized
+    # hoists it ONCE into _n, while the VM re-evaluates the condition
+    # every iteration -- a bound reading a buffer this loop WRITES went
+    # stale (`loop while i < b[0]` with `b[i] is 1`: VM exits after one
+    # iteration, the hoisted _n ran three). Index-shape-blind, per
+    # reads_buf_any; demotion is scalar and byte-exact.
+    local wbk79 is keys of wbufs
+    for wchk in range of (len of wbk79):
+        if (reads_buf_any of [bound, wbk79[wchk]]) == 1:
+            return null
     return {"ctr": ctr, "bound": bound, "assigns": assigns, "bufs": keys of bufs}
 
 define emit_vec(node, ctr, raw) as:
@@ -3316,7 +3337,13 @@ define emit_vectorized(node, vinfo, ind, nm, bt, minits) as:
     local i3 is i2 + "    "
     local i4 is i3 + "    "
     local s is ind + "{\n"
-    s is s + i2 + "long _n = (long)(" + boundc + ");\n"
+    # (round 79) ceiling + clamp, not truncation: the VM's `i < 2.5` runs
+    # 3 iterations and ends the counter at 3 where (long)2.5 ran 2; a
+    # NEGATIVE bound never enters the VM's loop and leaves the counter
+    # untouched, where the raw hoist force-assigned it to the bound (-3).
+    # ceil matches the VM's 0-base/step-1 iteration count and final
+    # counter for every bound sign and fraction.
+    s is s + i2 + "long _n = (long)ceil(" + boundc + "); if (_n < 0) _n = 0;\n"
     for k in range of (len of bufs):
         s is s + i2 + "double* _p_" + (cn of bufs[k]) + " = aot_buf_data(" + (cn of bufs[k]) + ");\n"
     local guard is "(long)" + (cn of ctr) + " == 0"
