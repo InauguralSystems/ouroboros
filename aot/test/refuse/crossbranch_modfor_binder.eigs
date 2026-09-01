@@ -1,0 +1,27 @@
+# EXPECT: used after its loop in an observed/traced program
+#
+# Round 69: cross-BRANCH pairs under re-entry. A binder in one branch and
+# a use in the SIBLING branch never met in one scan, and an enclosing
+# loop executes the pair on different iterations: iteration 0 runs the
+# for, iteration 1's else-branch read served the leaked binder (VM rc 1
+# "undefined variable 'i'"; AOT printed 8, rc 0; match arms identically).
+# Re-entry makes execution order circular, so under an enclosing loop the
+# walker checks if/match branches pairwise and scans EARLIER siblings
+# too. Outside a loop the pair stays in the envelope: mutual exclusion
+# means the read either never executes or misses the env and dies exactly
+# like the VM (verified live).
+#
+# Envelope shape: the VM RUNS this (rc 0 -- one iteration, so the reading
+# branch is never taken), but the static pair refuses.
+
+x is 1
+print of (report of x)
+n is 0
+loop while n < 1:
+    if n == 0:
+        for i in [7, 8]:
+            q is 1
+    else:
+        print of i
+    n is n + 1
+print of "done"

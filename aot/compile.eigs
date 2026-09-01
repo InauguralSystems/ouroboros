@@ -980,14 +980,31 @@ define collect_module_for_binders(node, acc) as:
         collect_module_for_binders of [node[k], acc]
     return 0
 
-define modfor_intra_check(node, tli) as:
+define modfor_bind_exempt(bb, tli) as:
+    # MUST-bind exemption shared by every check in modfor_intra_check: a
+    # plain top-level assign strictly before the enclosing statement.
+    local bfb is g_first_plain_bind[bb]
+    if (bfb != null) and (bfb < tli):
+        return 1
+    return 0
+
+define modfor_intra_check(node, tli, inloop) as:
     # WITHIN one top-level statement: after any nested `for`, later
     # siblings in the same block must not use the binder (the VM
     # loop-scopes it; observed/traced emission leaks it through the env).
     # A later sibling that plainly reassigns the binder starts a fresh
-    # binding and stops the scan. Pre-bound exemption is the caller's
-    # (g_first_bind vs tli); a bind INSIDE the same statement before the
-    # for is not recognized and refuses conservatively-loud.
+    # binding and stops the scan.
+    #
+    # (round 69) `inloop` marks re-entrant context (any enclosing loop or
+    # for body). Re-entry makes execution order CIRCULAR: iteration 0 runs
+    # the for, iteration 1 runs code that is textually BEFORE it or in the
+    # SIBLING BRANCH of the same if/match -- executed, the cross-branch
+    # pair printed the leaked 8, rc 0, where the VM raises. Under inloop,
+    # earlier siblings are scanned too (no stop logic -- circular order
+    # has no "after the rebind") and if/match branches are checked
+    # pairwise. Outside a loop those pairs are safe by mutual exclusion:
+    # the read either never executes or misses the env and dies exactly
+    # like the VM.
     if (type of node) != "list":
         return 0
     if (len of node) == 0:
@@ -995,12 +1012,8 @@ define modfor_intra_check(node, tli) as:
     local t is node[0]
     if (type of t) == "list":
         # (round 67) the trigger set per sibling is the SHARED collector,
-        # not a direct-`for` tag match -- the first version repeated
-        # invariant 16b one block level down: a for nested inside a
-        # sibling (if/loop/match arm) was invisible to the trigger while
-        # the use walk recursed, and one extra wrapper level restored the
-        # phantom (VM rc 1, AOT printed 8 then 7, rc 0). One traversal,
-        # both sides, at every depth.
+        # not a direct-`for` tag match -- one traversal, both sides, at
+        # every depth (invariant 16b).
         for bi in range of (len of node):
             local bacc is {}
             collect_module_for_binders of [node[bi], bacc]
@@ -1009,13 +1022,9 @@ define modfor_intra_check(node, tli) as:
                 local bb is bks[bk]
                 # (round 68) MUST-bind exemption only: a plain top-level
                 # assign before the enclosing statement, or an earlier
-                # SIBLING plain assign in this block (it shares the branch
-                # path with the loop, so it executed iff the loop did). A
-                # conditional earlier bind wrongly exempted the leak.
-                local bfb is g_first_plain_bind[bb]
-                local bexempt is 0
-                if (bfb != null) and (bfb < tli):
-                    bexempt is 1
+                # SIBLING plain assign in this block (shares the loop's
+                # branch path). Conditional binds wrongly exempted.
+                local bexempt is modfor_bind_exempt of [bb, tli]
                 for bp in range of (len of node):
                     if bp < bi:
                         local bps is unwrap of node[bp]
@@ -1038,29 +1047,66 @@ define modfor_intra_check(node, tli) as:
                             if bstop == 0:
                                 if (uses_ident_skip_forbind of [node[bj], bb]) == 1:
                                     throw of ("AOT: module for binder '" + bb + "' is used after its loop in an observed/traced program. The VM loop-scopes a binder with no pre-existing binding in every regime, but observed/traced module emission routes it through the env, where C block scoping cannot express the loop scope (see EigenScript#1056); refused rather than answering with the leaked value.")
-            modfor_intra_check of [node[bi], tli]
+                        if (bj < bi) and (inloop == 1):
+                            # (round 69) circular order: an earlier sibling
+                            # executes AFTER the for on the next iteration.
+                            if (uses_ident_skip_forbind of [node[bj], bb]) == 1:
+                                throw of ("AOT: module for binder '" + bb + "' is used after its loop in an observed/traced program (re-entrant context: an enclosing loop runs the use on a later iteration). The VM loop-scopes the binder; observed/traced emission leaks it through the env (see EigenScript#1056); refused rather than answering with the leaked value.")
+            modfor_intra_check of [node[bi], tli, inloop]
         return 0
     if t == "_line":
-        return modfor_intra_check of [node[2], tli]
+        return modfor_intra_check of [node[2], tli, inloop]
     if t == "func":
         return 0
     if t == "if":
-        modfor_intra_check of [node[2], tli]
-        modfor_intra_check of [node[3], tli]
+        if inloop == 1:
+            # (round 69) cross-branch pairs under re-entry: binder in one
+            # branch, use in the sibling branch -- different iterations.
+            local cbt is {}
+            collect_module_for_binders of [node[2], cbt]
+            local cbtk is keys of cbt
+            for cbti in range of (len of cbtk):
+                local cbtn is cbtk[cbti]
+                if (modfor_bind_exempt of [cbtn, tli]) == 0:
+                    if (uses_ident_skip_forbind of [node[3], cbtn]) == 1:
+                        throw of ("AOT: module for binder '" + cbtn + "' is used after its loop in an observed/traced program (re-entrant context: the sibling branch reads it on a later iteration). The VM loop-scopes the binder; observed/traced emission leaks it through the env (see EigenScript#1056); refused rather than answering with the leaked value.")
+            local cbe is {}
+            collect_module_for_binders of [node[3], cbe]
+            local cbek is keys of cbe
+            for cbei in range of (len of cbek):
+                local cben is cbek[cbei]
+                if (modfor_bind_exempt of [cben, tli]) == 0:
+                    if (uses_ident_skip_forbind of [node[2], cben]) == 1:
+                        throw of ("AOT: module for binder '" + cben + "' is used after its loop in an observed/traced program (re-entrant context: the sibling branch reads it on a later iteration). The VM loop-scopes the binder; observed/traced emission leaks it through the env (see EigenScript#1056); refused rather than answering with the leaked value.")
+        modfor_intra_check of [node[2], tli, inloop]
+        modfor_intra_check of [node[3], tli, inloop]
         return 0
     if t == "loop":
-        modfor_intra_check of [node[2], tli]
+        modfor_intra_check of [node[2], tli, 1]
         return 0
     if t == "for":
-        modfor_intra_check of [node[3], tli]
+        modfor_intra_check of [node[3], tli, 1]
         return 0
     if t == "unobserved":
-        modfor_intra_check of [node[1], tli]
+        modfor_intra_check of [node[1], tli, inloop]
         return 0
     if t == "match":
         local mcs is node[2]
+        if inloop == 1:
+            # (round 69) cross-ARM pairs under re-entry, same rule.
+            for ma in range of (len of mcs):
+                local macc is {}
+                collect_module_for_binders of [(mcs[ma])[1], macc]
+                local mak is keys of macc
+                for mk in range of (len of mak):
+                    local mnm is mak[mk]
+                    if (modfor_bind_exempt of [mnm, tli]) == 0:
+                        for mb in range of (len of mcs):
+                            if mb != ma:
+                                if (uses_ident_skip_forbind of [(mcs[mb])[1], mnm]) == 1:
+                                    throw of ("AOT: module for binder '" + mnm + "' is used after its loop in an observed/traced program (re-entrant context: a sibling match arm reads it on a later iteration). The VM loop-scopes the binder; observed/traced emission leaks it through the env (see EigenScript#1056); refused rather than answering with the leaked value.")
         for mi in range of (len of mcs):
-            modfor_intra_check of [(mcs[mi])[1], tli]
+            modfor_intra_check of [(mcs[mi])[1], tli, inloop]
         return 0
     # NO "try" case, on purpose and stated: module-scope try refuses
     # loudly at emission today ("cannot emit statement node 'try'"), so
@@ -6495,7 +6541,7 @@ define emit_program(ast) as:
                                 break
                             if (uses_ident_skip_forbind of [stmts[r65j], r65b]) == 1:
                                 throw of ("AOT: module for binder '" + r65b + "' is used after its loop in an observed/traced program. The VM loop-scopes a binder with no pre-existing binding in every regime, but observed/traced module emission routes it through the env, where C block scoping cannot express the loop scope (see EigenScript#1056); refused rather than answering with the leaked value.")
-            modfor_intra_check of [stmts[r65i], r65i]
+            modfor_intra_check of [stmts[r65i], r65i, 0]
     # Partition top-level function definitions from the rest (main body).
     local funcs is []
     local rest is []
