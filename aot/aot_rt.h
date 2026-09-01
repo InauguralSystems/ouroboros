@@ -709,7 +709,9 @@ static void   aot_buf_set_at(Value *b, double idx, double v, const char *site) {
     if (b && b->type == VAL_LIST) {
         long i = aot_idx_k(idx, b->data.list.count, 1);
         Value *old = b->data.list.items[i];
-        b->data.list.items[i] = make_num(v);
+        /* (round 107) #873: heap-force the box when an arena window is open
+         * and the list is heap -- mirrors OP_INDEX_SET's numeric fast path. */
+        b->data.list.items[i] = (g_arena.active && !b->arena) ? make_num_permanent(v) : make_num(v);
         if (old) val_decref(old);
         return;
     }
@@ -741,7 +743,9 @@ static void   aot_buf_set_i_at(Value *b, long idx, double v, const char *site) {
     if (b && b->type == VAL_LIST) {
         long i = aot_idx_ik(idx, b->data.list.count, 1);
         Value *old = b->data.list.items[i];
-        b->data.list.items[i] = make_num(v);
+        /* (round 107) #873: heap-force the box when an arena window is open
+         * and the list is heap -- mirrors OP_INDEX_SET's numeric fast path. */
+        b->data.list.items[i] = (g_arena.active && !b->arena) ? make_num_permanent(v) : make_num(v);
         if (old) val_decref(old);
         return;
     }
@@ -1706,7 +1710,15 @@ static void aot_index_set_ib(Value *target, double d, Value *val) {
             rt_error(EK_VALUE, 0, "index must be an integer, got %g", d);
         else if (aot_idx_resolve(&i, target->data.list.count)) {
             Value *old = target->data.list.items[i];
-            target->data.list.items[i] = val; val = NULL;   /* adopt */
+            /* (round 107) #873: an arena value stored into a HEAP list must be
+             * PROMOTED, exactly as OP_INDEX_SET / set_at / list_append do. The
+             * adopted arena pointer dangled after arena_reset and the next
+             * arena user's allocation landed in the slot -- wrong value, wrong
+             * type, then a free() abort (t198). Same shape as aot_lv_set:
+             * promote, adopt the promoted ref, drop val's below. */
+            Value *nv = promote_if_arena(val);
+            if (nv == val) { target->data.list.items[i] = val; val = NULL; }   /* adopt */
+            else target->data.list.items[i] = nv;   /* fresh heap ref; the arena val is dropped below */
             if (old) val_decref(old);
         } else
             rt_error(EK_INDEX, 0, "index %d out of range (list length %d)", i, target->data.list.count);
@@ -1833,7 +1845,15 @@ static void aot_index_set_i(Value *target, double d, Value *val) {
             rt_error(EK_VALUE, 0, "index must be an integer, got %g", d);
         else if (aot_idx_resolve(&i, target->data.list.count)) {
             Value *old = target->data.list.items[i];
-            target->data.list.items[i] = val; val = NULL;   /* adopt */
+            /* (round 107) #873: an arena value stored into a HEAP list must be
+             * PROMOTED, exactly as OP_INDEX_SET / set_at / list_append do. The
+             * adopted arena pointer dangled after arena_reset and the next
+             * arena user's allocation landed in the slot -- wrong value, wrong
+             * type, then a free() abort (t198). Same shape as aot_lv_set:
+             * promote, adopt the promoted ref, drop val's below. */
+            Value *nv = promote_if_arena(val);
+            if (nv == val) { target->data.list.items[i] = val; val = NULL; }   /* adopt */
+            else target->data.list.items[i] = nv;   /* fresh heap ref; the arena val is dropped below */
             if (old) val_decref(old);
         } else
             rt_error(EK_INDEX, 0, "index %d out of range (list length %d)", i, target->data.list.count);
@@ -1862,7 +1882,15 @@ static void aot_index_set(Value *target, Value *idx, Value *val) {
             rt_error(EK_VALUE, 0, "index must be an integer, got %g", idx->data.num);
         else if (aot_idx_resolve(&i, target->data.list.count)) {
             Value *old = target->data.list.items[i];
-            target->data.list.items[i] = val; val = NULL;   /* adopt */
+            /* (round 107) #873: an arena value stored into a HEAP list must be
+             * PROMOTED, exactly as OP_INDEX_SET / set_at / list_append do. The
+             * adopted arena pointer dangled after arena_reset and the next
+             * arena user's allocation landed in the slot -- wrong value, wrong
+             * type, then a free() abort (t198). Same shape as aot_lv_set:
+             * promote, adopt the promoted ref, drop val's below. */
+            Value *nv = promote_if_arena(val);
+            if (nv == val) { target->data.list.items[i] = val; val = NULL; }   /* adopt */
+            else target->data.list.items[i] = nv;   /* fresh heap ref; the arena val is dropped below */
             if (old) val_decref(old);
         } else
             rt_error(EK_INDEX, 0, "index %d out of range (list length %d)", i, target->data.list.count);

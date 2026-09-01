@@ -3143,7 +3143,7 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
                 fo is fo + ind + "    " + (cn of fvar) + " = aot_num_ck_at(aot_iter_get(" + itv + ", " + kv + "), \"" + (c_escape of (G_CUR_FN[0])) + ": for-in " + (c_escape of fvar) + "\");\n"
                 if g_traced == 1:
                     fo is fo + ind + "    aot_trace_assign(\"" + fvar + "\", " + (cn of fvar) + ");\n"
-            elif (lscope == 0) and (nm[fvar] == 1) and (g_observed == 0) and (g_traced == 0):
+            elif (lscope == 0) and (nm[fvar] == 1) and (g_observed == 0):
                 # (round 106) a MODULE-scope for-var whose unbox was DECLINED
                 # (it is an assignment target, so g_forunbox skipped it) but
                 # whose reads are C-static (`nm` was set by the numeric pass
@@ -3164,8 +3164,29 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
                 # static (the prebound module binding) is untouched, so
                 # post-loop code sees precisely what the VM's outer binding
                 # holds.
-                fo is fo + ind + "    double " + (cn of fvar) + " = aot_num_ck_at(aot_iter_get(" + itv + ", " + kv + "), \"" + (c_escape of (G_CUR_FN[0])) + ": for-in " + (c_escape of fvar) + "\");
-"
+                #
+                # (round 107) The first version was ALSO gated g_traced == 0,
+                # by analogy with the unboxed arm -- and that left the original
+                # bug live in every TRACED program: one `prev of` anywhere in
+                # the file (even inside an unrelated function) sent this shape
+                # to the terminal env arm while the body still read the C
+                # variable, at BOTH scopes (t199: module sum 21 for 13). The
+                # traced regime changes nothing about storage here -- nm is
+                # still the reads' regime -- it only adds the tape write, so
+                # this arm now fires in both regimes and traces like its
+                # lscope sibling. And the arm is scope-split, because the
+                # VM's rule is: a MODULE binder is loop-scoped (shadow), a
+                # FUNCTION-LOCAL binder OVERWRITES the local and persists
+                # (measured: `i is 7` then `for i in range of 3` prints 2
+                # after the loop in a function, 7 at module scope) -- the
+                # untraced function case reaches the unboxed arm above and
+                # already writes the local directly; this mirrors it.
+                if (G_CUR_FN[0]) == "<module>":
+                    fo is fo + ind + "    double " + (cn of fvar) + " = aot_num_ck_at(aot_iter_get(" + itv + ", " + kv + "), \"" + (c_escape of (G_CUR_FN[0])) + ": for-in " + (c_escape of fvar) + "\");\n"
+                else:
+                    fo is fo + ind + "    " + (cn of fvar) + " = aot_num_ck_at(aot_iter_get(" + itv + ", " + kv + "), \"" + (c_escape of (G_CUR_FN[0])) + ": for-in " + (c_escape of fvar) + "\");\n"
+                if g_traced == 1:
+                    fo is fo + ind + "    aot_trace_assign(\"" + fvar + "\", " + (cn of fvar) + ");\n"
             elif (g_lowerloc == 1) and (g_envloc[fvar] == 1):
                 if g_traced == 1:
                     fo is fo + ind + "    { Value* __fv = aot_iter_get(" + itv + ", " + kv + "); aot_trace_assign_val(\"" + fvar + "\", __fv); aot_lv_set(&" + (lv of fvar) + ", __fv); }\n"

@@ -1,4 +1,3 @@
-test_arena_escape.eigs DIVERGE
 test_auth.eigs DIVERGE
 test_bcd.eigs REFUSE
 test_bitwise.eigs REFUSE
