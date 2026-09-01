@@ -81,7 +81,7 @@ test_observer_park.eigs DIVERGE
 test_observer_saturation.eigs REFUSE
 test_observer_slots.eigs REFUSE
 test_observer_value_signal.eigs DIVERGE
-test_obs_mt_race.eigs DIVERGE
+test_obs_mt_race.eigs REFUSE
 test_opaque_fn.eigs DIVERGE
 test_optimize.eigs REFUSE
 test_pcm_codec.eigs REFUSE
@@ -112,9 +112,9 @@ test_store.eigs REFUSE
 test_stray_break.eigs REFUSE
 test_supervise.eigs DIVERGE
 test_sync.eigs REFUSE
-test_task_osr.eigs DIVERGE
+test_task_osr.eigs REFUSE
 test_tasks.eigs REFUSE
-test_task_sleep_order.eigs DIVERGE
+test_task_sleep_order.eigs REFUSE
 test_temporal.eigs REFUSE
 test_temporal_pruning.eigs REFUSE
 test_temporal_when.eigs REFUSE

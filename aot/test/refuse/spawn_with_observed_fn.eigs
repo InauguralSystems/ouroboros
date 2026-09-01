@@ -1,0 +1,22 @@
+# EXPECT: spawn with an observed/temporal function
+#
+# (round 108) Part 2a routes an OBSERVED function's locals through the
+# process-global env BY NAME; two OS threads then race one slot while
+# first-observation grows the obs array: "undefined variable 'seen'" then
+# SIGSEGV rc 139 where the VM prints 4000 / 4000. Lower contention is
+# worse -- silent wrong counts at rc 0. Keyed on ANY observed function in
+# the program, not on the spawn argument (the function value can flow
+# dynamically).
+define reader() as:
+    local seen is 0
+    for i in range of 4000:
+        seen is seen + 1
+        r is report of seen
+    return seen
+
+h1 is spawn of reader
+h2 is spawn of reader
+t1 is thread_join of h1
+t2 is thread_join of h2
+print of t1
+print of t2

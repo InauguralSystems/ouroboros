@@ -275,6 +275,24 @@ define has_interrogate(node) as:
             return 1
     return 0
 
+# Does this AST mention identifier NAME anywhere -- as a callee (`name of x`
+# is ["call", ["ident", name], ...]) or as a bare value reference (`spawn of
+# reader` passes `reader` as ["ident", "reader"])? Round 108's refusals key
+# on this program-wide, on purpose: a function value can flow to spawn or
+# task_spawn through any binding, so a predicate scoped to the call's bare
+# argument would breed an invariant-20 hole every round it was scoped.
+define mentions_ident(node, name) as:
+    if (type of node) != "list":
+        return 0
+    if (len of node) == 0:
+        return 0
+    if (node[0] == "ident") and (node[1] == name):
+        return 1
+    for k in range of (len of node):
+        if (mentions_ident of [node[k], name]) == 1:
+            return 1
+    return 0
+
 # where/why/how is x at L (kinds 3/4/5) need the observer SNAPSHOT, so the var
 # must be observed (env-boxed, slot-tracked) AND g_trace_obs_hist on.
 g_obs_traced is 0
@@ -7877,6 +7895,37 @@ define emit_program(ast) as:
         if fp_changed == 0:
             fp_round is 4
         fp_round is fp_round + 1
+    # (round 108) Concurrency builtins the native runtime cannot EXECUTE were
+    # admitted through generic dispatch (compile.eigs had no mention of
+    # spawn/task/chan at all). Two arms, one root, both refused by name;
+    # ouroboros#188 holds the design work that would lift each.
+    #
+    # task_spawn: the builtin enqueues (the AOT's make_builtin wrapper passes
+    # its type check) but the cooperative scheduler is pumped only by the VM
+    # dispatch loop (vm.c CASE(CALL): the suspend request is honoured at
+    # base_frame 0 -> vm_suspend_halt). Native main() has no run loop, so the
+    # task never runs and task_join/task_recv return their placeholder null:
+    # `print of task_join of (task_spawn of [worker, 21])` -- VM 42, AOT
+    # null, rc 0 both. task_spawn is the only scheduler entry point; without
+    # it the other task_* builtins already match the VM's no-scheduler
+    # behaviour, so the predicate need not be wider.
+    if (mentions_ident of [ast, "task_spawn"]) == 1:
+        throw of ("AOT: task_spawn -- cooperative tasks are pumped by the VM run loop (vm.c CASE(CALL) at base_frame 0 -> vm_suspend_halt); native main() has no run loop, so a spawned task never runs and task_join/task_recv return their placeholder null (VM 42 / AOT null, rc 0 both). Refused by name; a native scheduler needs a coroutine substrate the AOT does not have (ouroboros#188).")
+    # spawn: OS threads over compiled functions are fine while every local is
+    # a C variable on the thread's own stack. An OBSERVED function is not:
+    # Part 2a routes its locals through the process-global env BY NAME, and
+    # two threads then race one slot while first-observation grows the obs
+    # array -- "undefined variable 'seen'" then SIGSEGV rc 139 where the VM
+    # prints 4000 / 4000, and at lower contention silently wrong counts at
+    # rc 0 (an unobserved worker calling an observed helper: 6397 / 6223).
+    # Keyed on ANY observed function in the program, not on spawn's
+    # argument: the function value can flow to spawn dynamically.
+    if (mentions_ident of [ast, "spawn"]) == 1:
+        local ofn is keys of g_funcs
+        for k in range of (len of ofn):
+            local ofe is g_funcs[ofn[k]]
+            if ofe["observed"] == 1:
+                throw of ("AOT: spawn with an observed/temporal function in the program ('" + ofn[k] + "'): Part 2a routes its locals through the process-global env by name, and OS threads race one slot (undefined variable then SIGSEGV rc 139, or silently wrong counts at rc 0). Refused program-wide because the function value can flow to spawn dynamically (ouroboros#188).")
     # (#86) call-site widening: add the evidence body-only inference cannot
     # see, monotonically (num -> gen), to a fixpoint. No-op on programs that
     # never pass a boxed value into a num-defaulted param.

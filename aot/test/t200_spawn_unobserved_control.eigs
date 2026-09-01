@@ -1,0 +1,22 @@
+# (round 108) CONTROL for the spawn refusal: OS threads over UNOBSERVED
+# workers are fine -- each compiled worker's locals are C variables on
+# its own stack, and a worker READING a module numeric global races
+# nothing. Must keep building and stay byte-exact; the refusal keys on
+# func_observed and this pins that it keys on nothing wider.
+shared is 7
+define reader() as:
+    local seen is 0
+    for i in range of 4000:
+        seen is seen + 1
+    return seen
+define summer() as:
+    local acc is 0
+    for i in range of 2000:
+        acc is acc + shared
+    return acc
+h1 is spawn of reader
+h2 is spawn of summer
+t1 is thread_join of h1
+t2 is thread_join of h2
+print of t1
+print of t2

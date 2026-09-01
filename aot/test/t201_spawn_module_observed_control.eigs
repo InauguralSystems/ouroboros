@@ -1,0 +1,20 @@
+# (round 108) Second CONTROL for the spawn refusal: MODULE-scope
+# observation while unobserved workers run puts no FUNCTION into the
+# observed set, so this must keep building too -- the refusal is keyed on
+# observed functions, not on "the program observes".
+define reader() as:
+    local seen is 0
+    for i in range of 4000:
+        seen is seen + 1
+    return seen
+h1 is spawn of reader
+h2 is spawn of reader
+b0 is 0
+b1 is 1
+b1 is 1
+rr is report of b1
+print of rr
+t1 is thread_join of h1
+t2 is thread_join of h2
+print of t1
+print of t2
