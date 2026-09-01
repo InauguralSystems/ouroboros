@@ -1602,6 +1602,36 @@ define seq_call3(fn, ops, types) as:
         names is names + "_sqo" + (str of k)
     return pre + fn + "(" + names + "); })"
 
+define seq_buftgt(fn, tgtc, idx, val, rty) as:
+    # (round 94) TARGET-FIRST for the C-buffer index arms. The VM pushes
+    # the container, then the index, then (for a set) the value; these
+    # arms emitted the target as a bare C operand beside a sibling that
+    # can REBIND it, so `b[0] is swap of []` (swap rebinding b) wrote the
+    # NEW buffer -- VM 0, AOT 7 -- and the read twin served the new
+    # buffer's element (VM 5, AOT 0). When the rebind SHRANK the buffer
+    # the AOT fabricated an out-of-range death, rc 1, where the VM prints
+    # 9. Round 88 sequenced index-vs-value here and round 93 sequenced
+    # target-vs-bound inside slice_arg_parts; neither carried the target
+    # axis into these arms -- invariant 16(a), third sighting on one
+    # guard.
+    #
+    # The incref/decref pair is required, not hygiene. It is a no-op
+    # TODAY only because a buffer-global rebind leaks the old value
+    # (measured this round: 421 MB vs the VM's 2.9 MB over 200k rebinds,
+    # filed separately). The moment that leak is closed, a bare hoist
+    # becomes a use-after-free -- so the pair ships with the hoist, the
+    # same reasoning round 93 applied to slice targets.
+    if val == "":
+        return "({ Value* _sbt = " + tgtc + "; val_incref(_sbt); " + rty + " _sbr = " + fn + "(_sbt, " + idx + "); val_decref(_sbt); _sbr; })"
+    # a SET is a statement: a plain block, not a statement-expression.
+    return "{ Value* _sbt = " + tgtc + "; val_incref(_sbt); double _sbi = " + idx + "; " + fn + "(_sbt, _sbi, " + val + "); val_decref(_sbt); }"
+
+define seq_buftgt_i(fn, tgtc, idx, val) as:
+    # long-index sibling of seq_buftgt (aot_buf_set_i / aot_buf_get_i).
+    if val == "":
+        return "({ Value* _sbt = " + tgtc + "; val_incref(_sbt); double _sbr = " + fn + "(_sbt, " + idx + "); val_decref(_sbt); _sbr; })"
+    return "{ Value* _sbt = " + tgtc + "; val_incref(_sbt); long _sbi = " + idx + "; " + fn + "(_sbt, _sbi, " + val + "); val_decref(_sbt); }"
+
 define slice_hi(parts, tvar) as:
     # the DEFAULT upper bound is the target's own length, so once the
     # target is hoisted the length must be taken from the hoisted temp --
@@ -1783,7 +1813,11 @@ define emit_num(node, nm, bt, raw) as:
                 return "aot_num_ck_at(" + (seq_call3 of ["aot_index_get_i", [[(emit_val of [node[1], nm, bt]), (has_call_node of node[1])], [(emit_num of [node[2], nm, bt, 0]), (has_call_node of node[2])]], ["Value*", "double"]]) + ", \"" + (c_escape of (G_CUR_FN[0])) + ": index read\")"
             return "aot_num_ck_at(" + (seq_call3 of ["aot_index_get", [[(emit_val of [node[1], nm, bt]), (has_call_node of node[1])], [(emit_val of [node[2], nm, bt]), (has_call_node of node[2])]], ["Value*", "Value*"]]) + ", \"" + (c_escape of (G_CUR_FN[0])) + ": index read\")"
         if (is_int_expr of node[2]) == 1:
+            if (has_call_node of node[2]) == 1:
+                return seq_buftgt_i of ["aot_buf_get_i", (cn of tgt[1]), (emit_int of node[2]), ""]
             return "aot_buf_get_i(" + (cn of tgt[1]) + ", " + (emit_int of node[2]) + ")"
+        if (has_call_node of node[2]) == 1:
+            return seq_buftgt of ["aot_buf_get", (cn of tgt[1]), (emit_num of [node[2], nm, bt, 0]), "", "double"]
         return "aot_buf_get(" + (cn of tgt[1]) + ", " + (emit_num of [node[2], nm, bt, 0]) + ")"
     if t == "call":
         local callee is unwrap of node[1]
@@ -2045,6 +2079,8 @@ define emit_val(node, nm, bt) as:
         # aot_buf_get double instead (same VM index semantics, loud on error).
         local itgt is unwrap of node[1]
         if (itgt[0] == "ident") and (bt[itgt[1]] == 1):
+            if (has_call_node of node[2]) == 1:
+                return "make_num(" + (seq_buftgt of ["aot_buf_get", (cn of itgt[1]), (emit_num of [node[2], nm, bt, 0]), "", "double"]) + ")"
             return "make_num(aot_buf_get(" + (cn of itgt[1]) + ", " + (emit_num of [node[2], nm, bt, 0]) + "))"
         if (is_num_expr of [node[2], nm, bt]) == 1:
             local bib is emit_val_borrow of [node[1], nm, bt, node[2]]
@@ -2657,10 +2693,10 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
                     # (round 91) index before value, VM order (the boxed
                     # twins got this in round 88; this arm did not).
                     if ((has_call_node of node[2]) == 1) or ((has_call_node of node[3]) == 1):
-                        return ind + "{ long _sbi = " + (emit_int of node[2]) + "; aot_buf_set_i(" + (cn of tgt[1]) + ", _sbi, " + (emit_num of [node[3], nm, bt, 0]) + "); }\n"
+                        return ind + (seq_buftgt_i of ["aot_buf_set_i", (cn of tgt[1]), (emit_int of node[2]), (emit_num of [node[3], nm, bt, 0])]) + "\n"
                     return ind + "aot_buf_set_i(" + (cn of tgt[1]) + ", " + (emit_int of node[2]) + ", " + (emit_num of [node[3], nm, bt, 0]) + ");\n"
                 if ((has_call_node of node[2]) == 1) or ((has_call_node of node[3]) == 1):
-                    return ind + "{ double _sbi = " + (emit_num of [node[2], nm, bt, 0]) + "; aot_buf_set(" + (cn of tgt[1]) + ", _sbi, " + (emit_num of [node[3], nm, bt, 0]) + "); }\n"
+                    return ind + (seq_buftgt of ["aot_buf_set", (cn of tgt[1]), (emit_num of [node[2], nm, bt, 0]), (emit_num of [node[3], nm, bt, 0]), "double"]) + "\n"
                 return ind + "aot_buf_set(" + (cn of tgt[1]) + ", " + (emit_num of [node[2], nm, bt, 0]) + ", " + (emit_num of [node[3], nm, bt, 0]) + ");\n"
         # general boxed index-assign (#86): list / dict / buffer target as a
         # Value* — aot_index_set mirrors OP_INDEX_SET and consumes/adopts.

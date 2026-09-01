@@ -1,0 +1,42 @@
+# Round 94: the C-buffer index arms emitted the TARGET as a bare C operand
+# beside a sibling that can REBIND it. The VM pushes container, then index,
+# then (for a set) value; these arms did not. Round 88 sequenced
+# index-vs-value here and round 93 sequenced target-vs-bound inside
+# slice_arg_parts -- neither carried the target axis into these arms, so:
+#
+#   b[0] is swap of []     (swap rebinds b)   VM 0   AOT 7
+#   print of b[(swap of [])]                  VM 5   AOT 0
+#
+# and when the rebind SHRANK the buffer the AOT fabricated an out-of-range
+# death, rc 1, where the VM prints 9. The boxed twin of the same shape was
+# already correct (seq_call3 sequences every operand), which is exactly how
+# the defect stayed confined to the bt arms. The target now hoists first,
+# with a val_incref/val_decref pair -- required, not hygiene: it is a no-op
+# only while a buffer-global rebind leaks the old value (#172), and becomes
+# the difference between correct and a use-after-free the moment that lands.
+b is buffer of 4
+b[3] is 9
+define swapb() as:
+    b is buffer of 2
+    return 3
+print of b[(swapb of [])]
+c is buffer of 4
+define swapc() as:
+    c is buffer of 2
+    return 7
+c[0] is swapc of []
+print of c[0]
+d is buffer of 4
+d[0] is 5
+define swapd() as:
+    d is buffer of 2
+    return 0
+print of d[(swapd of [])]
+e is buffer of 4
+e[0] is 5
+define swape() as:
+    e is buffer of 2
+    return 0
+s is 0
+s is s + e[(swape of [])]
+print of s
