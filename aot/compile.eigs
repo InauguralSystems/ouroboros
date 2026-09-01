@@ -4584,7 +4584,9 @@ define is_boxed_node(node, fgen) as:
         # the return coerced the string through aot_num — a silent 0 where
         # the VM returns the string. (An un-shadowed builtin only: a user fn
         # of the same name resolved above.)
-        if (c[0] == "ident") and (g_funcs[c[1]] == null) and (BOXED_RET_BUILTINS[c[1]] == 1):
+        # (round 104) a BUILTIN whose return class we do not positively know
+        # to be numeric is boxed. Was: only the 24 names on the boxed list.
+        if (c[0] == "ident") and (g_funcs[c[1]] == null) and (NUM_RET_BUILTINS[c[1]] != 1):
             return 1
         # (round 102) a GENERIC PARAM callee: the result is whatever the
         # caller's function returns, unknowable here, so boxed. Round 101
@@ -4676,7 +4678,7 @@ define return_node_is_boxed(rnode, fbt, ftt, rba, fgen, fdict) as:
             # a program the VM runs. Same family as #167 (a direct
             # tensor-call return typed double), reached from the other
             # side.
-            if BOXED_RET_BUILTINS[rc1[1]] == 1:
+            if (g_funcs[rc1[1]] == null) and (NUM_RET_BUILTINS[rc1[1]] != 1):
                 return 1
             # (round 101) a GENERIC PARAM callee: its result is whatever the
             # caller's function returns, which is unknowable here, so the
@@ -4892,6 +4894,30 @@ define uses_type_dispatch(node, name) as:
 # silently clobbered by THIS assignment at module load -- one name, two
 # definitions, the later one winning: the duplicate-define hazard the
 # emitter refuses in compiled programs, live in the compiler's own source.)
+# (round 104) THE POLARITY IS NOW SAFE-BY-DEFAULT.
+#
+# BOXED_RET_BUILTINS below is a 24-name hand-maintained allowlist against a
+# runtime that registers ~238 builtins, and it was consulted to decide a
+# function's DECLARED RETURN TYPE: a builtin not on the list was taken as
+# "not boxed", so `return json_path of [j, k]` declared the function double
+# and the string died through aot_num_ck_at at RUNTIME -- rc 0 -> rc 1,
+# nothing printed, and no AOT: refusal, so the stdlib BUILD sweep could not
+# see it either. 11 of 12 sampled un-listed boxed builtins reproduced it.
+#
+# An allowlist of the BOXED ones has the failure polarity backwards: every
+# builtin nobody thought of, and every builtin upstream adds in future, is
+# a silent latent instance. So the return class now defaults to BOXED --
+# always correct, since a number boxes fine -- and the NUMERIC ones are the
+# enumerated exception. An omission from this table now costs a make_num,
+# not a miscompile.
+#
+# Every name here was MEASURED against the pin with `type of`, not assumed
+# (`sign`/`trunc` were candidates and do not exist; log/sin/cos/tan and the
+# predicate-shaped ones -- contains, starts_with, ends_with, file_exists --
+# really do return num). The first six are exactly the set is_num_expr's
+# own call arm already lowers as numeric.
+NUM_RET_BUILTINS is {"len": 1, "sqrt": 1, "exp": 1, "dot": 1, "sum": 1, "norm": 1, "abs": 1, "floor": 1, "ceil": 1, "round": 1, "min": 1, "max": 1, "pow": 1, "log": 1, "sin": 1, "cos": 1, "tan": 1, "ord": 1, "index_of": 1, "contains": 1, "starts_with": 1, "ends_with": 1, "file_exists": 1, "monotonic_ns": 1, "random": 1, "num": 1, "buf_get": 1, "buf_len": 1, "write_text": 1}
+
 BOXED_RET_BUILTINS is {"zeros": 1, "read_text": 1, "read_lines": 1, "split": 1, "trim": 1, "substr": 1, "str_replace": 1, "str_lower": 1, "str_upper": 1, "char_at": 1, "join": 1, "str": 1, "keys": 1, "values": 1, "sort": 1, "sort_by": 1, "scan_ints": 1, "scan_int_tokens": 1, "range": 1, "hex": 1, "chr": 1, "json_decode": 1, "json_encode": 1, "args": 1}
 
 STR_ARG_BUILTINS is {"split": 1, "trim": 1, "substr": 1, "str_replace": 1, "contains": 1, "index_of": 1, "char_at": 1, "starts_with": 1, "ends_with": 1, "str_lower": 1, "str_upper": 1, "ord": 1, "read_text": 1, "write_text": 1, "file_exists": 1, "read_lines": 1, "scan_ints": 1, "scan_int_tokens": 1}
