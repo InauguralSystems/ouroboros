@@ -1,0 +1,30 @@
+# Round 90: the mixed-numeric comparison fast path (emit_cmp_n)
+# escaped the round-89 evaluation-order closure -- its early return
+# sat ABOVE the binop sequencing guard, and both its emissions
+# passed bare C arguments: (f of 1) == (g of 1) with one numeric
+# side ran g-then-f under this gcc (VM c=12, AOT c=3, both rc 0),
+# in assign and condition positions alike. Both forms now hoist
+# typed temps in SOURCE order under call-hazard; the borrow
+# sub-path was already order-safe (it only exists when the sibling
+# cannot call).
+c is 0
+define f(d) as:
+    c is c + 1
+    return "a"
+define g(d) as:
+    c is (c * 10) + 2
+    return 5
+r is (f of 1) == (g of 1)
+print of r
+print of c
+
+c is 0
+define f2(d) as:
+    c is c + 1
+    return "a"
+define g2(d) as:
+    c is (c * 10) + 2
+    return 5
+if (f2 of 1) == (g2 of 1):
+    print of "eq"
+print of c

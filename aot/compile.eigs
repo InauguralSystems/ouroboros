@@ -2264,8 +2264,25 @@ define emit_cmp_n(node, nm, bt, want_bool) as:
                 bfn is CMPNB_R[n[1]]
             else:
                 bfn is CMPNB_L[n[1]]
+            # borrow only exists when the sibling cannot call, so bare
+            # arguments are order-safe here.
             return bfn + "(" + bexpr + ", " + num + ")"
+        # (round 90) SEQUENCE under call-hazard, in SOURCE order: this fast
+        # path's early return sat ABOVE the round-89 binop guard, so
+        # `(f of 1) == (g of 1)` with one numeric side ran g-then-f under
+        # this gcc (VM c=12, AOT c=3, both rc 0). The helper's operand
+        # slots are (boxed, num) regardless of which was LEFT in source,
+        # so the temps hoist in source order and the call uses the temps.
+        if ((has_call_node of n[2]) == 1) or ((has_call_node of n[3]) == 1):
+            if rnum == 1:
+                return "({ Value* _sqcb = " + boxed + "; double _sqcn = " + num + "; " + fn + "_t(_sqcb, _sqcn); })"
+            return "({ double _sqcn = " + num + "; Value* _sqcb = " + boxed + "; " + fn + "_t(_sqcb, _sqcn); })"
         return fn + "_t(" + boxed + ", " + num + ")"
+    # (round 90) same sequencing for the value-position form.
+    if ((has_call_node of n[2]) == 1) or ((has_call_node of n[3]) == 1):
+        if rnum == 1:
+            return "({ Value* _sqcb = " + boxed + "; double _sqcn = " + num + "; " + fn + "(_sqcb, _sqcn); })"
+        return "({ double _sqcn = " + num + "; Value* _sqcb = " + boxed + "; " + fn + "(_sqcb, _sqcn); })"
     return fn + "(" + boxed + ", " + num + ")"
 
 # Does this expression contain a CALL? A borrowed container is only safe while
