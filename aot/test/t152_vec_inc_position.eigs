@@ -1,0 +1,33 @@
+# Round 81: vec_loop discarded the counter increment's POSITION --
+# the emitters hard-code increment-LAST, so a write after
+# `i is i + 1` reads the POST-increment counter in the VM (VM
+# 0 1 2 3, AOT 0 1 2 0, both rc 0; straddling writes hit wrong
+# lanes in both directions), and two increments would make a step-2
+# loop the hoist ran as step-1. Admission requires exactly one
+# increment in final position; every other interleaving demotes to
+# the scalar path, byte-exact by construction. The axis no fixture
+# had varied in 28 rounds (invariants 16/19).
+b is buffer of 4
+i is 0
+loop while i < 3:
+    i is i + 1
+    b[i] is i
+print of b[0]
+print of b[1]
+print of b[2]
+print of b[3]
+print of i
+
+b is buffer of 8
+c is buffer of 8
+i is 0
+loop while i < 6:
+    b[i] is i * 2
+    i is i + 1
+    c[i] is i + 10
+print of b[0]
+print of b[5]
+print of c[0]
+print of c[1]
+print of c[6]
+print of i

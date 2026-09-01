@@ -3173,6 +3173,8 @@ define vec_loop(loopnode, nm, bt) as:
     local bufs is {}
     local wbufs is {}
     local sawinc is 0
+    local inccount is 0
+    local incpos is 0 - 1
     for k in range of (len of body):
         local st is unwrap of body[k]
         if st[0] == "assign":
@@ -3194,6 +3196,8 @@ define vec_loop(loopnode, nm, bt) as:
             if rb[1] != 1:
                 return null
             sawinc is 1
+            inccount is inccount + 1
+            incpos is k
         elif st[0] == "index_assign":
             local tgt is unwrap of st[1]
             local idx is unwrap of st[2]
@@ -3214,6 +3218,21 @@ define vec_loop(loopnode, nm, bt) as:
         else:
             return null
     if sawinc != 1:
+        return null
+    # (round 81) the increment's POSITION and COUNT are part of the
+    # semantics the emitters hard-code: they model increment-LAST, so a
+    # write after `ctr is ctr + 1` reads the POST-increment counter in
+    # the VM (executed: `i is i+1 / b[i] is i` -- VM 0 1 2 3, AOT
+    # 0 1 2 0, both rc 0; straddling writes hit wrong lanes both ways),
+    # and TWO increments make a step-2 loop the hoist would run as
+    # step-1. Admission requires exactly one increment, in final
+    # position; every other interleaving demotes to the scalar path,
+    # which is byte-exact by construction. Every green vec fixture
+    # already had it last -- invariants 16/19: no fixture had executed
+    # the other interleaving until round 81's probe.
+    if inccount != 1:
+        return null
+    if incpos != ((len of body) - 1):
         return null
     if (len of assigns) == 0:
         return null
