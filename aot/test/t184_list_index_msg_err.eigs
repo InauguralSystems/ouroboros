@@ -1,0 +1,11 @@
+# Round 97: the bt class is "indexable value" and LISTS route through the
+# buffer index helpers, which carried a single hardcoded "buffer index ..."
+# raise -- so an out-of-range list index said "buffer index 5 out of range
+# (length 3)" where the VM says "index 5 out of range (list length 3)".
+# Same rc, different text, and the _err tier compares text. Both index
+# helpers now take the container kind from their caller.
+define f(a, i) as:
+    return a[i] * 2
+xs is [10, 20, 30]
+print of (f of [xs, 1])
+print of (f of [xs, 5])

@@ -662,7 +662,14 @@ static void aot_buf_expect(Value *b) { aot_buf_expect_at(b, "?"); }
  * the frame prefix alone (line number is blanked by the normalizer; the
  * prefix is semantics). Line is g_trace_current_line: 0 unless traced,
  * per the documented siting contract. */
-static long aot_idx(double d, int count) {
+/* (round 97) The raise names the CONTAINER KIND. The bt class is
+ * "indexable value" and lists route through this helper, but it carried a
+ * single hardcoded "buffer index ..." text, so an out-of-range LIST index
+ * said "buffer index 5 out of range (length 3)" where the VM says
+ * "index 5 out of range (list length 3)". Same rc, different text -- and
+ * the _err tier compares text. The generic aot_index_get family already
+ * keeps the two apart; this one now takes the kind from its caller. */
+static long aot_idx_k(double d, int count, int is_list) {
     /* (round 96) INT width, mirroring the VM's vm_index_is_int: its check
      * is `int i = (int)d; (double)i != d`, so an index past INT_MAX fails
      * the INTEGER test, not the bounds test -- `b[65536 * 65536]` says
@@ -672,9 +679,14 @@ static long aot_idx(double d, int count) {
     if ((double)ii != d) { fprintf(stderr, "Error line %d: index must be an integer, got %g\n", g_trace_current_line, d); exit(1); }
     long i = (long)d;
     if (i < 0) i += count;
-    if (i < 0 || i >= count) { fprintf(stderr, "Error line %d: buffer index %ld out of range (length %d)\n", g_trace_current_line, (long)d, count); exit(1); }
+    if (i < 0 || i >= count) {
+        if (is_list) fprintf(stderr, "Error line %d: index %ld out of range (list length %d)\n", g_trace_current_line, (long)d, count);
+        else         fprintf(stderr, "Error line %d: buffer index %ld out of range (length %d)\n", g_trace_current_line, (long)d, count);
+        exit(1);
+    }
     return i;
 }
+static inline long aot_idx(double d, int count) { return aot_idx_k(d, count, 0); }
 /* The "buf" class is really INDEXABLE VALUE: inference assigns it from
  * `x[i]` / `len of x` usage, and in consumer code the runtime value is as
  * often a VAL_LIST of numbers as a VAL_BUFFER (EigenMiniSat's DIMACS
@@ -690,12 +702,12 @@ static double aot_list_num_at(Value *b, long i, const char *site) {
     return e->data.num;
 }
 static double aot_buf_get_at(Value *b, double idx, const char *site) {
-    if (b && b->type == VAL_LIST) return aot_list_num_at(b, aot_idx(idx, b->data.list.count), site);
+    if (b && b->type == VAL_LIST) return aot_list_num_at(b, aot_idx_k(idx, b->data.list.count, 1), site);
     aot_buf_expect_at(b, site); return b->data.buffer.data[aot_idx(idx, b->data.buffer.count)];
 }
 static void   aot_buf_set_at(Value *b, double idx, double v, const char *site) {
     if (b && b->type == VAL_LIST) {
-        long i = aot_idx(idx, b->data.list.count);
+        long i = aot_idx_k(idx, b->data.list.count, 1);
         Value *old = b->data.list.items[i];
         b->data.list.items[i] = make_num(v);
         if (old) val_decref(old);
@@ -706,22 +718,28 @@ static void   aot_buf_set_at(Value *b, double idx, double v, const char *site) {
 /* Integer-index fast path: the index was computed in native `long` arithmetic
    (provably-integer induction vars + dimensions), so skip the float integer
    check. Negative-resolve + bounds-check still mirror the VM. */
-static long aot_idx_i(long i, int count) {
+static long aot_idx_ik(long i, int count, int is_list) {
     /* (round 96) the int-width integer test applies here too: this path is
      * reached with a long computed by native integer arithmetic, and a
      * value past INT_MAX is what the VM calls a non-integer index. */
     if ((long)(int)i != i) { fprintf(stderr, "Error line %d: index must be an integer, got %g\n", g_trace_current_line, (double)i); exit(1); }
     if (i < 0) i += count;
-    if (i < 0 || i >= count) { fprintf(stderr, "Error line %d: buffer index %ld out of range (length %d)\n", g_trace_current_line, i, count); exit(1); }
+    if (i < 0 || i >= count) {
+        /* (round 97) name the container kind -- see aot_idx_k. */
+        if (is_list) fprintf(stderr, "Error line %d: index %ld out of range (list length %d)\n", g_trace_current_line, i, count);
+        else         fprintf(stderr, "Error line %d: buffer index %ld out of range (length %d)\n", g_trace_current_line, i, count);
+        exit(1);
+    }
     return i;
 }
+static inline long aot_idx_i(long i, int count) { return aot_idx_ik(i, count, 0); }
 static double aot_buf_get_i_at(Value *b, long idx, const char *site) {
-    if (b && b->type == VAL_LIST) return aot_list_num_at(b, aot_idx_i(idx, b->data.list.count), site);
+    if (b && b->type == VAL_LIST) return aot_list_num_at(b, aot_idx_ik(idx, b->data.list.count, 1), site);
     aot_buf_expect_at(b, site); return b->data.buffer.data[aot_idx_i(idx, b->data.buffer.count)];
 }
 static void   aot_buf_set_i_at(Value *b, long idx, double v, const char *site) {
     if (b && b->type == VAL_LIST) {
-        long i = aot_idx_i(idx, b->data.list.count);
+        long i = aot_idx_ik(idx, b->data.list.count, 1);
         Value *old = b->data.list.items[i];
         b->data.list.items[i] = make_num(v);
         if (old) val_decref(old);
@@ -856,11 +874,24 @@ static inline double aot_dot_v(Env *g, Value *a, Value *b) {
  * these instead of materializing the slice. Bound resolution mirrors the VM's
  * OP_SLICE_GET exactly (vm.c): integer-only, negatives count from len, then
  * 0<=start<=end<=len (<= upper end; out-of-range errors like the VM). */
+/* (round 97) INT width, mirroring the VM's READ_SLICE_BOUND -> the same
+ * vm_index_is_int round 96 taught the index helpers. A long-width test
+ * admitted everything in (INT_MAX, LONG_MAX] that is an exact double, and
+ * aot_slice_any then TRUNCATED the admitted value to int -- testing at one
+ * width and storing at another, which is why `xs[-4294967296 : 3]` printed
+ * a plausible 60, rc 0, where the VM refuses the bound. */
+static inline int aot_sbound_is_int(double d, int *out) {
+    int i = (int)d;
+    if ((double)i != d) return 0;
+    *out = i;
+    return 1;
+}
 static inline long aot_sbound(double x, long len) {
-    long i = (long)x;
-    if ((double)i != x) { rt_error(EK_VALUE, g_trace_current_line, "slice bound must be an integer, got %g", x); return 0; }
-    if (i < 0) i += len;
-    return i;
+    int i;
+    if (!aot_sbound_is_int(x, &i)) { rt_error(EK_VALUE, g_trace_current_line, "slice bound must be an integer, got %g", x); aot_error_exit(); return 0; }
+    long r = (long)i;
+    if (r < 0) r += len;
+    return r;
 }
 /* (round 92) The VM raises ONE message for every bad slice -- out-of-range and
  * start>end alike -- naming the ORIGINAL (pre-negative-resolve) bounds:
@@ -953,10 +984,9 @@ static Value *aot_slice_any(Value *A, double sa, double ea) {
         rt_error(EK_TYPE, g_trace_current_line, "cannot slice %s", val_type_name(A->type));
         return make_null();
     }
-    long si = (long)sa, ei = (long)ea;
-    if ((double)si != sa) { rt_error(EK_VALUE, g_trace_current_line, "slice bound must be an integer, got %g", sa); return make_null(); }
-    if ((double)ei != ea) { rt_error(EK_VALUE, g_trace_current_line, "slice bound must be an integer, got %g", ea); return make_null(); }
-    int orig_start = (int)si, orig_end = (int)ei;
+    int orig_start, orig_end;
+    if (!aot_sbound_is_int(sa, &orig_start)) { rt_error(EK_VALUE, g_trace_current_line, "slice bound must be an integer, got %g", sa); aot_error_exit(); return make_null(); }
+    if (!aot_sbound_is_int(ea, &orig_end))   { rt_error(EK_VALUE, g_trace_current_line, "slice bound must be an integer, got %g", ea); aot_error_exit(); return make_null(); }
     int start = orig_start, end = orig_end;
     if (start < 0) start += len;
     if (end   < 0) end   += len;

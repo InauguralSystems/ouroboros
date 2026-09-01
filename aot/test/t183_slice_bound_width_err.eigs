@@ -1,0 +1,24 @@
+# Round 97: the width lens, one helper family over. Round 96 taught the
+# INDEX helpers the VM's int-width integer test and left the SLICE family
+# at long width -- so every exact double in (INT_MAX, LONG_MAX] passed
+# here and failed there, and aot_slice_any then TRUNCATED the value its
+# own test had just admitted (int orig_start = (int)si). Testing at one
+# width and storing at another is why this was silent-wrong rather than
+# merely mis-messaged: the truncated 0 sailed through the range check.
+#
+#   sum of xs[-4294967296 : 3]   VM raises rc 1;  AOT printed 60, rc 0
+#   sum of xs[0 : 4294967296]    VM raises rc 1;  AOT printed 0,  rc 0
+#
+# The bound is computed at runtime here (doubling in a loop) so the
+# fixture pins the RUNTIME path, not a literal-emission artifact -- the
+# one existing slice-bound fixture uses 9, entirely inside int.
+xs is [10, 20, 30]
+k is 1
+i is 0
+loop while i < 32:
+    k is k * 2
+    i is i + 1
+print of k
+print of "before"
+print of (sum of xs[0 : k])
+print of "after"
