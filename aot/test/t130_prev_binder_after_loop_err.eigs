@@ -1,0 +1,12 @@
+# Round 65: `prev of` a BINDER-ONLY name outside its loop. The VM
+# loop-scopes the binder, so the post-loop interrogation raises
+# "undefined variable 'q'" rc 1 even though the name-keyed tape holds the
+# loop's history -- the AOT answered 7 from the tape, rc 0. The guard now
+# distinguishes in-body (nm seeded by the loop-scope arm; both sides
+# answer from the tape) from after (both sides raise). _err class: both
+# die "undefined variable 'q'", equal codes.
+define f(a) as:
+    for q in [7, 8]:
+        print of q
+    return prev of q
+print of (f of 1)

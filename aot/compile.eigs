@@ -102,6 +102,11 @@ g_outward_obs is {}
 # NOWHERE the VM could resolve it, so `prev of` always raises there.
 # Rebuilt per function in emit_function.
 g_cur_bound is {}
+# (round 65) The same set MINUS for-binders. A name bindable ONLY as a for
+# binder is dead outside its loop in the VM; `prev of` there raises even
+# though the tape holds history. The loop-scope nm seed marks in-body
+# emission, so the interrogate arm can tell inside from after.
+g_cur_bound_nb is {}
 
 # Does this AST contain a bare observer predicate (converged/stable/...)?
 define has_predicate(node) as:
@@ -954,6 +959,40 @@ define collect_idents_all(node, acc) as:
         collect_idents_all of [node[k], acc]
     return 0
 
+define uses_ident_skip_forbind(node, name) as:
+    # Does this subtree USE `name`, treating a nested `for` that REBINDS the
+    # same name as a fresh scope (its header iterable is still module scope
+    # and IS scanned; its body belongs to the new binder)? Func defs are
+    # skipped -- function reads of leaked bindings are the #163 read
+    # residual, not this guard's axis. Serves the round-65 module-binder
+    # post-loop guard; the common reuse idiom `for i ...: / for i ...:` must
+    # NOT count as a use, or the guard evicts half the corpus.
+    if (type of node) != "list":
+        return 0
+    if (len of node) == 0:
+        return 0
+    local t is node[0]
+    if (type of t) == "list":
+        for bi in range of (len of node):
+            if (uses_ident_skip_forbind of [node[bi], name]) == 1:
+                return 1
+        return 0
+    if t == "_line":
+        return uses_ident_skip_forbind of [node[2], name]
+    if t == "ident":
+        if node[1] == name:
+            return 1
+        return 0
+    if t == "func":
+        return 0
+    if t == "for":
+        if node[1] == name:
+            return uses_ident_skip_forbind of [node[2], name]
+    for k in range of (len of node):
+        if (uses_ident_skip_forbind of [node[k], name]) == 1:
+            return 1
+    return 0
+
 define has_call_node(node) as:
     # Does this subtree contain any call? Used by the first-use SLIDE: a
     # top-level statement can invoke a function -- directly or through any
@@ -1529,6 +1568,16 @@ define emit_val(node, nm, bt) as:
                     # fn's Part-2a leaked local sharing a module name)
                     # still diverges -- runtime-resolve is blocked by the
                     # Part 2a leak, unfixable without an env-removal API.
+                    return "aot_undefined_name(\"" + ie[1] + "\")"
+                if ((G_CUR_FN[0]) != "<module>") and (g_module_names[ie[1]] != 1) and (g_cur_bound_nb[(ie[1])] != 1) and (nm[(ie[1])] != 1):
+                    # (round 65) BINDER-ONLY name, interrogated OUTSIDE its
+                    # loop. The VM loop-scopes the binder, so `prev of` after
+                    # the loop raises "undefined variable" even though the
+                    # name-keyed tape holds the loop's history -- the AOT
+                    # answered 7 where the VM dies rc 1. Inside the body the
+                    # loop-scope arm seeds nm[binder], so nm distinguishes
+                    # in-body (answer from the tape, both sides agree) from
+                    # after (raise, both sides agree).
                     return "aot_undefined_name(\"" + ie[1] + "\")"
                 return "aot_prev_val(\"" + ie[1] + "\")"
             throw of "AOT: temporal interrogative without `at` only supports `prev`"
@@ -2289,6 +2338,8 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
         fo is fo + ind + "  long " + nv + " = aot_iter_len(" + itv + ");\n"
         fo is fo + ind + "  for (long " + kv + " = 0; " + kv + " < " + nv + "; " + kv + "++) {\n"
         local lscope is 0
+        local lsc_seeded is 0
+        local lsc_nm_prev is null
         if ((G_CUR_FN[0]) != "<module>") and (g_module_names[fvar] == 1):
             lscope is 1
         if ((G_CUR_FN[0]) != "<module>") and (g_interrogated_names[fvar] == 1):
@@ -2322,6 +2373,17 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
             fo is fo + ind + "    double " + (cn of fvar) + " = aot_num_ck_at(aot_iter_get(" + itv + ", " + kv + "), \"" + (c_escape of (G_CUR_FN[0])) + ": for-in " + (c_escape of fvar) + "\");\n"
             if g_traced == 1:
                 fo is fo + ind + "    aot_trace_assign(\"" + fvar + "\", " + (cn of fvar) + ");\n"
+            # (round 65) the BODY READS must take the C block-local too. In a
+            # traced program an interrogated non-module binder is in no
+            # numeric map, so body reads emitted ENV reads while the write
+            # went to the C var -- storage disagreement (invariant 14),
+            # executed: the AOT died rc 1 "undefined variable 'q'" on a
+            # VM-valid program. Seed nm for the body emission; restored
+            # right after emit_stmts below, so post-loop reads stay env
+            # reads that die exactly where the VM's loop-scoping dies.
+            lsc_nm_prev is nm[fvar]
+            nm[fvar] is 1
+            lsc_seeded is 1
         if (lscope == 0) and (g_forunbox[fvar] != null):
             # unboxed: bind the C double directly — no env write, no boxed
             # read-back in the body. A buffer iterable reads elementwise
@@ -2388,6 +2450,8 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
                 else:
                     fo is fo + ind + "    aot_set(" + (envc of fvar) + ", \"" + fvar + "\", aot_iter_get(" + itv + ", " + kv + "));\n"
         fo is fo + (emit_stmts of [fbody, ind + "    ", nm, bt, minits, gf])
+        if lsc_seeded == 1:
+            nm[fvar] is lsc_nm_prev
         fo is fo + ind + "  }\n"
         if fowned == 1:
             fo is fo + ind + "  val_decref(" + itv + ");\n"
@@ -5292,6 +5356,12 @@ define emit_function(fn, finfo, gnm, gbt) as:
     local _clk is keys of _lmk
     for cbl in range of (len of _clk):
         g_cur_bound[(_clk[cbl])] is 1
+    # non-binder snapshot BEFORE binders join (round 65: binder-only names
+    # are dead outside their loop; `prev of` there must raise like the VM)
+    g_cur_bound_nb is {}
+    local _cnbk is keys of g_cur_bound
+    for cnb in range of (len of _cnbk):
+        g_cur_bound_nb[(_cnbk[cnb])] is 1
     collect_for_binders of [body, g_cur_bound]
     local _lmn is keys of _lmk
     local _shcand is []
@@ -6251,6 +6321,44 @@ define emit_program(ast) as:
     # both rc 0. Order was guarded to death over seven rounds; the regime
     # axis was never asked.
     g_mod_observed is g_observed
+    # (round 65) Module-scope for binders are loop-scoped by the VM in EVERY
+    # regime, but observed/traced module emission routes the binder through
+    # the env -- the C block-scope mechanism is regime-gated off -- where it
+    # SURVIVES the loop: `for i in [7, 8]: print of i / print of i` printed
+    # the phantom 8, rc 0, where the VM raises "undefined variable". No
+    # order guard catches it statically: binders are correctly absent from
+    # g_module_names, so membership-keyed guards skip the post-loop use.
+    # Refused by name when the binder is used after its loop; the use scan
+    # treats a later `for` REBINDING the name as a fresh scope (header
+    # still scanned) so the ubiquitous reuse idiom stays in the envelope.
+    # Two rows bound the refusal (the suite's gate caught the first
+    # version firing on both): a binder over an EXISTING module binding
+    # OVERWRITES it and persists (t114's measured row -- VM prints 3 after
+    # the loop), so pre-bound binders are exempt; and a post-loop plain
+    # rebind starts a FRESH binding, so the scan stops at the first
+    # top-level reassignment of the name.
+    if (g_observed == 1) or (g_prog_traced == 1):
+        for r65i in range of (len of stmts):
+            local r65n is unwrap of stmts[r65i]
+            if ((type of r65n) == "list") and ((len of r65n) > 0):
+                if r65n[0] == "for":
+                    local r65b is r65n[1]
+                    local r65fb is g_first_bind[r65b]
+                    local r65pre is 0
+                    if (r65fb != null) and (r65fb < r65i):
+                        r65pre is 1
+                    if r65pre == 0:
+                        for r65j in range of (len of stmts):
+                            if r65j > r65i:
+                                local r65s is unwrap of stmts[r65j]
+                                local r65stop is 0
+                                if ((type of r65s) == "list") and ((len of r65s) > 0):
+                                    if (r65s[0] == "assign") and (r65s[1] == r65b):
+                                        r65stop is 1
+                                if r65stop == 1:
+                                    break
+                                if (uses_ident_skip_forbind of [stmts[r65j], r65b]) == 1:
+                                    throw of ("AOT: module for binder '" + r65b + "' is used after its loop in an observed/traced program. The VM loop-scopes a binder with no pre-existing binding in every regime, but observed/traced module emission routes it through the env, where C block scoping cannot express the loop scope (see EigenScript#1056); refused rather than answering with the leaked value.")
     # Partition top-level function definitions from the rest (main body).
     local funcs is []
     local rest is []
