@@ -3101,6 +3101,31 @@ define refs_ctr(node, ctr) as:
         return refs_ctr of [n[2], ctr]
     return 0
 
+define reads_written_offset(node, ctr, wbufs) as:
+    # (round 76) does this expression READ a buffer this loop WRITES, at a
+    # NONZERO offset? Loop-carried dependence: the SIMD block reads lanes
+    # the serial VM has already updated (or not yet written), so the
+    # vectorized interior diverges -- `b[i] is b[i-1] + 1` printed
+    # 1 2 1 2... where the VM chains 1 2 3 4..., and a cross-statement
+    # b[i+1] read inverted the other way, both rc 0. Zero-offset reads of
+    # written buffers stay: per-statement vector emission preserves
+    # same-lane ordering in both directions (RMW and cross-statement),
+    # matching serial semantics. Nonzero-offset reads of written buffers
+    # bail to the scalar path, which is byte-exact by construction.
+    local n is unwrap of node
+    local t is n[0]
+    if t == "index":
+        local tgt is unwrap of n[1]
+        if (tgt[0] == "ident") and (wbufs[tgt[1]] == 1):
+            if (idx_offset of [n[2], ctr]) != 0:
+                return 1
+        return 0
+    if t == "binop":
+        if (reads_written_offset of [n[2], ctr, wbufs]) == 1:
+            return 1
+        return reads_written_offset of [n[3], ctr, wbufs]
+    return 0
+
 define collect_read_bufs(node, bufs) as:
     local n is unwrap of node
     local t is n[0]
@@ -3135,6 +3160,7 @@ define vec_loop(loopnode, nm, bt) as:
     local body is loopnode[2]
     local assigns is []
     local bufs is {}
+    local wbufs is {}
     local sawinc is 0
     for k in range of (len of body):
         local st is unwrap of body[k]
@@ -3171,6 +3197,7 @@ define vec_loop(loopnode, nm, bt) as:
             if (is_vec_expr of [st[3], ctr, nm, bt]) != 1:
                 return null
             bufs[tgt[1]] is 1
+            wbufs[tgt[1]] is 1
             collect_read_bufs of [st[3], bufs]
             assigns is (append of [assigns, {"buf": tgt[1], "val": st[3]}])
         else:
@@ -3179,6 +3206,13 @@ define vec_loop(loopnode, nm, bt) as:
         return null
     if (len of assigns) == 0:
         return null
+    # (round 76) loop-carried dependence check -- runs AFTER the statement
+    # loop so wbufs holds every write target regardless of statement order
+    # (a read in stmt 1 of a buffer written in stmt 2 carries the same
+    # hazard). See reads_written_offset.
+    for dchk in range of (len of assigns):
+        if (reads_written_offset of [(assigns[dchk])["val"], ctr, wbufs]) == 1:
+            return null
     return {"ctr": ctr, "bound": bound, "assigns": assigns, "bufs": keys of bufs}
 
 define emit_vec(node, ctr, raw) as:
