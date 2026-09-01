@@ -1,0 +1,48 @@
+# Round 102: round 101 taught return_node_is_boxed's CALL arm that a
+# generic-param callee's result is boxed. Its LOCAL arm routes through
+# is_boxed_node instead, which enumerated three callee classes, had no
+# genp case, and was not even PASSED the fgen table. So one hop through
+# a local -- `r is fn of size` then `return r` -- kept asking the old
+# question, func_ret_type declared the function double, and the return
+# coerced through the checked unbox: rc 0 -> rc 1, after the function
+# had already printed. Fifth consecutive round on this one table.
+#
+# Reach: EigenGauntlet/gauntlet.eigs:38-44 `timed_run` is EXACTLY this
+# shape, and it is the single funnel all twelve dispatch arms pass
+# through (tensor, dataflow, swarm, swarm-batch, concurrent, parser,
+# memory, observer, io, realtime, module-scope, cross). All twelve
+# runners return an f-string, so the discriminator was 12/12 against
+# the AOT.
+#
+# Per invariant 22 the callbacks below vary what the inference BRANCHES
+# on -- the result type -- not the syntax. t188's disasm_one is this
+# same shape with a NUMBER-returning reader, which is why it rode the
+# double path and agreed for two rounds.
+define runner(size) as:
+    return f"records={size}"
+define timed_like(name, fn, size) as:
+    local result is fn of size
+    print of (name + ": ok")
+    return result
+print of (timed_like of ["dataflow", runner, 30])
+define void_cb(x) as:
+    print of x
+define hop_void(fn, v) as:
+    r is fn of v
+    return r
+print of (hop_void of [void_cb, 7])
+define list_cb(x) as:
+    return [x, x]
+print of (hop_void of [list_cb, 2])
+define dict_cb(x) as:
+    return {"v": x}
+d is hop_void of [dict_cb, 3]
+print of d["v"]
+define num_cb(x) as:
+    return x * 2
+print of (hop_void of [num_cb, 21])
+define two_hop(fn, v) as:
+    local a is fn of v
+    local b is a
+    return b
+print of (two_hop of [runner, 9])

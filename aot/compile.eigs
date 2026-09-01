@@ -4527,7 +4527,11 @@ define find_return_node(node) as:
 # ret type: void (no return) | Value* (returns a buffer) | double (numeric).
 # A value node that is never numeric (lives boxed in the env, not a C double):
 # a list / string / dict / null literal.
-define is_boxed_node(node) as:
+# `fgen` is threaded in (round 102) because the ONE question this function
+# answers about a call -- what class is the callee -- has a genp answer, and
+# g_genp is invalid during inference so the table must arrive explicitly, the
+# same reason return_node_is_boxed already receives it.
+define is_boxed_node(node, fgen) as:
     local n is unwrap of node
     local t is n[0]
     if (t == "list") or (t == "str") or (t == "dict") or (t == "null"):
@@ -4555,6 +4559,15 @@ define is_boxed_node(node) as:
         # of the same name resolved above.)
         if (c[0] == "ident") and (g_funcs[c[1]] == null) and (BOXED_RET_BUILTINS[c[1]] == 1):
             return 1
+        # (round 102) a GENERIC PARAM callee: the result is whatever the
+        # caller's function returns, unknowable here, so boxed. Round 101
+        # taught this exact case to return_node_is_boxed's own call arm 25
+        # lines below; the LOCAL arm routes through here instead, so
+        # `r is fn of size / return r` -- one hop -- kept asking the old
+        # question and declared the function double.
+        if (c[0] == "ident") and (fgen != null):
+            if fgen[c[1]] == 1:
+                return 1
     return 0
 
 # Collect EVERY return expression in a body (not just the first), recursing the
@@ -4575,6 +4588,37 @@ define collect_return_nodes(node, out) as:
 # Is a single return expression a boxed (non-numeric) Value? Mirrors the
 # classification the return-statement emitter uses, so the declared type and the
 # emission agree.
+# (round 102) Is a LOCAL's value boxed, following local-to-local aliases?
+#
+# The rrhss scan used to look one level deep, so `a is fn of v / b is a /
+# return b` -- two hops -- saw only the ident `a`, which is not itself a
+# boxed NODE, and declared the function double. Round 102's own fixture
+# caught this within minutes of the one-hop fix precisely because it swept
+# the discriminator (invariant 22) instead of restating the syntax.
+#
+# `seen` makes the walk terminate on a self- or mutually-referential
+# binding (`x is x`, or a pair that assigns from each other), which a
+# plain recursion would follow forever.
+define local_rhs_boxed(name, rba, fgen, fbt, fdict, ftt, seen) as:
+    if seen[name] == 1:
+        return 0
+    seen[name] is 1
+    local rhss is rba[name]
+    if rhss == null:
+        return 0
+    for j in range of (len of rhss):
+        if (is_boxed_node of [rhss[j], fgen]) == 1:
+            return 1
+        local rj is unwrap of rhss[j]
+        if rj[0] == "ident":
+            # an alias of a param carries that param's class...
+            if (fbt[rj[1]] == 1) or (fdict[rj[1]] == 1) or (fgen[rj[1]] == 1) or (ftt[rj[1]] == 1):
+                return 1
+            # ...and an alias of another local carries whatever IT holds.
+            if (local_rhs_boxed of [rj[1], rba, fgen, fbt, fdict, ftt, seen]) == 1:
+                return 1
+    return 0
+
 define return_node_is_boxed(rnode, fbt, ftt, rba, fgen, fdict) as:
     local re is unwrap of rnode
     # `return (f of x)` where f has NO return statement. The VM's rule is that
@@ -4637,15 +4681,13 @@ define return_node_is_boxed(rnode, fbt, ftt, rba, fgen, fdict) as:
         # a tensor-returning function serializes its tensor to a Value.
         if ftt[re[1]] == 1:
             return 1
-        # a local assigned a boxed value (list/str/dict/null) is non-numeric.
-        local rrhss is rba[re[1]]
-        if rrhss != null:
-            for j in range of (len of rrhss):
-                if (is_boxed_node of rrhss[j]) == 1:
-                    return 1
+        # a local assigned a boxed value (list/str/dict/null) is non-numeric,
+        # transitively through local-to-local aliases.
+        if (local_rhs_boxed of [re[1], rba, fgen, fbt, fdict, ftt, {}]) == 1:
+            return 1
     if (is_buf_create of rnode) == 1:
         return 1
-    if (is_boxed_node of rnode) == 1:
+    if (is_boxed_node of [rnode, fgen]) == 1:
         return 1
     return 0
 
