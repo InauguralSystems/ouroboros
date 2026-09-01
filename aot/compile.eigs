@@ -656,6 +656,33 @@ define is_num_expr(node, nm, bt) as:
         # num/non-num mix, so ONE provably numeric side makes the whole
         # expression numeric-or-raise.
         if node[1] == "+":
+            # (round 103) ...but a STRING LITERAL operand is decisive the
+            # other way, and it outranks the "one numeric side" rule above.
+            # `"msg: " + key` can never be numeric arithmetic in any
+            # execution, so calling it numeric-or-raise sent emit_num into
+            # the str node, where it threw an INTERNAL assertion --
+            # "AOT: emit_num on non-numeric node str", naming an emitter
+            # function and an AST node kind, no source line, no identifier,
+            # and not the real cause. No C was emitted at all.
+            #
+            # The real cause is that `key` was defaulted numeric because
+            # the program has no call site for its function -- the same
+            # "classification is a DEFAULT, not evidence" shape as #168,
+            # one stratum over. So the expression is not numeric-or-raise:
+            # at runtime the param may well hold a string and the VM
+            # concatenates happily. The boxed path handles BOTH outcomes
+            # (concatenate, or raise exactly as the VM does), so returning
+            # 0 here is both safe and strictly better than guessing.
+            #
+            # This is aimed squarely at LIBRARIES, whose whole purpose is
+            # functions their own file never calls: it refused NINE of the
+            # 75 real stdlib modules (args, config, io, log, state,
+            # template, test, ui_w_dialog, ui_w_menu) -- the single most
+            # frequent AOT failure in the standard library -- and it
+            # survives the consumer shape too, since any program using a
+            # SUBSET of a library's API leaves the rest uncalled.
+            if (chain_has_str of node) == 1:
+                return 0
             if (is_num_expr of [node[2], nm, bt]) == 1:
                 return 1
             return is_num_expr of [node[3], nm, bt]
