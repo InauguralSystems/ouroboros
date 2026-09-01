@@ -1766,6 +1766,14 @@ define emit_num(node, nm, bt, raw) as:
             # A buffer, dict or tensor is NEVER a number, in any execution, so
             # this is wrong at BUILD time and refusing is right.
             throw of ("AOT: Value-typed name '" + node[1] + "' (" + why + ", in " + (G_CUR_FN[0]) + ") read in a numeric context (the VM raises here)")
+        if g_func_names[node[1]] == 1:
+            # (round 99) a compiled FUNCTION name, same reasoning one class
+            # over: never a number in any execution, and it is not in the
+            # env either -- the emitted read could only miss, so the binary
+            # died "undefined variable 'g'" at runtime where the VM raises
+            # "cannot apply '+' to fn and num". Refuse at BUILD time with
+            # the real reason, as the Value-typed arm above does.
+            throw of ("AOT: function name '" + node[1] + "' (in " + (G_CUR_FN[0]) + ") read in a numeric context (the VM raises 'cannot apply ... to fn and num' here)")
         if g_genp[node[1]] == 1:
             # A GENERIC parameter is different in kind (#135): it can hold a
             # number at runtime, and refusing at build time rejected programs
@@ -2734,6 +2742,19 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
         local tgt is unwrap of node[1]
         if tgt[0] == "ident":
             if bt[tgt[1]] == 1:
+                # (round 99) a provably non-numeric RHS into a buffer element
+                # is refused BY NAME. The three paths used to speak in three
+                # voices -- an internal "emit_num on non-numeric node str" at
+                # module scope, a numeric-context death for an ident RHS, and
+                # "buffer elements must be numbers" on the boxed path -- and
+                # only the last named the construct. (The VM silently stores
+                # 0.0 here while raising in every other numeric context; that
+                # asymmetry is a fail-soft residual and is filed upstream, so
+                # the AOT stays loud rather than learning to coerce.)
+                if (is_num_expr of [node[3], nm, bt]) != 1:
+                    local rhk is unwrap of node[3]
+                    if (rhk[0] == "str") or (rhk[0] == "list") or (rhk[0] == "dict") or (rhk[0] == "null"):
+                        throw of ("AOT: buffer elements must be numbers -- '" + (cn of tgt[1]) + "' is assigned a " + rhk[0] + " (the VM silently stores 0.0 here; see the upstream fail-soft ledger)")
                 if (is_int_expr of node[2]) == 1:
                     # (round 91) index before value, VM order (the boxed
                     # twins got this in round 88; this arm did not).
@@ -5252,7 +5273,18 @@ define arg_class(node, caller_pt, caller_params, caller_locals) as:
                 return "unknown"
         if caller_locals[e[1]] == "gen":
             return "gen"
+        # (round 99) a compiled FUNCTION NAME is boxed evidence, exactly
+        # like a str/list/dict literal. Returning "unknown" here defaulted
+        # the callee's parameter to numeric, so `reg of ["a", g]` declared
+        # `double eig_f` and would have stored a NUMBER where the VM stores
+        # a function -- the loud death downstream was masking a latent
+        # silent-wrong, not preventing one.
+        if g_func_names[e[1]] == 1:
+            return "gen"
         return "unknown"
+    if e[0] == "ident":
+        if g_func_names[e[1]] == 1:
+            return "gen"
     return "unknown"
 
 # Boxed LOCALS of a function body: a name whose assignments include a
@@ -5893,6 +5925,17 @@ define emit_args(node, fname, nm, bt) as:
                     # about the C type and the boxed one wins. Owned-and-leaked
                     # like the non-ident fallback below -- one-shot process.
                     s is s + "make_num(" + (cn of te[1]) + ")"
+                elif g_func_names[te[1]] == 1:
+                    # (round 99) a compiled function's NAME is not an env
+                    # binding either -- the fifth "not in the env" regime,
+                    # formalized in emit_val one screen away in round 98 and
+                    # missing from this enumeration. The env read can only
+                    # miss, so passing a function by name to a user function
+                    # died "undefined variable 'g'" at runtime, after
+                    # arbitrary stdout, on programs the VM runs. emit_val
+                    # already emits the right thing (the per-function
+                    # singleton).
+                    s is s + (emit_val of [elems[k], nm, bt])
                 else:
                     s is s + (env_readb of te[1])
             else:
