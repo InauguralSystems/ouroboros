@@ -1,0 +1,48 @@
+# Round 101: round 100 gave a generic-param callee a working CALL SITE;
+# the RETURN-TYPE inference never asked what class the callee was. Its
+# call arm enumerated three callee classes (void user fn, boxed-return
+# builtin, Value*-returning user fn) and not `fgen` -- so `return fn`
+# was correctly boxed while `return (fn of x)` was declared double, in
+# the same function, fifteen lines apart. The same table, one consumer
+# taught and its sibling not, for the fourth round running.
+#
+# It broke EigenScript/lib/functional.eigs on its OWN source:
+# apply_when (:83) and unless (:91) both `return (fn of value)`, which
+# is their documented contract, so any string-returning callback -- or
+# any VOID callback, the commoner shape, returning null -- died
+# "non-numeric value in a numeric context at unless: return (type str)"
+# rc 1 after arbitrary stdout, where the VM prints the value rc 0.
+#
+# THE DISCRIMINATOR IS THE CALLBACK'S RETURN TYPE, and that is why 100
+# rounds walked past it: t188 contains this exact shape FOUR times, but
+# every one of its callbacks returns a number, so all four take the
+# double path and agree. A fixtured path with no discriminating fixture
+# -- invariant 7's nastier form, which t188's own commit message
+# invoked about the round before it. Each callback below is non-numeric
+# on purpose.
+define tag(x) as:
+    return ("v" + (str of x))
+define ap(fn, val) as:
+    return (fn of val)
+print of (ap of [tag, 5])
+define shout(x) as:
+    print of x
+print of (ap of [shout, 7])
+define pair(x) as:
+    return [x, x + 1]
+print of (ap of [pair, 3])
+define boxit(x) as:
+    return {"v": x}
+d is ap of [boxit, 9]
+print of d["v"]
+define nada(x) as:
+    return null
+print of (ap of [nada, 1])
+define twice_ap(fn, val) as:
+    return (fn of (fn of val))
+define sfx(s) as:
+    return (s + "!")
+print of (twice_ap of [sfx, "hi"])
+define num_cb(x) as:
+    return x * 3
+print of (ap of [num_cb, 4])

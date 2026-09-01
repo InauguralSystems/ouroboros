@@ -4607,6 +4607,21 @@ define return_node_is_boxed(rnode, fbt, ftt, rba, fgen, fdict) as:
             # side.
             if BOXED_RET_BUILTINS[rc1[1]] == 1:
                 return 1
+            # (round 101) a GENERIC PARAM callee: its result is whatever the
+            # caller's function returns, which is unknowable here, so the
+            # return is boxed unconditionally. The ident arm below already
+            # says a genp param RETURNED WHOLE is boxed; this arm never
+            # asked, so `return fn` was boxed and `return (fn of x)` was
+            # declared double -- the same table, one consumer taught and its
+            # sibling not, three rounds running.
+            #
+            # It broke lib/functional.eigs on its OWN source: apply_when and
+            # unless both `return (fn of value)`, so any callback returning
+            # a string (or a void callback returning null -- the commoner
+            # shape) died "non-numeric value in a numeric context at unless:
+            # return (type str)" rc 1 where the VM prints the value rc 0.
+            if fgen[rc1[1]] == 1:
+                return 1
     if re[0] == "ident":
         if fbt[re[1]] == 1:
             return 1
