@@ -1,0 +1,12 @@
+# Round 100, the other half: with round 99 typing function arguments as
+# "gen" and round 100 dispatching on them, a numeric-classified called
+# param can no longer HOLD a function -- a caller passing one through a
+# numeric channel dies at its OWN unbox and never enters the callee. So
+# the numeric class is now evidence, and the #168 "higher-order parameter
+# is not yet typed" message it used to print here was stale: the param
+# really does hold a number. The VM's own message is the honest one, and
+# emitting it turns a divergence into a byte-exact match.
+define f(cb) as:
+    return cb of 1
+n is 5
+print of (f of n)

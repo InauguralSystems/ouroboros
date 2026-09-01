@@ -195,7 +195,24 @@ fi
 # EIG may be a relative path, and the VM check below runs from the test's own
 # directory — so resolve it once, absolutely. Getting this wrong produced
 # rc=127 for every test and a tier that failed for the wrong reason.
-EIG_ABS=$(cd "$(dirname "$EIG")" && pwd)/$(basename "$EIG")
+# ...and it must resolve BOTH ways EIG is supplied. A path (the local
+# default, "../../EigenScript/src/eigenscript") resolves by dirname; a BARE
+# NAME resolves on PATH, which is what CI passes -- the devcontainer removes
+# the source tree after `make install`, so tests.yml runs `EIGS=eigenscript`.
+# dirname of a bare name is ".", so the old line built "<cwd>/eigenscript",
+# which does not exist, and every refusal guard failed rc=127 IN CI ONLY for
+# 15+ consecutive runs while the local suite stayed green. The comment above
+# was written by the round that hit the rc=127 on the path axis and fixed
+# only that axis -- a guard tested on one of its two inputs.
+case "$EIG" in
+  */*) EIG_ABS=$(cd "$(dirname "$EIG")" && pwd)/$(basename "$EIG") ;;
+  *)   EIG_ABS=$(command -v "$EIG" || true) ;;
+esac
+if [ -z "$EIG_ABS" ] || [ ! -x "$EIG_ABS" ]; then
+  echo "FAIL: refusal tier cannot resolve the VM from EIGS='$EIG'"
+  echo "      (a path is resolved by dirname, a bare name on PATH)"
+  exit 1
+fi
 refuse_n=0
 for prog in test/refuse/*.eigs; do
   [ -e "$prog" ] || continue

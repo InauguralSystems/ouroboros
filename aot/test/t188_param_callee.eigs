@@ -1,0 +1,43 @@
+# Round 100: round 99 fixed passing a function IN; calling it was still
+# broken. `define map(items, fn) as: ... fn of items[i]` -- a callee held
+# in a GENERIC PARAMETER -- resolved the name through the GLOBAL env and
+# died "undefined variable 'fn'" rc 1 on programs the VM runs, naming a
+# parameter sitting in a live C slot. Invariant 14: the binding lives in
+# the parameter regime, the call site consulted the env one. Same shape
+# as round 98's lowered-local arm, one class over.
+#
+# Reach: 89 direct call sites across 14 real files -- every higher-order
+# function in lib/list.eigs, lib/calculus.eigs, lib/optimize.eigs,
+# lib/functional.eigs, lib/data.eigs, lib/ui.eigs's app_loop, and DMG's
+# disasm_one. Round 99's own fixture missed it because all three of its
+# shapes call INDIRECTLY (a list element, a dict value), which routes
+# through emit_val on an index node and never through the ident callee.
+# Every one of the 89 real sites is written `f of x`.
+define worker(x) as:
+    return x + 1
+define register(fn) as:
+    return fn of 41
+print of (register of worker)
+define double_it(x) as:
+    return x * 2
+define map2(items, fn) as:
+    local result is []
+    for i in range of (len of items):
+        append of [result, fn of items[i]]
+    return result
+print of (map2 of [[1, 2, 3], double_it])
+MEM is [195, 17, 34]
+define reader(addr) as:
+    return MEM[addr]
+define disasm_one(addr, rd) as:
+    local op is rd of addr
+    return op
+print of (disasm_one of [0, reader])
+define add2(a, b) as:
+    return a + b
+define apply2(fn) as:
+    return fn of [3, 4]
+print of (apply2 of add2)
+define twice(fn, v) as:
+    return fn of (fn of v)
+print of (twice of [worker, 10])
