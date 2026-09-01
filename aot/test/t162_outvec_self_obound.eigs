@@ -1,0 +1,29 @@
+# Round 86: the round-85 discipline excluded only CROSS names -- the
+# SELF-counter checks its own comment claimed were missing. O in OBOUND
+# admitted a whole block when the block-BASE column satisfied a
+# shrinking bound (VM stops at o=3; the AOT wrote out[3] with a
+# reduction the VM never computes, rc 0); D in IBOUND defeated the
+# round-84 guard entry hoist (stale D gave _ibn=3, the re-evaluated
+# inner loop ran past the buffer -- heap-garbage read, rc 0). Both
+# demote to the scalar path now.
+a is buffer of 8
+b is buffer of 8
+out is buffer of 8
+i is 0
+loop while i < 8:
+    a[i] is i + 1
+    b[i] is i + 10
+    i is i + 1
+o is 0
+loop while o < 6 - o:
+    acc is 0
+    d is 0
+    loop while d < 3:
+        acc is acc + a[d] * b[d + o]
+        d is d + 1
+    out[o] is acc
+    o is o + 1
+j is 0
+loop while j < 8:
+    print of out[j]
+    j is j + 1

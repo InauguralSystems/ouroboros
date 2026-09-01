@@ -3760,6 +3760,16 @@ define outvec_loop(node, nm, bt) as:
         return null
     if (name_in_expr of [IBOUND, ACC]) == 1:
         return null
+    # (round 86) the SELF-counter checks the round-85 comment claimed and
+    # the code omitted: O in OBOUND admits a whole block when the block-
+    # BASE column satisfies a shrinking bound (VM stops at o=3, the AOT
+    # wrote out[3], rc 0); D in IBOUND defeats the round-84 guard's
+    # entry-hoisted _ibd (stale D=5 gave _ibn=3, the real loop reached
+    # d=3 past the buffer -- heap-garbage read, rc 0).
+    if (name_in_expr of [IBOUND, D]) == 1:
+        return null
+    if (name_in_expr of [OBOUND, O]) == 1:
+        return null
     if (name_in_expr of [OBOUND, D]) == 1:
         return null
     if (name_in_expr of [OBOUND, ACC]) == 1:
