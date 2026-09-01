@@ -1,0 +1,45 @@
+# Round 95: the last row of the target-vs-sibling axis -- the CALLEE. The VM
+# resolves the callee BEFORE evaluating the argument, so an argument whose
+# call rebinds the callee's name still dispatches to the binding that was
+# live before it. Both AOT call sites emitted the callee as a bare C operand
+# beside the argument, and aot_call_name_ic did its name resolution INSIDE
+# the helper -- i.e. after the argument by construction, not by gcc's mood:
+#
+#   f is one / r is f of (g of 5)   (g does `f is two`)
+#   VM 6        AOT 105       both rc 0
+#
+# Same through an expression callee (t[0]), and the pure-ordering shape
+# printed the two sides in the wrong order. The resolution is now split:
+# resolve (+ the undefined check, which the VM performs at the LOAD, before
+# the argument) then dispatch (+ the callability check, which it performs at
+# the CALL, after it) -- with an incref held across the argument, since the
+# slot read is a borrow while the VM holds an owned callee.
+define one(x) as:
+    return x + 1
+define two(x) as:
+    return x + 100
+define g(z) as:
+    f is two
+    return z
+f is one
+print of (f of (g of 5))
+define inc(x) as:
+    return x + 1
+define swapt(z) as:
+    t is [two]
+    return z
+t is [inc]
+print of ((t[0]) of (swapt of 5))
+ordlog is ""
+define note(s) as:
+    ordlog is ordlog + s
+    return 0
+define pickfn(k) as:
+    x is note of "callee-side"
+    return 0
+define argside(k) as:
+    x is note of "arg-side"
+    return 5
+u is [inc]
+print of ((u[pickfn of 0]) of (argside of 0))
+print of ordlog

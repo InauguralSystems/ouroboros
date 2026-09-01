@@ -2200,8 +2200,16 @@ define emit_val(node, nm, bt) as:
             # bare 1-element literal list passes its element RAW), because a
             # dynamically-resolved callee has no statically known signature.
             local vcarg is unwrap of node[2]
+            # (round 95) the CALLEE is evaluated before the argument -- the
+            # last row of the target-vs-sibling axis. An expression callee
+            # beside an argument whose call rebinds it dispatched to the
+            # NEW binding (VM 6, AOT 105, rc 0 both).
             if (vcarg[0] == "list") and ((len of vcarg) == 2) and ((len of vcarg[1]) == 1):
+                if (has_call_node of (vcarg[1])[0]) == 1:
+                    return "({ Value* _sqcf = " + (emit_val of [node[1], nm, bt]) + "; Value* _sqca = " + (emit_val of [(vcarg[1])[0], nm, bt]) + "; aot_call_value(_sqcf, _sqca); })"
                 return "aot_call_value(" + (emit_val of [node[1], nm, bt]) + ", " + (emit_val of [(vcarg[1])[0], nm, bt]) + ")"
+            if (has_call_node of node[2]) == 1:
+                return "({ Value* _sqcf = " + (emit_val of [node[1], nm, bt]) + "; Value* _sqca = " + (emit_val of [node[2], nm, bt]) + "; aot_call_value(_sqcf, _sqca); })"
             return "aot_call_value(" + (emit_val of [node[1], nm, bt]) + ", " + (emit_val of [node[2], nm, bt]) + ")"
         # `report of x` -> the most-specific predicate of x's observed slot.
         # (round 70) third arg = compiled-fn flag: a never-bound name must
@@ -2298,8 +2306,12 @@ define emit_val(node, nm, bt) as:
             return "({ rt_error(EK_TYPE, g_trace_current_line, \"cannot call num\"); make_null(); })"
         if (barg[0] == "list") and ((len of barg) == 2) and ((len of barg[1]) == 1):
             local hc1 is ic_cache of 0
+            if (has_call_node of (barg[1])[0]) == 1:
+                return "({ " + hc1[0] + "Value* _sqcf = aot_call_resolve(__eigs_g, \"" + callee[1] + "\", " + hc1[1] + "); Value* _sqca = " + (emit_val of [(barg[1])[0], nm, bt]) + "; aot_call_dispatch(_sqcf, _sqca); })"
             return "({ " + hc1[0] + "aot_call_name_ic(__eigs_g, \"" + callee[1] + "\", " + (emit_val of [(barg[1])[0], nm, bt]) + ", " + hc1[1] + "); })"
         local hc2 is ic_cache of 0
+        if (has_call_node of node[2]) == 1:
+            return "({ " + hc2[0] + "Value* _sqcf = aot_call_resolve(__eigs_g, \"" + callee[1] + "\", " + hc2[1] + "); Value* _sqca = " + (emit_val of [node[2], nm, bt]) + "; aot_call_dispatch(_sqcf, _sqca); })"
         return "({ " + hc2[0] + "aot_call_name_ic(__eigs_g, \"" + callee[1] + "\", " + (emit_val of [node[2], nm, bt]) + ", " + hc2[1] + "); })"
     throw of ("AOT: cannot emit value node '" + t + "'")
 

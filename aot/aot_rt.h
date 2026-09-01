@@ -2174,7 +2174,7 @@ static Value *aot_dispatch(Value *table, double key, Value *ctx) {
 
 static Value *aot_call_name(Env *g, const char *name, Value *arg) {
     Value *fn = env_get(g, name);
-    if (!fn) { fprintf(stderr, "aot: undefined function '%s'\n", name); exit(1); }
+    if (!fn) { rt_error(EK_UNDEFINED_NAME, g_trace_current_line, "undefined variable '%s'", name); aot_error_exit(); return NULL; }
     /* Round 71: the non-callable guard aot_call_value already had, mirrored
      * here (the round-70 sibling-asymmetry pattern). call_eigs_fn returns
      * make_null() for a non-FN/non-BUILTIN with NO error flag, so calling a
@@ -2264,10 +2264,51 @@ static Value *aot_call_value(Value *fn, Value *arg) {
     return res;
 }
 
+/* (round 95) CALLEE-BEFORE-ARGUMENT. The VM resolves the callee first: an
+ * undefined name dies with the argument NEVER evaluated (measured), and a
+ * name rebound by the argument's own call still dispatches to the binding
+ * that was live BEFORE it -- `f is one / r is f of (g of 5)` where g does
+ * `f is two` gives 6 in the VM and gave 105 here, rc 0 both sides. The
+ * resolution used to live INSIDE the call helper, so it happened after the
+ * argument by construction rather than by gcc's mood.
+ *
+ * Split in two: resolve (+ the undefined check, which the VM performs at
+ * the load, before the argument) and dispatch (+ the callability check,
+ * which the VM performs at the call, after it). The incref between them is
+ * load-bearing for the same reason round 93 gave for slice targets -- the
+ * slot read is a borrow while the VM holds an owned callee across the
+ * argument's evaluation. */
+static Value *aot_call_resolve(Env *g, const char *name, AotNameIC *c) {
+    EigsSlot *sp = aot_name_slot(g, name, c);
+    Value *fn = sp ? aot_slot_value(sp) : NULL;
+    if (!fn) { rt_error(EK_UNDEFINED_NAME, g_trace_current_line, "undefined variable '%s'", name); aot_error_exit(); return NULL; }
+    val_incref(fn);
+    return fn;
+}
+static Value *aot_call_dispatch(Value *fn, Value *arg) {
+    if (fn->type != VAL_BUILTIN && fn->type != VAL_FN)
+        rt_error(EK_TYPE, g_trace_current_line, "cannot call %s", val_type_name(fn->type));
+    Value *res;
+    if (fn->type == VAL_BUILTIN) res = fn->data.builtin(arg);
+    else                         res = call_eigs_fn(fn, arg);
+    if (g_exit_requested) exit(g_exit_code);
+    if (g_has_error) aot_error_exit();
+    if (!res) { val_decref(arg); val_decref(fn); return make_null(); }
+    if (res == arg) { val_decref(fn); return res; }
+    if (arg && arg->type == VAL_LIST) {
+        for (int i = 0; i < arg->data.list.count; i++) {
+            if (arg->data.list.items[i] == res) { val_incref(res); break; }
+        }
+    }
+    val_decref(arg);
+    val_decref(fn);
+    return res;
+}
+
 static Value *aot_call_name_ic(Env *g, const char *name, Value *arg, AotNameIC *c) {
     EigsSlot *sp = aot_name_slot(g, name, c);
     Value *fn = sp ? aot_slot_value(sp) : NULL;
-    if (!fn) { fprintf(stderr, "aot: undefined function '%s'\n", name); exit(1); }
+    if (!fn) { rt_error(EK_UNDEFINED_NAME, g_trace_current_line, "undefined variable '%s'", name); aot_error_exit(); return NULL; }
     /* Round 71: non-callable guard, see aot_call_name. */
     if (fn->type != VAL_BUILTIN && fn->type != VAL_FN)
         rt_error(EK_TYPE, g_trace_current_line, "cannot call %s",
