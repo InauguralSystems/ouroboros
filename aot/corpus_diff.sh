@@ -29,12 +29,21 @@ for f in "$EIGDIR"/tests/test_*.eigs; do
   n=$((n + 1)); b=$(basename "$f")
   ( cd "$EIGDIR" && timeout 60 src/eigenscript "tests/$b" ) >/tmp/_cd_vm.out 2>&1
   vrc=$?
-  if timeout 240 bash "$HERE/build.sh" "$f" /tmp/_cd_bin >/tmp/_cd_b.log 2>&1; then
+  timeout 240 bash "$HERE/build.sh" "$f" /tmp/_cd_bin >/tmp/_cd_b.log 2>&1
+  bst=$?
+  if [ "$bst" -eq 0 ]; then
     ( cd "$EIGDIR" && timeout 60 /tmp/_cd_bin ) >/tmp/_cd_aot.out 2>&1
     brc=$?
     if [ "$vrc" -ne "$brc" ] || ! diff <(norm /tmp/_cd_vm.out) <(norm /tmp/_cd_aot.out) >/dev/null; then
       echo "$b DIVERGE" >>"$got"
     fi
+  elif [ "$bst" -eq 124 ]; then
+    # (round 106) a TIMEOUT is not a crash: test_stmt_cap is an 8424-line
+    # program and the compiler is superlinear in statement count (~n^1.8
+    # measured), so it blows the budget without ever failing. Conflating
+    # the two under BUILDCRASH hid the perf finding behind a severity it
+    # does not have.
+    echo "$b TIMEOUT" >>"$got"
   else
     if grep -q 'AOT:' /tmp/_cd_b.log; then echo "$b REFUSE" >>"$got"
     else echo "$b BUILDCRASH" >>"$got"; fi

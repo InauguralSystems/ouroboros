@@ -3,7 +3,6 @@ test_auth.eigs DIVERGE
 test_bcd.eigs REFUSE
 test_bitwise.eigs REFUSE
 test_break_continue.eigs REFUSE
-test_break_scope.eigs DIVERGE
 test_buf_resample.eigs REFUSE
 test_buf_vectorized.eigs REFUSE
 test_builtin_contracts.eigs REFUSE
@@ -107,12 +106,11 @@ test_spawn_parallel.eigs DIVERGE
 test_stable_band.eigs REFUSE
 test_stdlib_fixes.eigs REFUSE
 test_stem_accuracy.eigs REFUSE
-test_stmt_cap.eigs BUILDCRASH
+test_stmt_cap.eigs TIMEOUT
 test_stmt_terminator.eigs REFUSE
 test_store_corruption.eigs REFUSE
 test_store.eigs REFUSE
 test_stray_break.eigs REFUSE
-test_string_math.eigs BUILDCRASH
 test_supervise.eigs DIVERGE
 test_sync.eigs REFUSE
 test_task_osr.eigs DIVERGE

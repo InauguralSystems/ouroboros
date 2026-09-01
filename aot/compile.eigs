@@ -17,6 +17,18 @@ define c_escape(s) as:
             out is out + "\\\\"
         elif ch == "\n":
             out is out + "\\n"
+        elif ch == "\r":
+            # (round 106) a lone CR passed through RAW, and gcc treats it as
+            # a line terminator inside a string literal -- "missing
+            # terminating \" character", a build death with no AOT: line, on
+            # any source carrying CRLF data (test_string_math, and anything
+            # touching HTTP/CSV/DOS text).
+            out is out + "\\r"
+        elif ch == "\t":
+            # same family, found by inspection while fixing CR: a literal
+            # tab survives in a C string (harmless), but escaping it costs
+            # nothing and keeps the emitted C greppable.
+            out is out + "\\t"
         else:
             out is out + ch
     return out
@@ -3131,6 +3143,29 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
                 fo is fo + ind + "    " + (cn of fvar) + " = aot_num_ck_at(aot_iter_get(" + itv + ", " + kv + "), \"" + (c_escape of (G_CUR_FN[0])) + ": for-in " + (c_escape of fvar) + "\");\n"
                 if g_traced == 1:
                     fo is fo + ind + "    aot_trace_assign(\"" + fvar + "\", " + (cn of fvar) + ");\n"
+            elif (lscope == 0) and (nm[fvar] == 1) and (g_observed == 0) and (g_traced == 0):
+                # (round 106) a MODULE-scope for-var whose unbox was DECLINED
+                # (it is an assignment target, so g_forunbox skipped it) but
+                # whose reads are C-static (`nm` was set by the numeric pass
+                # and never retracted). The terminal env arm below wrote
+                # __eigs_g while every body read took the file-scope static:
+                # the body saw 0 for the WHOLE loop, silently -- `t is t + i`
+                # summed zeros, rc 0, no diagnostic -- and the corruption is
+                # NON-LOCAL, because any module assignment to the same name
+                # anywhere in the file (before the loop, after it, or inside
+                # the loop's own body) is what declines the unbox.
+                #
+                # The VM's rule, measured: the loop binding is LOOP-SCOPED --
+                # `print of i` after the loop dies "undefined variable", and
+                # a prebound outer `i is 7` still reads 7 afterwards. That is
+                # exactly C block scoping, so the fix IS a block-local shadow:
+                # declare `double eig_i` INSIDE the loop block. Body reads and
+                # writes resolve to the shadow by C scope rules; the outer
+                # static (the prebound module binding) is untouched, so
+                # post-loop code sees precisely what the VM's outer binding
+                # holds.
+                fo is fo + ind + "    double " + (cn of fvar) + " = aot_num_ck_at(aot_iter_get(" + itv + ", " + kv + "), \"" + (c_escape of (G_CUR_FN[0])) + ": for-in " + (c_escape of fvar) + "\");
+"
             elif (g_lowerloc == 1) and (g_envloc[fvar] == 1):
                 if g_traced == 1:
                     fo is fo + ind + "    { Value* __fv = aot_iter_get(" + itv + ", " + kv + "); aot_trace_assign_val(\"" + fvar + "\", __fv); aot_lv_set(&" + (lv of fvar) + ", __fv); }\n"
