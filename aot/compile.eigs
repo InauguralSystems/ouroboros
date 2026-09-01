@@ -173,6 +173,7 @@ g_module_names is {}
 # the first version of the guard demonstrated it on its own author
 # ("undefined variable 'g_first_bind'" from emit_function).
 g_first_bind is {}
+g_first_plain_bind is {}
 g_first_use is {}
 # The CURRENT function's parameter names, set by emit_function and cleared for
 # the module body. The VM's tape records locals and module bindings and NEVER a
@@ -1006,14 +1007,33 @@ define modfor_intra_check(node, tli) as:
             local bks is keys of bacc
             for bk in range of (len of bks):
                 local bb is bks[bk]
-                local bfb is g_first_bind[bb]
-                if (bfb == null) or (bfb >= tli):
+                # (round 68) MUST-bind exemption only: a plain top-level
+                # assign before the enclosing statement, or an earlier
+                # SIBLING plain assign in this block (it shares the branch
+                # path with the loop, so it executed iff the loop did). A
+                # conditional earlier bind wrongly exempted the leak.
+                local bfb is g_first_plain_bind[bb]
+                local bexempt is 0
+                if (bfb != null) and (bfb < tli):
+                    bexempt is 1
+                for bp in range of (len of node):
+                    if bp < bi:
+                        local bps is unwrap of node[bp]
+                        if ((type of bps) == "list") and ((len of bps) > 0):
+                            if (bps[0] == "assign") and (bps[1] == bb):
+                                bexempt is 1
+                if bexempt == 0:
                     local bstop is 0
                     for bj in range of (len of node):
                         if (bj > bi) and (bstop == 0):
                             local bsj is unwrap of node[bj]
                             if ((type of bsj) == "list") and ((len of bsj) > 0):
                                 if (bsj[0] == "assign") and (bsj[1] == bb):
+                                    # (round 68) scan the stopping rebind's
+                                    # own RHS first (`i is i + 1` reads the
+                                    # leaked binder).
+                                    if (uses_ident_skip_forbind of [(bsj[2]), bb]) == 1:
+                                        throw of ("AOT: module for binder '" + bb + "' is used after its loop in an observed/traced program. The VM loop-scopes a binder with no pre-existing binding in every regime, but observed/traced module emission routes it through the env, where C block scoping cannot express the loop scope (see EigenScript#1056); refused rather than answering with the leaked value.")
                                     bstop is 1
                             if bstop == 0:
                                 if (uses_ident_skip_forbind of [node[bj], bb]) == 1:
@@ -6281,6 +6301,7 @@ define emit_program(ast) as:
     # order check at all (silent success, one arm over from round 56's fix).
     # The guard applies to EVERY outward-routing arm; see the decl loop.
     g_first_bind is {}
+    g_first_plain_bind is {}
     g_first_use is {}
     for fbi in range of (len of stmts):
         local fba is collect_assigns of [[(stmts[fbi])], {}]
@@ -6293,6 +6314,17 @@ define emit_program(ast) as:
             if fbu[0] == "func":
                 if g_first_bind[(fbu[1])] == null:
                     g_first_bind[(fbu[1])] is fbi
+            # (round 68) MUST-bind table: plain top-level assigns only. The
+            # binder guard's pre-bound exemption consumed g_first_bind's
+            # containment optimism to answer a RUNTIME question ("did a
+            # binding exist when the for executed?") -- a bind inside a
+            # never-taken branch wrongly exempted the binder and the leak
+            # returned (VM rc 1, AOT printed the leaked 8, rc 0). The
+            # exemption keys on THIS table now: a plain assign statement
+            # executes unconditionally before the loop.
+            if fbu[0] == "assign":
+                if g_first_plain_bind[(fbu[1])] == null:
+                    g_first_plain_bind[(fbu[1])] is fbi
     if 1 == 1:
         local mn_a is collect_assigns of [stmts, {}]
         local mn_k is keys of mn_a
@@ -6440,7 +6472,9 @@ define emit_program(ast) as:
             local r65bs is keys of r65acc
             for r65k in range of (len of r65bs):
                 local r65b is r65bs[r65k]
-                local r65fb is g_first_bind[r65b]
+                # (round 68) exemption keys on the MUST-bind table -- a
+                # conditional earlier bind wrongly exempted the leak.
+                local r65fb is g_first_plain_bind[r65b]
                 local r65pre is 0
                 if (r65fb != null) and (r65fb < r65i):
                     r65pre is 1
@@ -6451,6 +6485,11 @@ define emit_program(ast) as:
                             local r65stop is 0
                             if ((type of r65s) == "list") and ((len of r65s) > 0):
                                 if (r65s[0] == "assign") and (r65s[1] == r65b):
+                                    # (round 68) the stopping rebind's own
+                                    # RHS may READ the leaked binder
+                                    # (`i is i + 1`) -- scan it first.
+                                    if (uses_ident_skip_forbind of [(r65s[2]), r65b]) == 1:
+                                        throw of ("AOT: module for binder '" + r65b + "' is used after its loop in an observed/traced program. The VM loop-scopes a binder with no pre-existing binding in every regime, but observed/traced module emission routes it through the env, where C block scoping cannot express the loop scope (see EigenScript#1056); refused rather than answering with the leaked value.")
                                     r65stop is 1
                             if r65stop == 1:
                                 break

@@ -1,0 +1,20 @@
+# EXPECT: used after its loop in an observed/traced program
+#
+# Round 68: the rebind STOP honored `i is <expr>` without scanning the
+# expr -- but `i is i + 1` READS the leaked binder before rebinding it,
+# and the AOT printed 9 (leaked 8 + 1) where the VM raises rc 1. The
+# top-level variant was coincidentally backstopped by the order guard's
+# tie rule; one block level down the backstop vanished (the same wrapper
+# shape as rounds 62 and 66). Both halves of the guard now scan the
+# stopping assign's RHS before honoring the stop.
+#
+# Envelope shape: the VM RUNS this (rc 0 -- the whole block is dead), but
+# the scan is static and refuses the RHS read.
+
+x is 1
+print of (prev of x)
+if 1 == 2:
+    for i in [7, 8]:
+        y is i
+    i is i + 1
+print of "done"
