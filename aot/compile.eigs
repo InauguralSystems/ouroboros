@@ -3414,6 +3414,30 @@ define term_ov_ok(node, O) as:
         return term_ov_ok of [n[3], O]
     return 0
 
+define reads_buf_any(node, name) as:
+    # (round 78) does this expression READ buffer `name` at ANY index
+    # shape? The round-77 alias bail asked the right question of the wrong
+    # map: collect_ov_bufs records only O-indexed reads (its job is the
+    # _pv_ pointer declarations), so a read of the written buffer at a
+    # bare inner-counter index (`out[d]`) or a constant (`out[0]`) was
+    # invisible -- a Gauss-Seidel-style in-place kernel printed seven
+    # wrong numbers of eight, rc 0 (rowmap variant too). This walker is
+    # index-shape-blind on purpose; the bails consume it directly.
+    if (type of node) != "list":
+        return 0
+    if (len of node) == 0:
+        return 0
+    local n is unwrap of node
+    if ((type of n) == "list") and ((len of n) > 0):
+        if n[0] == "index":
+            local tg is unwrap of n[1]
+            if (tg[0] == "ident") and (tg[1] == name):
+                return 1
+        for k in range of (len of n):
+            if (reads_buf_any of [n[k], name]) == 1:
+                return 1
+    return 0
+
 define collect_ov_bufs(node, O, acc) as:
     local n is unwrap of node
     if n[0] == "index":
@@ -3557,14 +3581,24 @@ define outvec_loop(node, nm, bt) as:
         return null
     local ovb is {}
     collect_ov_bufs of [TERM, O, ovb]
-    # (round 77) ALIAS/DEPENDENCE bail, the round-76 rule for this
-    # recognizer: if the TERM reads the buffer being written (out == an
-    # input, e.g. matmul(out, out, w)), lanes read stale/updated values
-    # the serial VM would not. The missing-cn compile error was MASKING
-    # this hole -- repairing the mangling without this bail would have
-    # been textbook silent-wrong. Also covers matmul_loop (it wraps this
-    # recognizer) and its aot_buf_maxabs precheck's input reads.
-    if ovb[RES] == 1:
+    # (round 77/78) ALIAS/DEPENDENCE bail, the round-76 rule for this
+    # recognizer: if anything reads the buffer being written, lanes read
+    # stale/updated values the serial VM would not. Round 78 rebuilt the
+    # check on reads_buf_any -- the round-77 version consumed
+    # collect_ov_bufs, which records only O-indexed reads, so `out[d]`
+    # and `out[0]` reads were invisible (executed: seven wrong numbers of
+    # eight, rc 0). The BOUND and store-index expressions are checked too:
+    # the vector path re-evaluates them per BLOCK, not per iteration, so a
+    # bound reading the written buffer diverges the same way. Also covers
+    # matmul_loop (it wraps this recognizer) and its aot_buf_maxabs
+    # precheck's input reads.
+    if (reads_buf_any of [TERM, RES]) == 1:
+        return null
+    if (reads_buf_any of [OBOUND, RES]) == 1:
+        return null
+    if (reads_buf_any of [IBOUND, RES]) == 1:
+        return null
+    if (reads_buf_any of [SIDX, RES]) == 1:
         return null
     return {"O": O, "OBOUND": OBOUND, "ACC": ACC, "D": D, "IBOUND": IBOUND, "RES": RES, "SIDX": SIDX, "SBASE": SBASE, "TERM": TERM, "ovbufs": (keys of ovb)}
 
@@ -3761,12 +3795,17 @@ define rowmap_loop(node, nm, bt) as:
         return null
     local vb is {}
     collect_ov_bufs of [VEXPR, D, vb]
-    # (round 77) ALIAS/DEPENDENCE bail (the round-76 rule): a VEXPR that
-    # reads RES at a SHIFTED base is the stale-lane class, and the old
-    # filter below merely dropped RES from the _pv_ declarations while
-    # still admitting the read. Conservative: any read of the written
-    # buffer bails to the scalar path.
-    if vb[RES] == 1:
+    # (round 77/78) ALIAS/DEPENDENCE bail (the round-76 rule): any read of
+    # the written buffer bails to the scalar path. Round 78 rebuilt it on
+    # reads_buf_any -- the collect_ov_bufs-based check missed non-D-indexed
+    # reads (`out[0]` served stale, rc 0, executed) -- and covers the
+    # bound/store-index expressions, which the vector path re-evaluates
+    # per block.
+    if (reads_buf_any of [VEXPR, RES]) == 1:
+        return null
+    if (reads_buf_any of [BOUND, RES]) == 1:
+        return null
+    if (reads_buf_any of [SIDX, RES]) == 1:
         return null
     local vbufs is []
     local vbk is keys of vb
