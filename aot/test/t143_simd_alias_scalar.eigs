@@ -1,0 +1,22 @@
+# Round 77: SIMD alias/dependence bail parity. The TERM reads the
+# buffer being written (out == an input), which the round-76 rule
+# forbids for this recognizer family too -- the missing-cn compile
+# error was MASKING the hole, and repairing the mangling without the
+# bail would have been textbook silent-wrong (stale lanes). This
+# shape demotes to the scalar path and must stay byte-exact.
+# rowmap prefix chain: write base 1, read base 0 of the SAME buffer.
+n is 12
+b is buffer of n
+i is 0
+loop while i < n:
+    b[i] is i * 10.0
+    i is i + 1
+m is n - 1
+d is 0
+loop while d < m:
+    b[1 + d] is b[0 + d] + 1
+    d is d + 1
+j is 0
+loop while j < n:
+    print of b[j]
+    j is j + 1

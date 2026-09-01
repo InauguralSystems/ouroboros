@@ -1,0 +1,35 @@
+# Round 77: POSITIVE module-level outvec fixture -- the SIMD emitter
+# family (emit_outvec/emit_rowmap/emit_term_ov) was never cn-migrated
+# (99de31a) and no fixture noticed because every prior fixture wrote
+# through a write-only out PARAM, which the bt classification misses:
+# the recognizers were dark on their own named fixtures (invariant 7
+# as a production event -- t24/t25/t26 stopped executing their
+# subject). This fixture uses module-level buffers, where bt is
+# always set, so emit_outvec runs under the oracle on every suite
+# run. Under HEAD it fails gcc with raw unmangled names.
+n is 8
+dn is 4
+x is buffer of dn
+w is buffer of 32
+out is buffer of n
+f is 0
+loop while f < dn:
+    x[f] is f * 1.5 + 1.0
+    f is f + 1
+g is 0
+loop while g < 32:
+    w[g] is g * 0.25
+    g is g + 1
+o is 0
+loop while o < n:
+    acc is 0
+    d is 0
+    loop while d < dn:
+        acc is acc + x[d] * w[d * n + o]
+        d is d + 1
+    out[o] is acc
+    o is o + 1
+p is 0
+loop while p < n:
+    print of out[p]
+    p is p + 1

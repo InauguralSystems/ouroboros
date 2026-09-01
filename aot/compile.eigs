@@ -3440,7 +3440,7 @@ define emit_term_ov(node, O, nm, bt, guard) as:
         local tg is unwrap of n[1]
         if (name_in_expr of [n[2], O]) == 1:
             local base is extract_o_base of [n[2], O]
-            return "aot_vload(_pv_" + tg[1] + " + " + (emit_int of base) + " + " + O + ")"
+            return "aot_vload(_pv_" + (cn of tg[1]) + " + " + (emit_int of base) + " + " + (cn of O) + ")"
         if (is_int_expr of n[2]) == 1:
             return "aot_vset(aot_buf_get_i(" + (cn of tg[1]) + ", " + (emit_int of n[2]) + "))"
         return "aot_vset(aot_buf_get(" + (cn of tg[1]) + ", " + (emit_num of [n[2], nm, bt, 0]) + "))"
@@ -3557,6 +3557,15 @@ define outvec_loop(node, nm, bt) as:
         return null
     local ovb is {}
     collect_ov_bufs of [TERM, O, ovb]
+    # (round 77) ALIAS/DEPENDENCE bail, the round-76 rule for this
+    # recognizer: if the TERM reads the buffer being written (out == an
+    # input, e.g. matmul(out, out, w)), lanes read stale/updated values
+    # the serial VM would not. The missing-cn compile error was MASKING
+    # this hole -- repairing the mangling without this bail would have
+    # been textbook silent-wrong. Also covers matmul_loop (it wraps this
+    # recognizer) and its aot_buf_maxabs precheck's input reads.
+    if ovb[RES] == 1:
+        return null
     return {"O": O, "OBOUND": OBOUND, "ACC": ACC, "D": D, "IBOUND": IBOUND, "RES": RES, "SIDX": SIDX, "SBASE": SBASE, "TERM": TERM, "ovbufs": (keys of ovb)}
 
 define emit_outvec(d, ind, nm, bt, guard) as:
@@ -3569,37 +3578,48 @@ define emit_outvec(d, ind, nm, bt, guard) as:
     local SBASE is emit_int of d["SBASE"]
     local TERM is d["TERM"]
     local ovbufs is d["ovbufs"]
+    # (round 77) every source-name emission goes through cn: this emitter
+    # family was missed when cn went prefix-everything (99de31a), and its
+    # raw names either failed gcc unnamed or -- for source names spelled
+    # eig_X -- aliased into a SIBLING variable's mangled storage and
+    # compiled cleanly against the wrong memory (the loop ran as a no-op,
+    # rc 0). cn(O)/cn(D)/cn(ACC)/cn(RES) are the C locals; _pv_ pointers
+    # key on cn too so emit_term_ov's vloads match the declarations.
+    local cO is cn of O
+    local cD is cn of D
+    local cACC is cn of ACC
+    local cRES is cn of RES
     local i2 is ind + "    "
     local i3 is i2 + "    "
     local i4 is i3 + "    "
     local s is ind + "{\n"
-    s is s + i2 + "double* _pv_" + RES + " = aot_buf_data(" + RES + ");\n"
+    s is s + i2 + "double* _pv_" + cRES + " = aot_buf_data(" + cRES + ");\n"
     for k in range of (len of ovbufs):
-        s is s + i2 + "double* _pv_" + ovbufs[k] + " = aot_buf_data(" + ovbufs[k] + ");\n"
+        s is s + i2 + "double* _pv_" + (cn of ovbufs[k]) + " = aot_buf_data(" + (cn of ovbufs[k]) + ");\n"
     # vector loop over O (each lane = one output column), byte-exact d-order sum.
     # guard=0 -> raw accumulate (caller proved no overflow); guard=1 -> packed guard.
     local accline is "_acc = aot_vadd(_acc, " + (emit_term_ov of [TERM, O, nm, bt, guard]) + ");\n"
     if guard == 1:
         accline is "_acc = aot_vguard(aot_vadd(_acc, " + (emit_term_ov of [TERM, O, nm, bt, 1]) + "));\n"
-    s is s + i2 + "for (; " + O + " + AOT_VW <= " + OB + "; " + O + " += AOT_VW) {\n"
+    s is s + i2 + "for (; " + cO + " + AOT_VW <= " + OB + "; " + cO + " += AOT_VW) {\n"
     s is s + i3 + "aot_vec _acc = aot_vset(0.0);\n"
-    s is s + i3 + D + " = 0;\n"
-    s is s + i3 + "while (" + D + " < " + IB + ") {\n"
+    s is s + i3 + cD + " = 0;\n"
+    s is s + i3 + "while (" + cD + " < " + IB + ") {\n"
     s is s + i4 + accline
-    s is s + i4 + D + " = " + D + " + 1;\n"
+    s is s + i4 + cD + " = " + cD + " + 1;\n"
     s is s + i3 + "}\n"
-    s is s + i3 + "aot_vstore(_pv_" + RES + " + " + SBASE + " + " + O + ", _acc);\n"
+    s is s + i3 + "aot_vstore(_pv_" + cRES + " + " + SBASE + " + " + cO + ", _acc);\n"
     s is s + i2 + "}\n"
     # scalar tail for the remaining columns (reuses the checked emit path)
-    s is s + i2 + "while (" + O + " < " + OB + ") {\n"
-    s is s + i3 + ACC + " = 0;\n"
-    s is s + i3 + D + " = 0;\n"
-    s is s + i3 + "while (" + D + " < " + IB + ") {\n"
-    s is s + i4 + ACC + " = num_guard(" + ACC + " + " + (emit_num of [TERM, nm, bt, 0]) + ");\n"
-    s is s + i4 + D + " = " + D + " + 1;\n"
+    s is s + i2 + "while (" + cO + " < " + OB + ") {\n"
+    s is s + i3 + cACC + " = 0;\n"
+    s is s + i3 + cD + " = 0;\n"
+    s is s + i3 + "while (" + cD + " < " + IB + ") {\n"
+    s is s + i4 + cACC + " = num_guard(" + cACC + " + " + (emit_num of [TERM, nm, bt, 0]) + ");\n"
+    s is s + i4 + cD + " = " + cD + " + 1;\n"
     s is s + i3 + "}\n"
-    s is s + i3 + "aot_buf_set_i(" + RES + ", " + (emit_int of d["SIDX"]) + ", " + ACC + ");\n"
-    s is s + i3 + O + " = " + O + " + 1;\n"
+    s is s + i3 + "aot_buf_set_i(" + cRES + ", " + (emit_int of d["SIDX"]) + ", " + cACC + ");\n"
+    s is s + i3 + cO + " = " + cO + " + 1;\n"
     s is s + i2 + "}\n"
     return s + ind + "}\n"
 
@@ -3738,6 +3758,13 @@ define rowmap_loop(node, nm, bt) as:
         return null
     local vb is {}
     collect_ov_bufs of [VEXPR, D, vb]
+    # (round 77) ALIAS/DEPENDENCE bail (the round-76 rule): a VEXPR that
+    # reads RES at a SHIFTED base is the stale-lane class, and the old
+    # filter below merely dropped RES from the _pv_ declarations while
+    # still admitting the read. Conservative: any read of the written
+    # buffer bails to the scalar path.
+    if vb[RES] == 1:
+        return null
     local vbufs is []
     local vbk is keys of vb
     for k in range of (len of vbk):
@@ -3752,17 +3779,20 @@ define emit_rowmap(d, ind, nm, bt) as:
     local SBASE is emit_int of d["SBASE"]
     local i2 is ind + "    "
     local i3 is i2 + "    "
+    # (round 77) cn-migrated with emit_outvec; see the note there.
+    local cD is cn of D
+    local cRES is cn of RES
     local s is ind + "{\n"
-    s is s + i2 + "double* _pv_" + RES + " = aot_buf_data(" + RES + ");\n"
+    s is s + i2 + "double* _pv_" + cRES + " = aot_buf_data(" + cRES + ");\n"
     local vbufs is d["vbufs"]
     for k in range of (len of vbufs):
-        s is s + i2 + "double* _pv_" + vbufs[k] + " = aot_buf_data(" + vbufs[k] + ");\n"
-    s is s + i2 + "for (; " + D + " + AOT_VW <= " + OB + "; " + D + " += AOT_VW) {\n"
-    s is s + i3 + "aot_vstore(_pv_" + RES + " + " + SBASE + " + " + D + ", " + (emit_term_ov of [d["VEXPR"], D, nm, bt, 1]) + ");\n"
+        s is s + i2 + "double* _pv_" + (cn of vbufs[k]) + " = aot_buf_data(" + (cn of vbufs[k]) + ");\n"
+    s is s + i2 + "for (; " + cD + " + AOT_VW <= " + OB + "; " + cD + " += AOT_VW) {\n"
+    s is s + i3 + "aot_vstore(_pv_" + cRES + " + " + SBASE + " + " + cD + ", " + (emit_term_ov of [d["VEXPR"], D, nm, bt, 1]) + ");\n"
     s is s + i2 + "}\n"
-    s is s + i2 + "while (" + D + " < " + OB + ") {\n"
-    s is s + i3 + "aot_buf_set_i(" + RES + ", " + (emit_int of d["SIDX"]) + ", " + (emit_num of [d["VEXPR"], nm, bt, 0]) + ");\n"
-    s is s + i3 + D + " = " + D + " + 1;\n"
+    s is s + i2 + "while (" + cD + " < " + OB + ") {\n"
+    s is s + i3 + "aot_buf_set_i(" + cRES + ", " + (emit_int of d["SIDX"]) + ", " + (emit_num of [d["VEXPR"], nm, bt, 0]) + ");\n"
+    s is s + i3 + cD + " = " + cD + " + 1;\n"
     s is s + i2 + "}\n"
     return s + ind + "}\n"
 

@@ -1,0 +1,29 @@
+# Round 77: a user name spelled eig_X collided with the un-cn'd
+# emission of X's sibling -- emit_rowmap wrote bare eig_b/eig_d,
+# which are cn("b")/cn("d"), so the emitted block compiled cleanly
+# against the WRONG storage and the loop ran as a no-op (VM chained
+# 1..7; AOT printed the untouched fill, both rc 0). With cn
+# everywhere, eig_b mangles to eig_eig_b -- distinct storage.
+n is 8
+b is buffer of n
+eig_b is buffer of n
+d is 0
+loop while d < n:
+    b[d] is 100.0
+    eig_b[d] is d * 10.0
+    d is d + 1
+eig_d is 0
+m is n - 1
+loop while eig_d < m:
+    eig_b[1 + eig_d] is eig_b[0 + eig_d] + 1
+    eig_d is eig_d + 1
+print of "eig_d after loop:"
+print of eig_d
+j is 0
+loop while j < n:
+    print of b[j]
+    j is j + 1
+j is 0
+loop while j < n:
+    print of eig_b[j]
+    j is j + 1

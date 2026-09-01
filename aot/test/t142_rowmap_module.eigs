@@ -1,0 +1,26 @@
+# Round 77: POSITIVE module-level rowmap fixture -- see t141. Under
+# HEAD this fails gcc (raw names in emit_rowmap).
+rows is 3
+cols is 4
+src is buffer of 12
+g1 is buffer of cols
+out is buffer of 12
+f is 0
+loop while f < 12:
+    src[f] is f * 0.5 + 1.0
+    f is f + 1
+g is 0
+loop while g < cols:
+    g1[g] is g + 1.0
+    g is g + 1
+i is 0
+loop while i < rows:
+    d2 is 0
+    loop while d2 < cols:
+        out[i * cols + d2] is g1[d2] * src[i * cols + d2]
+        d2 is d2 + 1
+    i is i + 1
+p is 0
+loop while p < 12:
+    print of out[p]
+    p is p + 1
