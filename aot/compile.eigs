@@ -601,7 +601,19 @@ define is_buf_create(rhs) as:
     local callee is unwrap of n[1]
     if callee[0] != "ident":
         return 0
-    if (callee[1] == "buffer") or (callee[1] == "zeros"):
+    if callee[1] == "buffer":
+        return 1
+    if callee[1] == "zeros":
+        # (round 92) 1-D `zeros` only. `zeros of [r, c]` builds a NESTED
+        # LIST in this VM, and keeping it in the numeric-buffer class
+        # compiled every `m[i]` row read as a numeric element fetch: the
+        # AOT died "non-numeric element in `eig_m`[0] (list)" -- not a VM
+        # message -- where the VM prints the row [0, 0, 0]. Round 91 made
+        # that loud instead of silent (it used to be a flat 6-buffer);
+        # this takes it out of the class entirely so rows read as rows.
+        local zarg is unwrap of n[2]
+        if zarg[0] == "list":
+            return 0
         return 1
     return 0
 
@@ -1599,7 +1611,14 @@ define slice_arg_parts(argnode, nm, bt) as:
         local lo is "0"
         if n[2] != null:
             lo is emit_num of [n[2], nm, bt, 0]
-        local hi is "aot_buf_len(" + (cn of bnm) + ")"
+        # (round 92) a non-bt target is not a C variable -- a 2-D `zeros`
+        # is a nested list and left the buf class this round, and emitting
+        # its raw name gave gcc an undeclared identifier. Read it boxed
+        # instead; the _v wrappers are polymorphic over what comes back.
+        local cbuf is cn of bnm
+        if (bt[bnm] != 1) and (g_btmap[bnm] != 1) and (g_dict[bnm] != 1) and (g_genp[bnm] != 1) and (g_tensor[bnm] != 1):
+            cbuf is env_readb of bnm
+        local hi is "aot_buf_len(" + cbuf + ")"
         if n[3] != null:
             hi is emit_num of [n[3], nm, bt, 0]
         # [0] is a C NAME, so it is mangled like every other emitted name —
@@ -1616,8 +1635,11 @@ define slice_arg_parts(argnode, nm, bt) as:
         if n[3] != null:
             if (has_call_node of n[3]) == 1:
                 slhaz is 1
-        return [(cn of bnm), lo, hi, slhaz]
-    return [(cn of n[1]), "0", "aot_buf_len(" + (cn of n[1]) + ")", 0]
+        return [cbuf, lo, hi, slhaz]
+    local cb2 is cn of n[1]
+    if (bt[n[1]] != 1) and (g_btmap[n[1]] != 1) and (g_dict[n[1]] != 1) and (g_genp[n[1]] != 1) and (g_tensor[n[1]] != 1):
+        cb2 is env_readb of n[1]
+    return [cb2, "0", "aot_buf_len(" + cb2 + ")", 0]
 
 define emit_num(node, nm, bt, raw) as:
     local t is node[0]

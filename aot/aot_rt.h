@@ -848,16 +848,28 @@ static inline double aot_dot_v(Env *g, Value *a, Value *b) {
  * 0<=start<=end<=len (<= upper end; out-of-range errors like the VM). */
 static inline long aot_sbound(double x, long len) {
     long i = (long)x;
-    if ((double)i != x) { fprintf(stderr, "slice bound must be an integer, got %g\n", x); exit(1); }
+    if ((double)i != x) { rt_error(EK_VALUE, g_trace_current_line, "slice bound must be an integer, got %g", x); return 0; }
     if (i < 0) i += len;
-    if (i < 0 || i > len) { fprintf(stderr, "Error line %d: slice bound %ld out of range (length %ld)\n", g_trace_current_line, (long)x, len); exit(1); }
     return i;
+}
+/* (round 92) The VM raises ONE message for every bad slice -- out-of-range and
+ * start>end alike -- naming the ORIGINAL (pre-negative-resolve) bounds:
+ * "slice %d:%d out of range (length %d)". The per-bound checks printed a
+ * different text ("slice bound %ld out of range") and a bare "slice start >
+ * end", so these deaths matched on rc and diverged on stderr. Resolve both
+ * bounds, then check once, exactly as OP_SLICE_GET does. */
+static inline void aot_srange(double sa, double ea, long len, long *s_out, long *e_out) {
+    long s = aot_sbound(sa, len), e = aot_sbound(ea, len);
+    if (s < 0 || s > len || e < 0 || e > len || s > e)
+        rt_error(EK_INDEX, g_trace_current_line, "slice %d:%d out of range (length %d)",
+                 (int)sa, (int)ea, (int)len);
+    *s_out = s; *e_out = e;
 }
 static inline double aot_dot_range(Value *A, double sa, double ea, Value *B, double sb, double eb) {
     long la = A->data.buffer.count, lb = B->data.buffer.count;
-    long s1 = aot_sbound(sa, la), e1 = aot_sbound(ea, la);
-    long s2 = aot_sbound(sb, lb), e2 = aot_sbound(eb, lb);
-    if (s1 > e1 || s2 > e2) { fprintf(stderr, "slice start > end\n"); exit(1); }
+    long s1, e1, s2, e2;
+    aot_srange(sa, ea, la, &s1, &e1);
+    aot_srange(sb, eb, lb, &s2, &e2);
     long n1 = e1 - s1, n2 = e2 - s2, n = n1 < n2 ? n1 : n2, i = 0;
     double *a = A->data.buffer.data + s1, *b = B->data.buffer.data + s2;
     aot_vec acc = aot_vset(0.0);
@@ -869,8 +881,8 @@ static inline double aot_dot_range(Value *A, double sa, double ea, Value *B, dou
 }
 static inline double aot_sum_range(Value *A, double sa, double ea) {
     long la = A->data.buffer.count;
-    long s1 = aot_sbound(sa, la), e1 = aot_sbound(ea, la);
-    if (s1 > e1) { fprintf(stderr, "slice start > end\n"); exit(1); }
+    long s1, e1;
+    aot_srange(sa, ea, la, &s1, &e1);
     long n = e1 - s1, i = 0;
     double *a = A->data.buffer.data + s1;
     aot_vec acc = aot_vset(0.0);
@@ -882,8 +894,8 @@ static inline double aot_sum_range(Value *A, double sa, double ea) {
 }
 static inline double aot_norm_range(Value *A, double sa, double ea) {
     long la = A->data.buffer.count;
-    long s1 = aot_sbound(sa, la), e1 = aot_sbound(ea, la);
-    if (s1 > e1) { fprintf(stderr, "slice start > end\n"); exit(1); }
+    long s1, e1;
+    aot_srange(sa, ea, la, &s1, &e1);
     long n = e1 - s1, i = 0;
     double *a = A->data.buffer.data + s1;
     aot_vec acc = aot_vset(0.0);
@@ -895,37 +907,80 @@ static inline double aot_norm_range(Value *A, double sa, double ea) {
     for (; i < n; i++) s = num_guard(s + num_guard(a[i] * a[i]));
     return num_guard(sqrt(s));
 }
-/* (round 91) Ranged siblings of the _v wrappers: same rule, same reason --
- * the slice is materialized and handed to the runtime's builtin for any
- * non-buffer container. */
-static Value *aot_slice_materialize(Value *A, double sa, double ea) {
-    long la = aot_any_len(A);
-    long s1 = aot_sbound(sa, la), e1 = aot_sbound(ea, la);
-    if (s1 > e1) { fprintf(stderr, "slice start > end\n"); exit(1); }
-    long n = e1 - s1;
-    Value *l = make_list(n > 0 ? n : 1);
-    for (long i = s1; i < e1; i++) list_append_owned(l, make_num(aot_any_at(A, i)));
-    return l;
+/* (round 92) Ranged siblings of the _v wrappers. Round 91 shipped these with
+ * a HAND-WRITTEN materializer -- breaking the rule its own commit stated for
+ * the scalar ones. Measured consequences: a nested list element was coerced
+ * to 0.0 (`sum of [[1,2],[3,4]][0:2]` gave 0 where the VM FLATTENS to 10);
+ * VAL_STR was called length-0 though the bt class carries strings; and dict/
+ * num/null were treated as empty containers, turning the VM's "cannot slice
+ * dict" into a silent 0. The slice is now a faithful mirror of the VM's
+ * OP_SLICE_GET -- same length rule per type, same negative resolution, same
+ * error text with the ORIGINAL bounds, element VALUES rather than doubles --
+ * and its result goes to the runtime's own builtin, so the oracle answers. */
+static Value *aot_slice_any(Value *A, double sa, double ea) {
+    if (!A || A->type == VAL_NUM) {
+        rt_error(EK_TYPE, g_trace_current_line, "cannot slice number");
+        return make_null();
+    }
+    int len;
+    if (A->type == VAL_LIST)        len = A->data.list.count;
+    else if (A->type == VAL_STR)    len = (int)strlen(A->data.str);
+    else if (A->type == VAL_BUFFER) len = A->data.buffer.count;
+    else {
+        rt_error(EK_TYPE, g_trace_current_line, "cannot slice %s", val_type_name(A->type));
+        return make_null();
+    }
+    long si = (long)sa, ei = (long)ea;
+    if ((double)si != sa) { rt_error(EK_VALUE, g_trace_current_line, "slice bound must be an integer, got %g", sa); return make_null(); }
+    if ((double)ei != ea) { rt_error(EK_VALUE, g_trace_current_line, "slice bound must be an integer, got %g", ea); return make_null(); }
+    int orig_start = (int)si, orig_end = (int)ei;
+    int start = orig_start, end = orig_end;
+    if (start < 0) start += len;
+    if (end   < 0) end   += len;
+    if (start < 0 || start > len || end < 0 || end > len || start > end) {
+        rt_error(EK_INDEX, g_trace_current_line,
+                 "slice %d:%d out of range (length %d)", orig_start, orig_end, len);
+        return make_null();
+    }
+    int n = end - start;
+    if (A->type == VAL_LIST) {
+        Value *r = make_list(n > 0 ? n : 1);
+        for (int i = 0; i < n; i++) {
+            Value *e = A->data.list.items[start + i];
+            val_incref(e);
+            list_append_owned(r, e);
+        }
+        return r;
+    }
+    if (A->type == VAL_STR) {
+        char *buf = (char *)xmalloc((size_t)n + 1);
+        if (n > 0) memcpy(buf, A->data.str + start, (size_t)n);
+        buf[n] = '\0';
+        return make_str_owned(buf);
+    }
+    Value *r = make_list(n > 0 ? n : 1);
+    for (int i = 0; i < n; i++) list_append_owned(r, make_num(A->data.buffer.data[start + i]));
+    return r;
+}
+static inline double aot_range_poly(Env *g, const char *name, Value *A, double sa, double ea) {
+    Value *r = aot_call_name(g, name, aot_slice_any(A, sa, ea));
+    double d = (r && r->type == VAL_NUM) ? r->data.num : 0.0;
+    if (r) val_decref(r);
+    return d;
 }
 static inline double aot_sum_range_v(Env *g, Value *A, double sa, double ea) {
     if (A && A->type == VAL_BUFFER) return aot_sum_range(A, sa, ea);
-    Value *r = aot_call_name(g, "sum", aot_slice_materialize(A, sa, ea));
-    double d = (r && r->type == VAL_NUM) ? r->data.num : 0.0;
-    if (r) val_decref(r);
-    return d;
+    return aot_range_poly(g, "sum", A, sa, ea);
 }
 static inline double aot_norm_range_v(Env *g, Value *A, double sa, double ea) {
     if (A && A->type == VAL_BUFFER) return aot_norm_range(A, sa, ea);
-    Value *r = aot_call_name(g, "norm", aot_slice_materialize(A, sa, ea));
-    double d = (r && r->type == VAL_NUM) ? r->data.num : 0.0;
-    if (r) val_decref(r);
-    return d;
+    return aot_range_poly(g, "norm", A, sa, ea);
 }
 static inline double aot_dot_range_v(Env *g, Value *A, double sa, double ea, Value *B, double sb, double eb) {
     if (A && B && A->type == VAL_BUFFER && B->type == VAL_BUFFER) return aot_dot_range(A, sa, ea, B, sb, eb);
     Value *l = make_list(2);
-    list_append_owned(l, aot_slice_materialize(A, sa, ea));
-    list_append_owned(l, aot_slice_materialize(B, sb, eb));
+    list_append_owned(l, aot_slice_any(A, sa, ea));
+    list_append_owned(l, aot_slice_any(B, sb, eb));
     Value *r = aot_call_name(g, "dot", l);
     double d = (r && r->type == VAL_NUM) ? r->data.num : 0.0;
     if (r) val_decref(r);

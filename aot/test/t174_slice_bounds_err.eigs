@@ -1,0 +1,11 @@
+# Round 92: the VM raises ONE message for every bad slice -- out-of-range
+# and start>end alike -- naming the ORIGINAL (pre-negative-resolve) bounds:
+# "slice %d:%d out of range (length %d)". The AOT's per-bound checks
+# printed a different text ("slice bound N out of range") and a bare
+# "slice start > end", so these deaths matched on rc and diverged on
+# stderr. Bound resolution is now a single check mirroring OP_SLICE_GET.
+# _err class: both die, equal codes, normalized text equal.
+b is buffer of 5
+b[0] is 1
+print of "before"
+print of (sum of b[0 : 9])
