@@ -1,0 +1,23 @@
+# EXPECT: used after its loop in an observed/traced program
+#
+# Round 67: invariant 16b one block level DOWN. modfor_intra_check's
+# first version matched only direct `for` siblings while its use walk
+# recursed, so a for nested inside a sibling wrapper (if/loop/match arm)
+# was invisible to the trigger and one extra wrapper level restored the
+# phantom: VM rc 1 "undefined variable 'i'", AOT printed 8 then 7, rc 0
+# (loop-while wrapper too, executed). The trigger per sibling is now the
+# SHARED collector (collect_module_for_binders, any depth) -- one
+# traversal, both sides, at every block level.
+#
+# Envelope shape: the VM RUNS this (rc 0 -- the post-loop use is in a
+# dead if arm).
+
+x is 1
+print of (prev of x)
+if 1 == 1:
+    if 2 == 2:
+        for i in [7, 8]:
+            y is i
+    if 1 == 2:
+        print of i
+print of "done"

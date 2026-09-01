@@ -993,23 +993,31 @@ define modfor_intra_check(node, tli) as:
         return 0
     local t is node[0]
     if (type of t) == "list":
+        # (round 67) the trigger set per sibling is the SHARED collector,
+        # not a direct-`for` tag match -- the first version repeated
+        # invariant 16b one block level down: a for nested inside a
+        # sibling (if/loop/match arm) was invisible to the trigger while
+        # the use walk recursed, and one extra wrapper level restored the
+        # phantom (VM rc 1, AOT printed 8 then 7, rc 0). One traversal,
+        # both sides, at every depth.
         for bi in range of (len of node):
-            local bs is unwrap of node[bi]
-            if ((type of bs) == "list") and ((len of bs) > 0):
-                if bs[0] == "for":
-                    local bb is bs[1]
-                    local bfb is g_first_bind[bb]
-                    if (bfb == null) or (bfb >= tli):
-                        local bstop is 0
-                        for bj in range of (len of node):
-                            if (bj > bi) and (bstop == 0):
-                                local bsj is unwrap of node[bj]
-                                if ((type of bsj) == "list") and ((len of bsj) > 0):
-                                    if (bsj[0] == "assign") and (bsj[1] == bb):
-                                        bstop is 1
-                                if bstop == 0:
-                                    if (uses_ident_skip_forbind of [node[bj], bb]) == 1:
-                                        throw of ("AOT: module for binder '" + bb + "' is used after its loop in an observed/traced program. The VM loop-scopes a binder with no pre-existing binding in every regime, but observed/traced module emission routes it through the env, where C block scoping cannot express the loop scope (see EigenScript#1056); refused rather than answering with the leaked value.")
+            local bacc is {}
+            collect_module_for_binders of [node[bi], bacc]
+            local bks is keys of bacc
+            for bk in range of (len of bks):
+                local bb is bks[bk]
+                local bfb is g_first_bind[bb]
+                if (bfb == null) or (bfb >= tli):
+                    local bstop is 0
+                    for bj in range of (len of node):
+                        if (bj > bi) and (bstop == 0):
+                            local bsj is unwrap of node[bj]
+                            if ((type of bsj) == "list") and ((len of bsj) > 0):
+                                if (bsj[0] == "assign") and (bsj[1] == bb):
+                                    bstop is 1
+                            if bstop == 0:
+                                if (uses_ident_skip_forbind of [node[bj], bb]) == 1:
+                                    throw of ("AOT: module for binder '" + bb + "' is used after its loop in an observed/traced program. The VM loop-scopes a binder with no pre-existing binding in every regime, but observed/traced module emission routes it through the env, where C block scoping cannot express the loop scope (see EigenScript#1056); refused rather than answering with the leaked value.")
             modfor_intra_check of [node[bi], tli]
         return 0
     if t == "_line":
@@ -1034,6 +1042,10 @@ define modfor_intra_check(node, tli) as:
         for mi in range of (len of mcs):
             modfor_intra_check of [(mcs[mi])[1], tli]
         return 0
+    # NO "try" case, on purpose and stated: module-scope try refuses
+    # loudly at emission today ("cannot emit statement node 'try'"), so
+    # this walker cannot reach one. The moment top-level try is emitted,
+    # this walker needs the case or the leak reopens inside try blocks.
     return 0
 
 define uses_ident_skip_forbind(node, name) as:
