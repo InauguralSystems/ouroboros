@@ -1,0 +1,17 @@
+# Round 63: an accepted outward write lands in the NAME's observation
+# regime, not the writer-function's. setv does not observe, so its
+# emission ran with the per-function g_observed off and its outward store
+# to demoted module v was a plain env store -- no observer-slot update.
+# The value was right and the observer verdict wrong: VM `5 / moving`,
+# AOT `5 / equilibrium`, both rc 0. Seven rounds had hardened ORDER on
+# the outward arms; none asked which REGIME the accepted write lands in.
+# g_outward_obs now carries the decl loop's verdict to the assign arms,
+# which use aot_observe_num/_val for these names.
+v is 0
+define setv(k) as:
+    v is k
+    return k
+setv of 5
+print of v
+print of (report of v)
+v is "s"

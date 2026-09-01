@@ -88,6 +88,15 @@ g_dump_out is ""
 # the VM — unboxing/int-typing are off (observation needs the env slot).
 g_observed is 0
 
+# (round 63) The PROGRAM's observation regime — g_observed as computed for
+# the module, surviving emit_function's per-body reset. Outward writes land
+# in the NAME's regime, which is the module's, not the writer's.
+g_mod_observed is 0
+# (round 63) Names whose accepted OUTWARD writes from the current function
+# must use the observe-store (aot_observe_num/_val): module names routed
+# outward by the decl loop while g_mod_observed is set. Reset per function.
+g_outward_obs is {}
+
 # Does this AST contain a bare observer predicate (converged/stable/...)?
 define has_predicate(node) as:
     if (type of node) != "list":
@@ -2010,7 +2019,7 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
                 asn is asn + ind + "aot_trace_assign(\"" + name + "\", " + (cn of name) + ");\n"
             return asn
         if (is_num_expr of [node[2], nm, bt]) == 1:
-            if g_observed == 1:
+            if (g_observed == 1) or (g_outward_obs[name] == 1):
                 # a numeric RHS to a DEMOTED name (nm[name] != 1, e.g. after a
                 # module-dict call elsewhere demoted it) still must observe --
                 # this arm was the third unobserved store in the same family,
@@ -2035,9 +2044,13 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
             # execute. A traced program's locals stay env-resident, and traced
             # boxed stores go through the terminal arm below.
             return ind + "aot_lv_set(&" + (lv of name) + ", " + (emit_val of [node[2], nm, bt]) + ");\n"
-        if g_observed == 1:
+        if (g_observed == 1) or (g_outward_obs[name] == 1):
             # A BOXED assign in an observed program must still observe. This
             # path is reached when a name is demoted off the numeric class --
+            # (round 63: also when a NON-observing function's accepted
+            # outward write targets an observed module name -- the write
+            # lands in the name's regime, not the writer's; g_outward_obs
+            # carries the decl loop's verdict to this arm.)
             # measured: `a is M.step of a` four times, then `diverging of a`:
             # VM 1, AOT 0, both rc 0, because aot_set_ic stored the value and
             # updated no slot, so every predicate answered from an empty
@@ -5159,6 +5172,9 @@ define emit_function(fn, finfo, gnm, gbt) as:
         g_observed is 1
     if g_obs_traced == 1:
         g_observed is 1
+    # (round 63) outward-observe set is per-function; the decl loop below
+    # repopulates it for this function's accepted outward writes.
+    g_outward_obs is {}
     # Part 2a routes an observed/temporal function's locals through the GLOBAL
     # env, which is correct only when such functions don't nest. Fail loudly
     # rather than silently miscompile the nested case (the per-call env, Part 2b,
@@ -5643,6 +5659,14 @@ define emit_function(fn, finfo, gnm, gbt) as:
                 # global and PRINTED 99, rc 0.
                 if (vg_fb == null) or ((vg_fu != null) and (vg_fb >= vg_fu)):
                     throw of ("AOT: function '" + name + "' assigns module name '" + v + "' whose first module-level binding does not provably precede the function's first use. The VM's outward-write rule is checked at RUNTIME (a missing outer binding makes the write a function-local that dies with the call); this order cannot be answered statically, so it is refused (see the outward-write arm).")
+                # (round 63) In an observed PROGRAM, module numerics are
+                # env-boxed with no C globals -- a non-observing function's
+                # gnm outward write emitted `eig_v = k` and died as a raw
+                # gcc 'eig_v' undeclared. Loud but unnamed; named here.
+                # (Reads of gnm names from non-observing functions in
+                # observed programs share the break and remain a residual.)
+                if (g_mod_observed == 1) and (g_observed != 1):
+                    throw of ("AOT: non-observing function '" + name + "' assigns observed module numeric/buffer global '" + v + "'. In an observed program module numerics are env-boxed with no C global, and this function's emission regime has no env routing for the write; refused until outward stores consult the module regime for these classes too.")
             isglobal is 1
         if (g_module_names[v] == 1) and (_lmk[v] != 1) and (gnm[v] != 1) and (gbt[v] != 1) and (g_tensor[v] != 1) and (shadowed[v] != 1):
             # ORDER GUARD, demoted arm (see g_first_bind's declaration):
@@ -5679,6 +5703,14 @@ define emit_function(fn, finfo, gnm, gbt) as:
             # decl (undeclared identifier; the suite gate refused the push).
             # A buffer-shadow (shadowed[v]) also keeps its local decl.
             isglobal is 1
+            # (round 63) An accepted outward write lands in the NAME's
+            # regime, not the writer-function's: in an observed program a
+            # non-observing helper's plain env store updated no observer
+            # slot, so `report of v` answered from a short window --
+            # VM `5 / moving`, AOT `5 / equilibrium`, both rc 0. Mark the
+            # name so the assign arms use the observe-store.
+            if g_mod_observed == 1:
+                g_outward_obs[v] is 1
         # a local that shadows a global buffer is declared locally, not skipped.
         if shadowed[v] == 1:
             isglobal is 0
@@ -6176,6 +6208,15 @@ define emit_program(ast) as:
         g_observed is 1
     if g_obs_traced == 1:
         g_observed is 1
+    # (round 63) The PROGRAM's observation regime, preserved across
+    # emit_function's per-body reset of g_observed. An accepted outward
+    # write must land in the NAME's regime, not the writer-function's: a
+    # non-observing helper writing an observed module name emitted a plain
+    # env store (no observer-slot update), so the value was right and the
+    # observer verdict wrong -- VM `5 / moving`, AOT `5 / equilibrium`,
+    # both rc 0. Order was guarded to death over seven rounds; the regime
+    # axis was never asked.
+    g_mod_observed is g_observed
     # Partition top-level function definitions from the rest (main body).
     local funcs is []
     local rest is []

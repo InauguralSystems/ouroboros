@@ -1,0 +1,19 @@
+# EXPECT: assigns observed module numeric/buffer global
+#
+# Round 63, the loud-unnamed sibling of t127: with v staying CLEAN numeric
+# (gnm) instead of demoted, an observed program env-boxes module numerics
+# with no C global -- and the non-observing writer's emission produced
+# `eig_v = eig_k`, dying as a raw gcc "'eig_v' undeclared". Loud but
+# naming nothing. Now refused by name at the outward arm; reads of gnm
+# names from non-observing functions in observed programs share the break
+# and remain a residual (noted on #163).
+#
+# Envelope shape: the VM RUNS this (rc 0: 5, then moving).
+
+v is 0
+define setv(k) as:
+    v is k
+    return k
+setv of 5
+print of v
+print of (report of v)
