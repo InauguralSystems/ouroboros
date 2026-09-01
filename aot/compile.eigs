@@ -3742,6 +3742,14 @@ define emit_outvec(d, ind, nm, bt, guard) as:
     s is s + i3 + "}\n"
     s is s + i3 + "aot_vstore(_pv_" + cRES + " + " + SBASE + " + " + cO + ", _acc);\n"
     s is s + i2 + "}\n"
+    # (round 83) materialize the carried scalar: the vector block
+    # accumulates in the C-local aot_vec and never wrote cACC, so an ACC
+    # read AFTER the loop was stale exactly when OBOUND % AOT_VW == 0 --
+    # the scalar tail, the only cACC writer, never ran (VM 76.75, AOT 0,
+    # both rc 0; appears and disappears with buffer size and SIMD width).
+    # The last stored column IS ACC's final value (the stores are the
+    # per-column sums, guarded and elided arms alike), so read it back.
+    s is s + i2 + "if (" + cO + " > 0) " + cACC + " = _pv_" + cRES + "[" + SBASE + " + " + cO + " - 1];\n"
     # scalar tail for the remaining columns (reuses the checked emit path)
     s is s + i2 + "while (" + cO + " < " + OB + ") {\n"
     s is s + i3 + cACC + " = 0;\n"
