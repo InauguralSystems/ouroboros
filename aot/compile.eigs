@@ -3534,6 +3534,41 @@ define is_zero_init(st, name) as:
         return 0
     return 1
 
+define is_affine_in(node, name) as:
+    # (round 85) is this expression AFFINE in `name` (a*name + b with a, b
+    # name-free)? The endpoint evaluation in the round-84 bounds guard is
+    # sound only for affine bases -- the grammar admitted any O-free
+    # polynomial in D, and a concave base (d * (7 - d)) had endpoint
+    # values 0/0 with interior max 12: the guard passed and the vector
+    # path read heap garbage past the buffer (VM rc 1 out of range; AOT
+    # printed the garbage, rc 0).
+    local n is unwrap of node
+    if (name_in_expr of [node, name]) == 0:
+        return 1
+    if n[0] == "ident":
+        if n[1] == name:
+            return 1
+        return 1
+    if n[0] == "binop":
+        if (n[1] == "+") or (n[1] == "-"):
+            if (is_affine_in of [n[2], name]) == 0:
+                return 0
+            return is_affine_in of [n[3], name]
+        if n[1] == "*":
+            # affine iff at most one factor mentions the name, and that
+            # factor is itself affine
+            local lm is name_in_expr of [n[2], name]
+            local rm is name_in_expr of [n[3], name]
+            if (lm == 1) and (rm == 1):
+                return 0
+            if lm == 1:
+                return is_affine_in of [n[2], name]
+            return is_affine_in of [n[3], name]
+        return 0
+    if n[0] == "unary":
+        return is_affine_in of [n[2], name]
+    return 0
+
 define collect_ov_sites(node, O, acc) as:
     # (round 84) O-dependent read SITES with their base expressions, for
     # the runtime bounds guard: each vload reaches base(D) + [O, OBOUND).
@@ -3711,6 +3746,35 @@ define outvec_loop(node, nm, bt) as:
         return null
     if (reads_buf_any of [SIDX, RES]) == 1:
         return null
+    # (round 85) WRITTEN-NAME discipline on every hoisted expression --
+    # three executed members of one family: O in IBOUND gave every lane
+    # the BLOCK-BASE column's reduction length (triangular reduction,
+    # every odd column wrong, rc 0); D/ACC in SBASE made the round-84
+    # store-reach guard evaluate a STALE base and the vstore smash the
+    # heap; a non-affine read base defeated the endpoint bound. The
+    # loop's own written names (O, D, ACC) may not appear in the bounds
+    # or the store base, and read-site bases must be structurally AFFINE
+    # in D for the endpoint evaluation to bound them. Violations demote
+    # to the scalar path via the recognizer.
+    if (name_in_expr of [IBOUND, O]) == 1:
+        return null
+    if (name_in_expr of [IBOUND, ACC]) == 1:
+        return null
+    if (name_in_expr of [OBOUND, D]) == 1:
+        return null
+    if (name_in_expr of [OBOUND, ACC]) == 1:
+        return null
+    if (name_in_expr of [SBASE, D]) == 1:
+        return null
+    if (name_in_expr of [SBASE, ACC]) == 1:
+        return null
+    local r85sites is collect_ov_sites of [TERM, O, []]
+    for r85k in range of (len of r85sites):
+        local r85b is (r85sites[r85k])["base"]
+        if (name_in_expr of [r85b, ACC]) == 1:
+            return null
+        if (is_affine_in of [r85b, D]) == 0:
+            return null
     return {"O": O, "OBOUND": OBOUND, "ACC": ACC, "D": D, "IBOUND": IBOUND, "RES": RES, "SIDX": SIDX, "SBASE": SBASE, "TERM": TERM, "ovbufs": (keys of ovb), "node": node}
 
 define emit_outvec(d, ind, nm, bt, guard, minits) as:
@@ -3969,6 +4033,12 @@ define rowmap_loop(node, nm, bt) as:
     for k in range of (len of vbk):
         if vbk[k] != RES:
             vbufs is (append of [vbufs, vbk[k]])
+    # (round 85) written-name discipline, the outvec rule: the loop's
+    # counter may not appear in the hoisted bound or store base.
+    if (name_in_expr of [BOUND, D]) == 1:
+        return null
+    if (name_in_expr of [SBASE, D]) == 1:
+        return null
     return {"D": D, "BOUND": BOUND, "RES": RES, "SBASE": SBASE, "SIDX": SIDX, "VEXPR": VEXPR, "vbufs": vbufs, "node": node}
 
 define emit_rowmap(d, ind, nm, bt, minits) as:
