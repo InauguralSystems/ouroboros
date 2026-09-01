@@ -2569,10 +2569,10 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
             return emit_matmul of [mm, ind, nm, bt, minits]
         local rm is rowmap_loop of [node, nm, bt]
         if rm != null:
-            return emit_rowmap of [rm, ind, nm, bt]
+            return emit_rowmap of [rm, ind, nm, bt, minits]
         local ov is outvec_loop of [node, nm, bt]
         if ov != null:
-            return emit_outvec of [ov, ind, nm, bt, 1]
+            return emit_outvec of [ov, ind, nm, bt, 1, minits]
         local lg is loop_gf of [node, minits]
         local s is ind + "while (" + (emit_cond of [node[1], nm, bt]) + ") {\n"
         s is s + (emit_stmts of [node[2], ind + "    ", nm, bt, minits, lg])
@@ -3534,6 +3534,19 @@ define is_zero_init(st, name) as:
         return 0
     return 1
 
+define collect_ov_sites(node, O, acc) as:
+    # (round 84) O-dependent read SITES with their base expressions, for
+    # the runtime bounds guard: each vload reaches base(D) + [O, OBOUND).
+    local n is unwrap of node
+    if n[0] == "index":
+        if (name_in_expr of [n[2], O]) == 1:
+            acc is (append of [acc, {"buf": ((unwrap of n[1])[1]), "base": (extract_o_base of [n[2], O])}])
+        return acc
+    if n[0] == "binop":
+        acc is collect_ov_sites of [n[2], O, acc]
+        return collect_ov_sites of [n[3], O, acc]
+    return acc
+
 define collect_ov_bufs(node, O, acc) as:
     local n is unwrap of node
     if n[0] == "index":
@@ -3698,9 +3711,9 @@ define outvec_loop(node, nm, bt) as:
         return null
     if (reads_buf_any of [SIDX, RES]) == 1:
         return null
-    return {"O": O, "OBOUND": OBOUND, "ACC": ACC, "D": D, "IBOUND": IBOUND, "RES": RES, "SIDX": SIDX, "SBASE": SBASE, "TERM": TERM, "ovbufs": (keys of ovb)}
+    return {"O": O, "OBOUND": OBOUND, "ACC": ACC, "D": D, "IBOUND": IBOUND, "RES": RES, "SIDX": SIDX, "SBASE": SBASE, "TERM": TERM, "ovbufs": (keys of ovb), "node": node}
 
-define emit_outvec(d, ind, nm, bt, guard) as:
+define emit_outvec(d, ind, nm, bt, guard, minits) as:
     local O is d["O"]
     local OB is emit_num of [d["OBOUND"], nm, bt, 0]
     local IB is emit_num of [d["IBOUND"], nm, bt, 0]
@@ -3725,6 +3738,29 @@ define emit_outvec(d, ind, nm, bt, guard) as:
     local i3 is i2 + "    "
     local i4 is i3 + "    "
     local s is ind + "{\n"
+    # (round 84) RUNTIME BOUNDS GUARD. The old design comment claimed the
+    # vector path "inherits the scalar loop's bounds" -- true only when
+    # the scalar loop COMPLETES. When the VM would die "buffer index out
+    # of range" mid-loop, the raw _pv_ loads/stores read heap garbage
+    # (silent-wrong, rc 0) or smashed the heap (SIGABRT, executed both
+    # ways). Entry checks: the store reach (SBASE + [O, ceil(OBOUND)))
+    # within RES; each O-dependent read site's reach, with its base
+    # evaluated at the inner counter's ENDPOINTS (bases are affine in D
+    # in this grammar, so the endpoints bound the range); O nonnegative;
+    # bounds representable (the round-80 rule). Any failure demotes to
+    # the faithful scalar while below, which dies byte-exactly.
+    s is s + i2 + "int _ovok = 1;\n"
+    s is s + i2 + "double _obd = (" + OB + "); double _ibd = (" + IB + ");\n"
+    s is s + i2 + "long _obn = 0; if (_obd > 0 && _obd <= 9.2e18) _obn = (long)ceil(_obd); else if (_obd > 9.2e18) _ovok = 0;\n"
+    s is s + i2 + "long _ibn = 0; if (_ibd > 0 && _ibd <= 9.2e18) _ibn = (long)ceil(_ibd); else if (_ibd > 9.2e18) _ovok = 0;\n"
+    s is s + i2 + "if (" + cO + " < 0) _ovok = 0;\n"
+    s is s + i2 + "{ long _sb = (" + SBASE + "); if (_sb < 0 || _sb + _obn > (long)aot_buf_len(" + cRES + ")) _ovok = 0; }\n"
+    local ovsites is collect_ov_sites of [TERM, O, []]
+    for sk in range of (len of ovsites):
+        local sbuf is cn of ((ovsites[sk])["buf"])
+        local sbase is emit_int of ((ovsites[sk])["base"])
+        s is s + i2 + "if (_ovok && _ibn > 0) { long _dsv = " + cD + "; " + cD + " = 0; long _b0 = (" + sbase + "); " + cD + " = _ibn - 1; long _b1 = (" + sbase + "); " + cD + " = _dsv; long _blo = _b0 < _b1 ? _b0 : _b1; long _bhi = (_b0 > _b1 ? _b0 : _b1) + _obn; if (_blo < 0 || _bhi > (long)aot_buf_len(" + sbuf + ")) _ovok = 0; }\n"
+    s is s + i2 + "if (_ovok) {\n"
     s is s + i2 + "double* _pv_" + cRES + " = aot_buf_data(" + cRES + ");\n"
     for k in range of (len of ovbufs):
         s is s + i2 + "double* _pv_" + (cn of ovbufs[k]) + " = aot_buf_data(" + (cn of ovbufs[k]) + ");\n"
@@ -3733,6 +3769,7 @@ define emit_outvec(d, ind, nm, bt, guard) as:
     local accline is "_acc = aot_vadd(_acc, " + (emit_term_ov of [TERM, O, nm, bt, guard]) + ");\n"
     if guard == 1:
         accline is "_acc = aot_vguard(aot_vadd(_acc, " + (emit_term_ov of [TERM, O, nm, bt, 1]) + "));\n"
+    s is s + i2 + "long _oent = " + cO + ";\n"
     s is s + i2 + "for (; " + cO + " + AOT_VW <= " + OB + "; " + cO + " += AOT_VW) {\n"
     s is s + i3 + "aot_vec _acc = aot_vset(0.0);\n"
     s is s + i3 + cD + " = 0;\n"
@@ -3749,7 +3786,12 @@ define emit_outvec(d, ind, nm, bt, guard) as:
     # both rc 0; appears and disappears with buffer size and SIMD width).
     # The last stored column IS ACC's final value (the stores are the
     # per-column sums, guarded and elided arms alike), so read it back.
-    s is s + i2 + "if (" + cO + " > 0) " + cACC + " = _pv_" + cRES + "[" + SBASE + " + " + cO + " - 1];\n"
+    # (round 84) predicate corrected: `cO > 0` was a proxy for "the loop
+    # advanced" and fired on ZERO-iteration entries with O pre-set,
+    # clobbering ACC with a cell the loop never wrote (VM 99, AOT 0, both
+    # rc 0) -- and with entry O past the buffer it was itself an OOB
+    # read. Entry-value compare: only a loop that ADVANCED materializes.
+    s is s + i2 + "if (" + cO + " > _oent) " + cACC + " = _pv_" + cRES + "[" + SBASE + " + " + cO + " - 1];\n"
     # scalar tail for the remaining columns (reuses the checked emit path)
     s is s + i2 + "while (" + cO + " < " + OB + ") {\n"
     s is s + i3 + cACC + " = 0;\n"
@@ -3760,6 +3802,16 @@ define emit_outvec(d, ind, nm, bt, guard) as:
     s is s + i3 + "}\n"
     s is s + i3 + "aot_buf_set_i(" + cRES + ", " + (emit_int of d["SIDX"]) + ", " + cACC + ");\n"
     s is s + i3 + cO + " = " + cO + " + 1;\n"
+    s is s + i2 + "}\n"
+    s is s + i2 + "} else {\n"
+    # faithful scalar fallback (the emit_vectorized pattern): the original
+    # loop through the plain path, checked accesses, dies exactly as the
+    # VM does.
+    local ovnode is d["node"]
+    local ovlg is loop_gf of [ovnode, minits]
+    s is s + i3 + "while (" + (emit_cond of [ovnode[1], nm, bt]) + ") {\n"
+    s is s + (emit_stmts of [ovnode[2], i3 + "    ", nm, bt, minits, ovlg])
+    s is s + i3 + "}\n"
     s is s + i2 + "}\n"
     return s + ind + "}\n"
 
@@ -3843,9 +3895,9 @@ define emit_matmul(d, ind, nm, bt, minits) as:
     s is s + i2 + "while (" + (emit_cond of [d["icond"], nm, bt]) + ") {\n"
     s is s + (emit_stmt of [d["oinit"], i3, nm, bt, minits, {}])
     s is s + i3 + "if (_noof) {\n"
-    s is s + (emit_outvec of [ov, i3 + "    ", nm, bt, 0])
+    s is s + (emit_outvec of [ov, i3 + "    ", nm, bt, 0, minits])
     s is s + i3 + "} else {\n"
-    s is s + (emit_outvec of [ov, i3 + "    ", nm, bt, 1])
+    s is s + (emit_outvec of [ov, i3 + "    ", nm, bt, 1, minits])
     s is s + i3 + "}\n"
     s is s + (emit_stmt of [d["iincr"], i3, nm, bt, minits, {}])
     s is s + i2 + "}\n"
@@ -3917,9 +3969,9 @@ define rowmap_loop(node, nm, bt) as:
     for k in range of (len of vbk):
         if vbk[k] != RES:
             vbufs is (append of [vbufs, vbk[k]])
-    return {"D": D, "BOUND": BOUND, "RES": RES, "SBASE": SBASE, "SIDX": SIDX, "VEXPR": VEXPR, "vbufs": vbufs}
+    return {"D": D, "BOUND": BOUND, "RES": RES, "SBASE": SBASE, "SIDX": SIDX, "VEXPR": VEXPR, "vbufs": vbufs, "node": node}
 
-define emit_rowmap(d, ind, nm, bt) as:
+define emit_rowmap(d, ind, nm, bt, minits) as:
     local D is d["D"]
     local OB is emit_num of [d["BOUND"], nm, bt, 0]
     local RES is d["RES"]
@@ -3930,6 +3982,22 @@ define emit_rowmap(d, ind, nm, bt) as:
     local cD is cn of D
     local cRES is cn of RES
     local s is ind + "{\n"
+    # (round 84) runtime bounds guard, the emit_outvec rule: raw _pv_
+    # stores past the buffer smashed the heap where the VM dies cleanly.
+    # Rowmap bases are loop-invariant (no inner counter), so reaches are
+    # directly evaluable. Any failure demotes to the faithful scalar
+    # while, which dies byte-exactly.
+    s is s + i2 + "int _rmok = 1;\n"
+    s is s + i2 + "double _rbd = (" + OB + ");\n"
+    s is s + i2 + "long _rbn = 0; if (_rbd > 0 && _rbd <= 9.2e18) _rbn = (long)ceil(_rbd); else if (_rbd > 9.2e18) _rmok = 0;\n"
+    s is s + i2 + "if (" + cD + " < 0) _rmok = 0;\n"
+    s is s + i2 + "{ long _sb = (" + SBASE + "); if (_sb < 0 || _sb + _rbn > (long)aot_buf_len(" + cRES + ")) _rmok = 0; }\n"
+    local rmsites is collect_ov_sites of [d["VEXPR"], D, []]
+    for sk in range of (len of rmsites):
+        local sbuf is cn of ((rmsites[sk])["buf"])
+        local sbase is emit_int of ((rmsites[sk])["base"])
+        s is s + i2 + "{ long _b = (" + sbase + "); if (_b < 0 || _b + _rbn > (long)aot_buf_len(" + sbuf + ")) _rmok = 0; }\n"
+    s is s + i2 + "if (_rmok) {\n"
     s is s + i2 + "double* _pv_" + cRES + " = aot_buf_data(" + cRES + ");\n"
     local vbufs is d["vbufs"]
     for k in range of (len of vbufs):
@@ -3940,6 +4008,13 @@ define emit_rowmap(d, ind, nm, bt) as:
     s is s + i2 + "while (" + cD + " < " + OB + ") {\n"
     s is s + i3 + "aot_buf_set_i(" + cRES + ", " + (emit_int of d["SIDX"]) + ", " + (emit_num of [d["VEXPR"], nm, bt, 0]) + ");\n"
     s is s + i3 + cD + " = " + cD + " + 1;\n"
+    s is s + i2 + "}\n"
+    s is s + i2 + "} else {\n"
+    local rmnode is d["node"]
+    local rmlg is loop_gf of [rmnode, minits]
+    s is s + i3 + "while (" + (emit_cond of [rmnode[1], nm, bt]) + ") {\n"
+    s is s + (emit_stmts of [rmnode[2], i3 + "    ", nm, bt, minits, rmlg])
+    s is s + i3 + "}\n"
     s is s + i2 + "}\n"
     return s + ind + "}\n"
 

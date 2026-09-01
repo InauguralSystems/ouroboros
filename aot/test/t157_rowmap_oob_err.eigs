@@ -1,0 +1,20 @@
+# Round 84: the outvec/rowmap SIMD interiors had NO bounds relation --
+# the "inherits the scalar loop bounds" premise holds only when the
+# scalar loop COMPLETES. When the VM dies "buffer index out of range"
+# mid-loop, the raw _pv_ access read heap garbage (silent-wrong, rc 0)
+# or smashed the heap (SIGABRT rc 134). A runtime entry guard now checks
+# the store reach and every O-dependent read site (base evaluated at the
+# inner counter endpoints -- affine bases) and demotes to a faithful
+# scalar while, which dies byte-exactly.
+n is 8
+x is buffer of 8
+out is buffer of 4
+f is 0
+loop while f < 8:
+    x[f] is f * 0.5 + 1.0
+    f is f + 1
+d is 0
+loop while d < n:
+    out[1 + d] is x[d] * 2.0
+    d is d + 1
+print of out[3]
