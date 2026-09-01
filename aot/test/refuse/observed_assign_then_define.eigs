@@ -1,18 +1,16 @@
-# EXPECT: assigned before its top-level define
+# EXPECT: observed module name 'f' is both a function definition and a top-level binding
 #
-# Round 61: the observed-mode exemption on the kind-flip refusal was
-# ORDER-BLIND. t87_observer_named_fn pins only the define-first direction
-# (env misses fall back to the opaque band while the name is a function;
-# the env number wins after the assigns execute). In THIS direction the VM
-# rebinds the name to the FUNCTION at the define's execution point, but
-# compiled functions execute nothing at their statement position -- the
-# env kept the stale number and the AOT printed 4 where the VM prints
-# <fn f>, both rc 0. Silent-wrong, phantom stale value.
+# Round 61 found this direction of the observed kind-flip silently wrong:
+# with the assigns BEFORE the define, the VM rebinds the name to the
+# FUNCTION at the define's execution point, but compiled functions execute
+# nothing at their statement position -- the env kept the stale number and
+# the AOT printed 4 where the VM prints <fn f>, both rc 0. Round 61 added
+# a direction check; round 62 measured three holes in the direction check
+# itself and superseded it with a WHOLESALE refusal of the flip class
+# (see refuse/observed_kind_flip.eigs for the full ledger). This fixture
+# keeps the round-61 shape pinned under the round-62 message.
 #
 # Envelope shape: the VM RUNS this (rc 0, prints stab=0 then <fn f>).
-# Adjacent shapes whose only post-define uses are CALLS matched by
-# coincidence (calls emit direct C calls, not env reads) and are refused
-# by the same conservative rule.
 
 f is 3.0
 f is 4.0

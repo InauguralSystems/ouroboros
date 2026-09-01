@@ -5,14 +5,16 @@
 # undefined" raised `undefined variable 'g'` and exited 1 here, against the
 # VM's 0 and exit 0. That divergence was INTRODUCED by the fix for #119 and
 # caught by attacking it; this fixture is the witness.
+#
+# (Until round 62 this fixture also pinned a REBINDING half — `g is 4.0`
+# after the define, "the env lookup runs first". That half witnessed only
+# one direction of the kind-flip and rounds 61–62 measured three
+# divergences in the scoped acceptance built on it; the whole flip class
+# now refuses by name — refuse/observed_kind_flip.eigs is its pin.)
 define g(x) as:
     return x + 1.0
 u is 5.0
 u is 6.0
 print of ("fn.equi=" + (str of (equilibrium of g)))
 print of ("fn.conv=" + (str of (converged of g)))
-# ...and a rebinding must win over the function: the env lookup runs first.
-g is 4.0
-g is 4.0
-print of ("reb.stab=" + (str of (stable of g)))
 print of "done"

@@ -1,0 +1,23 @@
+# EXPECT: no interleaving of the flip is faithfully expressible
+#
+# Round 62: the observed kind-flip class refuses WHOLESALE. The scoped
+# acceptances each bred a hole: round 60 exempted observed flips on t87's
+# witness; round 61 found the witness one-directional (assign-then-define
+# kept a stale env number where the VM rebinds to the function); round 62
+# executed three more inside the direction check -- a call after the
+# assign stays bound to the C function (AOT printed 3, VM rc 1 "cannot
+# call num"), an `if 1 == 1:` wrapper bypassed the bare-statement scan,
+# and THIS shape: a plain value read between the define and the first
+# assign has no opaque-band fallback, so the AOT died rc 1 where the VM
+# prints <fn f>. Calls are bound at build time; value reads of the
+# function phase have no env fallback; no interleaving survives.
+#
+# Envelope shape: the VM RUNS this (rc 0: <fn f>, then 4).
+
+u is 5.0
+print of ("conv=" + (str of (converged of u)))
+define f(x) as:
+    return x + 1.0
+print of f
+f is 4.0
+print of f

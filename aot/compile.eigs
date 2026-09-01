@@ -6253,34 +6253,41 @@ define emit_program(ast) as:
         if dupseen[dnm2] == 1:
             throw of ("AOT: function '" + dnm2 + "' is defined more than once (counting lifted nested defines). The VM rebinds the name at each define's execution point; one C function cannot express both bodies, so this is refused rather than silently picking one.")
         dupseen[dnm2] is 1
-    # Kind-flips, by observation mode. UNOBSERVED: a C function and a C
-    # global cannot share one name -- refuse any flip. OBSERVED: module
-    # numerics are env-boxed, so ONE direction is expressible --
-    # define-first, assigns after (t87_observer_named_fn is the witness:
-    # env misses fall back to the #708 opaque band while the name is a
-    # function, and the env number wins after the assigns execute). Round
-    # 61 measured the other direction silently wrong: with the assigns
-    # BEFORE the define, the VM rebinds the name to the FUNCTION at the
-    # define's execution point, but compiled functions execute nothing at
-    # their statement position, so the env kept the stale number (VM
-    # printed <fn f>; AOT printed 4, both rc 0). The round-60 scoping was
-    # itself order-blind -- the witness pinned only one direction.
-    local fdefidx is {}
-    for fdi in range of (len of stmts):
-        local fdn is unwrap of stmts[fdi]
-        if ((type of fdn) == "list") and ((len of fdn) > 0):
-            if fdn[0] == "func":
-                fdefidx[(fdn[1])] is fdi
+    # Kind-flips (a name that is both a function definition and a module
+    # binding) refuse WHOLESALE, both observation modes. The history is the
+    # argument: round 60 refused unobserved flips (C symbol collision) but
+    # exempted observed ones on t87's witness; round 61 found the witness
+    # pinned only the define-first direction; round 62 found THREE holes in
+    # the direction check itself -- (a) a call after the assign stays
+    # statically bound to the C function and printed 3 where the VM dies
+    # rc 1 "cannot call num", (b) wrapping the assign in `if 1 == 1:`
+    # bypassed the bare-statement scan (g_first_bind counts containment,
+    # the flip scan did not -- the axes mismatch again), and (c) even the
+    # ACCEPTED direction dies on a plain value read between the define and
+    # the first assign (no opaque-band fallback for value reads: VM prints
+    # <fn f>, AOT rc 1). The expressible envelope is a sliver that has
+    # produced a hole every round it was scoped; calls compile to
+    # compile-time-bound C calls and can never follow the env's runtime
+    # kind, so the class refuses by name. This scan shares collect_assigns'
+    # containment axes with g_first_bind (a bind inside a top-level
+    # if/loop/match counts).
+    local kf_assign is {}
     for dk3 in range of (len of stmts):
-        local dsn is unwrap of stmts[dk3]
-        if ((type of dsn) == "list") and ((len of dsn) > 0):
-            if dsn[0] == "assign":
-                if dupseen[(dsn[1])] == 1:
-                    if g_observed != 1:
-                        throw of ("AOT: module name '" + (dsn[1]) + "' is both a function definition and a plain top-level binding. The VM flips the name's kind at the assignment's execution point; a C function and a C global cannot share one name, so this is refused rather than emitting a colliding pair.")
-                    local dfi is fdefidx[(dsn[1])]
-                    if (dfi == null) or (dk3 < dfi):
-                        throw of ("AOT: observed module name '" + (dsn[1]) + "' is assigned before its top-level define (or the define is nested). The VM rebinds the name to the FUNCTION at the define's execution point, but compiled functions execute nothing at their statement position, so the env would keep the stale value. Only the define-before-assign direction is expressible; this order is refused.")
+        local dsu is unwrap of stmts[dk3]
+        if ((type of dsu) == "list") and ((len of dsu) > 0):
+            if dsu[0] != "func":
+                local kfa is collect_assigns of [[(stmts[dk3])], {}]
+                local kfk is keys of kfa
+                for kj in range of (len of kfk):
+                    if kf_assign[(kfk[kj])] == null:
+                        kf_assign[(kfk[kj])] is dk3
+    local kfnames is keys of kf_assign
+    for kn in range of (len of kfnames):
+        local kfn is kfnames[kn]
+        if dupseen[kfn] == 1:
+            if g_observed != 1:
+                throw of ("AOT: module name '" + kfn + "' is both a function definition and a plain top-level binding. The VM flips the name's kind at the assignment's execution point; a C function and a C global cannot share one name, so this is refused rather than emitting a colliding pair.")
+            throw of ("AOT: observed module name '" + kfn + "' is both a function definition and a top-level binding. The VM flips the name's kind at each statement's execution point; compiled calls are bound to the C function at build time and value reads of the function phase have no env fallback, so no interleaving of the flip is faithfully expressible. Refused wholesale (rounds 60-62 each measured a divergence in a scoped acceptance).")
     # Which functions are referenced as VALUES? Scan every function body and
     # the module-level statements, AFTER nested lifting so lifted bodies are
     # in `funcs`. Must run before the ptypes build below reads it.
