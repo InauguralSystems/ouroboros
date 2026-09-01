@@ -1,0 +1,15 @@
+# Round 70: `report of <never-bound-name>` answered "equilibrium" rc 0
+# where the VM raises "undefined variable" rc 1 -- aot_report conflated
+# two distinct env misses (never-bound vs bound-but-unobserved) into the
+# "equilibrium" arm, while its sibling aot_predicate_of ten lines up had
+# the split all along (which is why `stable of zzz` died correctly). The
+# name skips every static guard by construction: the top-level order
+# guard only covers names IN g_module_names, and zzz is bound nowhere.
+# aot_report now mirrors the sibling: never-bound raises; a compiled
+# function (env-unbound here, bound in the VM) reports "equilibrium" via
+# the unobserved-slot band; bound-but-unobserved stays "equilibrium".
+# _err class: both die "undefined variable 'zzz'", equal codes.
+x is 1.0
+x is 2.0
+print of (str of (stable of x))
+print of (report of zzz)

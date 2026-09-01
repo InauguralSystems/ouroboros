@@ -1879,10 +1879,18 @@ define emit_val(node, nm, bt) as:
                 return "aot_call_value(" + (emit_val of [node[1], nm, bt]) + ", " + (emit_val of [(vcarg[1])[0], nm, bt]) + ")"
             return "aot_call_value(" + (emit_val of [node[1], nm, bt]) + ", " + (emit_val of [node[2], nm, bt]) + ")"
         # `report of x` -> the most-specific predicate of x's observed slot.
+        # (round 70) third arg = compiled-fn flag: a never-bound name must
+        # RAISE like the VM (the helper's first version answered
+        # "equilibrium" on any env miss), while a compiled function is
+        # env-unbound here yet bound in the VM, whose unobserved slot
+        # legitimately reports "equilibrium".
         if callee[1] == "report":
             local ra is unwrap of node[2]
             if ra[0] == "ident":
-                return "aot_report(__eigs_g, \"" + ra[1] + "\")"
+                local rfn is "0"
+                if g_func_names[(ra[1])] == 1:
+                    rfn is "1"
+                return "aot_report(__eigs_g, \"" + ra[1] + "\", " + rfn + ")"
         # user function returning a Value* (e.g. a tensor-returning forward pass)
         # -> direct native C call.
         if g_funcs[callee[1]] != null:

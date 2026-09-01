@@ -925,11 +925,24 @@ static int aot_predicate_of(Env *e, const char *name, int kind, int is_compiled_
 }
 /* `report of x` — the most-specific predicate of x's observed slot, as a string
  * (mirrors CASE(REPORT_NAME)): resolve the binding's slot, classify it, else
- * "equilibrium" for an unobserved binding. */
-static Value *aot_report(Env *e, const char *name) {
+ * "equilibrium" for a BOUND-but-unobserved binding. Round 70: the first
+ * version conflated two distinct env misses — a NEVER-BOUND name (oe==NULL)
+ * fell into the bound-but-unobserved arm and answered "equilibrium" where the
+ * VM raises "undefined variable" rc 1 (silent-wrong: clean exit, plausible
+ * verdict). The sibling aot_predicate_of ten lines up already had the split;
+ * this mirrors it, compiled-fn opaque band included (a compiled function is
+ * not env-bound here but IS bound in the VM, whose unobserved slot reports
+ * "equilibrium"). */
+static Value *aot_report(Env *e, const char *name, int is_compiled_fn) {
     int oidx = -1, odepth = 0;
     Env *oe = env_resolve_chain(e, name, env_hash_name(name), &oidx, &odepth);
-    if (oe && oidx >= 0 && oidx < oe->obs_cap && oe->obs[oidx].used)
+    if (!oe) {
+        if (is_compiled_fn) return make_str("equilibrium");
+        rt_error(EK_UNDEFINED_NAME, g_trace_current_line,
+                 "undefined variable '%s'", name);
+        return make_str("equilibrium"); /* unreachable */
+    }
+    if (oidx >= 0 && oidx < oe->obs_cap && oe->obs[oidx].used)
         return make_str(observer_slot_report(&oe->obs[oidx]));
     return make_str("equilibrium");
 }
