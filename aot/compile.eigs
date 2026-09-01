@@ -3493,6 +3493,47 @@ define reads_buf_any(node, name) as:
                 return 1
     return 0
 
+define is_plain_step1(st, name) as:
+    # (round 82) exact-content check for `name is name + 1` -- the sibling
+    # recognizers admitted counter statements by POSITION and TARGET only
+    # while the emitters re-synthesized canonical `+ 1` stepping, so
+    # `d is d + 2` (and `d is 1` inits, and `o is o + 2`) were admitted
+    # and emitted as step-1: four executed silent-wrong shapes, one root
+    # (the round-81 lesson on CONTENT instead of position).
+    if st[0] != "assign":
+        return 0
+    if st[1] != name:
+        return 0
+    local r is unwrap of st[2]
+    if r[0] != "binop":
+        return 0
+    if r[1] != "+":
+        return 0
+    local ra is unwrap of r[2]
+    if ra[0] != "ident":
+        return 0
+    if ra[1] != name:
+        return 0
+    local rb is unwrap of r[3]
+    if rb[0] != "num":
+        return 0
+    if rb[1] != 1:
+        return 0
+    return 1
+
+define is_zero_init(st, name) as:
+    # (round 82) exact-content check for `name is 0`; see is_plain_step1.
+    if st[0] != "assign":
+        return 0
+    if st[1] != name:
+        return 0
+    local r is unwrap of st[2]
+    if r[0] != "num":
+        return 0
+    if r[1] != 0:
+        return 0
+    return 1
+
 define collect_ov_bufs(node, O, acc) as:
     local n is unwrap of node
     if n[0] == "index":
@@ -3599,11 +3640,14 @@ define outvec_loop(node, nm, bt) as:
     if a0l[1] != ACC:
         return null
     local TERM is a0r[3]
-    # stmt1: D is 0 (inner counter init)
-    local s1 is stmts[1]
-    if s1[0] != "assign":
+    # (round 82) ibody[1] was NEVER examined -- `d is d + 2` was admitted
+    # and emitted as step-1. Exact content required.
+    if (is_plain_step1 of [ibody[1], D]) == 0:
         return null
-    if s1[1] != D:
+    # stmt1: D is 0 (inner counter init) -- RHS content enforced (round 82:
+    # `d is 1` was admitted and emitted as `= 0`).
+    local s1 is stmts[1]
+    if (is_zero_init of [s1, D]) == 0:
         return null
     # stmt3: RES[SIDX] is ACC
     local s3 is stmts[3]
@@ -3621,11 +3665,10 @@ define outvec_loop(node, nm, bt) as:
         return null
     if sval[1] != ACC:
         return null
-    # stmt4: O is O + 1
+    # stmt4: O is O + 1 -- RHS content enforced (round 82: `o is o + 2`
+    # was admitted and emitted as step-1).
     local s4 is stmts[4]
-    if s4[0] != "assign":
-        return null
-    if s4[1] != O:
+    if (is_plain_step1 of [s4, O]) == 0:
         return null
     local SBASE is extract_o_base of [SIDX, O]
     if SBASE == null:
@@ -3835,11 +3878,10 @@ define rowmap_loop(node, nm, bt) as:
         return null
     local SIDX is s0[2]
     local VEXPR is s0[3]
-    # stmt1: D is D + 1
+    # stmt1: D is D + 1 -- RHS content enforced (round 82: `d2 is d2 + 2`
+    # was admitted and emitted as step-1, filling elements the VM skips).
     local s1 is stmts[1]
-    if s1[0] != "assign":
-        return null
-    if s1[1] != D:
+    if (is_plain_step1 of [s1, D]) == 0:
         return null
     local SBASE is extract_o_base of [SIDX, D]
     if SBASE == null:
