@@ -1,0 +1,18 @@
+# Round 73: the round-72 counter bound guarded BASES when the axis that
+# matters is the REACHABLE VALUE -- a counter stepped by 1e9 for 100
+# iterations reaches 1e11 with every assignment passing the base guard,
+# and `i * i` wrapped the signed long (VM 1e+22; AOT 1.86e+18, both rc 0,
+# plus UB). is_counter now bounds |base| + |step| * 1e8 (the VM's own
+# cumulative loop cap, EigenScript#772) under 3e9, so pairwise products
+# stay under 2^63; this counter demotes to the double path and prints the
+# VM's numbers. Step-1 counters from small bases (the matmul shape) stay
+# int -- t22 pins that half.
+i is 0
+for k in range of 100:
+    i is i + 1000000000
+print of (i * i)
+j is 0
+j is j + 2000000000
+j is j + 2000000000
+j is j + 2000000000
+print of (j * j)

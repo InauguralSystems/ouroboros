@@ -750,6 +750,19 @@ define is_int_expr(node) as:
     if t == "binop":
         local op is n[1]
         if (op == "+") or (op == "-") or (op == "*") or (op == "%"):
+            if op == "*":
+                # (round 73) literal FACTORS are bounded to 2^31 -- a 2^53
+                # literal (int_lit_ok's bound) times a ~3e9 counter value
+                # overflows the long product. Counters carry the reachable-
+                # value bound at is_counter; literals carry it here.
+                local ml is unwrap of n[2]
+                if ml[0] == "num":
+                    if (ml[1] >= 2147483648) or (ml[1] <= -2147483648):
+                        return 0
+                local mr is unwrap of n[3]
+                if mr[0] == "num":
+                    if (mr[1] >= 2147483648) or (mr[1] <= -2147483648):
+                        return 0
             if (is_int_expr of n[2]) == 0:
                 return 0
             return is_int_expr of n[3]
@@ -838,35 +851,55 @@ define uses_int_forcing(node, name) as:
 # small (a loop bound), and index dimensions are bounded by buffer length, so
 # both stay in the range where long == num_guard(double) exactly.
 define is_counter(v, rhss) as:
+    # (round 73) The bound is on the REACHABLE VALUE, not the base -- the
+    # round-72 base-only bound guarded the wrong axis (invariant 16): a
+    # counter stepped by 1e9 for 100 iterations reaches 1e11 with every
+    # individual assignment passing the old guard, and `i * i` wrapped the
+    # signed long (VM 1e+22; AOT 1.86e+18, both rc 0 -- silent wrong
+    # number, and UB). The sound static bound exists because the VM itself
+    # caps CUMULATIVE loop iterations at 1e8 (EigenScript #772), so a
+    # counter's value never exceeds |base| + |step| * 1e8. Requiring that
+    # quantity under 3e9 keeps every pairwise product under 2^63 (3e9
+    # squared = 9e18 < 9.22e18). Step-1 counters from small bases (the
+    # matmul shape) and strided counters from 0 stay int; big steps or big
+    # bases demote to the double path, which is what the VM computes.
+    # Residual, stated: index-forced PARAMS have no static bound and their
+    # products can still wrap (#163's ledger).
+    local cmaxbase is 0
+    local cmaxstep is 0
     for j in range of (len of rhss):
         local n is unwrap of rhss[j]
         if n[0] == "num":
             if (int_lit_ok of n[1]) == 0:
                 return 0
-            # (round 72) counter BASES are bounded to 2^31, not int_lit_ok's
-            # 2^53: `n is 3100000000` was counter-classified and `n * n`
-            # wrapped the signed long (-8.8e18 where the VM prints 9.61e18,
-            # both rc 0 -- silent wrong number). Two factors under 2^31 keep
-            # every pairwise product under 2^62; longer chains of
-            # buffer-bounded index dims are the stated residual, policed by
-            # the oracle (the t5 accumulator rule's sibling, for constants
-            # feeding products).
-            if (n[1] >= 2147483648) or (n[1] <= -2147483648):
-                return 0
+            local cb is n[1]
+            if cb < 0:
+                cb is 0 - cb
+            if cb > cmaxbase:
+                cmaxbase is cb
         elif n[0] == "binop":
             if (n[1] != "+") and (n[1] != "-"):
                 return 0
             local a is unwrap of n[2]
             local b is unwrap of n[3]
             local ok is 0
+            local cs is null
             if (a[0] == "ident") and (a[1] == v) and (b[0] == "num") and ((int_lit_ok of b[1]) == 1):
                 ok is 1
+                cs is b[1]
             if (n[1] == "+") and (b[0] == "ident") and (b[1] == v) and (a[0] == "num") and ((int_lit_ok of a[1]) == 1):
                 ok is 1
+                cs is a[1]
             if ok == 0:
                 return 0
+            if cs < 0:
+                cs is 0 - cs
+            if cs > cmaxstep:
+                cmaxstep is cs
         else:
             return 0
+    if (cmaxbase + (cmaxstep * 100000000)) >= 3000000000:
+        return 0
     return 1
 
 # infer_int: integer names for one scope. Params: integer iff used in an
