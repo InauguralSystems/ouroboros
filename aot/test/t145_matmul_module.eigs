@@ -1,0 +1,36 @@
+# Round 77: POSITIVE module-level MATMUL fixture -- fires matmul_loop
+# and the aot_buf_maxabs guard-elision path (_noof), which no other
+# fixture executes since the write-only-param bt gap (#169) darkened
+# the bench shapes. Building this fixture immediately found the
+# FOURTH un-migrated emitter: emit_matmul's maxabs calls used raw
+# names (gcc: 'w' undeclared under the pre-fix tree).
+rows is 3
+dn is 4
+n is 5
+x is buffer of 12
+w is buffer of 20
+out is buffer of 15
+f is 0
+loop while f < 12:
+    x[f] is f * 0.5 + 1.0
+    f is f + 1
+g is 0
+loop while g < 20:
+    w[g] is g * 0.25 + 0.5
+    g is g + 1
+i is 0
+loop while i < rows:
+    o is 0
+    loop while o < n:
+        acc is 0
+        d is 0
+        loop while d < dn:
+            acc is acc + x[i * dn + d] * w[d * n + o]
+            d is d + 1
+        out[i * n + o] is acc
+        o is o + 1
+    i is i + 1
+p is 0
+loop while p < 15:
+    print of out[p]
+    p is p + 1

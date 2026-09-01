@@ -3692,8 +3692,11 @@ define emit_matmul(d, ind, nm, bt, minits) as:
     local i2 is ind + "    "
     local i3 is i2 + "    "
     local s is ind + "{\n"
-    s is s + i2 + "double _mxA = aot_buf_maxabs(" + d["bufA"] + ");\n"
-    s is s + i2 + "double _mxB = aot_buf_maxabs(" + d["bufB"] + ");\n"
+    # (round 77) cn-migrated with the rest of the family -- the fourth
+    # un-migrated emitter, found by the module-level matmul probe built to
+    # put the elision path under the oracle (gcc: 'w' undeclared).
+    s is s + i2 + "double _mxA = aot_buf_maxabs(" + (cn of d["bufA"]) + ");\n"
+    s is s + i2 + "double _mxB = aot_buf_maxabs(" + (cn of d["bufB"]) + ");\n"
     # Din*max|A|*max|B| <= 1e308  =>  no product/partial-sum exceeds 1e308  =>
     # num_guard is identity  =>  the unguarded reduction is byte-exact vs the VM.
     s is s + i2 + "int _noof = ((double)(" + IB + ") * _mxA * _mxB <= 1e308);\n"
