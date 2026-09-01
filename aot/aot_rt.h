@@ -917,6 +917,19 @@ static inline double aot_norm_range(Value *A, double sa, double ea) {
  * OP_SLICE_GET -- same length rule per type, same negative resolution, same
  * error text with the ORIGINAL bounds, element VALUES rather than doubles --
  * and its result goes to the runtime's own builtin, so the oracle answers. */
+/* (round 93) The VM computes a slice's default upper bound by TYPE and
+ * raises "cannot slice %s" for anything unsliceable. The emitter's default
+ * `hi` was aot_buf_len, whose own message ("buffer op on a non-buffer
+ * value") fired first and made aot_slice_any unreachable for dicts/numbers
+ * -- the mirror could not mirror. */
+static inline long aot_slice_len(Value *A) {
+    if (!A || A->type == VAL_NUM) { rt_error(EK_TYPE, g_trace_current_line, "cannot slice number"); return 0; }
+    if (A->type == VAL_LIST)   return A->data.list.count;
+    if (A->type == VAL_STR)    return (long)strlen(A->data.str);
+    if (A->type == VAL_BUFFER) return A->data.buffer.count;
+    rt_error(EK_TYPE, g_trace_current_line, "cannot slice %s", val_type_name(A->type));
+    return 0;
+}
 static Value *aot_slice_any(Value *A, double sa, double ea) {
     if (!A || A->type == VAL_NUM) {
         rt_error(EK_TYPE, g_trace_current_line, "cannot slice number");

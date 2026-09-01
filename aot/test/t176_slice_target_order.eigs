@@ -1,0 +1,31 @@
+# Round 93: the round-91 slice hazard enumerated bound-vs-bound and OMITTED
+# target-vs-bound, while the VM's OP_SLICE_GET pushes the TARGET first, then
+# start, then end. A bound whose call rebinds the container had the AOT
+# reading the NEW one: VM 3, AOT 18, both rc 0 -- and through norm, dot, the
+# DEFAULT upper bound (which is the target's own length, so the length came
+# from the post-call container too), and the bt fast path. Round 92's boxed
+# read had turned a coin-flip into a deterministic target-last read.
+#
+# The target now hoists FIRST, and the incref is load-bearing rather than
+# hygiene: the target read is a BORROW while the VM holds an owned ref on
+# its stack across the bound evaluation, so without it a rebinding bound
+# drops the last reference and the wrapper reads freed memory.
+xs is [1, 2, 3, 4]
+define shrink() as:
+    xs is [9, 9]
+    return 2
+print of (sum of xs[0 : (shrink of [])])
+print of xs
+ys is [5, 6, 7, 8]
+define grow() as:
+    ys is [1, 1, 1, 1, 1, 1]
+    return 1
+print of (sum of ys[(grow of []) :])
+b is buffer of 4
+b[0] is 1
+b[1] is 2
+b[2] is 3
+b[3] is 4
+define two() as:
+    return 2
+print of (sum of b[0 : (two of [])])

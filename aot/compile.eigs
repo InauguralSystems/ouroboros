@@ -603,18 +603,17 @@ define is_buf_create(rhs) as:
         return 0
     if callee[1] == "buffer":
         return 1
-    if callee[1] == "zeros":
-        # (round 92) 1-D `zeros` only. `zeros of [r, c]` builds a NESTED
-        # LIST in this VM, and keeping it in the numeric-buffer class
-        # compiled every `m[i]` row read as a numeric element fetch: the
-        # AOT died "non-numeric element in `eig_m`[0] (list)" -- not a VM
-        # message -- where the VM prints the row [0, 0, 0]. Round 91 made
-        # that loud instead of silent (it used to be a flat 6-buffer);
-        # this takes it out of the class entirely so rows read as rows.
-        local zarg is unwrap of n[2]
-        if zarg[0] == "list":
-            return 0
-        return 1
+    # (round 93) `zeros` does NOT create a buffer -- in this VM it is a
+    # tensor builtin returning a LIST, every time (round 91). Round 92
+    # took the 2-D form out of the buffer class on LITERAL shape; round 93
+    # found the same error one row over, on VALUE shape (`d is [2, 3] /
+    # m is zeros of d` kept the class and emitted make_num of a list,
+    # rc 1 on a program the VM runs). The class was only ever buying a
+    # fast indexing path for a container that can never take the SIMD
+    # path anyway -- the runtime type guards demote it -- so the honest
+    # rule is that `zeros` is simply not a buffer create. Its containers
+    # take the generic boxed path, which is correct for every shape and
+    # needs no shape analysis at all.
     return 0
 
 define infer_buffers(stmts) as:
@@ -1603,10 +1602,42 @@ define seq_call3(fn, ops, types) as:
         names is names + "_sqo" + (str of k)
     return pre + fn + "(" + names + "); })"
 
+define slice_hi(parts, tvar) as:
+    # the DEFAULT upper bound is the target's own length, so once the
+    # target is hoisted the length must be taken from the hoisted temp --
+    # otherwise the container is read twice and the second read is
+    # post-mutation (probe p18: VM 10, AOT 18).
+    if (parts[4]) == 1:
+        return "aot_slice_len(" + tvar + ")"
+    return parts[2]
+
+define seq_slice1(fn, parts) as:
+    # (round 93) TARGET-FIRST sequencing. The round-91 hazard enumerated
+    # bound-vs-bound and omitted target-vs-bound, while the VM's
+    # OP_SLICE_GET pushes the TARGET, then start, then end -- so a bound
+    # whose call rebinds the container had the AOT reading the NEW one
+    # (VM 3, AOT 18, both rc 0; also through norm, dot, the default upper
+    # bound, and the bt fast path). The general path already sequences
+    # every operand via seq_call3; this hand-rolled one was narrower --
+    # invariant 16(a).
+    #
+    # The incref is load-bearing, not hygiene: the target read is a
+    # BORROW (aot_getb_named_ic hands back the slot's value with no
+    # incref) while the VM holds an owned reference on its stack across
+    # the bound evaluation. Without it, a bound whose call rebinds the
+    # name drops the last reference and the wrapper reads freed memory.
+    return "({ Value* _sqt = " + (parts[0]) + "; val_incref(_sqt); double _sq1 = " + (parts[1]) + "; double _sq2 = " + (slice_hi of [parts, "_sqt"]) + "; double _sqr = " + fn + "(__eigs_g, _sqt, _sq1, _sq2); val_decref(_sqt); _sqr; })"
+
 define slice_arg_parts(argnode, nm, bt) as:
     local n is unwrap of argnode
     if n[0] == "slice":
         local tgt is unwrap of n[1]
+        if tgt[0] != "ident":
+            # (round 93) a non-ident slice target (a slice of a slice, a
+            # row of a matrix) reached `cn` and died "cn on a non-string
+            # name" -- an internal shape, not a reason. There is no general
+            # slice VALUE emission to fall back to, so refuse by name.
+            throw of "AOT: a ranged reduction's slice target must be a name (a slice of an expression has no emitted form)"
         local bnm is tgt[1]
         local lo is "0"
         if n[2] != null:
@@ -1617,10 +1648,22 @@ define slice_arg_parts(argnode, nm, bt) as:
         # instead; the _v wrappers are polymorphic over what comes back.
         local cbuf is cn of bnm
         if (bt[bnm] != 1) and (g_btmap[bnm] != 1) and (g_dict[bnm] != 1) and (g_genp[bnm] != 1) and (g_tensor[bnm] != 1):
-            cbuf is env_readb of bnm
-        local hi is "aot_buf_len(" + cbuf + ")"
+            if nm[bnm] == 1:
+                # (round 93) a NUMERIC name is a C double, not in the env --
+                # the boxed read said "undefined variable 'n'" where the VM
+                # says "cannot slice number". Box it and let the slice
+                # helper's own type rule raise the VM's message.
+                cbuf is "make_num(" + (cn of bnm) + ")"
+            else:
+                cbuf is env_readb of bnm
+        # (round 93) default upper bound goes through the VM's own
+        # per-type length rule, so a non-sliceable target raises the VM's
+        # message instead of aot_buf_len's.
+        local hidef is 1
+        local hi is "aot_slice_len(" + cbuf + ")"
         if n[3] != null:
             hi is emit_num of [n[3], nm, bt, 0]
+            hidef is 0
         # [0] is a C NAME, so it is mangled like every other emitted name —
         # [2] already was, and the asymmetry meant every consumer emitted the
         # raw buffer name (`aot_dot(a, b)` against a declared `eig_a`).
@@ -1635,11 +1678,11 @@ define slice_arg_parts(argnode, nm, bt) as:
         if n[3] != null:
             if (has_call_node of n[3]) == 1:
                 slhaz is 1
-        return [cbuf, lo, hi, slhaz]
+        return [cbuf, lo, hi, slhaz, hidef]
     local cb2 is cn of n[1]
     if (bt[n[1]] != 1) and (g_btmap[n[1]] != 1) and (g_dict[n[1]] != 1) and (g_genp[n[1]] != 1) and (g_tensor[n[1]] != 1):
         cb2 is env_readb of n[1]
-    return [cb2, "0", "aot_buf_len(" + cb2 + ")", 0]
+    return [cb2, "0", "aot_slice_len(" + cb2 + ")", 0, 1]
 
 define emit_num(node, nm, bt, raw) as:
     local t is node[0]
@@ -1781,7 +1824,11 @@ define emit_num(node, nm, bt, raw) as:
                     local pa is slice_arg_parts of [delems[0], nm, bt]
                     local pb is slice_arg_parts of [delems[1], nm, bt]
                     if ((pa[3]) == 1) or ((pb[3]) == 1):
-                        return "({ double _sqa1 = " + pa[1] + "; double _sqa2 = " + pa[2] + "; double _sqb1 = " + pb[1] + "; double _sqb2 = " + pb[2] + "; aot_dot_range_v(__eigs_g, " + pa[0] + ", _sqa1, _sqa2, " + pb[0] + ", _sqb1, _sqb2); })"
+                        # per-operand VM push order: A's target, A's bounds,
+                        # then B's target, B's bounds.
+                        local ha is slice_hi of [pa, "_sqt0"]
+                        local hb is slice_hi of [pb, "_sqt1"]
+                        return "({ Value* _sqt0 = " + pa[0] + "; val_incref(_sqt0); double _sqa1 = " + pa[1] + "; double _sqa2 = " + ha + "; Value* _sqt1 = " + pb[0] + "; val_incref(_sqt1); double _sqb1 = " + pb[1] + "; double _sqb2 = " + hb + "; double _sqdr = aot_dot_range_v(__eigs_g, _sqt0, _sqa1, _sqa2, _sqt1, _sqb1, _sqb2); val_decref(_sqt0); val_decref(_sqt1); _sqdr; })"
                     return "aot_dot_range_v(__eigs_g, " + pa[0] + ", " + pa[1] + ", " + pa[2] + ", " + pb[0] + ", " + pb[1] + ", " + pb[2] + ")"
             if callee[1] == "sum":
                 local sa is unwrap of node[2]
@@ -1790,7 +1837,7 @@ define emit_num(node, nm, bt, raw) as:
                 if sa[0] == "slice":
                     local ps is slice_arg_parts of [node[2], nm, bt]
                     if (ps[3]) == 1:
-                        return "({ double _sqs1 = " + ps[1] + "; double _sqs2 = " + ps[2] + "; aot_sum_range_v(__eigs_g, " + ps[0] + ", _sqs1, _sqs2); })"
+                        return seq_slice1 of ["aot_sum_range_v", ps]
                     return "aot_sum_range_v(__eigs_g, " + ps[0] + ", " + ps[1] + ", " + ps[2] + ")"
             if callee[1] == "norm":
                 local na is unwrap of node[2]
@@ -1799,7 +1846,7 @@ define emit_num(node, nm, bt, raw) as:
                 if na[0] == "slice":
                     local pn is slice_arg_parts of [node[2], nm, bt]
                     if (pn[3]) == 1:
-                        return "({ double _sqn1 = " + pn[1] + "; double _sqn2 = " + pn[2] + "; aot_norm_range_v(__eigs_g, " + pn[0] + ", _sqn1, _sqn2); })"
+                        return seq_slice1 of ["aot_norm_range_v", pn]
                     return "aot_norm_range_v(__eigs_g, " + pn[0] + ", " + pn[1] + ", " + pn[2] + ")"
             if callee[1] == "exp":
                 # VM exp guards the result (exp of 1000 -> 1e308), so match.
@@ -4427,6 +4474,15 @@ define return_node_is_boxed(rnode, fbt, ftt, rba, fgen, fdict) as:
             if g_funcs[rc1[1]] != null:
                 if (g_funcs[rc1[1]])["ret"] == "void":
                     return 1
+            # (round 93) a direct BUILTIN call that yields a container is a
+            # boxed return. `return zeros of n` used to ride the buffer
+            # class; once `zeros` stopped being a buffer create (it never
+            # made one) the return inferred numeric and the coercion killed
+            # a program the VM runs. Same family as #167 (a direct
+            # tensor-call return typed double), reached from the other
+            # side.
+            if BOXED_RET_BUILTINS[rc1[1]] == 1:
+                return 1
     if re[0] == "ident":
         if fbt[re[1]] == 1:
             return 1
@@ -4621,7 +4677,14 @@ define uses_type_dispatch(node, name) as:
 # and defaulted to "num", so a string-literal call site threw).
 # Builtins whose return is never a number: a local assigned from one is a
 # boxed value, which call-site widening needs to know (#86).
-BOXED_RET_BUILTINS is {"read_text": 1, "read_lines": 1, "split": 1, "trim": 1, "substr": 1, "str_replace": 1, "str_lower": 1, "str_upper": 1, "char_at": 1, "join": 1, "str": 1, "keys": 1, "values": 1, "sort": 1, "sort_by": 1, "scan_ints": 1, "scan_int_tokens": 1, "range": 1, "hex": 1, "chr": 1, "json_decode": 1, "json_encode": 1, "args": 1}
+# (round 93) `zeros` joins the list: it is a tensor builtin returning a
+# LIST, and once it stopped being a buffer create a direct
+# `return zeros of n` inferred numeric and the coercion killed a program
+# the VM runs. (A second table declared nearer the first consumer was
+# silently clobbered by THIS assignment at module load -- one name, two
+# definitions, the later one winning: the duplicate-define hazard the
+# emitter refuses in compiled programs, live in the compiler's own source.)
+BOXED_RET_BUILTINS is {"zeros": 1, "read_text": 1, "read_lines": 1, "split": 1, "trim": 1, "substr": 1, "str_replace": 1, "str_lower": 1, "str_upper": 1, "char_at": 1, "join": 1, "str": 1, "keys": 1, "values": 1, "sort": 1, "sort_by": 1, "scan_ints": 1, "scan_int_tokens": 1, "range": 1, "hex": 1, "chr": 1, "json_decode": 1, "json_encode": 1, "args": 1}
 
 STR_ARG_BUILTINS is {"split": 1, "trim": 1, "substr": 1, "str_replace": 1, "contains": 1, "index_of": 1, "char_at": 1, "starts_with": 1, "ends_with": 1, "str_lower": 1, "str_upper": 1, "ord": 1, "read_text": 1, "write_text": 1, "file_exists": 1, "read_lines": 1, "scan_ints": 1, "scan_int_tokens": 1}
 
