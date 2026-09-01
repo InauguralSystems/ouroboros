@@ -1,0 +1,13 @@
+# Round 80: the vec guard's (long)ctr == 0 truncation admitted any
+# counter start in (-1, 1) -- `i is 0.5` ran the integer-lane
+# vector path (wrong indices AND values, rc 0) where the VM dies
+# "index must be an integer, got 0.5". The guard is an exact
+# double compare now. _err class: both die, equal codes.
+b is buffer of 6
+i is 0.5
+loop while i < 3:
+    b[i] is i
+    i is i + 1
+print of i
+print of b[0]
+print of b[1]

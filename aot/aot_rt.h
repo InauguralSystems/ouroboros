@@ -657,11 +657,16 @@ static void aot_buf_expect_at(Value *b, const char *site) {
     }
 }
 static void aot_buf_expect(Value *b) { aot_buf_expect_at(b, "?"); }
+/* (round 80) these deaths carry the "Error line N:" frame the VM's raises
+ * print -- the bare fprintf form failed the _err tier's normalization on
+ * the frame prefix alone (line number is blanked by the normalizer; the
+ * prefix is semantics). Line is g_trace_current_line: 0 unless traced,
+ * per the documented siting contract. */
 static long aot_idx(double d, int count) {
     long i = (long)d;
-    if ((double)i != d) { fprintf(stderr, "index must be an integer, got %g\n", d); exit(1); }
+    if ((double)i != d) { fprintf(stderr, "Error line %d: index must be an integer, got %g\n", g_trace_current_line, d); exit(1); }
     if (i < 0) i += count;
-    if (i < 0 || i >= count) { fprintf(stderr, "buffer index %ld out of range (length %d)\n", (long)d, count); exit(1); }
+    if (i < 0 || i >= count) { fprintf(stderr, "Error line %d: buffer index %ld out of range (length %d)\n", g_trace_current_line, (long)d, count); exit(1); }
     return i;
 }
 /* The "buf" class is really INDEXABLE VALUE: inference assigns it from
@@ -697,7 +702,7 @@ static void   aot_buf_set_at(Value *b, double idx, double v, const char *site) {
    check. Negative-resolve + bounds-check still mirror the VM. */
 static long aot_idx_i(long i, int count) {
     if (i < 0) i += count;
-    if (i < 0 || i >= count) { fprintf(stderr, "buffer index %ld out of range (length %d)\n", i, count); exit(1); }
+    if (i < 0 || i >= count) { fprintf(stderr, "Error line %d: buffer index %ld out of range (length %d)\n", g_trace_current_line, i, count); exit(1); }
     return i;
 }
 static double aot_buf_get_i_at(Value *b, long idx, const char *site) {
@@ -795,7 +800,7 @@ static inline long aot_sbound(double x, long len) {
     long i = (long)x;
     if ((double)i != x) { fprintf(stderr, "slice bound must be an integer, got %g\n", x); exit(1); }
     if (i < 0) i += len;
-    if (i < 0 || i > len) { fprintf(stderr, "slice bound %ld out of range (length %ld)\n", (long)x, len); exit(1); }
+    if (i < 0 || i > len) { fprintf(stderr, "Error line %d: slice bound %ld out of range (length %ld)\n", g_trace_current_line, (long)x, len); exit(1); }
     return i;
 }
 static inline double aot_dot_range(Value *A, double sa, double ea, Value *B, double sb, double eb) {

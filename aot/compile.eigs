@@ -3341,12 +3341,21 @@ define emit_vectorized(node, vinfo, ind, nm, bt, minits) as:
     # 3 iterations and ends the counter at 3 where (long)2.5 ran 2; a
     # NEGATIVE bound never enters the VM's loop and leaves the counter
     # untouched, where the raw hoist force-assigned it to the bound (-3).
-    # ceil matches the VM's 0-base/step-1 iteration count and final
-    # counter for every bound sign and fraction.
-    s is s + i2 + "long _n = (long)ceil(" + boundc + "); if (_n < 0) _n = 0;\n"
+    # (round 80) the bound is tested AS A DOUBLE before the cast:
+    # (long)ceil(1e19) is UB (LLONG_MIN on x86-64) and the round-79
+    # `_n < 0` clamp -- written for legitimately negative bounds --
+    # LAUNDERED the overflow sentinel into an empty loop (VM dies out of
+    # range; AOT printed 0, rc 0). An unrepresentable bound fails the
+    # guard and takes the scalar branch, which dies byte-exactly.
+    s is s + i2 + "double _bd = (" + boundc + ");\n"
+    s is s + i2 + "long _n = 0; if (_bd > 0 && _bd <= 9.2e18) _n = (long)ceil(_bd);\n"
     for k in range of (len of bufs):
         s is s + i2 + "double* _p_" + (cn of bufs[k]) + " = aot_buf_data(" + (cn of bufs[k]) + ");\n"
-    local guard is "(long)" + (cn of ctr) + " == 0"
+    # (round 80) the counter guard is an EXACT double compare: the old
+    # `(long)ctr == 0` truncation admitted any start in (-1, 1), so
+    # `i is 0.5` ran the integer-lane vector path (rc 0, wrong indices
+    # AND values) where the VM dies "index must be an integer, got 0.5".
+    local guard is (cn of ctr) + " == 0.0 && _bd <= 9.2e18"
     for k in range of (len of bufs):
         guard is guard + " && _n <= (long)aot_buf_len(" + (cn of bufs[k]) + ")"
     s is s + i2 + "if (" + guard + ") {\n"
