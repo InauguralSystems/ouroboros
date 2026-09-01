@@ -959,6 +959,83 @@ define collect_idents_all(node, acc) as:
         collect_idents_all of [node[k], acc]
     return 0
 
+define collect_module_for_binders(node, acc) as:
+    # Every for binder at MODULE scope under one top-level statement --
+    # nested inside if/loop/match/for bodies included, func defs excluded
+    # (function binders are function-scope). Round 66: the module-binder
+    # guard's trigger scan matched only TOP-LEVEL `for` statements while
+    # its use-side walker recursed -- two walks of "the same" scope
+    # (invariant 16b), and one `if 1 == 1:` wrapper around the for
+    # restored the exact phantom the guard was written to kill.
+    if (type of node) != "list":
+        return 0
+    if (len of node) == 0:
+        return 0
+    if node[0] == "func":
+        return 0
+    if node[0] == "for":
+        acc[(node[1])] is 1
+    for k in range of (len of node):
+        collect_module_for_binders of [node[k], acc]
+    return 0
+
+define modfor_intra_check(node, tli) as:
+    # WITHIN one top-level statement: after any nested `for`, later
+    # siblings in the same block must not use the binder (the VM
+    # loop-scopes it; observed/traced emission leaks it through the env).
+    # A later sibling that plainly reassigns the binder starts a fresh
+    # binding and stops the scan. Pre-bound exemption is the caller's
+    # (g_first_bind vs tli); a bind INSIDE the same statement before the
+    # for is not recognized and refuses conservatively-loud.
+    if (type of node) != "list":
+        return 0
+    if (len of node) == 0:
+        return 0
+    local t is node[0]
+    if (type of t) == "list":
+        for bi in range of (len of node):
+            local bs is unwrap of node[bi]
+            if ((type of bs) == "list") and ((len of bs) > 0):
+                if bs[0] == "for":
+                    local bb is bs[1]
+                    local bfb is g_first_bind[bb]
+                    if (bfb == null) or (bfb >= tli):
+                        local bstop is 0
+                        for bj in range of (len of node):
+                            if (bj > bi) and (bstop == 0):
+                                local bsj is unwrap of node[bj]
+                                if ((type of bsj) == "list") and ((len of bsj) > 0):
+                                    if (bsj[0] == "assign") and (bsj[1] == bb):
+                                        bstop is 1
+                                if bstop == 0:
+                                    if (uses_ident_skip_forbind of [node[bj], bb]) == 1:
+                                        throw of ("AOT: module for binder '" + bb + "' is used after its loop in an observed/traced program. The VM loop-scopes a binder with no pre-existing binding in every regime, but observed/traced module emission routes it through the env, where C block scoping cannot express the loop scope (see EigenScript#1056); refused rather than answering with the leaked value.")
+            modfor_intra_check of [node[bi], tli]
+        return 0
+    if t == "_line":
+        return modfor_intra_check of [node[2], tli]
+    if t == "func":
+        return 0
+    if t == "if":
+        modfor_intra_check of [node[2], tli]
+        modfor_intra_check of [node[3], tli]
+        return 0
+    if t == "loop":
+        modfor_intra_check of [node[2], tli]
+        return 0
+    if t == "for":
+        modfor_intra_check of [node[3], tli]
+        return 0
+    if t == "unobserved":
+        modfor_intra_check of [node[1], tli]
+        return 0
+    if t == "match":
+        local mcs is node[2]
+        for mi in range of (len of mcs):
+            modfor_intra_check of [(mcs[mi])[1], tli]
+        return 0
+    return 0
+
 define uses_ident_skip_forbind(node, name) as:
     # Does this subtree USE `name`, treating a nested `for` that REBINDS the
     # same name as a fresh scope (its header iterable is still module scope
@@ -6337,28 +6414,37 @@ define emit_program(ast) as:
     # the loop), so pre-bound binders are exempt; and a post-loop plain
     # rebind starts a FRESH binding, so the scan stops at the first
     # top-level reassignment of the name.
+    # Round 66 rebuilt the scan on SHARED traversals after one `if 1 == 1:`
+    # wrapper bypassed it (the trigger matched only top-level `for`
+    # statements while the use walker recursed -- invariant 16b, and the
+    # same wrapper shape that bypassed the round-62 kind-flip scan):
+    # collect_module_for_binders finds binders at ANY nesting depth for the
+    # cross-statement half, and modfor_intra_check covers uses after a
+    # nested loop WITHIN its own top-level statement.
     if (g_observed == 1) or (g_prog_traced == 1):
         for r65i in range of (len of stmts):
-            local r65n is unwrap of stmts[r65i]
-            if ((type of r65n) == "list") and ((len of r65n) > 0):
-                if r65n[0] == "for":
-                    local r65b is r65n[1]
-                    local r65fb is g_first_bind[r65b]
-                    local r65pre is 0
-                    if (r65fb != null) and (r65fb < r65i):
-                        r65pre is 1
-                    if r65pre == 0:
-                        for r65j in range of (len of stmts):
-                            if r65j > r65i:
-                                local r65s is unwrap of stmts[r65j]
-                                local r65stop is 0
-                                if ((type of r65s) == "list") and ((len of r65s) > 0):
-                                    if (r65s[0] == "assign") and (r65s[1] == r65b):
-                                        r65stop is 1
-                                if r65stop == 1:
-                                    break
-                                if (uses_ident_skip_forbind of [stmts[r65j], r65b]) == 1:
-                                    throw of ("AOT: module for binder '" + r65b + "' is used after its loop in an observed/traced program. The VM loop-scopes a binder with no pre-existing binding in every regime, but observed/traced module emission routes it through the env, where C block scoping cannot express the loop scope (see EigenScript#1056); refused rather than answering with the leaked value.")
+            local r65acc is {}
+            collect_module_for_binders of [stmts[r65i], r65acc]
+            local r65bs is keys of r65acc
+            for r65k in range of (len of r65bs):
+                local r65b is r65bs[r65k]
+                local r65fb is g_first_bind[r65b]
+                local r65pre is 0
+                if (r65fb != null) and (r65fb < r65i):
+                    r65pre is 1
+                if r65pre == 0:
+                    for r65j in range of (len of stmts):
+                        if r65j > r65i:
+                            local r65s is unwrap of stmts[r65j]
+                            local r65stop is 0
+                            if ((type of r65s) == "list") and ((len of r65s) > 0):
+                                if (r65s[0] == "assign") and (r65s[1] == r65b):
+                                    r65stop is 1
+                            if r65stop == 1:
+                                break
+                            if (uses_ident_skip_forbind of [stmts[r65j], r65b]) == 1:
+                                throw of ("AOT: module for binder '" + r65b + "' is used after its loop in an observed/traced program. The VM loop-scopes a binder with no pre-existing binding in every regime, but observed/traced module emission routes it through the env, where C block scoping cannot express the loop scope (see EigenScript#1056); refused rather than answering with the leaked value.")
+            modfor_intra_check of [stmts[r65i], r65i]
     # Partition top-level function definitions from the rest (main body).
     local funcs is []
     local rest is []
