@@ -1,0 +1,19 @@
+# Round 88: a LIST flowing through a bt-classified name is legal in
+# the VM (the bt class is 'really INDEXABLE VALUE'), but the vec
+# loop's _p_ hoists ran aot_buf_data BEFORE the demotion guard and
+# its VAL_BUFFER hard-assert killed the program (rc 1) where the
+# scalar branch runs it byte-exactly. Per-name type clauses now
+# license every aot_buf_data via && short-circuit, the hoists moved
+# inside the guarded branch, and the outvec/rowmap alias compares
+# are type-gated the same way.
+define scale(b, n) as:
+    i is 0
+    loop while i < n:
+        b[i] is b[i] * 2.0
+        i is i + 1
+    return 0
+
+xs is [1, 2, 3, 4]
+r is scale of [xs, 4]
+print of xs[0]
+print of xs[3]

@@ -2511,8 +2511,15 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
             local sib is emit_val_borrow of [node[1], nm, bt, [node[2], node[3]]]
             if sib != "":
                 return ind + "aot_index_set_ib(" + sib + ", " + (emit_num of [node[2], nm, bt, 0]) + ", " + (emit_val of [node[3], nm, bt]) + ");\n"
-            return ind + "aot_index_set_i(" + (emit_val of [node[1], nm, bt]) + ", " + (emit_num of [node[2], nm, bt, 0]) + ", " + (emit_val of [node[3], nm, bt]) + ");\n"
-        return ind + "aot_index_set(" + (emit_val of [node[1], nm, bt]) + ", " + (emit_val of [node[2], nm, bt]) + ", " + (emit_val of [node[3], nm, bt]) + ");\n"
+            # (round 88) SEQUENCE the target before the rhs: C argument
+            # order is unspecified, and gcc evaluated an outward-rebinding
+            # rhs FIRST, so the setter wrote into the container the rebind
+            # just installed where the VM writes into the OLD one it
+            # pushed before the rhs (VM 100, AOT 7, both rc 0). Temps in
+            # VM push order (target, index, value) make the order a
+            # sequence point, not a compiler mood.
+            return ind + "{ Value* _sat = " + (emit_val of [node[1], nm, bt]) + "; double _sai = " + (emit_num of [node[2], nm, bt, 0]) + "; aot_index_set_i(_sat, _sai, " + (emit_val of [node[3], nm, bt]) + "); }\n"
+        return ind + "{ Value* _sat = " + (emit_val of [node[1], nm, bt]) + "; Value* _sai = " + (emit_val of [node[2], nm, bt]) + "; aot_index_set(_sat, _sai, " + (emit_val of [node[3], nm, bt]) + "); }\n"
     if t == "capbind":
         # (#86) bind a lifted nested-define's captures: alias each captured
         # Value into the env under its mangled name (emit_val increfs; the
@@ -2532,14 +2539,22 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
         # Inline-cached (#130). A rhs the numeric inference can prove scalar
         # goes through the double-taking setter, which reuses the slot's
         # existing box instead of allocating and freeing one per write.
+        # (round 88) the borrow is only sound when the rhs cannot CALL --
+        # invariant 12, which index_assign's borrow already enforced via
+        # emit_val_borrow while this arm called borrowable_cvar with no
+        # sibling check: an outward-rebinding rhs frees the container
+        # under the borrowed pointer. And the OWNED forms sequence the
+        # target before the rhs (see the index_assign note: C argument
+        # order is unspecified and gcc ran the rebinding rhs first,
+        # writing into the new dict where the VM writes into the old).
         if (is_num_expr of [node[3], nm, bt]) == 1:
             local icn is ic_new of node[2]
             local scv is borrowable_cvar of [node[1], nm, bt]
-            if scv != "":
+            if (scv != "") and ((has_call_node of node[3]) == 0):
                 return ind + "{ " + icn[0] + "aot_dot_set_num_tb_ic(" + scv + ", \"" + (c_escape of node[2]) + "\", " + (emit_num of [node[3], nm, bt, 0]) + ", " + icn[1] + "); }\n"
-            return ind + "{ " + icn[0] + "aot_dot_set_num_ic(" + (emit_val of [node[1], nm, bt]) + ", \"" + (c_escape of node[2]) + "\", " + (emit_num of [node[3], nm, bt, 0]) + ", " + icn[1] + "); }\n"
+            return ind + "{ " + icn[0] + "Value* _sat = " + (emit_val of [node[1], nm, bt]) + "; aot_dot_set_num_ic(_sat, \"" + (c_escape of node[2]) + "\", " + (emit_num of [node[3], nm, bt, 0]) + ", " + icn[1] + "); }\n"
         local icg is ic_new of node[2]
-        return ind + "{ " + icg[0] + "aot_dot_set_ic(" + (emit_val of [node[1], nm, bt]) + ", \"" + (c_escape of node[2]) + "\", " + (emit_val of [node[3], nm, bt]) + ", " + icg[1] + "); }\n"
+        return ind + "{ " + icg[0] + "Value* _sat = " + (emit_val of [node[1], nm, bt]) + "; aot_dot_set_ic(_sat, \"" + (c_escape of node[2]) + "\", " + (emit_val of [node[3], nm, bt]) + ", " + icg[1] + "); }\n"
     if t == "call":
         local callee is unwrap of node[1]
         if callee[0] == "ident":
@@ -3389,13 +3404,20 @@ define emit_vectorized(node, vinfo, ind, nm, bt, minits) as:
     # guard and takes the scalar branch, which dies byte-exactly.
     s is s + i2 + "double _bd = (" + boundc + ");\n"
     s is s + i2 + "long _n = 0; if (_bd > 0 && _bd <= 9.2e18) _n = (long)ceil(_bd);\n"
-    for k in range of (len of bufs):
-        s is s + i2 + "double* _p_" + (cn of bufs[k]) + " = aot_buf_data(" + (cn of bufs[k]) + ");\n"
     # (round 80) the counter guard is an EXACT double compare: the old
     # `(long)ctr == 0` truncation admitted any start in (-1, 1), so
     # `i is 0.5` ran the integer-lane vector path (rc 0, wrong indices
     # AND values) where the VM dies "index must be an integer, got 0.5".
+    # (round 88) per-name TYPE clauses come before anything that calls
+    # aot_buf_data: the bt class is "really INDEXABLE VALUE" and a LIST
+    # flowing through it is legal in the VM, but the _p_ hoists ran
+    # aot_buf_data BEFORE the guard and its VAL_BUFFER hard-assert killed
+    # an in-envelope program the scalar branch runs byte-exactly. The &&
+    # chain short-circuits, so the type checks license every later
+    # aot_buf_data; the hoists moved inside the guarded branch.
     local guard is (cn of ctr) + " == 0.0 && _bd <= 9.2e18"
+    for k in range of (len of bufs):
+        guard is guard + " && " + (cn of bufs[k]) + " && " + (cn of bufs[k]) + "->type == VAL_BUFFER"
     for k in range of (len of bufs):
         guard is guard + " && _n <= (long)aot_buf_len(" + (cn of bufs[k]) + ")"
     # (round 87) POINTER distinctness: buffer assignment ALIASES by
@@ -3413,6 +3435,8 @@ define emit_vectorized(node, vinfo, ind, nm, bt, minits) as:
             if (bufs[j]) != (vwk[k]):
                 guard is guard + " && aot_buf_data(" + (cn of vwk[k]) + ") != aot_buf_data(" + (cn of bufs[j]) + ")"
     s is s + i2 + "if (" + guard + ") {\n"
+    for k in range of (len of bufs):
+        s is s + i3 + "double* _p_" + (cn of bufs[k]) + " = aot_buf_data(" + (cn of bufs[k]) + ");\n"
     # safe interior [_lo, _hi): all neighbor offsets land in [0, _n)
     s is s + i3 + "long _lo = " + (str of (0 - minoff)) + "; if (_lo > _n) _lo = _n;\n"
     s is s + i3 + "long _hi = _n - " + (str of maxoff) + "; if (_hi < _lo) _hi = _lo;\n"
@@ -3873,9 +3897,15 @@ define emit_outvec(d, ind, nm, bt, guard, minits) as:
     # (round 87) pointer distinctness -- see the vec guard note: aliasing
     # is a runtime fact the by-name bails cannot see (a helper reading a
     # param while writing the module global it aliases diverged rc 0).
+    # (round 88) TYPE checks first: a LIST through a bt name is legal in
+    # the VM and aot_buf_data hard-asserts VAL_BUFFER, so the compares
+    # are gated on _ovok after per-name type clauses.
+    s is s + i2 + "if (!(" + cRES + ") || (" + cRES + ")->type != VAL_BUFFER) _ovok = 0;\n"
+    for pk in range of (len of ovbufs):
+        s is s + i2 + "if (!(" + (cn of ovbufs[pk]) + ") || (" + (cn of ovbufs[pk]) + ")->type != VAL_BUFFER) _ovok = 0;\n"
     for pk in range of (len of ovbufs):
         if (ovbufs[pk]) != RES:
-            s is s + i2 + "if (aot_buf_data(" + cRES + ") == aot_buf_data(" + (cn of ovbufs[pk]) + ")) _ovok = 0;\n"
+            s is s + i2 + "if (_ovok && aot_buf_data(" + cRES + ") == aot_buf_data(" + (cn of ovbufs[pk]) + ")) _ovok = 0;\n"
     local ovsites is collect_ov_sites of [TERM, O, []]
     for sk in range of (len of ovsites):
         local sbuf is cn of ((ovsites[sk])["buf"])
@@ -4120,10 +4150,14 @@ define emit_rowmap(d, ind, nm, bt, minits) as:
     s is s + i2 + "if (" + cD + " < 0) _rmok = 0;\n"
     s is s + i2 + "{ long _sb = (" + SBASE + "); if (_sb < 0 || _sb + _rbn > (long)aot_buf_len(" + cRES + ")) _rmok = 0; }\n"
     # (round 87) pointer distinctness -- see the vec guard note.
+    # (round 88) type checks first; see the outvec note.
     local rmvb is d["vbufs"]
+    s is s + i2 + "if (!(" + cRES + ") || (" + cRES + ")->type != VAL_BUFFER) _rmok = 0;\n"
+    for pk in range of (len of rmvb):
+        s is s + i2 + "if (!(" + (cn of rmvb[pk]) + ") || (" + (cn of rmvb[pk]) + ")->type != VAL_BUFFER) _rmok = 0;\n"
     for pk in range of (len of rmvb):
         if (rmvb[pk]) != RES:
-            s is s + i2 + "if (aot_buf_data(" + cRES + ") == aot_buf_data(" + (cn of rmvb[pk]) + ")) _rmok = 0;\n"
+            s is s + i2 + "if (_rmok && aot_buf_data(" + cRES + ") == aot_buf_data(" + (cn of rmvb[pk]) + ")) _rmok = 0;\n"
     local rmsites is collect_ov_sites of [d["VEXPR"], D, []]
     for sk in range of (len of rmsites):
         local sbuf is cn of ((rmsites[sk])["buf"])

@@ -1,0 +1,25 @@
+# Round 88: the assignment TARGET container was fetched in unspecified
+# C order relative to the rhs -- gcc evaluated an outward-rebinding
+# rhs FIRST, so the setter wrote into the dict the rebind installed
+# where the VM writes into the OLD one it pushed before the rhs
+# (VM 100, AOT 7, both rc 0; index-assign identically). All owned
+# setter emissions now sequence temps in VM push order (target,
+# index, value), and dot_assign's borrow gained the invariant-12
+# sibling-call check its index_assign twin always had.
+d is {"f": 1}
+
+define g(x) as:
+    d is {"f": 100}
+    return x + 5
+
+d.f is g of [2]
+print of d["f"]
+
+l is [1]
+
+define h(x) as:
+    l is [100]
+    return x + 5
+
+l[0] is h of [2]
+print of l[0]
