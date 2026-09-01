@@ -53,6 +53,10 @@ g_scalbound is {}
 # measured ~2x lever for matmul-style index-heavy loops). Set per function /
 # module body (like g_bufbound) by infer_int.
 g_int is {}
+# (round 74) per-name reachable-value bounds for int-classified names;
+# int_expr_bound's composition budget reads it (null = assume 2^31, the
+# stated residual for index-forced params).
+g_int_bound is {}
 # Buffer-typed names of the CURRENT scope, mirrored for is_int_expr/emit_int
 # (which read globals, not the threaded bt map): `len of x` is int-typed and
 # emitted as aot_buf_len ONLY for a C buffer var — a boxed list/str hitting
@@ -734,39 +738,59 @@ define int_lit_ok(v) as:
 # native `long`? Reads g_int (the current scope's integer names). Conservative:
 # integer literals, integer names, +/-/*/% of integers, `len of`, unary minus.
 # NOT division (fractional), NOT a buffer read (holds doubles), NOT a call.
-define is_int_expr(node) as:
+define int_expr_bound(node) as:
+    # (round 74) The int grammar carries a MAGNITUDE BOUND, not just a
+    # yes/no: round 72 bounded literal bases, round 73 bounded reachable
+    # counter values, and round 74 executed the composition hole both
+    # left open -- `(i*i)*i` (8e27) and `(i*i)+(i*i)` (1.8e19) over
+    # in-bound counters wrapped the signed long (silent wrong numbers,
+    # plus UB) because admission recursed with no composition budget.
+    # Returns null (not an int expr) or the expression's magnitude bound;
+    # the wrapper below admits only bounds under 9.2e18 (< 2^63 =
+    # 9.223e18). A rejected expression takes the DOUBLE path, which is
+    # what the VM computes -- demotion is byte-exact by construction.
+    # Leaves: literals carry |v| (int_lit_ok still gates exact long
+    # representability); counters carry their reachable-value bound from
+    # is_counter (g_int_bound); index-forced params and buffer lens carry
+    # an ASSUMED 2^31 -- the #163 ledger residual, now explicit in one
+    # place instead of implicit everywhere.
     local n is unwrap of node
     local t is n[0]
     if t == "num":
-        return int_lit_ok of n[1]
+        if (int_lit_ok of n[1]) == 0:
+            return null
+        if n[1] < 0:
+            return 0 - n[1]
+        return n[1]
     if t == "ident":
         if g_int[n[1]] == 1:
-            return 1
-        return 0
+            local ib is g_int_bound[(n[1])]
+            if ib == null:
+                ib is 2147483648
+            return ib
+        return null
     if t == "unary":
         if n[1] == "-":
-            return is_int_expr of n[2]
-        return 0
+            return int_expr_bound of n[2]
+        return null
     if t == "binop":
         local op is n[1]
         if (op == "+") or (op == "-") or (op == "*") or (op == "%"):
+            local bl is int_expr_bound of n[2]
+            if bl == null:
+                return null
+            local br is int_expr_bound of n[3]
+            if br == null:
+                return null
+            if (op == "+") or (op == "-"):
+                return bl + br
             if op == "*":
-                # (round 73) literal FACTORS are bounded to 2^31 -- a 2^53
-                # literal (int_lit_ok's bound) times a ~3e9 counter value
-                # overflows the long product. Counters carry the reachable-
-                # value bound at is_counter; literals carry it here.
-                local ml is unwrap of n[2]
-                if ml[0] == "num":
-                    if (ml[1] >= 2147483648) or (ml[1] <= -2147483648):
-                        return 0
-                local mr is unwrap of n[3]
-                if mr[0] == "num":
-                    if (mr[1] >= 2147483648) or (mr[1] <= -2147483648):
-                        return 0
-            if (is_int_expr of n[2]) == 0:
-                return 0
-            return is_int_expr of n[3]
-        return 0
+                return bl * br
+            # %: |a % b| <= min(|a|, |b|)
+            if bl < br:
+                return bl
+            return br
+        return null
     if t == "call":
         local callee is unwrap of n[1]
         if callee[0] == "ident":
@@ -775,9 +799,23 @@ define is_int_expr(node) as:
                 # generic numeric path (aot_num_ck of the boxed len call).
                 local la is unwrap of n[2]
                 if (la[0] == "ident") and (g_btmap[la[1]] == 1):
-                    return 1
+                    return 2147483648
+        return null
+    return null
+
+define is_int_expr(node) as:
+    local ieb is int_expr_bound of node
+    if ieb == null:
         return 0
-    return 0
+    # The budget is 2^53, NOT 2^63: below 2^53 every long value is an
+    # exact double, so exact long arithmetic and the VM's per-op-rounded
+    # double arithmetic agree bit-for-bit. Between 2^53 and 2^63 the long
+    # path is EXACT where the VM rounds each op -- a 1-ulp divergence by
+    # construction, no overflow needed. (Round 74's executed finds were
+    # the overflow half; this cutoff closes the rounding half too.)
+    if ieb >= 9007199254740992:
+        return 0
+    return 1
 
 # emit_int: render a proven-integer expression as native C `long` arithmetic
 # (no num_guard — guard is identity on in-range integers; bytes match the VM).
@@ -871,7 +909,7 @@ define is_counter(v, rhss) as:
         local n is unwrap of rhss[j]
         if n[0] == "num":
             if (int_lit_ok of n[1]) == 0:
-                return 0
+                return null
             local cb is n[1]
             if cb < 0:
                 cb is 0 - cb
@@ -879,7 +917,7 @@ define is_counter(v, rhss) as:
                 cmaxbase is cb
         elif n[0] == "binop":
             if (n[1] != "+") and (n[1] != "-"):
-                return 0
+                return null
             local a is unwrap of n[2]
             local b is unwrap of n[3]
             local ok is 0
@@ -891,16 +929,22 @@ define is_counter(v, rhss) as:
                 ok is 1
                 cs is a[1]
             if ok == 0:
-                return 0
+                return null
             if cs < 0:
                 cs is 0 - cs
             if cs > cmaxstep:
                 cmaxstep is cs
         else:
-            return 0
-    if (cmaxbase + (cmaxstep * 100000000)) >= 3000000000:
-        return 0
-    return 1
+            return null
+    # (round 74) returns the reachable-value BOUND itself (null = not a
+    # counter) so int_expr_bound can budget compositions precisely --
+    # 2999999999 squared fits a long where 3e9-bound squared would not.
+    local cbound is cmaxbase + (cmaxstep * 100000000)
+    if cbound >= 3000000000:
+        return null
+    if cbound < 1:
+        cbound is 1
+    return cbound
 
 # infer_int: integer names for one scope. Params: integer iff used in an
 # index/slice position (forced -> bounded by buffer length). Vars: integer iff a
@@ -922,11 +966,18 @@ define infer_int(stmts, params, nm, bt) as:
                 iv[params[p]] is 1
     local assigns is collect_assigns of [stmts, {}]
     local names is keys of assigns
+    # (round 74) per-name reachable-value bounds feed int_expr_bound's
+    # composition budget: counters carry their exact is_counter bound;
+    # index-forced params stay null here (the wrapper assumes 2^31, the
+    # stated #163 residual).
+    g_int_bound is {}
     for k in range of (len of names):
         local v is names[k]
         if (nm[v] == 1) and (bt[v] != 1):
-            if (is_counter of [v, assigns[v]]) == 1:
+            local cb is is_counter of [v, assigns[v]]
+            if cb != null:
                 iv[v] is 1
+                g_int_bound[v] is cb
     g_int is iv
     return iv
 
@@ -1522,6 +1573,15 @@ define emit_num(node, nm, bt, raw) as:
         if g_observed == 1:
             return env_read_num of [node[1], "\"" + (c_escape of (G_CUR_FN[0])) + ": name " + (c_escape of node[1]) + "\""]
         if nm[node[1]] == 1:
+            # (round 74) an int-classified name in the DOUBLE path must be
+            # CAST: C's promotion keeps `long * long` integral, so a
+            # demoted product's operands wrapped in long arithmetic before
+            # num_guard ever saw a double -- the demotion at is_int_expr
+            # was ineffective because the raw C long names re-created the
+            # long op. Values are bounded < 3e9 << 2^53, so the cast is
+            # exact; emit_int reads the raw name and is unaffected.
+            if g_int[node[1]] == 1:
+                return "((double)" + (cn of node[1]) + ")"
             return cn of node[1]
         # A Value-typed C name (buffer/dict/tensor param or local) in a numeric
         # context is a VM runtime error (`u & 1`, `w[v]` with v a buffer) — and
@@ -1679,9 +1739,17 @@ define emit_num(node, nm, bt, raw) as:
         # arm above requires it — the VM raises otherwise.
         return "aot_num_ck_at(" + (emit_val of [node, nm, bt]) + ", \"" + (c_escape of (G_CUR_FN[0])) + ": value-callee call\")"
     if t == "binop":
-        # whole expression proven integer -> native long arithmetic, no guard
+        # whole expression proven integer -> native long arithmetic, no guard.
+        # (round 74) the result is CAST to double at this boundary: emit_num's
+        # consumers are double contexts, and a long-typed C subexpression
+        # re-creates integral arithmetic in its PARENT op -- `(i*i)+(i*i)`
+        # had in-budget long products whose long SUM wrapped inside the
+        # demoted double arm. The cast is EXACT: the composition budget
+        # caps int-expr values at 2^53, where every long is an exact
+        # double. Direct emit_int consumers (index positions) are
+        # unaffected.
         if (is_int_expr of node) == 1:
-            return emit_int of node
+            return "((double)" + (emit_int of node) + ")"
         local op is node[1]
         local l is emit_num of [node[2], nm, bt, raw]
         local r is emit_num of [node[3], nm, bt, raw]

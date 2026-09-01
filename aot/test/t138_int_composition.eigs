@@ -1,0 +1,23 @@
+# Round 74: the round-73 bound guaranteed each COUNTER's value; admission
+# recursed with no composition budget, so `(i*i)*i` (8e27) and
+# `(i*i)+(i*i)` (1.8e19) over in-bound counters wrapped the signed long
+# (silent wrong numbers, plus UB). int_expr_bound now propagates a
+# magnitude bound through the grammar (literals |v|; counters their exact
+# is_counter bound; index-forced params an ASSUMED 2^31 -- the #163
+# residual, explicit in one place). The budget is 2^53, not 2^63: below
+# it every long is an exact double, so long arithmetic and the VM's
+# per-op-rounded doubles agree bit-for-bit; between 2^53 and 2^63 the
+# exact long path would be 1 ulp off the VM by construction. Demoted
+# expressions take the double path with CASTS at both leak points (bare
+# int idents and int subexpressions inside double ops -- C's promotion
+# kept `long op long` integral and re-created the wrap inside the
+# "demoted" arm, twice).
+i is 2000000000
+print of ((i * i) * i)
+j is 2999999999
+print of ((j * j) + (j * j))
+print of ((j * j) + 1)
+k is 0
+for m in range of 100:
+    k is k + 3
+print of (k * k)
