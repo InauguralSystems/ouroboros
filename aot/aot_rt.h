@@ -663,8 +663,14 @@ static void aot_buf_expect(Value *b) { aot_buf_expect_at(b, "?"); }
  * prefix is semantics). Line is g_trace_current_line: 0 unless traced,
  * per the documented siting contract. */
 static long aot_idx(double d, int count) {
+    /* (round 96) INT width, mirroring the VM's vm_index_is_int: its check
+     * is `int i = (int)d; (double)i != d`, so an index past INT_MAX fails
+     * the INTEGER test, not the bounds test -- `b[65536 * 65536]` says
+     * "index must be an integer, got 4.29497e+09" there while a long-width
+     * check here reported an out-of-range bound instead. */
+    int ii = (int)d;
+    if ((double)ii != d) { fprintf(stderr, "Error line %d: index must be an integer, got %g\n", g_trace_current_line, d); exit(1); }
     long i = (long)d;
-    if ((double)i != d) { fprintf(stderr, "Error line %d: index must be an integer, got %g\n", g_trace_current_line, d); exit(1); }
     if (i < 0) i += count;
     if (i < 0 || i >= count) { fprintf(stderr, "Error line %d: buffer index %ld out of range (length %d)\n", g_trace_current_line, (long)d, count); exit(1); }
     return i;
@@ -701,6 +707,10 @@ static void   aot_buf_set_at(Value *b, double idx, double v, const char *site) {
    (provably-integer induction vars + dimensions), so skip the float integer
    check. Negative-resolve + bounds-check still mirror the VM. */
 static long aot_idx_i(long i, int count) {
+    /* (round 96) the int-width integer test applies here too: this path is
+     * reached with a long computed by native integer arithmetic, and a
+     * value past INT_MAX is what the VM calls a non-integer index. */
+    if ((long)(int)i != i) { fprintf(stderr, "Error line %d: index must be an integer, got %g\n", g_trace_current_line, (double)i); exit(1); }
     if (i < 0) i += count;
     if (i < 0 || i >= count) { fprintf(stderr, "Error line %d: buffer index %ld out of range (length %d)\n", g_trace_current_line, i, count); exit(1); }
     return i;

@@ -845,7 +845,20 @@ define emit_int(node) as:
     local n is unwrap of node
     local t is n[0]
     if t == "num":
-        return str of n[1]
+        # (round 96) the literal leaf carries LONG width. A bare decimal
+        # constant is typed `int` by C whenever it fits, so a
+        # proven-integer expression whose leaves are all literals computed
+        # in 32 bits while rounds 72/73/74 priced the admission budget at
+        # 2^53: `65536 * 65536` printed 0, `1000000 * 1000000` printed
+        # -727379968, and `if (1000000 * 1000000) > 0:` took the OTHER
+        # BRANCH -- all rc 0. Invariant 14 on the arc built to enforce a
+        # bound: the budget was tightened three times against 2^63/2^53
+        # and never once against the width the emitted C actually uses.
+        # (The ident leaf was safe by accident -- int-classified names are
+        # declared `long` -- which is why `a * a` matched where the
+        # literal form did not, and why literals ABOVE INT_MAX also
+        # matched: C types those `long` already.)
+        return "((long)" + (str of n[1]) + ")"
     if t == "ident":
         return cn of n[1]
     if t == "unary":
@@ -2306,13 +2319,16 @@ define emit_val(node, nm, bt) as:
             return "({ rt_error(EK_TYPE, g_trace_current_line, \"cannot call num\"); make_null(); })"
         if (barg[0] == "list") and ((len of barg) == 2) and ((len of barg[1]) == 1):
             local hc1 is ic_cache of 0
-            if (has_call_node of (barg[1])[0]) == 1:
-                return "({ " + hc1[0] + "Value* _sqcf = aot_call_resolve(__eigs_g, \"" + callee[1] + "\", " + hc1[1] + "); Value* _sqca = " + (emit_val of [(barg[1])[0], nm, bt]) + "; aot_call_dispatch(_sqcf, _sqca); })"
-            return "({ " + hc1[0] + "aot_call_name_ic(__eigs_g, \"" + callee[1] + "\", " + (emit_val of [(barg[1])[0], nm, bt]) + ", " + hc1[1] + "); })"
+            # (round 96) UNCONDITIONAL. Round 95 gated the split on the
+            # argument containing a call, but the VM loads the callee
+            # first ALWAYS, and an argument with no call can still raise:
+            # `nosuch of alsonosuch` reported the ARGUMENT's undefined
+            # name, and `nosuch of lst[7]` reported an out-of-range index,
+            # where the VM names the callee. Same stdout and rc, wrong
+            # message -- and the _err tier compares message text.
+            return "({ " + hc1[0] + "Value* _sqcf = aot_call_resolve(__eigs_g, \"" + callee[1] + "\", " + hc1[1] + "); Value* _sqca = " + (emit_val of [(barg[1])[0], nm, bt]) + "; aot_call_dispatch(_sqcf, _sqca); })"
         local hc2 is ic_cache of 0
-        if (has_call_node of node[2]) == 1:
-            return "({ " + hc2[0] + "Value* _sqcf = aot_call_resolve(__eigs_g, \"" + callee[1] + "\", " + hc2[1] + "); Value* _sqca = " + (emit_val of [node[2], nm, bt]) + "; aot_call_dispatch(_sqcf, _sqca); })"
-        return "({ " + hc2[0] + "aot_call_name_ic(__eigs_g, \"" + callee[1] + "\", " + (emit_val of [node[2], nm, bt]) + ", " + hc2[1] + "); })"
+        return "({ " + hc2[0] + "Value* _sqcf = aot_call_resolve(__eigs_g, \"" + callee[1] + "\", " + hc2[1] + "); Value* _sqca = " + (emit_val of [node[2], nm, bt]) + "; aot_call_dispatch(_sqcf, _sqca); })"
     throw of ("AOT: cannot emit value node '" + t + "'")
 
 # Render a tensor-valued expression as a C `AotTensor` expr. Producers (matmul/

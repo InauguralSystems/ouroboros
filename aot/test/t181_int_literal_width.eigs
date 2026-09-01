@@ -1,0 +1,29 @@
+# Round 96: emit_int's LITERAL leaf emitted a bare C constant, which C
+# types `int` whenever it fits -- so a "proven-integer" expression whose
+# leaves are all literals computed in 32 BITS while rounds 72/73/74 priced
+# the admission budget at 2^53. The budget was tightened three times
+# against 2^63 and 2^53 and never once against the width the emitted C
+# actually uses (invariant 14, on the arc built to enforce a bound).
+#
+#   65536 * 65536        VM 4294967296    AOT 0
+#   1000000 * 1000000    VM 1e12          AOT -727379968
+#   if (1000000 * 1000000) > 0:  VM takes the branch, AOT does NOT
+#
+# The ident leaf was safe by accident (int-classified names are declared
+# `long`), which is why `a * a` matched where the literal form did not --
+# and literals ABOVE INT_MAX also matched, because C types those `long`
+# already. That boundary is what pins the diagnosis, so it is pinned here.
+print of (65536 * 65536)
+print of (1000000 * 1000000)
+print of (100000 * 100000)
+print of (50000 * 50000)
+print of (2000000000 + 2000000000)
+print of (46341 * 46341)
+total is 1024 * 1024 * 4096
+print of total
+if (1000000 * 1000000) > 0:
+    print of "positive"
+print of (3000000000 - 1)
+print of (10000000000 + 1)
+a is 100000
+print of (a * a)
