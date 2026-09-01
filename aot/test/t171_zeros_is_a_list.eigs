@@ -1,0 +1,32 @@
+# Round 91: `zeros of N` was compiled as `buffer of N` on the belief they
+# make "the same length-N zero buffer". They do not: this VM's `zeros` is a
+# TENSOR builtin returning a LIST, and `buffer` returns a VAL_BUFFER --
+# different type, printing, shape, and builtin dispatch. Sixteen fixtures
+# used `zeros` and every one touched the container ONLY through indexed
+# read/write, `len of`, and reductions, where a 1-D zero list and a 1-D
+# zero buffer are indistinguishable: invariant 7's nastier form, a
+# fixtured path with no DISCRIMINATING fixture. This one discriminates on
+# every axis at once. (The old comment blamed an arena clobber for the
+# substitution; measured this round, emitting the real callee is clean.)
+z is zeros of 3
+b is buffer of 3
+print of (type of z)
+print of (type of b)
+print of z
+print of b
+z[0] is 1
+z[1] is 2
+print of z
+print of (len of z)
+print of (sum of z)
+print of (norm of z)
+w is zeros of 3
+w[0] is 3
+w[1] is 4
+print of (dot of [z, w])
+m is zeros of [2, 3]
+print of m
+print of (type of m)
+print of (len of m)
+print of (sum of z[0 : 2])
+print of (norm of z[0 : 2])

@@ -16,8 +16,8 @@ define activate(out, x) as:
         i is i + 1
 
 n is 4096
-x is zeros of n
-out is zeros of n
+x is buffer of n
+out is buffer of n
 i is 0
 loop while i < n:
     x[i] is i * 0.001

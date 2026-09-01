@@ -8,8 +8,8 @@
 # The loop's written names (O, D, ACC) may not appear in hoisted
 # bounds or the store base, and read bases must be structurally AFFINE
 # in D (is_affine_in); violations demote to the scalar path.
-res is zeros of 8
-src is zeros of 32
+res is buffer of 8
+src is buffer of 32
 k is 0
 loop while k < 32:
     src[k] is k + 1

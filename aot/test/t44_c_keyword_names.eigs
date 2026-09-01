@@ -25,7 +25,7 @@ define float(n) as:
     return extern
 
 define char(void) as:
-    local union is zeros of 4
+    local union is buffer of 4
     local signed is 0
     loop while signed < 4:
         union[signed] is signed * 1.5

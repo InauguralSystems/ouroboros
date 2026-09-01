@@ -1566,6 +1566,31 @@ define loop_gf(loopnode, minits) as:
 # `buf[lo:hi]`. Returns [buf_value_name, lo_C, hi_C] where lo/hi are raw bound
 # expressions (null start -> 0, null end -> aot_buf_len); the runtime helpers
 # resolve negatives + bounds-check exactly like the VM's OP_SLICE_GET.
+# (round 91) Sequence a multi-operand C call in SOURCE order when any
+# operand can CALL: C argument order is unspecified and the VM evaluates
+# left-to-right (the round-88/89/90 family, five sites further). Each
+# operand is hoisted into a typed temp inside a statement expression.
+define seq_call3(fn, ops, types) as:
+    local haz is 0
+    for k in range of (len of ops):
+        if ((ops[k])[1]) == 1:
+            haz is 1
+    if haz == 0:
+        local plain is ""
+        for k in range of (len of ops):
+            if k > 0:
+                plain is plain + ", "
+            plain is plain + ((ops[k])[0])
+        return fn + "(" + plain + ")"
+    local pre is "({ "
+    local names is ""
+    for k in range of (len of ops):
+        pre is pre + (types[k]) + " _sqo" + (str of k) + " = " + ((ops[k])[0]) + "; "
+        if k > 0:
+            names is names + ", "
+        names is names + "_sqo" + (str of k)
+    return pre + fn + "(" + names + "); })"
+
 define slice_arg_parts(argnode, nm, bt) as:
     local n is unwrap of argnode
     if n[0] == "slice":
@@ -1580,8 +1605,19 @@ define slice_arg_parts(argnode, nm, bt) as:
         # [0] is a C NAME, so it is mangled like every other emitted name —
         # [2] already was, and the asymmetry meant every consumer emitted the
         # raw buffer name (`aot_dot(a, b)` against a declared `eig_a`).
-        return [(cn of bnm), lo, hi]
-    return [(cn of n[1]), "0", "aot_buf_len(" + (cn of n[1]) + ")"]
+        # (round 91) 4th element: do the BOUND expressions contain a call?
+        # The consumers pass these as bare C arguments, so `sum of b[lo of
+        # [] : hi of []]` evaluated HI before LO under this gcc where the
+        # VM is left-to-right (VM "LO HI", AOT "HI LO", rc 0 both).
+        local slhaz is 0
+        if n[2] != null:
+            if (has_call_node of n[2]) == 1:
+                slhaz is 1
+        if n[3] != null:
+            if (has_call_node of n[3]) == 1:
+                slhaz is 1
+        return [(cn of bnm), lo, hi, slhaz]
+    return [(cn of n[1]), "0", "aot_buf_len(" + (cn of n[1]) + ")", 0]
 
 define emit_num(node, nm, bt, raw) as:
     local t is node[0]
@@ -1679,8 +1715,8 @@ define emit_num(node, nm, bt, raw) as:
                 local nib is emit_val_borrow of [node[1], nm, bt, node[2]]
                 if nib != "":
                     return "aot_index_num_ib(" + nib + ", " + (emit_num of [node[2], nm, bt, 0]) + ", \"" + (c_escape of (G_CUR_FN[0])) + ": index read\")"
-                return "aot_num_ck_at(aot_index_get_i(" + (emit_val of [node[1], nm, bt]) + ", " + (emit_num of [node[2], nm, bt, 0]) + "), \"" + (c_escape of (G_CUR_FN[0])) + ": index read\")"
-            return "aot_num_ck_at(aot_index_get(" + (emit_val of [node[1], nm, bt]) + ", " + (emit_val of [node[2], nm, bt]) + "), \"" + (c_escape of (G_CUR_FN[0])) + ": index read\")"
+                return "aot_num_ck_at(" + (seq_call3 of ["aot_index_get_i", [[(emit_val of [node[1], nm, bt]), (has_call_node of node[1])], [(emit_num of [node[2], nm, bt, 0]), (has_call_node of node[2])]], ["Value*", "double"]]) + ", \"" + (c_escape of (G_CUR_FN[0])) + ": index read\")"
+            return "aot_num_ck_at(" + (seq_call3 of ["aot_index_get", [[(emit_val of [node[1], nm, bt]), (has_call_node of node[1])], [(emit_val of [node[2], nm, bt]), (has_call_node of node[2])]], ["Value*", "Value*"]]) + ", \"" + (c_escape of (G_CUR_FN[0])) + ": index read\")"
         if (is_int_expr of node[2]) == 1:
             return "aot_buf_get_i(" + (cn of tgt[1]) + ", " + (emit_int of node[2]) + ")"
         return "aot_buf_get(" + (cn of tgt[1]) + ", " + (emit_num of [node[2], nm, bt, 0]) + ")"
@@ -1718,25 +1754,31 @@ define emit_num(node, nm, bt, raw) as:
                 local db is unwrap of delems[1]
                 if (da[0] == "ident") and (db[0] == "ident"):
                     if (bt[da[1]] == 1) and (bt[db[1]] == 1):
-                        return "aot_dot(" + (cn of da[1]) + ", " + (cn of db[1]) + ")"
+                        return "aot_dot_v(__eigs_g, " + (cn of da[1]) + ", " + (cn of db[1]) + ")"
                 if (da[0] == "slice") or (db[0] == "slice"):
                     local pa is slice_arg_parts of [delems[0], nm, bt]
                     local pb is slice_arg_parts of [delems[1], nm, bt]
-                    return "aot_dot_range(" + pa[0] + ", " + pa[1] + ", " + pa[2] + ", " + pb[0] + ", " + pb[1] + ", " + pb[2] + ")"
+                    if ((pa[3]) == 1) or ((pb[3]) == 1):
+                        return "({ double _sqa1 = " + pa[1] + "; double _sqa2 = " + pa[2] + "; double _sqb1 = " + pb[1] + "; double _sqb2 = " + pb[2] + "; aot_dot_range_v(__eigs_g, " + pa[0] + ", _sqa1, _sqa2, " + pb[0] + ", _sqb1, _sqb2); })"
+                    return "aot_dot_range_v(__eigs_g, " + pa[0] + ", " + pa[1] + ", " + pa[2] + ", " + pb[0] + ", " + pb[1] + ", " + pb[2] + ")"
             if callee[1] == "sum":
                 local sa is unwrap of node[2]
                 if (sa[0] == "ident") and (bt[sa[1]] == 1):
-                    return "aot_sum(" + (cn of sa[1]) + ")"
+                    return "aot_sum_v(__eigs_g, " + (cn of sa[1]) + ")"
                 if sa[0] == "slice":
                     local ps is slice_arg_parts of [node[2], nm, bt]
-                    return "aot_sum_range(" + ps[0] + ", " + ps[1] + ", " + ps[2] + ")"
+                    if (ps[3]) == 1:
+                        return "({ double _sqs1 = " + ps[1] + "; double _sqs2 = " + ps[2] + "; aot_sum_range_v(__eigs_g, " + ps[0] + ", _sqs1, _sqs2); })"
+                    return "aot_sum_range_v(__eigs_g, " + ps[0] + ", " + ps[1] + ", " + ps[2] + ")"
             if callee[1] == "norm":
                 local na is unwrap of node[2]
                 if (na[0] == "ident") and (bt[na[1]] == 1):
-                    return "aot_norm(" + (cn of na[1]) + ")"
+                    return "aot_norm_v(__eigs_g, " + (cn of na[1]) + ")"
                 if na[0] == "slice":
                     local pn is slice_arg_parts of [node[2], nm, bt]
-                    return "aot_norm_range(" + pn[0] + ", " + pn[1] + ", " + pn[2] + ")"
+                    if (pn[3]) == 1:
+                        return "({ double _sqn1 = " + pn[1] + "; double _sqn2 = " + pn[2] + "; aot_norm_range_v(__eigs_g, " + pn[0] + ", _sqn1, _sqn2); })"
+                    return "aot_norm_range_v(__eigs_g, " + pn[0] + ", " + pn[1] + ", " + pn[2] + ")"
             if callee[1] == "exp":
                 # VM exp guards the result (exp of 1000 -> 1e308), so match.
                 return "num_guard(exp(" + (emit_num of [node[2], nm, bt, 0]) + "))"
@@ -1939,8 +1981,8 @@ define emit_val(node, nm, bt) as:
             local bib is emit_val_borrow of [node[1], nm, bt, node[2]]
             if bib != "":
                 return "aot_index_get_ib(" + bib + ", " + (emit_num of [node[2], nm, bt, 0]) + ")"
-            return "aot_index_get_i(" + (emit_val of [node[1], nm, bt]) + ", " + (emit_num of [node[2], nm, bt, 0]) + ")"
-        return "aot_index_get(" + (emit_val of [node[1], nm, bt]) + ", " + (emit_val of [node[2], nm, bt]) + ")"
+            return seq_call3 of ["aot_index_get_i", [[(emit_val of [node[1], nm, bt]), (has_call_node of node[1])], [(emit_num of [node[2], nm, bt, 0]), (has_call_node of node[2])]], ["Value*", "double"]]
+        return seq_call3 of ["aot_index_get", [[(emit_val of [node[1], nm, bt]), (has_call_node of node[1])], [(emit_val of [node[2], nm, bt]), (has_call_node of node[2])]], ["Value*", "Value*"]]
     if t == "dot":
         # general dict field read (#86) -> owned Value. aot_dot_get consumes
         # the owned target and mirrors the VM's field-read semantics (null
@@ -2124,7 +2166,7 @@ define emit_val(node, nm, bt) as:
         # key on a path DMG executes once per emulated instruction (#130).
         if (callee[1] == "dispatch") and (barg[0] == "list") and ((len of barg) == 2) and ((len of barg[1]) == 3):
             if (is_num_expr of [(barg[1])[1], nm, bt]) == 1:
-                return "aot_dispatch(" + (emit_val of [(barg[1])[0], nm, bt]) + ", " + (emit_num of [(barg[1])[1], nm, bt, 0]) + ", " + (emit_val of [(barg[1])[2], nm, bt]) + ")"
+                return seq_call3 of ["aot_dispatch", [[(emit_val of [(barg[1])[0], nm, bt]), (has_call_node of (barg[1])[0])], [(emit_num of [(barg[1])[1], nm, bt, 0]), (has_call_node of (barg[1])[1])], [(emit_val of [(barg[1])[2], nm, bt]), (has_call_node of (barg[1])[2])]], ["Value*", "double", "Value*"]]
         # (round 71) calling a name that is an UNBOXED C numeric: the env has
         # no binding (the value lives in a C double/long), so the helper's
         # env miss claimed "undefined function 'x'" -- a FALSE reason for a
@@ -2422,10 +2464,8 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
                 # `buffer of [r, c]` -> a shaped 2-D buffer; pass the list Value.
                 local barg is unwrap of cc[2]
                 if barg[0] == "list":
-                    return ind + (cn of name) + " = aot_call_name(__eigs_g, \"buffer\", " + (emit_val of [cc[2], nm, bt]) + ");\n"
-                # Always create via the heap-zeroed `buffer` builtin: `zeros` is
-                # arena-allocated and the AOT's flat arena clobbers it.
-                return ind + (cn of name) + " = aot_call_name(__eigs_g, \"buffer\", make_num(" + (emit_num of [cc[2], nm, bt, 0]) + "));\n"
+                    return ind + (cn of name) + " = aot_call_name(__eigs_g, \"" + (unwrap of cc[1])[1] + "\", " + (emit_val of [cc[2], nm, bt]) + ");\n"
+                return ind + (cn of name) + " = aot_call_name(__eigs_g, \"" + (unwrap of cc[1])[1] + "\", make_num(" + (emit_num of [cc[2], nm, bt, 0]) + "));\n"
             # buffer var assigned from a call: a USER function goes through
             # the typed C call; a BUILTIN callee (e.g. trim/substr on a
             # string riding the buf class) must NOT — g_funcs[builtin] is
@@ -2545,14 +2585,20 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
         if tgt[0] == "ident":
             if bt[tgt[1]] == 1:
                 if (is_int_expr of node[2]) == 1:
+                    # (round 91) index before value, VM order (the boxed
+                    # twins got this in round 88; this arm did not).
+                    if ((has_call_node of node[2]) == 1) or ((has_call_node of node[3]) == 1):
+                        return ind + "{ long _sbi = " + (emit_int of node[2]) + "; aot_buf_set_i(" + (cn of tgt[1]) + ", _sbi, " + (emit_num of [node[3], nm, bt, 0]) + "); }\n"
                     return ind + "aot_buf_set_i(" + (cn of tgt[1]) + ", " + (emit_int of node[2]) + ", " + (emit_num of [node[3], nm, bt, 0]) + ");\n"
+                if ((has_call_node of node[2]) == 1) or ((has_call_node of node[3]) == 1):
+                    return ind + "{ double _sbi = " + (emit_num of [node[2], nm, bt, 0]) + "; aot_buf_set(" + (cn of tgt[1]) + ", _sbi, " + (emit_num of [node[3], nm, bt, 0]) + "); }\n"
                 return ind + "aot_buf_set(" + (cn of tgt[1]) + ", " + (emit_num of [node[2], nm, bt, 0]) + ", " + (emit_num of [node[3], nm, bt, 0]) + ");\n"
         # general boxed index-assign (#86): list / dict / buffer target as a
         # Value* — aot_index_set mirrors OP_INDEX_SET and consumes/adopts.
         if (is_num_expr of [node[2], nm, bt]) == 1:
             local sib is emit_val_borrow of [node[1], nm, bt, [node[2], node[3]]]
             if sib != "":
-                return ind + "aot_index_set_ib(" + sib + ", " + (emit_num of [node[2], nm, bt, 0]) + ", " + (emit_val of [node[3], nm, bt]) + ");\n"
+                return ind + "{ double _sai = " + (emit_num of [node[2], nm, bt, 0]) + "; aot_index_set_ib(" + sib + ", _sai, " + (emit_val of [node[3], nm, bt]) + "); }\n"
             # (round 88) SEQUENCE the target before the rhs: C argument
             # order is unspecified, and gcc evaluated an outward-rebinding
             # rhs FIRST, so the setter wrote into the container the rebind

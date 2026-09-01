@@ -1,0 +1,46 @@
+# Round 91: five more unsequenced multi-operand emissions, same family as
+# rounds 88-90 (C argument order is unspecified; the VM is left-to-right).
+# Executed divergences: aot_dispatch's three args (VM "A B C", AOT "C B A"),
+# aot_index_get's target-vs-index pair (VM "A B", AOT "B A"), the BUFFER
+# index-assign arm's index-vs-value (VM "K V", AOT "V K" -- its boxed twins
+# were sequenced in round 88, this arm was not), and the slice bound pairs
+# feeding sum/norm/dot_range through slice_arg_parts (VM "LO HI", AOT
+# "HI LO"). All now hoist typed temps in source order under call-hazard.
+ordlog is ""
+define note(s) as:
+    ordlog is ordlog + s
+    return 0
+define mk() as:
+    x is note of "A"
+    return [10, 20, 30]
+define kx() as:
+    x is note of "B"
+    return 1
+v is (mk of [])[kx of []]
+print of v
+print of ordlog
+ordlog is ""
+b is buffer of 4
+define ki() as:
+    x is note of "K"
+    return 1
+define vi() as:
+    x is note of "V"
+    return 7
+b[ki of []] is vi of []
+print of b[1]
+print of ordlog
+ordlog is ""
+c is buffer of 4
+c[0] is 1
+c[1] is 2
+c[2] is 3
+c[3] is 4
+define lo() as:
+    x is note of "L"
+    return 1
+define hi() as:
+    x is note of "H"
+    return 3
+print of (sum of c[lo of [] : hi of []])
+print of ordlog

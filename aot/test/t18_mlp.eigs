@@ -35,12 +35,12 @@ define forward(logits, inp, hW, hb, oW, hbuf) as:
 nin is 16
 nhid is 32
 nvoc is 54
-inp is zeros of nin
-hW is zeros of (nin * nhid)
-hb is zeros of nhid
-oW is zeros of (nhid * nvoc)
-hbuf is zeros of nhid
-logits is zeros of nvoc
+inp is buffer of nin
+hW is buffer of (nin * nhid)
+hb is buffer of nhid
+oW is buffer of (nhid * nvoc)
+hbuf is buffer of nhid
+logits is buffer of nvoc
 i is 0
 loop while i < nin:
     inp[i] is i * 0.05

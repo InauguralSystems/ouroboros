@@ -1,5 +1,5 @@
 DT is 2
-G is zeros of 4
+G is buffer of 4
 G[0] is 10
 G[1] is 20
 
@@ -10,7 +10,7 @@ define readg(idx) as:
     return G[idx]
 
 n is 6
-xs is zeros of n
+xs is buffer of n
 i is 0
 loop while i < n:
     xs[i] is step of i

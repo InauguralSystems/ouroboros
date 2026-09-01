@@ -766,6 +766,35 @@ static inline double aot_dot(Value *a, Value *b) {
     return num_guard(s);
 }
 
+/* (round 91) The fast reductions index data.buffer.data with NO type check,
+ * but the `bt` class is "indexable value" and `zeros of N` produces a LIST in
+ * this VM -- `sum of z` returned 2.05e-309 and `norm of z` returned 0 against
+ * the VM's 3 and 2.236, rc 0 both sides. The _v wrappers keep the SIMD path
+ * for real buffers and defer every other shape to the runtime's OWN builtin:
+ * a hand-written fallback is not faithful (measured, this VM's `dot` over
+ * LISTS yields 0 while sum/norm fold elementwise), so the oracle answers by
+ * construction at a cost only non-buffer shapes pay. */
+static Value *aot_call_name(Env *g, const char *name, Value *arg);
+static inline long aot_any_len(Value *A) {
+    if (A && A->type == VAL_LIST) return A->data.list.count;
+    if (A && A->type == VAL_BUFFER) return A->data.buffer.count;
+    return 0;
+}
+static inline double aot_any_at(Value *A, long i) {
+    if (A && A->type == VAL_LIST) {
+        Value *e = A->data.list.items[i];
+        return (e && e->type == VAL_NUM) ? e->data.num : 0.0;
+    }
+    return A->data.buffer.data[i];
+}
+static double aot_reduce_poly1(Env *g, const char *name, Value *a) {
+    if (a) val_incref(a);
+    Value *r = aot_call_name(g, name, a);
+    double d = (r && r->type == VAL_NUM) ? r->data.num : 0.0;
+    if (r) val_decref(r);
+    return d;
+}
+
 /* sum of a / norm of a — sibling association-unspecified reductions (same
  * reassociated-SIMD license as aot_dot; tolerance oracle, not byte-exact). */
 static inline double aot_sum(Value *a) {
@@ -789,6 +818,27 @@ static inline double aot_norm(Value *a) {
     double s = aot_vhsum(acc);
     for (; i < n; i++) s = num_guard(s + num_guard(d[i] * d[i]));
     return num_guard(sqrt(s));
+}
+
+static inline double aot_sum_v(Env *g, Value *a) {
+    if (a && a->type == VAL_BUFFER) return aot_sum(a);
+    return aot_reduce_poly1(g, "sum", a);
+}
+static inline double aot_norm_v(Env *g, Value *a) {
+    if (a && a->type == VAL_BUFFER) return aot_norm(a);
+    return aot_reduce_poly1(g, "norm", a);
+}
+static inline double aot_dot_v(Env *g, Value *a, Value *b) {
+    if (a && b && a->type == VAL_BUFFER && b->type == VAL_BUFFER) return aot_dot(a, b);
+    Value *l = make_list(2);
+    if (a) val_incref(a);
+    list_append_owned(l, a);
+    if (b) val_incref(b);
+    list_append_owned(l, b);
+    Value *r = aot_call_name(g, "dot", l);
+    double d = (r && r->type == VAL_NUM) ? r->data.num : 0.0;
+    if (r) val_decref(r);
+    return d;
 }
 
 /* ---- ranged reductions over a slice `buf[lo:hi]` (zero-copy) ----
@@ -844,6 +894,42 @@ static inline double aot_norm_range(Value *A, double sa, double ea) {
     double s = aot_vhsum(acc);
     for (; i < n; i++) s = num_guard(s + num_guard(a[i] * a[i]));
     return num_guard(sqrt(s));
+}
+/* (round 91) Ranged siblings of the _v wrappers: same rule, same reason --
+ * the slice is materialized and handed to the runtime's builtin for any
+ * non-buffer container. */
+static Value *aot_slice_materialize(Value *A, double sa, double ea) {
+    long la = aot_any_len(A);
+    long s1 = aot_sbound(sa, la), e1 = aot_sbound(ea, la);
+    if (s1 > e1) { fprintf(stderr, "slice start > end\n"); exit(1); }
+    long n = e1 - s1;
+    Value *l = make_list(n > 0 ? n : 1);
+    for (long i = s1; i < e1; i++) list_append_owned(l, make_num(aot_any_at(A, i)));
+    return l;
+}
+static inline double aot_sum_range_v(Env *g, Value *A, double sa, double ea) {
+    if (A && A->type == VAL_BUFFER) return aot_sum_range(A, sa, ea);
+    Value *r = aot_call_name(g, "sum", aot_slice_materialize(A, sa, ea));
+    double d = (r && r->type == VAL_NUM) ? r->data.num : 0.0;
+    if (r) val_decref(r);
+    return d;
+}
+static inline double aot_norm_range_v(Env *g, Value *A, double sa, double ea) {
+    if (A && A->type == VAL_BUFFER) return aot_norm_range(A, sa, ea);
+    Value *r = aot_call_name(g, "norm", aot_slice_materialize(A, sa, ea));
+    double d = (r && r->type == VAL_NUM) ? r->data.num : 0.0;
+    if (r) val_decref(r);
+    return d;
+}
+static inline double aot_dot_range_v(Env *g, Value *A, double sa, double ea, Value *B, double sb, double eb) {
+    if (A && B && A->type == VAL_BUFFER && B->type == VAL_BUFFER) return aot_dot_range(A, sa, ea, B, sb, eb);
+    Value *l = make_list(2);
+    list_append_owned(l, aot_slice_materialize(A, sa, ea));
+    list_append_owned(l, aot_slice_materialize(B, sb, eb));
+    Value *r = aot_call_name(g, "dot", l);
+    double d = (r && r->type == VAL_NUM) ? r->data.num : 0.0;
+    if (r) val_decref(r);
+    return d;
 }
 
 /* ---- observer system ----
