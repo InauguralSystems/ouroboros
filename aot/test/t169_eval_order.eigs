@@ -1,0 +1,39 @@
+# Round 89: the evaluation-order family beyond setters -- user-fn
+# ARGUMENT LISTS and the binop operand pairs were bare C arguments,
+# order unspecified: gcc ran a sibling argument's outward-rebinding
+# call before a global read (VM 105, AOT 1005), two call arguments
+# right-to-left (VM 12, AOT 21), and string-concat/f-string chains
+# likewise. emit_args now hoists every argument into typed temps in
+# the VM's left-to-right push order whenever any argument can call;
+# the boxed and numeric binops sequence both operands the same way
+# (and/or keep their short-circuit ternaries untouched).
+x is 1
+define bump(d) as:
+    x is 10
+    return 5
+define h(a, b) as:
+    return a * 100 + b
+print of h of [x, bump of [0]]
+
+rec is 0
+define f(d) as:
+    rec is rec * 10 + 1
+    return 1
+define g(d) as:
+    rec is rec * 10 + 2
+    return 2
+define h2(a, b) as:
+    return a - b
+print of h2 of [f of [0], g of [0]]
+print of rec
+
+rec is 0
+define f3(d) as:
+    rec is rec * 10 + 1
+    return "A"
+define g3(d) as:
+    rec is rec * 10 + 2
+    return "B"
+s is f3 of [0] + g3 of [0]
+print of s
+print of rec

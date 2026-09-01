@@ -1783,34 +1783,50 @@ define emit_num(node, nm, bt, raw) as:
         local op is node[1]
         local l is emit_num of [node[2], nm, bt, raw]
         local r is emit_num of [node[3], nm, bt, raw]
+        # (round 89) sequence when either operand can CALL: bare C
+        # operator operands evaluate in unspecified order while the VM is
+        # left-then-right -- this arm had only matched by gcc mood. Both
+        # operands hoist into temps in VM order inside one statement
+        # expression; every return in the arm carries the pre/post pair.
+        # The and/or ternary forms keep seqpre empty on purpose: their l
+        # is already evaluated first and pre-hoisting r would break
+        # short-circuit side effects.
+        local seqpre is ""
+        local seqpost is ""
+        if (op != "and") and (op != "or"):
+            if ((has_call_node of node[2]) == 1) or ((has_call_node of node[3]) == 1):
+                seqpre is "({ double _sqbl = " + l + "; double _sqbr = " + r + "; "
+                seqpost is "; })"
+                l is "_sqbl"
+                r is "_sqbr"
         # bitwise: the VM's INT_BINOP — int64 two's-complement, shift counts
         # masked to 0..63 (defined for any count, matching hardware). The
         # final (double) cast is the VM's own last step (always finite), so
         # no num_guard — byte-exact by construction.
         if op == "&":
-            return "((double)((int64_t)(" + l + ") & (int64_t)(" + r + ")))"
+            return seqpre + ("((double)((int64_t)(" + l + ") & (int64_t)(" + r + ")))") + seqpost
         if op == "|":
-            return "((double)((int64_t)(" + l + ") | (int64_t)(" + r + ")))"
+            return seqpre + ("((double)((int64_t)(" + l + ") | (int64_t)(" + r + ")))") + seqpost
         if op == "^":
-            return "((double)((int64_t)(" + l + ") ^ (int64_t)(" + r + ")))"
+            return seqpre + ("((double)((int64_t)(" + l + ") ^ (int64_t)(" + r + ")))") + seqpost
         if op == "<<":
-            return "((double)((int64_t)(" + l + ") << ((int64_t)(" + r + ") & 63)))"
+            return seqpre + ("((double)((int64_t)(" + l + ") << ((int64_t)(" + r + ") & 63)))") + seqpost
         if op == ">>":
-            return "((double)((int64_t)(" + l + ") >> ((int64_t)(" + r + ") & 63)))"
+            return seqpre + ("((double)((int64_t)(" + l + ") >> ((int64_t)(" + r + ") & 63)))") + seqpost
         if op == "+":
             if raw == 1:
-                return "(" + l + " + " + r + ")"
-            return "num_guard(" + l + " + " + r + ")"
+                return seqpre + ("(" + l + " + " + r + ")") + seqpost
+            return seqpre + ("num_guard(" + l + " + " + r + ")") + seqpost
         if op == "-":
             if raw == 1:
-                return "(" + l + " - " + r + ")"
-            return "num_guard(" + l + " - " + r + ")"
+                return seqpre + ("(" + l + " - " + r + ")") + seqpost
+            return seqpre + ("num_guard(" + l + " - " + r + ")") + seqpost
         if op == "*":
-            return "num_guard(" + l + " * " + r + ")"
+            return seqpre + ("num_guard(" + l + " * " + r + ")") + seqpost
         if op == "/":
-            return "aot_ddiv(" + l + ", " + r + ")"
+            return seqpre + ("aot_ddiv(" + l + ", " + r + ")") + seqpost
         if op == "%":
-            return "aot_dmod(" + l + ", " + r + ")"
+            return seqpre + ("aot_dmod(" + l + ", " + r + ")") + seqpost
         # numeric and/or (#65 inc. 2, both operands proven numeric): return
         # the OPERAND like the VM (1 and 2 -> 2, 0 or 3 -> 3). The C ternary
         # evaluates only the taken arm, preserving short-circuit; -0.0 == 0.0
@@ -1819,7 +1835,7 @@ define emit_num(node, nm, bt, raw) as:
             return "({ double _sc = " + l + "; _sc == 0.0 ? _sc : (" + r + "); })"
         if op == "or":
             return "({ double _sc = " + l + "; _sc != 0.0 ? _sc : (" + r + "); })"
-        return "((" + l + " " + op + " " + r + ") ? 1.0 : 0.0)"
+        return seqpre + ("((" + l + " " + op + " " + r + ") ? 1.0 : 0.0)") + seqpost
     throw of ("AOT: emit_num on non-numeric node " + t)
 
 define emit_val(node, nm, bt) as:
@@ -1995,6 +2011,11 @@ define emit_val(node, nm, bt) as:
         local cn2 is emit_cmp_n of [node, nm, bt, 0]
         if cn2 != "":
             return cn2
+        # (round 89) sequence when either operand can CALL -- string
+        # concat and f-string chains evaluated right-to-left under this
+        # gcc where the VM pushes left-to-right (VM 12, AOT 21).
+        if ((has_call_node of node[2]) == 1) or ((has_call_node of node[3]) == 1):
+            return "({ Value* _sql = " + (emit_val of [node[2], nm, bt]) + "; Value* _sqr = " + (emit_val of [node[3], nm, bt]) + "; " + (binfn of bop) + "(_sql, _sqr); })"
         return (binfn of bop) + "(" + (emit_val of [node[2], nm, bt]) + ", " + (emit_val of [node[3], nm, bt]) + ")"
     if t == "call":
         local callee is unwrap of node[1]
@@ -2060,7 +2081,10 @@ define emit_val(node, nm, bt) as:
                 # emitted the UNMANGLED name while the definition was mangled,
                 # which only surfaced once `import` brought in a module
                 # defining `div` (#121).
-                return (cn of callee[1]) + "(" + (emit_args of [node, callee[1], nm, bt]) + ")"
+                local ea1 is emit_args of [node, callee[1], nm, bt]
+                if (ea1[0]) == "":
+                    return (cn of callee[1]) + "(" + (ea1[1]) + ")"
+                return "({ " + (ea1[0]) + (cn of callee[1]) + "(" + (ea1[1]) + "); })"
             if (g_funcs[callee[1]])["ret"] == "void":
                 # A function with NO return statement is emitted as a C `void`
                 # function (func_ret_type), so it has no value form — and this
@@ -2085,7 +2109,8 @@ define emit_val(node, nm, bt) as:
                 #
                 # The wrapper generator solves the identical problem the same
                 # way: `{ wcall; return make_null(); }`.
-                return "({ " + (cn of callee[1]) + "(" + (emit_args of [node, callee[1], nm, bt]) + "); make_null(); })"
+                local ea2 is emit_args of [node, callee[1], nm, bt]
+                return "({ " + (ea2[0]) + (cn of callee[1]) + "(" + (ea2[1]) + "); make_null(); })"
         # Builtin calls mirror the VM's arg packing (one call rule, #405): a
         # bare literal list IS the argument list — 1 element passes that
         # element RAW (`buf_from_list of [[bytes]]` hands the builtin the
@@ -2563,7 +2588,8 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
                     # cn, not the raw name: a user function whose name collides
                     # with a C identifier is emitted mangled everywhere else, and
                     # this site would have called the unmangled one (#121).
-                    return ind + (cn of callee[1]) + "(" + (emit_args of [node, callee[1], nm, bt]) + ");\n"
+                    local ea3 is emit_args of [node, callee[1], nm, bt]
+                    return ind + "{ " + (ea3[0]) + (cn of callee[1]) + "(" + (ea3[1]) + "); }\n"
         return ind + "{ Value* _r = " + (emit_val of [node, nm, bt]) + "; if (_r) val_decref(_r); }\n"
     if t == "if":
         local s is ind + "if (" + (emit_cond of [node[1], nm, bt]) + ") {\n"
@@ -5545,17 +5571,24 @@ define emit_args(node, fname, nm, bt) as:
         # otherwise the body would see 0 where the VM binds null/nothing —
         # fail loudly, never guess.
         if ((g_funcs[fname])["nullok"]) == 1:
-            return "0"
+            return ["", "0"]
         throw of ("AOT: zero-arg call to '" + fname + "' — the callee reads its parameter's incoming value (the VM binds null, no C equivalent); only a dead single param (the zero-param define idiom) is supported")
     if (len of elems) > (len of ptypes):
         # more args than params: the VM drops extras, but emitting a C call
         # with extra arguments is a hard compile error and indexing ptypes
         # past its end used to crash the emitter with an index error.
         throw of ("AOT: call to '" + fname + "' passes " + (str of (len of elems)) + " arguments to " + (str of (len of ptypes)) + " parameters (the VM drops extras; parenthesize a literal list to pass it whole)")
-    local s is ""
+    # (round 89) per-arg strings, then SEQUENCING under hazard: bare C
+    # argument lists evaluate in unspecified order, and gcc ran a sibling
+    # argument's outward-rebinding call BEFORE a global read (VM 105, AOT
+    # 1005) and two call arguments right-to-left (VM 12, AOT 21) -- the
+    # round-88 setter defect, two sites over. When any argument contains
+    # a call and there are two or more arguments, each is hoisted into a
+    # typed temp in the VM's left-to-right push order inside a statement
+    # expression (callers compose the prelude).
+    local argl is []
     for k in range of (len of elems):
-        if k > 0:
-            s is s + ", "
+        local s is ""
         if (ptypes[k]) == "buf":
             # a buffer arg is a Value*: a plain ident -> its C name; a
             # buffer-returning call (e.g. `seed_blinker of W`) -> emit the call.
@@ -5640,14 +5673,42 @@ define emit_args(node, fname, nm, bt) as:
                 s is s + (emit_num of [elems[k], nm, bt, 0])
             catch e:
                 throw of ("in call to '" + fname + "' arg " + (str of k) + ": " + e)
-    return s
+        argl is (append of [argl, s])
+    local hazard is 0
+    if (len of elems) >= 2:
+        for hk in range of (len of elems):
+            if (has_call_node of [elems[hk]]) == 1:
+                hazard is 1
+    if hazard == 0:
+        local plain is ""
+        for pk in range of (len of argl):
+            if pk > 0:
+                plain is plain + ", "
+            plain is plain + (argl[pk])
+        return ["", plain]
+    local pre is ""
+    local names is ""
+    for qk in range of (len of argl):
+        local qt is "Value*"
+        if (ptypes[qk]) == "num":
+            qt is "double"
+        if (ptypes[qk]) == "tensor":
+            qt is "AotTensor"
+        pre is pre + qt + " _sqa" + (str of qk) + " = " + (argl[qk]) + "; "
+        if qk > 0:
+            names is names + ", "
+        names is names + "_sqa" + (str of qk)
+    return [pre, names]
 
 define emit_call_num(node, nm, bt) as:
     local fcallee is unwrap of node[1]
     if fcallee[0] != "ident":
         throw of ("AOT: emit_call_num on a non-ident callee: " + (str of fcallee))
     local fname is fcallee[1]
-    return (cn of fname) + "(" + (emit_args of [node, fname, nm, bt]) + ")"
+    local ea4 is emit_args of [node, fname, nm, bt]
+    if (ea4[0]) == "":
+        return (cn of fname) + "(" + (ea4[1]) + ")"
+    return "({ " + (ea4[0]) + (cn of fname) + "(" + (ea4[1]) + "); })"
 
 # ---- --dump-inference support (#65 spec_audit) ----
 # Walk a body recording each name's FIRST-assignment source line (from the
