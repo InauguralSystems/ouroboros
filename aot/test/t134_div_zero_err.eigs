@@ -1,0 +1,11 @@
+# Round 72: division by zero answered 0 rc 0 where the pinned VM raises
+# "division by zero" rc 1 -- the helpers' comment "matching the VM
+# (b==0 -> 0)" was a FOSSIL of the pre-fail-soft-reform VM, carried
+# through every storage regime (boxed NUMOP, unboxed ddiv/dmod, the SIMD
+# lane mask), and no fixture covered the operator pair. All arms now
+# raise the VM's message. _err class: both die, equal codes; the print
+# before the death pins output ordering.
+print of "before"
+a is 7
+b is 0
+print of (a / b)

@@ -66,9 +66,11 @@ static inline aot_vec aot_vguard(aot_vec x){
     return _mm256_max_pd(x, _mm256_set1_pd(-1e308));
 }
 static inline aot_vec aot_viota(long base){ return _mm256_add_pd(_mm256_set1_pd((double)base), _mm256_set_pd(3.0,2.0,1.0,0.0)); }
-static inline aot_vec aot_vdiv(aot_vec a, aot_vec b){   /* b==0 -> 0, else clamp(a/b) */
-    aot_vec nz = _mm256_cmp_pd(b, _mm256_setzero_pd(), _CMP_NEQ_OQ);
-    return aot_vguard(_mm256_and_pd(_mm256_div_pd(a, b), nz));
+static inline aot_vec aot_vdiv(aot_vec a, aot_vec b){   /* any b==0 lane RAISES (round 72: the VM raises post-fail-soft-reform; the old lane mask was the same fossil as aot_ddiv's) */
+    aot_vec z = _mm256_cmp_pd(b, _mm256_setzero_pd(), _CMP_EQ_OQ);
+    if (_mm256_movemask_pd(z))
+        rt_error(EK_VALUE, g_trace_current_line, "division by zero");
+    return aot_vguard(_mm256_div_pd(a, b));
 }
 static inline double aot_vhsum(aot_vec x){
     __m128d lo = _mm256_castpd256_pd128(x), hi = _mm256_extractf128_pd(x, 1);
@@ -90,9 +92,11 @@ static inline aot_vec aot_vguard(aot_vec x){
     return _mm_max_pd(x, _mm_set1_pd(-1e308));
 }
 static inline aot_vec aot_viota(long base){ return _mm_add_pd(_mm_set1_pd((double)base), _mm_set_pd(1.0,0.0)); }
-static inline aot_vec aot_vdiv(aot_vec a, aot_vec b){   /* b==0 -> 0, else clamp(a/b) */
-    aot_vec nz = _mm_cmpneq_pd(b, _mm_setzero_pd());
-    return aot_vguard(_mm_and_pd(_mm_div_pd(a, b), nz));
+static inline aot_vec aot_vdiv(aot_vec a, aot_vec b){   /* any b==0 lane RAISES (round 72, see the AVX2 variant) */
+    aot_vec z = _mm_cmpeq_pd(b, _mm_setzero_pd());
+    if (_mm_movemask_pd(z))
+        rt_error(EK_VALUE, g_trace_current_line, "division by zero");
+    return aot_vguard(_mm_div_pd(a, b));
 }
 static inline double aot_vhsum(aot_vec x){ return _mm_cvtsd_f64(_mm_add_pd(x, _mm_unpackhi_pd(x, x))); }
 #else
@@ -106,7 +110,7 @@ typedef double aot_vec;
 #define aot_vsub(a,b)   ((a)-(b))
 static inline aot_vec aot_vguard(aot_vec x){ return num_guard(x); }
 static inline aot_vec aot_viota(long base){ return (double)base; }
-static inline aot_vec aot_vdiv(aot_vec a, aot_vec b){ return b == 0.0 ? 0.0 : num_guard(a / b); }
+static inline aot_vec aot_vdiv(aot_vec a, aot_vec b){ if (b == 0.0) rt_error(EK_VALUE, g_trace_current_line, "division by zero"); return num_guard(a / b); }
 static inline double aot_vhsum(aot_vec x){ return x; }
 #endif
 
@@ -450,13 +454,41 @@ static Value *aot_add(Value *a, Value *b) {
         val_decref(a); val_decref(b); return r; }
 AOT_NUMOP(aot_sub, x - y)
 AOT_NUMOP(aot_mul, x * y)
-AOT_NUMOP(aot_div, (y == 0.0 ? 0.0 : x / y))
-AOT_NUMOP(aot_mod, (y == 0.0 ? 0.0 : fmod(x, y)))
 
-/* Specialized (unboxed double) div/mod, matching the VM (b==0 -> 0). Single-eval
-   helpers so the emitter doesn't have to duplicate the operand expressions. */
-static inline double aot_ddiv(double a, double b) { return b == 0.0 ? 0.0 : num_guard(a / b); }
-static inline double aot_dmod(double a, double b) { return b == 0.0 ? 0.0 : num_guard(fmod(a, b)); }
+/* Round 72: division/modulo by zero RAISES, mirroring vm.c's OP_DIV/OP_MOD
+ * (rt_error EK_VALUE "division by zero"/"modulo by zero"). The old b==0->0
+ * arms carried a comment saying "matching the VM" -- a FOSSIL of the
+ * pre-fail-soft-reform VM (the 2026-08 reform made these raise upstream;
+ * the pinned oracle raises, and `print of (7 / 0)` printed 0 rc 0 here
+ * against the VM's rc 1 -- silent-wrong on the most common operator pair,
+ * with zero fixtures covering it). Same rule in every storage regime:
+ * boxed NUMOP, unboxed ddiv/dmod, and the int-classified emit (aot_imod
+ * below -- raw C `%` by zero compiled to ud2/SIGILL under -O3). */
+static inline double aot_div_zero_check(double y) {
+    if (y == 0.0)
+        rt_error(EK_VALUE, g_trace_current_line, "division by zero");
+    return y;
+}
+static inline double aot_mod_zero_check(double y) {
+    if (y == 0.0)
+        rt_error(EK_VALUE, g_trace_current_line, "modulo by zero");
+    return y;
+}
+AOT_NUMOP(aot_div, x / aot_div_zero_check(y))
+AOT_NUMOP(aot_mod, fmod(x, aot_mod_zero_check(y)))
+
+/* Specialized (unboxed double) div/mod. Single-eval helpers so the emitter
+   doesn't have to duplicate the operand expressions. */
+static inline double aot_ddiv(double a, double b) { return num_guard(a / aot_div_zero_check(b)); }
+static inline double aot_dmod(double a, double b) { return num_guard(fmod(a, aot_mod_zero_check(b))); }
+/* Int-classified modulo: raw C `%` is UB on zero (measured: gcc -O3 emitted
+ * ud2 -- rc 132 SIGILL, no diagnostic). Negative operands keep C truncated
+ * semantics, which match the VM's (probed both paths). */
+static inline long aot_imod(long a, long b) {
+    if (b == 0)
+        rt_error(EK_VALUE, g_trace_current_line, "modulo by zero");
+    return a % b;
+}
 
 /* Ordering comparisons — the VM's NUM_CMP macro exactly (vm.c ~3100):
  * num/num numeric compare; str/str byte-wise strcmp with the SAME operator

@@ -781,6 +781,13 @@ define emit_int(node) as:
         local a is unwrap of n[2]
         return "((long)aot_buf_len(" + (cn of a[1]) + "))"
     local op is n[1]
+    if op == "%":
+        # (round 72) raw C `%` is UB on a zero divisor -- gcc -O3 compiled
+        # an int-counter `a % b` with b==0 to ud2: rc 132 SIGILL, no
+        # diagnostic, where the VM raises "modulo by zero" rc 1. The
+        # helper raises; negative operands keep C truncated semantics,
+        # which match the VM's (probed both paths).
+        return "aot_imod(" + (emit_int of n[2]) + ", " + (emit_int of n[3]) + ")"
     return "(" + (emit_int of n[2]) + " " + op + " " + (emit_int of n[3]) + ")"
 
 # does `name` appear inside an INDEX/SLICE position? Such use forces integer-
@@ -835,6 +842,16 @@ define is_counter(v, rhss) as:
         local n is unwrap of rhss[j]
         if n[0] == "num":
             if (int_lit_ok of n[1]) == 0:
+                return 0
+            # (round 72) counter BASES are bounded to 2^31, not int_lit_ok's
+            # 2^53: `n is 3100000000` was counter-classified and `n * n`
+            # wrapped the signed long (-8.8e18 where the VM prints 9.61e18,
+            # both rc 0 -- silent wrong number). Two factors under 2^31 keep
+            # every pairwise product under 2^62; longer chains of
+            # buffer-bounded index dims are the stated residual, policed by
+            # the oracle (the t5 accumulator rule's sibling, for constants
+            # feeding products).
+            if (n[1] >= 2147483648) or (n[1] <= -2147483648):
                 return 0
         elif n[0] == "binop":
             if (n[1] != "+") and (n[1] != "-"):
@@ -1946,6 +1963,22 @@ define emit_val(node, nm, bt) as:
         # known statically; emit the VM's raise at the call's reachability
         # (a dead-branch call stays rc 0, exactly as the VM's would).
         if ((nm[(callee[1])] == 1) or (g_int[(callee[1])] == 1)) and (g_func_names[(callee[1])] != 1):
+            if g_cur_params[(callee[1])] == 1:
+                # A called PARAM's numeric classification is an inference
+                # DEFAULT, not evidence (ouroboros#168) -- emitting the
+                # cannot-call-num raise for it was FALSE (`wrap(f)` calling
+                # its param prints 6 in the VM). A BUILD refusal was tried
+                # first and evicted DMG: its disasm helpers call a `reader`
+                # callback that the canary never executes, and build-time
+                # refusal punishes latent code (the DMG blast-radius build
+                # caught it before the suite did). So: a RUNTIME raise with
+                # the TRUE reason, per the _die-class convention (an
+                # AOT-owned fatal diagnostic) -- latent sites build, an
+                # executed site dies loud and honest. The residual (VM rc 0
+                # vs AOT loud rc 1 on executed higher-order params) is the
+                # #168 ledger row; the real fix is call-position use as
+                # typing evidence.
+                return "({ rt_error(EK_TYPE, g_trace_current_line, \"higher-order parameter '" + callee[1] + "' is not yet typed (ouroboros#168)\"); make_null(); })"
             return "({ rt_error(EK_TYPE, g_trace_current_line, \"cannot call num\"); make_null(); })"
         if (barg[0] == "list") and ((len of barg) == 2) and ((len of barg[1]) == 1):
             local hc1 is ic_cache of 0
