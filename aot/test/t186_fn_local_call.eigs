@@ -1,0 +1,21 @@
+# Round 98: a callee held in a LOWERED LOCAL is a C slot, not an env
+# binding -- `local w is g / return (w of 4)` bound the slot and then
+# resolved "w" through the env, dying "undefined variable 'w'" rc 1 on a
+# program the VM runs. Invariant 14: the binding lives in one regime and
+# the call site consulted the other. The call now reads the slot and
+# dispatches on the value.
+define g(x) as:
+    return x + 1
+define h() as:
+    local w is g
+    return (w of 4)
+print of (h of [])
+define pick(n) as:
+    local f is g
+    local s is 0
+    local i is 0
+    loop while i < 3:
+        s is s + (f of i)
+        i is i + 1
+    return s
+print of (pick of 0)

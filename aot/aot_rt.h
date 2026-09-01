@@ -1721,7 +1721,7 @@ static void aot_index_set_ib(Value *target, double d, Value *val) {
         } else
             rt_error(EK_TYPE, 0, "buffer elements must be numbers");
     } else {
-        rt_error(EK_TYPE, 0, "cannot index-assign into %s",
+        rt_error(EK_TYPE, 0, "cannot index %s for assignment",
                  target ? val_type_name(target->type) : "null");
     }
     if (val) val_decref(val);
@@ -1848,7 +1848,7 @@ static void aot_index_set_i(Value *target, double d, Value *val) {
         } else
             rt_error(EK_TYPE, 0, "buffer elements must be numbers");
     } else {
-        rt_error(EK_TYPE, 0, "cannot index-assign into %s",
+        rt_error(EK_TYPE, 0, "cannot index %s for assignment",
                  target ? val_type_name(target->type) : "null");
     }
     if (val) val_decref(val);
@@ -1880,7 +1880,7 @@ static void aot_index_set(Value *target, Value *idx, Value *val) {
         } else
             rt_error(EK_TYPE, 0, "buffer elements must be numbers");
     } else {
-        rt_error(EK_TYPE, 0, "cannot index-assign into %s",
+        rt_error(EK_TYPE, 0, "cannot index %s for assignment",
                  target ? val_type_name(target->type) : "null");
     }
     if (val) val_decref(val);

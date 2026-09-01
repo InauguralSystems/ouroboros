@@ -2081,7 +2081,9 @@ define emit_val(node, nm, bt) as:
             # (#86) a user function used as a VALUE (e.g. a sort_by key):
             # box it as a builtin via a generated Value*->Value* wrapper.
             g_fn_as_value[node[1]] is 1
-            return "make_builtin(__wrap_" + (cn of node[1]) + ")"
+            # (round 98) the per-function singleton; increfed per read so a
+            # consuming caller cannot free the shared identity.
+            return "({ if (!__fnv_" + (cn of node[1]) + ") __fnv_" + (cn of node[1]) + " = make_builtin(__wrap_" + (cn of node[1]) + "); val_incref(__fnv_" + (cn of node[1]) + "); __fnv_" + (cn of node[1]) + "; })"
         return env_read of node[1]
     if t == "index":
         # target[idx] on a boxed value (list/dict/string/buffer). A buffer index
@@ -2317,6 +2319,21 @@ define emit_val(node, nm, bt) as:
                 # typing evidence.
                 return "({ rt_error(EK_TYPE, g_trace_current_line, \"higher-order parameter '" + callee[1] + "' is not yet typed (ouroboros#168)\"); make_null(); })"
             return "({ rt_error(EK_TYPE, g_trace_current_line, \"cannot call num\"); make_null(); })"
+        # (round 98) a callee held in a LOWERED LOCAL is a C slot, NOT an env
+        # binding: `local w is g / return (w of 4)` bound __lv_eig_w and then
+        # resolved "w" through the env, dying "undefined variable 'w'" rc 1
+        # on a program the VM runs (5). Invariant 14 -- the binding lives in
+        # the lowered-local regime and the call site consulted the env one.
+        # Read the slot and dispatch on the value.
+        if (g_lowerloc == 1) and (g_envloc[(callee[1])] == 1) and (g_funcs[(callee[1])] == null):
+            # the slot read is a BORROW and aot_call_value CONSUMES its
+            # callee -- without the incref the first call frees the slot's
+            # value and the second iteration dies "cannot call ?". The
+            # hoist also keeps the round-95 order: callee, then argument.
+            local lvcarg is unwrap of node[2]
+            if (lvcarg[0] == "list") and ((len of lvcarg) == 2) and ((len of lvcarg[1]) == 1):
+                return "({ Value* _lvf = " + (env_readb of callee[1]) + "; val_incref(_lvf); Value* _lva = " + (emit_val of [(lvcarg[1])[0], nm, bt]) + "; aot_call_value(_lvf, _lva); })"
+            return "({ Value* _lvf = " + (env_readb of callee[1]) + "; val_incref(_lvf); Value* _lva = " + (emit_val of [node[2], nm, bt]) + "; aot_call_value(_lvf, _lva); })"
         if (barg[0] == "list") and ((len of barg) == 2) and ((len of barg[1]) == 1):
             local hc1 is ic_cache of 0
             # (round 96) UNCONDITIONAL. Round 95 gated the split on the
@@ -7798,6 +7815,15 @@ define emit_program(ast) as:
     for i in range of (len of wnames):
         local wn is wnames[i]
         local wi is g_funcs[wn]
+        # (round 98) ONE Value per function, for its whole life. make_builtin
+        # allocated a fresh Value on every read of the name, and this VM
+        # compares VAL_FN/VAL_BUILTIN by POINTER IDENTITY -- so `a is g /
+        # c is g / print of (a == c)` printed 0 where the VM prints 1, rc 0
+        # both sides. That is branch-deciding: `if handler == some_fn:` over
+        # a dispatch table takes the other arm in the native binary. The VM
+        # holds one Value in its env for the process's life; this mirrors
+        # that lifetime.
+        wprotos is wprotos + "static Value* __fnv_" + (cn of wn) + " = NULL;\n"
         local wpt is wi["ptypes"]
         if (len of wpt) != 1:
             # MULTI-PARAMETER value wrappers (#140). The builtin calling
