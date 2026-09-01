@@ -838,6 +838,10 @@ define emit_int(node) as:
     if t == "ident":
         return cn of n[1]
     if t == "unary":
+        # (round 87) minus only -- this was the last emitter that did not
+        # dispatch on the operator, and `not d` compiled as -d.
+        if n[1] != "-":
+            throw of ("AOT: emit_int unary '" + n[1] + "' is not integer negation")
         return "(-(" + (emit_int of n[2]) + "))"
     if t == "call":
         local a is unwrap of n[2]
@@ -1692,6 +1696,10 @@ define emit_num(node, nm, bt, raw) as:
                 local pnfn is 0
                 if g_funcs[pna[1]] != null:
                     pnfn is 1
+                # (round 87) C-emitted value classes take the band too;
+                # see the emit_val arm.
+                if (nm[pna[1]] != 1) and ((bt[pna[1]] == 1) or (g_btmap[pna[1]] == 1) or (g_dict[pna[1]] == 1) or (g_tensor[pna[1]] == 1)):
+                    pnfn is 1
                 return "((double)aot_predicate_of(__eigs_g, \"" + pna[1] + "\", " + (str of callee[1]) + ", " + (str of pnfn) + "))"
             throw of "AOT: a predicate operand must be a name"
         if callee[0] == "ident":
@@ -2002,6 +2010,15 @@ define emit_val(node, nm, bt) as:
                 local pfn is 0
                 if g_funcs[pa[1]] != null:
                     pfn is 1
+                # (round 87) module BUFFERS (and dicts/tensors) are C
+                # globals, never env-bound, and the env-miss raise said
+                # "undefined variable 'b'" where the VM answers 0 through
+                # the unobserved-slot band (element writes are value
+                # mutations, not rebinds, so the binding's slot stays
+                # unobserved). Same flag as compiled functions: an env
+                # miss on a known C-emitted name is not an undefined name.
+                if (bt[pa[1]] == 1) or (g_btmap[pa[1]] == 1) or (g_dict[pa[1]] == 1) or (g_tensor[pa[1]] == 1):
+                    pfn is 1
                 return "make_num((double)aot_predicate_of(__eigs_g, \"" + pa[1] + "\", " + (str of callee[1]) + ", " + (str of pfn) + "))"
             # a non-name operand is `cannot call num` in the VM; refuse loudly
             # rather than emit something that answers about the wrong thing.
@@ -2029,6 +2046,10 @@ define emit_val(node, nm, bt) as:
             if ra[0] == "ident":
                 local rfn is "0"
                 if g_func_names[(ra[1])] == 1:
+                    rfn is "1"
+                # (round 87) same band for C-emitted value classes; see
+                # the predicate arm.
+                if (bt[(ra[1])] == 1) or (g_btmap[(ra[1])] == 1) or (g_dict[(ra[1])] == 1) or (g_tensor[(ra[1])] == 1):
                     rfn is "1"
                 return "aot_report(__eigs_g, \"" + ra[1] + "\", " + rfn + ")"
         # user function returning a Value* (e.g. a tensor-returning forward pass)
@@ -3377,6 +3398,20 @@ define emit_vectorized(node, vinfo, ind, nm, bt, minits) as:
     local guard is (cn of ctr) + " == 0.0 && _bd <= 9.2e18"
     for k in range of (len of bufs):
         guard is guard + " && _n <= (long)aot_buf_len(" + (cn of bufs[k]) + ")"
+    # (round 87) POINTER distinctness: buffer assignment ALIASES by
+    # reference in the VM (measured), so two NAMES can be one heap
+    # buffer and every by-name dependence bail is blind to it -- an
+    # in-place kernel called f of [b, b] printed six wrong numbers of
+    # eight, rc 0. Any written buffer aliasing any other touched name
+    # demotes to the scalar branch at runtime.
+    local vwr is {}
+    for k in range of (len of assigns):
+        vwr[((assigns[k])["buf"])] is 1
+    local vwk is keys of vwr
+    for k in range of (len of vwk):
+        for j in range of (len of bufs):
+            if (bufs[j]) != (vwk[k]):
+                guard is guard + " && aot_buf_data(" + (cn of vwk[k]) + ") != aot_buf_data(" + (cn of bufs[j]) + ")"
     s is s + i2 + "if (" + guard + ") {\n"
     # safe interior [_lo, _hi): all neighbor offsets land in [0, _n)
     s is s + i3 + "long _lo = " + (str of (0 - minoff)) + "; if (_lo > _n) _lo = _n;\n"
@@ -3566,6 +3601,12 @@ define is_affine_in(node, name) as:
             return is_affine_in of [n[3], name]
         return 0
     if n[0] == "unary":
+        # (round 87) minus ONLY: emit_int compiles every unary as
+        # negation, so a `not d` base was admitted as affine and emitted
+        # as -d -- guard and vloads consistently wrong together, all
+        # eight outputs wrong, rc 0.
+        if n[1] != "-":
+            return 0
         return is_affine_in of [n[2], name]
     return 0
 
@@ -3829,6 +3870,12 @@ define emit_outvec(d, ind, nm, bt, guard, minits) as:
     s is s + i2 + "long _ibn = 0; if (_ibd > 0 && _ibd <= 9.2e18) _ibn = (long)ceil(_ibd); else if (_ibd > 9.2e18) _ovok = 0;\n"
     s is s + i2 + "if (" + cO + " < 0) _ovok = 0;\n"
     s is s + i2 + "{ long _sb = (" + SBASE + "); if (_sb < 0 || _sb + _obn > (long)aot_buf_len(" + cRES + ")) _ovok = 0; }\n"
+    # (round 87) pointer distinctness -- see the vec guard note: aliasing
+    # is a runtime fact the by-name bails cannot see (a helper reading a
+    # param while writing the module global it aliases diverged rc 0).
+    for pk in range of (len of ovbufs):
+        if (ovbufs[pk]) != RES:
+            s is s + i2 + "if (aot_buf_data(" + cRES + ") == aot_buf_data(" + (cn of ovbufs[pk]) + ")) _ovok = 0;\n"
     local ovsites is collect_ov_sites of [TERM, O, []]
     for sk in range of (len of ovsites):
         local sbuf is cn of ((ovsites[sk])["buf"])
@@ -4072,6 +4119,11 @@ define emit_rowmap(d, ind, nm, bt, minits) as:
     s is s + i2 + "long _rbn = 0; if (_rbd > 0 && _rbd <= 9.2e18) _rbn = (long)ceil(_rbd); else if (_rbd > 9.2e18) _rmok = 0;\n"
     s is s + i2 + "if (" + cD + " < 0) _rmok = 0;\n"
     s is s + i2 + "{ long _sb = (" + SBASE + "); if (_sb < 0 || _sb + _rbn > (long)aot_buf_len(" + cRES + ")) _rmok = 0; }\n"
+    # (round 87) pointer distinctness -- see the vec guard note.
+    local rmvb is d["vbufs"]
+    for pk in range of (len of rmvb):
+        if (rmvb[pk]) != RES:
+            s is s + i2 + "if (aot_buf_data(" + cRES + ") == aot_buf_data(" + (cn of rmvb[pk]) + ")) _rmok = 0;\n"
     local rmsites is collect_ov_sites of [d["VEXPR"], D, []]
     for sk in range of (len of rmsites):
         local sbuf is cn of ((rmsites[sk])["buf"])

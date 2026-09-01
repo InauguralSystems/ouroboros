@@ -1,0 +1,25 @@
+# Round 87: is_affine_in's unary arm accepted ANY unary op while
+# emit_int compiled every unary as NEGATION -- a (not d) base was
+# admitted as affine and emitted as -d, guard and vloads consistently
+# wrong together: all eight outputs wrong, rc 0. Both now restrict
+# to minus (emit_int throws on anything else); this shape demotes
+# and matches.
+src is buffer of 16
+out is buffer of 8
+j is 0
+loop while j < 16:
+    src[j] is j * j
+    j is j + 1
+o is 0
+loop while o < 8:
+    acc is 0
+    d is 0
+    loop while d < 4:
+        acc is acc + src[((not d) + 5) + o]
+        d is d + 1
+    out[o] is acc
+    o is o + 1
+p is 0
+loop while p < 8:
+    print of out[p]
+    p is p + 1
