@@ -1,0 +1,25 @@
+# ouroboros#184: the tensor value layer at MODULE scope. Both shapes used to
+# build rc 1 with gcc "undeclared" errors and no AOT: line: the module decl
+# loop had no tensor arm (s, r), and emit_tensor emitted a bare C name for
+# ANY ident (a). Control: the same bodies inside a function were already
+# byte-exact.
+p is {"w": [[1, 0 - 2], [3, 4]]}
+r is relu of p.w
+print of r
+a is [1, 2]
+b is [3, 4]
+s is add of [a, b]
+print of s
+m is matmul of [[[1, 2], [3, 4]], [[5, 6], [7, 8]]]
+print of m
+define f() as:
+    local q is {"w": [[1, 0 - 2], [3, 4]]}
+    local rr is relu of q.w
+    local aa is [1, 2]
+    local ss is add of [aa, [3, 4]]
+    return [rr, ss]
+print of (f of null)
+# relu of a bare literal matrix: a 1-parameter callee re-collects the arg
+# list WHOLE (EigenScript#733), so this is the matrix, not its first row.
+e is relu of [[0 - 1, 2], [3, 0 - 4]]
+print of e

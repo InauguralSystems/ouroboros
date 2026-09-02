@@ -38,7 +38,6 @@ test_entropy_query_time.eigs REFUSE
 test_error_extra.eigs REFUSE
 test_error_propagation.eigs REFUSE
 test_eval.eigs REFUSE
-test_flat_buffer_tensor.eigs REFUSE
 test_for_in_mutation.eigs REFUSE
 test_gc.eigs REFUSE
 test_gfx_argtypes.eigs REFUSE
@@ -111,8 +110,6 @@ test_temporal.eigs REFUSE
 test_temporal_param.eigs REFUSE
 test_temporal_pruning.eigs REFUSE
 test_temporal_when.eigs REFUSE
-test_tensor_kernel_tiling.eigs BUILDCRASH
-test_tensor_overflow.eigs BUILDCRASH
 test_terminal.eigs REFUSE
 test_throw_unwind.eigs REFUSE
 test_trajectory.eigs REFUSE

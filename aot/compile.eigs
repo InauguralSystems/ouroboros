@@ -2590,7 +2590,17 @@ define emit_tensor(node, nm, bt) as:
     local n is unwrap of node
     local t is n[0]
     if t == "ident":
-        return cn of n[1]
+        # (round 126, #184) only a tensor-classified name is a C AotTensor;
+        # any other name (a buffer, a boxed list, a generic param holding
+        # a nested list) is a Value* and converts at the operand -- the
+        # bare C name was emitted whatever the storage class and gcc's
+        # type error leaked, or a dead `double` decl was picked up.
+        if g_tensor[n[1]] == 1:
+            return cn of n[1]
+        # owned emit: aot_tensor_from_value VIEWS a buffer's data, so the
+        # Value must outlive the tensor -- an owned, never-freed temp does
+        # (one-shot process; the same trade the gen-param literal makes).
+        return "aot_treg(aot_tensor_from_value(" + (emit_val of [node, nm, bt]) + "))"
     if t == "dot":
         local tgt is unwrap of n[1]
         local dval is ""
@@ -2613,7 +2623,20 @@ define emit_tensor(node, nm, bt) as:
         if fnname == "add":
             return "aot_treg(aot_tensor_add(" + (emit_tensor of [elems[0], nm, bt]) + ", " + (emit_tensor of [elems[1], nm, bt]) + "))"
         if fnname == "relu":
-            return "aot_treg(aot_tensor_relu(" + (emit_tensor of [elems[0], nm, bt]) + "))"
+            # (round 126) relu takes ONE parameter, so a bare literal list
+            # of any count but one is re-collected WHOLE into it (the
+            # arity-1 rule, EigenScript#733): `relu of [[0 - 1, 2], [3,
+            # 0 - 4]]` is the matrix, not its first row. Measured: taking
+            # elems[0] printed [0, 2] where the VM prints [[0, 2], [3, 0]].
+            local rop is elems[0]
+            if (arg[0] == "list") and ((len of elems) != 1):
+                rop is arg
+            return "aot_treg(aot_tensor_relu(" + (emit_tensor of [rop, nm, bt]) + "))"
+    if t == "list":
+        # (round 126, #184) a LITERAL nested list as a tensor operand
+        # (`matmul of [[[1, 2], [3, 4]], [[5, 6], [7, 8]]]`): build the
+        # Value and convert, as the ident arm does for a non-tensor name.
+        return "aot_treg(aot_tensor_from_value(" + (emit_val of [node, nm, bt]) + "))"
     throw of ("AOT: cannot emit tensor node '" + t + "'")
 
 # `<expr> OP <numeric>` / `<numeric> OP <expr>` for a comparison, with the
@@ -8806,6 +8829,17 @@ define emit_program(ast) as:
     for i in range of (len of bnames):
         if bt[bnames[i]] == 1:
             gdecls is gdecls + "static Value* " + (cn of bnames[i]) + " = NULL;\n"
+    # (round 126, #184) the tensor value layer at MODULE scope: g_tensor is
+    # inferred for the module body (above) and the assign arm emits
+    # `eig_x = <AotTensor expr>` in every scope, but this loop declared
+    # only numeric and buffer names -- the C referenced an undeclared
+    # name and gcc's error leaked with no AOT: line. Mirror the function
+    # path's `AotTensor eig_x = aot_tensor_null();` as a static (a
+    # zero-initialised struct is what aot_tensor_null builds).
+    local tnames is keys of g_tensor
+    for i in range of (len of tnames):
+        if g_tensor[tnames[i]] == 1:
+            gdecls is gdecls + "static AotTensor " + (cn of tnames[i]) + " = {0};   /* tensor (round 126) */\n"
     # emit_function sets G_CUR_FN; the module body has no emit_function, so
     # reset it or every site label in main() inherits the LAST function's
     # name (that stale label sent an earlier debugging session chasing
