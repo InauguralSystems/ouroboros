@@ -35,8 +35,6 @@ test_dispatch_rebind_fn.eigs REFUSE
 test_dot.eigs DIVERGE
 test_entropy_cycles.eigs REFUSE
 test_entropy_query_time.eigs REFUSE
-test_entropy_reference_stop.eigs REFUSE
-test_entropy_types.eigs REFUSE
 test_error_extra.eigs REFUSE
 test_error_propagation.eigs REFUSE
 test_eval.eigs REFUSE
@@ -48,8 +46,6 @@ test_halting_descent.eigs REFUSE
 test_halting_stall.eigs REFUSE
 test_harness.eigs REFUSE
 test_hash.eigs REFUSE
-test_hexdump.eigs DIVERGE
-test_hex_literals.eigs DIVERGE
 test_http.eigs REFUSE
 test_import.eigs REFUSE
 test_import_errors.eigs REFUSE
@@ -82,10 +78,8 @@ test_optimize.eigs REFUSE
 test_pcm_codec.eigs REFUSE
 test_pipe_lambda.eigs REFUSE
 test_predicate_matrix.eigs REFUSE
-test_proc_stream.eigs REFUSE
 test_raise_on_bad_input.eigs REFUSE
 test_recursion_guard.eigs REFUSE
-test_report_value_convergence.eigs REFUSE
 test_sandbox_allow.eigs DIVERGE
 test_sandbox_backedge_cap.eigs DIVERGE
 test_sandbox_budget.eigs DIVERGE

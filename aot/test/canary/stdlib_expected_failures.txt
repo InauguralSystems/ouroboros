@@ -3,7 +3,6 @@ eigen.eigs REFUSE
 geometry.eigs REFUSE
 lab.eigs REFUSE
 numerics.eigs REFUSE
-observer_slots.eigs REFUSE
 pkg.eigs CRASH
 supervise.eigs REFUSE
 sync.eigs REFUSE

@@ -2760,7 +2760,7 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
             # C static are visible at query time), and buffer names take the
             # env lookup in the observer arms instead of band 2.
             local bobs is ""
-            if g_observed == 1:
+            if (g_observed == 1) or (g_outward_obs[name] == 1):
                 bobs is ind + "val_incref(" + (cn of name) + "); aot_observe_val(" + (envc of name) + ", \"" + name + "\", " + (cn of name) + ");\n"
             if (is_buf_create of node[2]) == 1:
                 # `buffer of [r, c]` -> a shaped 2-D buffer; pass the list Value.
@@ -5057,7 +5057,12 @@ define uses_type_dispatch(node, name) as:
 # own call arm already lowers as numeric.
 NUM_RET_BUILTINS is {"len": 1, "sqrt": 1, "exp": 1, "dot": 1, "sum": 1, "norm": 1, "abs": 1, "floor": 1, "ceil": 1, "round": 1, "min": 1, "max": 1, "pow": 1, "log": 1, "sin": 1, "cos": 1, "tan": 1, "ord": 1, "index_of": 1, "contains": 1, "starts_with": 1, "ends_with": 1, "file_exists": 1, "monotonic_ns": 1, "random": 1, "num": 1, "buf_get": 1, "buf_len": 1, "write_text": 1}
 
-BOXED_RET_BUILTINS is {"zeros": 1, "read_text": 1, "read_lines": 1, "split": 1, "trim": 1, "substr": 1, "str_replace": 1, "str_lower": 1, "str_upper": 1, "char_at": 1, "join": 1, "str": 1, "keys": 1, "values": 1, "sort": 1, "sort_by": 1, "scan_ints": 1, "scan_int_tokens": 1, "range": 1, "hex": 1, "chr": 1, "json_decode": 1, "json_encode": 1, "args": 1}
+# (round 111) the four observer special forms return str / str / dict /
+# list. They were absent, so `check of [tag, report_value of x, want]`
+# left the callee's param numeric and the string died at the coercion --
+# a runtime death where the VM prints, and `report of x` as an argument
+# had been dying the same way all along (test_report_value_convergence).
+BOXED_RET_BUILTINS is {"report": 1, "report_value": 1, "trajectory": 1, "observe": 1, "zeros": 1, "read_text": 1, "read_lines": 1, "split": 1, "trim": 1, "substr": 1, "str_replace": 1, "str_lower": 1, "str_upper": 1, "char_at": 1, "join": 1, "str": 1, "keys": 1, "values": 1, "sort": 1, "sort_by": 1, "scan_ints": 1, "scan_int_tokens": 1, "range": 1, "hex": 1, "chr": 1, "json_decode": 1, "json_encode": 1, "args": 1}
 
 STR_ARG_BUILTINS is {"split": 1, "trim": 1, "substr": 1, "str_replace": 1, "contains": 1, "index_of": 1, "char_at": 1, "starts_with": 1, "ends_with": 1, "str_lower": 1, "str_upper": 1, "ord": 1, "read_text": 1, "write_text": 1, "file_exists": 1, "read_lines": 1, "scan_ints": 1, "scan_int_tokens": 1}
 
@@ -5527,6 +5532,17 @@ define arg_class(node, caller_pt, caller_params, caller_locals) as:
             if vcf != null:
                 if (vcf["ret"]) == "Value*":
                     return "gen"
+            # (round 111) a BUILTIN callee with a known boxed return is the
+            # same evidence. This arm consulted user functions only, so
+            # `check of [tag, report_value of x, want]` left `got` numeric
+            # and the string died at the coercion -- a runtime death where
+            # the VM prints; `report of x` as an argument had died the same
+            # way all along. NUM_RET_BUILTINS' comment records that the
+            # boxed-allowlist polarity is backwards for RETURN classes; this
+            # arm keeps "unknown" for an unlisted builtin (the widening to
+            # boxed-by-default here is a separate, measured change).
+            elif (g_func_names[vac[1]] != 1) and (BOXED_RET_BUILTINS[vac[1]] == 1):
+                return "gen"
         return "unknown"
     if t == "ident":
         for k in range of (len of caller_params):
@@ -7157,8 +7173,25 @@ define emit_function(fn, finfo, gnm, gbt) as:
                 # gcc 'eig_v' undeclared. Loud but unnamed; named here.
                 # (Reads of gnm names from non-observing functions in
                 # observed programs share the break and remain a residual.)
+                # (round 111) LIFTED. Measured (round 110, seam B): the
+                # VM treats the helper's write as an in-order slot
+                # observation, identical to a module-level assignment.
+                # Since #189 the helper's reads of the name already take the
+                # env (the numeric seed is skipped in this regime), and the
+                # demoted arm's outward-observe mark routes a write through
+                # aot_observe_num / aot_observe_val -- the name's regime,
+                # not the writer's. A buffer takes round 110's observe-store
+                # on the same mark (bt assign arm). t207/t208 pin it.
                 if (g_mod_observed == 1) and (g_observed != 1):
-                    throw of ("AOT: non-observing function '" + name + "' assigns observed module numeric/buffer global '" + v + "'. In an observed program module numerics are env-boxed with no C global, and this function's emission regime has no env routing for the write; refused until outward stores consult the module regime for these classes too.")
+                    g_outward_obs[v] is 1
+                    # and DEMOTE it in this function's maps: the body's own
+                    # numeric pass re-promoted `total is total + k` to a C
+                    # double after the #189 seed skip, so the write still
+                    # emitted `eig_total = ...` (gcc undeclared). Same pair
+                    # the `local`-shadow demotion sets.
+                    if gnm[v] == 1:
+                        fnm[v] is 0
+                        g_int[v] is 0
             isglobal is 1
         if (g_module_names[v] == 1) and (_lmk[v] != 1) and (gnm[v] != 1) and (gbt[v] != 1) and (g_tensor[v] != 1) and (shadowed[v] != 1):
             # ORDER GUARD, demoted arm (see g_first_bind's declaration):
