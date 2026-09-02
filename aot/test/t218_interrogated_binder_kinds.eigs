@@ -1,0 +1,41 @@
+# ouroboros#187 on the a5bc350 pin (EigenScript#1063): the for-binder rule
+# keyed on the binding KIND, each row measured on the VM.
+#   parameter, body writes, interrogated after   -> persists: 18, prev 8
+#   parameter, no loop, two writes               -> prev 11, what-is 11 (#1063:
+#      a parameter's writes reach the tape in an interrogating function)
+#   parameter rebound in a NON-interrogating fn  -> off the tape on both sides
+#   pre-bound local, interrogated (any body) -> REFUSED: refuse/interrogated_local_binder
+#      (writing body: EigenScript#1074) and refuse/interrogated_local_binder_readonly
+#      (the other binding may not have run: live-at-zero, #157/#163/#185)
+#   fresh name, read-only body, interrogated IN the body -> loop-scoped;
+#      a post-loop `prev of s` raises on both sides (t130), so the query
+#      sits inside the loop here
+define pw(p) as:
+    for p in [7, 8]:
+        p is p + 10
+    print of p
+    print of (prev of p)
+    return 0
+pw of 1
+define pn(p) as:
+    p is p + 10
+    p is p + 10
+    print of p
+    print of (prev of p)
+    print of (what is p at 21)
+    return 0
+pn of 1
+w is 5
+w is 6
+define quiet(w) as:
+    w is w + 1
+    w is w + 1
+    return w
+print of (quiet of 1)
+print of (prev of w)
+define fr(q) as:
+    for s in [7, 8]:
+        print of s
+        print of (prev of s)
+    return 0
+fr of 1

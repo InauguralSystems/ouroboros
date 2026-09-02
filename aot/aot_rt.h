@@ -1258,10 +1258,15 @@ static Value *aot_trajectory(Env *e, const char *name, int band) {
 }
 /* mirrors CASE(OBSERVE_VALUE_NAME) -- the one form that TOLERATES an
  * unbound name (no raise: the no-observation tuple). */
+static Value *aot_undefined_name(const char *name);   /* defined with the temporal helpers below */
 static Value *aot_observe_of(Env *e, const char *name, int band) {
     if (band != 0) return builtin_observe(NULL);
     int oidx = -1, odepth = 0;
     Env *oe = env_resolve_chain(e, name, env_hash_name(name), &oidx, &odepth);
+    /* (round 116) EigenScript#1059: `observe of v` on an unbound name dies
+     * "undefined variable" like every other read (pinned 90bcec0+). It
+     * answered the no-observation tuple here, silently, while the VM died. */
+    if (!oe) return aot_undefined_name(name);
     const ObserverSlot *s = env_obs_slot(oe, oidx);
     if (s && s->used) {
         ObserverSlot q = aot_slot_query_view(oe, oidx, s);

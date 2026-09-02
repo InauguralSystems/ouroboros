@@ -44,7 +44,9 @@ print of report_value of f
 print of observe of f
 print of report of print
 print of observe of print
-print of observe of never_bound
+# (round 116) `observe of never_bound` moved to t217_observe_unbound_err:
+# since EigenScript#1059 (pin a5bc350) it dies "undefined variable" on both
+# sides, which this parity fixture cannot carry mid-program.
 define g() as:
     z is 1
     z is 1

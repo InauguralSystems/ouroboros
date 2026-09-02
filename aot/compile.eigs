@@ -212,6 +212,12 @@ g_cur_params is {}
 # after the loop -- VM post-loop p is the incoming 1, tape holds 7,8), so the
 # binder-scoping decision needs this set alongside g_module_names.
 g_interrogated_names is {}
+# (round 116) The same, per FUNCTION: names THIS function interrogates.
+# EigenScript#1063 records a slot write only in the chunk that interrogates
+# the name (local_traced), so a parameter's writes reach the tape in an
+# interrogating function and nowhere else. Rebuilt per function in
+# emit_function.
+g_cur_interrogated is {}
 
 define collect_interrogated(node, out) as:
     if (type of node) != "list":
@@ -226,11 +232,23 @@ define collect_interrogated(node, out) as:
         collect_interrogated of [node[k], out]
     return 0
 
-# g_traced, minus parameter targets: the tape write-set predicate.
+# g_traced, with parameter targets traced only in a function that
+# interrogates them: the tape write-set predicate. The old rule was
+# "minus parameter targets" and matched the OLD pin, where a parameter's
+# slot writes recorded under a key no query could present. Since
+# EigenScript#1063 (pin 90bcec0+) a parameter is a slot like any local and
+# its writes record iff the owning chunk interrogates the name -- so
+# `define f(p) as: p is p + 10 / p is p + 10 / print of (prev of p)`
+# answers 11 on the VM and answered null here (round-116 critic, 12 cells
+# of #187's axis). A non-interrogating function's parameter writes stay
+# off the tape on both sides (measured: prev of a module `w` after
+# `f(w)` rebinds its parameter twice reads the module history, 5).
 define traced_name(name) as:
     if g_traced != 1:
         return 0
     if g_cur_params[name] == 1:
+        if g_cur_interrogated[name] == 1:
+            return 1
         return 0
     return 1
 # ---- #67: C-keyword identifier mangling -----------------------------------
@@ -1447,23 +1465,10 @@ define collect_uses_scoped(node, acc) as:
             if (fbound[fkn] == null) and (fkn != node[1]):
                 acc[fkn] is 1
         return 0
-    if t == "call":
-        # `observe of v` on an UNBOUND name is VM-tolerated (measured round
-        # 58: rc 0, silent no-op, while `print of v` in the same position
-        # dies rc 1 -- filed upstream as a silent-tolerance divergence), so a
-        # BARE-ident observe argument is not a use for the order guard. Any
-        # other argument shape evaluates its expression and dies like any
-        # read, and is walked normally.
-        local cal is unwrap of node[1]
-        if ((type of cal) == "list") and ((len of cal) > 0):
-            if (cal[0] == "ident") and (cal[1] == "observe"):
-                local oarg is unwrap of node[2]
-                if ((type of oarg) == "list") and ((len of oarg) > 0):
-                    if oarg[0] == "ident":
-                        return 0
-        for ck in range of (len of node):
-            collect_uses_scoped of [node[ck], acc]
-        return 0
+    # (round 116) `observe of v` on an unbound name dies "undefined variable"
+    # upstream since EigenScript#1059 (pinned a5bc350), like every other read,
+    # so the round-58 carve-out that exempted a bare-ident observe argument
+    # from the order guard is gone with its fixture (t124): observe is a use.
     for k in range of (len of node):
         collect_uses_scoped of [node[k], acc]
     return 0
@@ -3143,10 +3148,50 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
         local lscope is 0
         local lsc_seeded is 0
         local lsc_nm_prev is null
-        if ((G_CUR_FN[0]) != "<module>") and (g_module_names[fvar] == 1):
-            lscope is 1
-        if ((G_CUR_FN[0]) != "<module>") and (g_interrogated_names[fvar] == 1):
-            lscope is 1
+        # (round 116, #187) The lscope table keyed on ONE axis (module-bound
+        # or interrogated); the VM's rule keys on the binding KIND. Measured
+        # on the a5bc350 pin (EigenScript#1063 made an interrogated
+        # parameter a slot like any other):
+        #   PARAMETER (interrogated or shadowing a module name) -- the
+        #     binder writes the slot and PERSISTS (t116: VM 8|5; t119),
+        #     exactly as an uninterrogated param does -> never lscope.
+        #   function LOCAL bound outside the loop, interrogated -- REFUSE.
+        #     A writing body is the VM's own incoherence (EigenScript#1074).
+        #     A read-only body loop-scopes on the VM, and the lscope arm
+        #     emits that correctly WHEN the other binding ran before the
+        #     loop -- but the bound-set is whole-body containment: a
+        #     binding in a not-taken branch or AFTER the loop leaves the C
+        #     local live-at-zero, and the post-loop read printed 0 where the
+        #     VM dies (round-116 critic: pl1/ib3/ib4). That is the #157/#163
+        #     /#185 boundness class; until a boundness bit exists, refuse.
+        #   fresh name (bound only as a binder), interrogated -- loop-scoped,
+        #     post-loop read dies on both sides -> lscope.
+        #   module-bound name, not a param -- loop-scoped shadow -> lscope
+        #     (refused when the body writes it: EigenScript#1074).
+        if ((G_CUR_FN[0]) != "<module>") and (g_cur_params[fvar] != 1):
+            if g_module_names[fvar] == 1:
+                if g_interrogated_names[fvar] == 1:
+                    local _mwr is collect_assigns of [fbody, {}]
+                    if _mwr[fvar] != null:
+                        throw of ("AOT: '" + fvar + "' is a for binder over a MODULE name inside a function, interrogated, and the loop body WRITES it. On the pinned VM that write is invisible to the next body read yet persists past the loop (EigenScript#1074), so there is no one answer to emit; refused (ouroboros#187).")
+                lscope is 1
+            elif g_interrogated_names[fvar] == 1:
+                # The body WRITING an interrogated non-parameter binder is
+                # where the VM disagrees with itself (EigenScript#1074: the
+                # write is invisible to the next body read yet persists
+                # past the loop; a pre-bound local persists where a read-
+                # only body loop-scopes, #1064). Read-only bodies are
+                # coherent -- loop-scoped -- and emitted as such.
+                local _lwr is collect_assigns of [fbody, {}]
+                if _lwr[fvar] != null:
+                    # (the name may be a `local`, a plain assign elsewhere in
+                    # the function, or bound ONLY inside this loop -- the
+                    # bound-set is whole-body containment and cannot tell
+                    # those apart, so the message claims none of them: #195)
+                    throw of ("AOT: '" + fvar + "' is a for binder over an INTERROGATED name that is not a parameter, and the loop body WRITES it. On the pinned VM that write is invisible to the next body read yet persists past the loop (EigenScript#1074; the #1064 family), so there is no one answer to emit; refused rather than picking one (ouroboros#187).")
+                if g_cur_bound_nb[fvar] == 1:
+                    throw of ("AOT: '" + fvar + "' is a for binder over an INTERROGATED name that the function also binds outside this loop. The VM loop-scopes the binder, and the post-loop read is the OTHER binding's value only if that binding ran first -- a binding in a not-taken branch or after the loop makes the VM die 'undefined variable' where a C local would read 0 (the #157/#163/#185 live-at-zero class). Refused until the emitter can prove the binding dominates the loop (ouroboros#187).")
+                lscope is 1
         if lscope == 1:
             # A function-body binder the VM LOOP-SCOPES: its name is
             # module-bound (param shadow, local shadow, or the plain module
@@ -6825,6 +6870,8 @@ define emit_function(fn, finfo, gnm, gbt) as:
 
     local _lmk is {}
     collect_local_marked of [body, _lmk]
+    g_cur_interrogated is {}
+    collect_interrogated of [body, g_cur_interrogated]
     # (round 64) the never-bound set for the function-scope `prev of` guard:
     # everything THIS function could possibly bind. Conservative-inclusive
     # (conditional assigns and binders count as bound), so the guard only

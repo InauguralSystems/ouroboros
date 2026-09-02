@@ -1,0 +1,17 @@
+# EXPECT: and the loop body WRITES it
+# ouroboros#187 / EigenScript#1074: a `for` binder over a function LOCAL (or a
+# fresh name, or a module name) in a function that interrogates it, where the
+# loop body WRITES the binder. On the pinned VM the write is invisible to the
+# next body read (prints 7 8, not 17 18) yet persists past the loop (18) --
+# two answers for one binding -- so the AOT refuses rather than pick. A
+# read-only body is coherent (loop-scoped) and emitted: t218. A PARAMETER
+# binder is coherent since EigenScript#1063 and emitted: t116, t119.
+define f(q) as:
+    local r is q
+    for r in [7, 8]:
+        r is r + 10
+        print of r
+    print of r
+    print of (prev of r)
+    return 0
+f of 1

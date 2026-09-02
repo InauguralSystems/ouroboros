@@ -2,6 +2,7 @@ test_auth.eigs DIVERGE
 test_bcd.eigs REFUSE
 test_bitwise.eigs REFUSE
 test_break_continue.eigs REFUSE
+test_buffer_store_type.eigs REFUSE
 test_buf_resample.eigs REFUSE
 test_buf_vectorized.eigs REFUSE
 test_builtin_contracts.eigs REFUSE
@@ -57,6 +58,8 @@ test_json_depth.eigs REFUSE
 test_json_hard.eigs REFUSE
 test_keyword_reservation.eigs REFUSE
 test_leaf_call.eigs REFUSE
+test_linalg.eigs REFUSE
+test_listcomp_interrogate.eigs REFUSE
 test_list_truncate.eigs REFUSE
 test_loop_exit.eigs DIVERGE
 test_math_underflow.eigs DIVERGE
@@ -72,6 +75,7 @@ test_observer_interactions.eigs REFUSE
 test_observer_park.eigs DIVERGE
 test_observer_saturation.eigs REFUSE
 test_observer_slots.eigs REFUSE
+test_observe_unbound.eigs REFUSE
 test_obs_mt_race.eigs REFUSE
 test_optimize.eigs REFUSE
 test_pcm_codec.eigs REFUSE
@@ -104,6 +108,7 @@ test_task_osr.eigs REFUSE
 test_tasks.eigs REFUSE
 test_task_sleep_order.eigs REFUSE
 test_temporal.eigs REFUSE
+test_temporal_param.eigs REFUSE
 test_temporal_pruning.eigs REFUSE
 test_temporal_when.eigs REFUSE
 test_tensor_kernel_tiling.eigs BUILDCRASH

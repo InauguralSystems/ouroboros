@@ -1,0 +1,10 @@
+# ouroboros round 116 / EigenScript#1059: `observe of <never-bound name>` was
+# the one read-shaped form the VM tolerated (a silent no-observation tuple);
+# on the a5bc350 pin it dies "undefined variable" like every other read, and
+# the AOT's aot_observe_of now dies the same way instead of answering the
+# tuple (t203 used to pin the tolerant answer). A bound name still observes.
+x is 1
+x is 2
+print of observe of x
+print of observe of never_bound
+print of "unreachable"
