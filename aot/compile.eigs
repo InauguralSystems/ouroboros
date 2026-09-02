@@ -888,7 +888,10 @@ define is_num_expr(node, nm, bt) as:
                 return 1
             if (callee[1] == "sqrt") and (g_funcs["sqrt"] == null):
                 return 1
-            if g_funcs[callee[1]] != null:
+            # (round 132, #177) a PARAMETER named like a compiled function
+            # shadows it: the call goes through the parameter's value, not the
+            # C function (gcc: "called object 'eig_handler' is not a function").
+            if (g_funcs[callee[1]] != null) and (g_cur_params[callee[1]] != 1):
                 if (g_funcs[callee[1]])["ret"] == "double":
                     return 1
         return 0
@@ -2071,7 +2074,7 @@ define emit_num(node, nm, bt, raw) as:
             if (callee[1] == "sqrt") and (g_funcs["sqrt"] == null):
                 # VM sqrt guards (sqrt of negative -> NaN -> 0).
                 return "num_guard(sqrt(" + (emit_num of [node[2], nm, bt, 0]) + "))"
-            if g_funcs[callee[1]] != null:
+            if (g_funcs[callee[1]] != null) and (g_cur_params[callee[1]] != 1):
                 if g_func_void[callee[1]] == 1:
                     # Every other arm of emit_num refuses loudly on a
                     # non-numeric node; this one emitted a raw C call, so a
@@ -2458,7 +2461,7 @@ define emit_val(node, nm, bt) as:
                 return rhelper + "(__eigs_g, \"" + ra[1] + "\", " + rfn + ")"
         # user function returning a Value* (e.g. a tensor-returning forward pass)
         # -> direct native C call.
-        if g_funcs[callee[1]] != null:
+        if (g_funcs[callee[1]] != null) and (g_cur_params[callee[1]] != 1):
             if (g_funcs[callee[1]])["ret"] == "Value*":
                 # cn, not the raw name — see the void-call site: two of these
                 # emitted the UNMANGLED name while the definition was mangled,
@@ -3107,7 +3110,7 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
     if t == "call":
         local callee is unwrap of node[1]
         if callee[0] == "ident":
-            if g_funcs[callee[1]] != null:
+            if (g_funcs[callee[1]] != null) and (g_cur_params[callee[1]] != 1):
                 if (g_funcs[callee[1]])["ret"] == "void":
                     # cn, not the raw name: a user function whose name collides
                     # with a C identifier is emitted mangled everywhere else, and
@@ -5106,6 +5109,15 @@ define return_node_is_boxed(rnode, fbt, ftt, rba, fgen, fdict) as:
             # return (type str)" rc 1 where the VM prints the value rc 0.
             if fgen[rc1[1]] == 1:
                 return 1
+    if re[0] == "interrogate":
+        # (round 132, #155) `return prev of s`: the tape slot may hold a
+        # number, a string, or null (a first assignment), so the return
+        # is boxed whatever the name's class -- a double declared here
+        # died "non-numeric value in a numeric context at f: return
+        # (type str)" where the VM prints aa. `print of (prev of s)`
+        # already went through emit_val; only the return position
+        # classified numerically.
+        return 1
     if re[0] == "ident":
         if fbt[re[1]] == 1:
             return 1
@@ -5925,9 +5937,19 @@ define arg_class(node, caller_pt, caller_params, caller_locals) as:
         # silent-wrong, not preventing one.
         if g_func_names[e[1]] == 1:
             return "gen"
+        if (aot_is_builtin_name of e[1]) == 1:
+            # (round 132, #176) a BUILTIN passed as a callback is boxed
+            # evidence exactly like a compiled function's name (above);
+            # "unknown" left the callee's parameter numeric and the caller
+            # died at its own unbox (`ap of [len, [1, 2, 3]]`, VM 3).
+            # lib/eigen.eigs registers builtins into an env dict at 16
+            # sites this way.
+            return "gen"
         return "unknown"
     if e[0] == "ident":
         if g_func_names[e[1]] == 1:
+            return "gen"
+        if (aot_is_builtin_name of e[1]) == 1:
             return "gen"
     return "unknown"
 

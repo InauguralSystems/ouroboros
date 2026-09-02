@@ -1,0 +1,11 @@
+# ouroboros#176: a BUILTIN name passed as a callback argument. arg_class
+# returned "unknown" for it, the callee's parameter defaulted numeric, and
+# the caller died at its own unbox ("name len (type builtin)"); the VM
+# prints 3. A builtin name is boxed evidence like a compiled function's.
+define ap(fn, v) as:
+    return (fn of v)
+print of (ap of [len, [1, 2, 3]])
+print of (ap of [str, 42])
+define twice(x) as:
+    return x * 2
+print of (ap of [twice, 4])

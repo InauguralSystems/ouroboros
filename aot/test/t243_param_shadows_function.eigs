@@ -1,0 +1,20 @@
+# ouroboros#177: (2) a parameter named like a compiled function shadows
+# it -- the call inside `run` must go through the parameter's VALUE, not
+# the C function (gcc: "called object 'eig_handler' is not a function");
+# (1) a parameter passed a number at one site and a function at another,
+# once refused with a false "the VM raises" reason (VM 6 then 10).
+define handler(x) as:
+    return x + 1
+define run(handler, v) as:
+    return handler of v
+define dbl(x) as:
+    return x * 2
+print of (run of [handler, 4])
+print of (run of [dbl, 4])
+print of (handler of 4)
+define ap(fn, v) as:
+    return (fn of v)
+define useit(n) as:
+    return n + 1
+print of (ap of [dbl, 3])
+print of (useit of 9)
