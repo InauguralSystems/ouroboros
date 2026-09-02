@@ -274,14 +274,14 @@ static inline Value *aot_slot_value(EigsSlot *sp) {
 
 static Value *aot_get_named_ic(Env *g, const char *name, AotNameIC *c) {
     EigsSlot *sp = aot_name_slot(g, name, c);
-    if (!sp) rt_error(EK_UNDEFINED_NAME, 0, "undefined variable '%s'", name);
+    if (!sp) rt_error(EK_UNDEFINED_NAME, g_trace_current_line, "undefined variable '%s'", name);
     Value *v = aot_slot_value(sp);
     val_incref(v);
     return v;
 }
 static Value *aot_getb_named_ic(Env *g, const char *name, AotNameIC *c) {
     EigsSlot *sp = aot_name_slot(g, name, c);
-    if (!sp) rt_error(EK_UNDEFINED_NAME, 0, "undefined variable '%s'", name);
+    if (!sp) rt_error(EK_UNDEFINED_NAME, g_trace_current_line, "undefined variable '%s'", name);
     return aot_slot_value(sp);
 }
 static Value *aot_get_ic(Env *l, const char *name, AotNameIC *c) {
@@ -304,14 +304,14 @@ static Value *aot_get(Env *g, const char *name) {
 }
 static Value *aot_get_named(Env *g, const char *name) {
     Value *v = env_get(g, name);
-    if (!v) rt_error(EK_UNDEFINED_NAME, 0, "undefined variable '%s'", name);
+    if (!v) rt_error(EK_UNDEFINED_NAME, g_trace_current_line, "undefined variable '%s'", name);
     val_incref(v);
     return v;
 }
 /* borrowed variant (call-argument reads: no incref, callee doesn't consume) */
 static Value *aot_getb_named(Env *g, const char *name) {
     Value *v = env_get(g, name);
-    if (!v) rt_error(EK_UNDEFINED_NAME, 0, "undefined variable '%s'", name);
+    if (!v) rt_error(EK_UNDEFINED_NAME, g_trace_current_line, "undefined variable '%s'", name);
     return v;
 }
 static void aot_set(Env *g, const char *name, Value *val) {
@@ -528,7 +528,7 @@ static const char *aot_cmp_type_name(Value *v) {
                            b->data.str ? b->data.str : ""); \
             res = (c OP 0) ? 1.0 : 0.0; \
         } else { \
-            rt_error(EK_TYPE, 0, "cannot compare %s and %s with '%s'", \
+            rt_error(EK_TYPE, g_trace_current_line, "cannot compare %s and %s with '%s'", \
                      aot_cmp_type_name(a), aot_cmp_type_name(b), OPNAME); \
         } \
         val_decref(a); val_decref(b); \
@@ -1347,7 +1347,7 @@ static void aot_trace_assign(const char *name, double v) {
 /* Compile-time-known "undefined variable" raise, in Value* position: the VM's
  * exact error for a module-scope interrogate of a never-module-bound name. */
 static Value *aot_undefined_name(const char *name) {
-    rt_error(EK_UNDEFINED_NAME, 0, "undefined variable '%s'", name);
+    rt_error(EK_UNDEFINED_NAME, g_trace_current_line, "undefined variable '%s'", name);
     return NULL; /* unreachable */
 }
 static Value *aot_prev_val(const char *name) {
@@ -1583,7 +1583,7 @@ static inline void aot_set_num_sh(Env *l, Env *g, const char *name,
  * (#100 item 5). Consumes v, returns owned. */
 static Value *aot_neg(Value *v) {
     if (!v || v->type != VAL_NUM)
-        rt_error(EK_TYPE, 0, "cannot negate non-numeric");
+        rt_error(EK_TYPE, g_trace_current_line, "cannot negate non-numeric");
     double d = v->data.num;
     val_decref(v);
     return make_num(-d);
@@ -1710,7 +1710,7 @@ static AotTensor aot_tensor_matmul(AotTensor a, AotTensor b) {
      * 1xN on both tiers). The old silent null tensor serialized to `[]` and the
      * program ran on (#100 item 8). */
     if (a.cols != b.rows)
-        rt_error(EK_VALUE, 0, "matmul: incompatible shapes (%ldx%ld · %ldx%ld)",
+        rt_error(EK_VALUE, g_trace_current_line, "matmul: incompatible shapes (%ldx%ld · %ldx%ld)",
                  a.rows, a.cols, b.rows, b.cols);
     o.rows = a.rows; o.cols = b.cols;
     o.is1d = a.is1d;                           /* 1-D result iff the left operand is a vector */
@@ -1800,27 +1800,27 @@ static __attribute__((noinline)) Value *aot_index_get_ib_slow(Value *target, dou
     int i;
     if (target && target->type == VAL_LIST) {
         if (!aot_idx_is_int(d, &i))
-            rt_error(EK_VALUE, 0, "index must be an integer, got %g", d);
+            rt_error(EK_VALUE, g_trace_current_line, "index must be an integer, got %g", d);
         else if (aot_idx_resolve(&i, target->data.list.count)) {
             result = target->data.list.items[i]; val_incref(result);
         } else
-            rt_error(EK_INDEX, 0, "index %d out of range (list length %d)", i, target->data.list.count);
+            rt_error(EK_INDEX, g_trace_current_line, "index %d out of range (list length %d)", i, target->data.list.count);
     } else if (target && target->type == VAL_STR) {
         if (!aot_idx_is_int(d, &i))
-            rt_error(EK_VALUE, 0, "index must be an integer, got %g", d);
+            rt_error(EK_VALUE, g_trace_current_line, "index must be an integer, got %g", d);
         else if (aot_idx_resolve(&i, (int)strlen(target->data.str))) {
             char b[2] = { target->data.str[i], 0 }; result = make_str(b);
         } else
-            rt_error(EK_INDEX, 0, "string index %d out of range (length %d)", i, (int)strlen(target->data.str));
+            rt_error(EK_INDEX, g_trace_current_line, "string index %d out of range (length %d)", i, (int)strlen(target->data.str));
     } else if (target && target->type == VAL_BUFFER) {
         if (!aot_idx_is_int(d, &i))
-            rt_error(EK_VALUE, 0, "index must be an integer, got %g", d);
+            rt_error(EK_VALUE, g_trace_current_line, "index must be an integer, got %g", d);
         else if (aot_idx_resolve(&i, target->data.buffer.count))
             result = make_num(target->data.buffer.data[i]);
         else
-            rt_error(EK_INDEX, 0, "buffer index %d out of range (length %d)", i, target->data.buffer.count);
+            rt_error(EK_INDEX, g_trace_current_line, "buffer index %d out of range (length %d)", i, target->data.buffer.count);
     } else {
-        rt_error(EK_TYPE, 0, "cannot index %s",
+        rt_error(EK_TYPE, g_trace_current_line, "cannot index %s",
                  target ? val_type_name(target->type) : "null");
     }
     return result ? result : make_null();
@@ -1838,7 +1838,7 @@ static void aot_index_set_ib(Value *target, double d, Value *val) {
     int i;
     if (target && target->type == VAL_LIST) {
         if (!aot_idx_is_int(d, &i))
-            rt_error(EK_VALUE, 0, "index must be an integer, got %g", d);
+            rt_error(EK_VALUE, g_trace_current_line, "index must be an integer, got %g", d);
         else if (aot_idx_resolve(&i, target->data.list.count)) {
             Value *old = target->data.list.items[i];
             /* (round 107) #873: an arena value stored into a HEAP list must be
@@ -1852,19 +1852,19 @@ static void aot_index_set_ib(Value *target, double d, Value *val) {
             else target->data.list.items[i] = nv;   /* fresh heap ref; the arena val is dropped below */
             if (old) val_decref(old);
         } else
-            rt_error(EK_INDEX, 0, "index %d out of range (list length %d)", i, target->data.list.count);
+            rt_error(EK_INDEX, g_trace_current_line, "index %d out of range (list length %d)", i, target->data.list.count);
     } else if (target && target->type == VAL_BUFFER) {
         if (val && val->type == VAL_NUM) {
             if (!aot_idx_is_int(d, &i))
-                rt_error(EK_VALUE, 0, "index must be an integer, got %g", d);
+                rt_error(EK_VALUE, g_trace_current_line, "index must be an integer, got %g", d);
             else if (aot_idx_resolve(&i, target->data.buffer.count))
                 target->data.buffer.data[i] = val->data.num;
             else
-                rt_error(EK_INDEX, 0, "buffer index %d out of range (length %d)", i, target->data.buffer.count);
+                rt_error(EK_INDEX, g_trace_current_line, "buffer index %d out of range (length %d)", i, target->data.buffer.count);
         } else
-            rt_error(EK_TYPE, 0, "buffer elements must be numbers");
+            rt_error(EK_TYPE, g_trace_current_line, "buffer elements must be numbers");
     } else {
-        rt_error(EK_TYPE, 0, "cannot index %s for assignment",
+        rt_error(EK_TYPE, g_trace_current_line, "cannot index %s for assignment",
                  target ? val_type_name(target->type) : "null");
     }
     if (val) val_decref(val);
@@ -1881,29 +1881,29 @@ static Value *aot_index_get_i(Value *target, double d) {
     int i;
     if (target->type == VAL_LIST) {
         if (!aot_idx_is_int(d, &i))
-            rt_error(EK_VALUE, 0, "index must be an integer, got %g", d);
+            rt_error(EK_VALUE, g_trace_current_line, "index must be an integer, got %g", d);
         else if (aot_idx_resolve(&i, target->data.list.count)) {
             result = target->data.list.items[i]; val_incref(result);
         } else
-            rt_error(EK_INDEX, 0, "index %d out of range (list length %d)", i, target->data.list.count);
+            rt_error(EK_INDEX, g_trace_current_line, "index %d out of range (list length %d)", i, target->data.list.count);
     } else if (target->type == VAL_STR) {
         if (!aot_idx_is_int(d, &i))
-            rt_error(EK_VALUE, 0, "index must be an integer, got %g", d);
+            rt_error(EK_VALUE, g_trace_current_line, "index must be an integer, got %g", d);
         else if (aot_idx_resolve(&i, (int)strlen(target->data.str))) {
             char b[2] = { target->data.str[i], 0 }; result = make_str(b);
         } else
-            rt_error(EK_INDEX, 0, "string index %d out of range (length %d)", i, (int)strlen(target->data.str));
+            rt_error(EK_INDEX, g_trace_current_line, "string index %d out of range (length %d)", i, (int)strlen(target->data.str));
     } else if (target->type == VAL_BUFFER) {
         if (!aot_idx_is_int(d, &i))
-            rt_error(EK_VALUE, 0, "index must be an integer, got %g", d);
+            rt_error(EK_VALUE, g_trace_current_line, "index must be an integer, got %g", d);
         else if (aot_idx_resolve(&i, target->data.buffer.count))
             result = make_num(target->data.buffer.data[i]);
         else
-            rt_error(EK_INDEX, 0, "buffer index %d out of range (length %d)", i, target->data.buffer.count);
+            rt_error(EK_INDEX, g_trace_current_line, "buffer index %d out of range (length %d)", i, target->data.buffer.count);
     } else {
         /* A VAL_DICT with a numeric index falls here in the oracle too: its
          * dict arm requires VAL_STR, so the final else raises. */
-        rt_error(EK_TYPE, 0, "cannot index %s", val_type_name(target->type));
+        rt_error(EK_TYPE, g_trace_current_line, "cannot index %s", val_type_name(target->type));
     }
     val_decref(target);
     return result ? result : make_null();
@@ -1914,35 +1914,35 @@ static Value *aot_index_get(Value *target, Value *idx) {
     if (target->type == VAL_LIST && idx->type == VAL_NUM) {
         int i;
         if (!aot_idx_is_int(idx->data.num, &i))
-            rt_error(EK_VALUE, 0, "index must be an integer, got %g", idx->data.num);
+            rt_error(EK_VALUE, g_trace_current_line, "index must be an integer, got %g", idx->data.num);
         else if (aot_idx_resolve(&i, target->data.list.count)) {
             result = target->data.list.items[i]; val_incref(result);
         } else
-            rt_error(EK_INDEX, 0, "index %d out of range (list length %d)", i, target->data.list.count);
+            rt_error(EK_INDEX, g_trace_current_line, "index %d out of range (list length %d)", i, target->data.list.count);
     } else if (target->type == VAL_DICT && idx->type == VAL_STR) {
         Value *v = dict_get(target, idx->data.str);
         if (v) { result = v; val_incref(result); }
     } else if (target->type == VAL_STR && idx->type == VAL_NUM) {
         int i;
         if (!aot_idx_is_int(idx->data.num, &i))
-            rt_error(EK_VALUE, 0, "index must be an integer, got %g", idx->data.num);
+            rt_error(EK_VALUE, g_trace_current_line, "index must be an integer, got %g", idx->data.num);
         else if (aot_idx_resolve(&i, (int)strlen(target->data.str))) {
             char b[2] = { target->data.str[i], 0 }; result = make_str(b);
         } else
-            rt_error(EK_INDEX, 0, "string index %d out of range (length %d)", i, (int)strlen(target->data.str));
+            rt_error(EK_INDEX, g_trace_current_line, "string index %d out of range (length %d)", i, (int)strlen(target->data.str));
     } else if (target->type == VAL_BUFFER && idx->type == VAL_NUM) {
         int i;
         if (!aot_idx_is_int(idx->data.num, &i))
-            rt_error(EK_VALUE, 0, "index must be an integer, got %g", idx->data.num);
+            rt_error(EK_VALUE, g_trace_current_line, "index must be an integer, got %g", idx->data.num);
         else if (aot_idx_resolve(&i, target->data.buffer.count))
             result = make_num(target->data.buffer.data[i]);
         else
-            rt_error(EK_INDEX, 0, "buffer index %d out of range (length %d)", i, target->data.buffer.count);
+            rt_error(EK_INDEX, g_trace_current_line, "buffer index %d out of range (length %d)", i, target->data.buffer.count);
     } else {
         /* The oracle's final else (vm.c ~2018). Missing here, an unindexable
          * target — `null["k"]` above all, the index-side twin of the #898 dot
          * read — answered null instead of raising. */
-        rt_error(EK_TYPE, 0, "cannot index %s", val_type_name(target->type));
+        rt_error(EK_TYPE, g_trace_current_line, "cannot index %s", val_type_name(target->type));
     }
     val_decref(target);
     val_decref(idx);
@@ -1973,7 +1973,7 @@ static void aot_index_set_i(Value *target, double d, Value *val) {
     int i;
     if (target && target->type == VAL_LIST) {
         if (!aot_idx_is_int(d, &i))
-            rt_error(EK_VALUE, 0, "index must be an integer, got %g", d);
+            rt_error(EK_VALUE, g_trace_current_line, "index must be an integer, got %g", d);
         else if (aot_idx_resolve(&i, target->data.list.count)) {
             Value *old = target->data.list.items[i];
             /* (round 107) #873: an arena value stored into a HEAP list must be
@@ -1987,19 +1987,19 @@ static void aot_index_set_i(Value *target, double d, Value *val) {
             else target->data.list.items[i] = nv;   /* fresh heap ref; the arena val is dropped below */
             if (old) val_decref(old);
         } else
-            rt_error(EK_INDEX, 0, "index %d out of range (list length %d)", i, target->data.list.count);
+            rt_error(EK_INDEX, g_trace_current_line, "index %d out of range (list length %d)", i, target->data.list.count);
     } else if (target && target->type == VAL_BUFFER) {
         if (val && val->type == VAL_NUM) {
             if (!aot_idx_is_int(d, &i))
-                rt_error(EK_VALUE, 0, "index must be an integer, got %g", d);
+                rt_error(EK_VALUE, g_trace_current_line, "index must be an integer, got %g", d);
             else if (aot_idx_resolve(&i, target->data.buffer.count))
                 target->data.buffer.data[i] = val->data.num;
             else
-                rt_error(EK_INDEX, 0, "buffer index %d out of range (length %d)", i, target->data.buffer.count);
+                rt_error(EK_INDEX, g_trace_current_line, "buffer index %d out of range (length %d)", i, target->data.buffer.count);
         } else
-            rt_error(EK_TYPE, 0, "buffer elements must be numbers");
+            rt_error(EK_TYPE, g_trace_current_line, "buffer elements must be numbers");
     } else {
-        rt_error(EK_TYPE, 0, "cannot index %s for assignment",
+        rt_error(EK_TYPE, g_trace_current_line, "cannot index %s for assignment",
                  target ? val_type_name(target->type) : "null");
     }
     if (val) val_decref(val);
@@ -2010,7 +2010,7 @@ static void aot_index_set(Value *target, Value *idx, Value *val) {
     if (target && target->type == VAL_LIST && idx && idx->type == VAL_NUM) {
         int i;
         if (!aot_idx_is_int(idx->data.num, &i))
-            rt_error(EK_VALUE, 0, "index must be an integer, got %g", idx->data.num);
+            rt_error(EK_VALUE, g_trace_current_line, "index must be an integer, got %g", idx->data.num);
         else if (aot_idx_resolve(&i, target->data.list.count)) {
             Value *old = target->data.list.items[i];
             /* (round 107) #873: an arena value stored into a HEAP list must be
@@ -2024,22 +2024,22 @@ static void aot_index_set(Value *target, Value *idx, Value *val) {
             else target->data.list.items[i] = nv;   /* fresh heap ref; the arena val is dropped below */
             if (old) val_decref(old);
         } else
-            rt_error(EK_INDEX, 0, "index %d out of range (list length %d)", i, target->data.list.count);
+            rt_error(EK_INDEX, g_trace_current_line, "index %d out of range (list length %d)", i, target->data.list.count);
     } else if (target && target->type == VAL_DICT && idx && idx->type == VAL_STR) {
         dict_set_owned(target, idx->data.str, val); val = NULL;
     } else if (target && target->type == VAL_BUFFER && idx && idx->type == VAL_NUM) {
         if (val && val->type == VAL_NUM) {
             int i;
             if (!aot_idx_is_int(idx->data.num, &i))
-                rt_error(EK_VALUE, 0, "index must be an integer, got %g", idx->data.num);
+                rt_error(EK_VALUE, g_trace_current_line, "index must be an integer, got %g", idx->data.num);
             else if (aot_idx_resolve(&i, target->data.buffer.count))
                 target->data.buffer.data[i] = val->data.num;
             else
-                rt_error(EK_INDEX, 0, "buffer index %d out of range (length %d)", i, target->data.buffer.count);
+                rt_error(EK_INDEX, g_trace_current_line, "buffer index %d out of range (length %d)", i, target->data.buffer.count);
         } else
-            rt_error(EK_TYPE, 0, "buffer elements must be numbers");
+            rt_error(EK_TYPE, g_trace_current_line, "buffer elements must be numbers");
     } else {
-        rt_error(EK_TYPE, 0, "cannot index %s for assignment",
+        rt_error(EK_TYPE, g_trace_current_line, "cannot index %s for assignment",
                  target ? val_type_name(target->type) : "null");
     }
     if (val) val_decref(val);
@@ -2064,7 +2064,7 @@ static Value *aot_dot_get(Value *target, const char *key) {
         Value *v = dict_get(target, key);
         if (v) { result = v; val_incref(v); }
     } else if (target) {
-        rt_error(EK_TYPE, 0, "cannot access field '%s' on %s",
+        rt_error(EK_TYPE, g_trace_current_line, "cannot access field '%s' on %s",
                  key, val_type_name(target->type));
     }
     if (target) val_decref(target);
@@ -2109,7 +2109,7 @@ static inline Value *aot_dot_borrow_ic(Value *target, const char *key,
         return (i >= 0) ? target->data.dict.vals[i] : NULL;
     }
     if (target)
-        rt_error(EK_TYPE, 0, "cannot access field '%s' on %s",
+        rt_error(EK_TYPE, g_trace_current_line, "cannot access field '%s' on %s",
                  key, val_type_name(target->type));
     return NULL;   /* null target reads null, silently — the #898 contract */
 }
@@ -2129,7 +2129,7 @@ static __attribute__((noinline)) Value *aot_dot_get_tb_slow(Value *target, const
         return make_null();
     }
     if (target)
-        rt_error(EK_TYPE, 0, "cannot access field '%s' on %s",
+        rt_error(EK_TYPE, g_trace_current_line, "cannot access field '%s' on %s",
                  key, val_type_name(target->type));
     return make_null();
 }
@@ -2145,7 +2145,7 @@ static __attribute__((noinline)) double aot_dot_num_tb_slow(Value *target, const
         exit(1);
     }
     if (target)
-        rt_error(EK_TYPE, 0, "cannot access field '%s' on %s",
+        rt_error(EK_TYPE, g_trace_current_line, "cannot access field '%s' on %s",
                  key, val_type_name(target->type));
     fprintf(stderr, "non-numeric value in a numeric context at %s (null)\n", site);
     exit(1);
@@ -2169,7 +2169,7 @@ static __attribute__((noinline)) void aot_dot_set_num_tb_slow(Value *target, con
             dict_set_owned(target, key, make_num(d));
         }
     } else if (target && target->type != VAL_NULL) {
-        rt_error(EK_TYPE, 0, "cannot set field '%s' on %s",
+        rt_error(EK_TYPE, g_trace_current_line, "cannot set field '%s' on %s",
                  key, val_type_name(target->type));
     }
 }
@@ -2189,7 +2189,7 @@ static double aot_dot_num_ic(Value *target, const char *key,
         exit(1);
     }
     if (target) {
-        rt_error(EK_TYPE, 0, "cannot access field '%s' on %s",
+        rt_error(EK_TYPE, g_trace_current_line, "cannot access field '%s' on %s",
                  key, val_type_name(target->type));
     }
     fprintf(stderr, "non-numeric value in a numeric context at %s (null)\n", site);
@@ -2211,7 +2211,7 @@ static Value *aot_dot_get_ic(Value *target, const char *key,
         return v ? v : make_null();
     }
     if (target) {
-        rt_error(EK_TYPE, 0, "cannot access field '%s' on %s",
+        rt_error(EK_TYPE, g_trace_current_line, "cannot access field '%s' on %s",
                  key, val_type_name(target->type));
         val_decref(target);
     }
@@ -2248,7 +2248,7 @@ static void aot_dot_set_num_ic(Value *target, const char *key, double d,
             dict_set_owned(target, key, make_num(d));
         }
     } else if (target && target->type != VAL_NULL) {
-        rt_error(EK_TYPE, 0, "cannot set field '%s' on %s",
+        rt_error(EK_TYPE, g_trace_current_line, "cannot set field '%s' on %s",
                  key, val_type_name(target->type));
     }
     if (target) val_decref(target);
@@ -2277,7 +2277,7 @@ static void aot_dot_set_ic(Value *target, const char *key, Value *val,
         }
     } else {
         if (target && target->type != VAL_NULL)
-            rt_error(EK_TYPE, 0, "cannot set field '%s' on %s",
+            rt_error(EK_TYPE, g_trace_current_line, "cannot set field '%s' on %s",
                      key, val_type_name(target->type));
         if (val) val_decref(val);
     }
@@ -2289,7 +2289,7 @@ static void aot_dot_set(Value *target, const char *key, Value *val) {
         dict_set_owned(target, key, val);   /* adopts val's ref */
     } else {
         if (target && target->type != VAL_NULL)
-            rt_error(EK_TYPE, 0, "cannot set field '%s' on %s",
+            rt_error(EK_TYPE, g_trace_current_line, "cannot set field '%s' on %s",
                      key, val_type_name(target->type));
         if (val) val_decref(val);
     }
@@ -2442,7 +2442,7 @@ static inline Value *aot_arg_at(Value *a, int k) {
  * non-callable raises the VM's own message rather than being coerced. */
 static Value *aot_call_value(Value *fn, Value *arg) {
     if (!fn || (fn->type != VAL_BUILTIN && fn->type != VAL_FN)) {
-        rt_error(EK_TYPE, 0, "cannot call %s",
+        rt_error(EK_TYPE, g_trace_current_line, "cannot call %s",
                  fn ? val_type_name(fn->type) : "null");
     }
     Value *res;

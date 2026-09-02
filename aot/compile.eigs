@@ -2846,9 +2846,11 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
     if t == "_line":
         # stamp the current source line for the trace tape (mirrors OP_LINE), so
         # `what is x at L` history entries get the right line.
-        if g_traced == 1:
-            return ind + "g_trace_current_line = " + (str of node[1]) + ";\n" + (emit_stmt of [node[2], ind, nm, bt, minits, gf])
-        return emit_stmt of [node[2], ind, nm, bt, minits, gf]
+        # (round 140, #201) the line stamp is emitted for EVERY program, not
+        # only traced ones: rt_error reads g_trace_current_line, so an
+        # unstamped program reported "Error line 0" where the VM names the
+        # source line. One store per statement; the DMG canary measures it.
+        return ind + "g_trace_current_line = " + (str of node[1]) + ";\n" + (emit_stmt of [node[2], ind, nm, bt, minits, gf])
     if t == "assign":
         local name is node[1]
         if g_genp[name] == 1:
