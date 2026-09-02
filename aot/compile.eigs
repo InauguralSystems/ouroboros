@@ -5787,6 +5787,20 @@ define param_assigned_nonnum(node, name) as:
         return 0
     if node[0] == "func":
         return 0
+    if (node[0] == "for") and (node[1] == name):
+        # (round 133, #158) the parameter is re-bound as a for BINDER
+        # over a literal list with a non-numeric element: the numeric
+        # binder arm stored through aot_num_ck_at and died "non-numeric
+        # value in a numeric context at f: for-in p" where the VM prints
+        # b. The literal is statically known; the parameter is boxed.
+        local it is unwrap of node[2]
+        if it[0] == "list":
+            local els is it[1]
+            for ek in range of (len of els):
+                local ee is unwrap of els[ek]
+                if (len of ee) > 0:
+                    if (ee[0] == "str") or (ee[0] == "list") or (ee[0] == "dict") or (ee[0] == "null"):
+                        return 1
     if (node[0] == "assign") and (node[1] == name):
         local r is unwrap of node[2]
         if (len of r) > 0:
@@ -7245,6 +7259,19 @@ define emit_function(fn, finfo, gnm, gbt) as:
                         _isp is 1
                 if _isp == 0:
                     throw of ("AOT: `" + _pan[k] + " is ...` inside a function writes the GLOBAL builtin binding (VM semantics); the AOT has no global-clobber path — use `local " + _pan[k] + " is ...` for a function-local")
+        if (g_func_names[_pan[k]] == 1) and (_lmk[_pan[k]] != 1):
+            # (round 133, #162) a plain assign to a compiled FUNCTION's
+            # name: on the VM `g is k` inside f rebinds module g outward
+            # (prints 5 then 5 -- the function is gone afterwards). A C
+            # function cannot be rebound; the body used to die at run
+            # time "non-numeric value in a numeric context at f: return
+            # (type builtin)". Refused by name, like the builtin case.
+            local _isf is 0
+            for p in range of (len of params):
+                if params[p] == _pan[k]:
+                    _isf is 1
+            if _isf == 0:
+                throw of ("AOT: `" + _pan[k] + " is ...` inside function '" + name + "' assigns the name of a compiled module function. On the VM that rebinds the module binding outward (the function is gone afterwards); a C function cannot be rebound, so it is refused rather than dying at run time (ouroboros#162).")
     # tensor (nested-list) layer for this scope: tensor locals (assigned from a
     # tensor RHS) + tensor/dict params.
     g_dict is {}
@@ -8791,6 +8818,38 @@ define emit_program(ast) as:
     # file-scope vars in C; a function's params/locals shadow same-named globals).
     local bt is infer_buffers of rest
     local nm is infer_numeric of [rest, bt]
+    # (round 133, #173) the module classifier saw only module statements:
+    # `slot is 0` made slot numeric, and a function's outward `slot is f`
+    # -- f a boxed parameter (a callback) -- died "non-numeric value in a
+    # numeric context at keep: name f (type builtin)" where the VM prints
+    # 8. A function's plain assign to a module name whose RHS is a boxed
+    # parameter of that function (gen/dict/buf/tensor class), a compiled
+    # function's name, or a builtin's name demotes the module name.
+    for _dk in range of (len of funcs):
+        local _df is funcs[_dk]
+        local _dpt is (g_funcs[(_df[1])])["ptypes"]
+        local _das is collect_assigns of [_df[3], {}]
+        local _dan is keys of _das
+        for _di in range of (len of _dan):
+            local _dv is _dan[_di]
+            if nm[_dv] == 1:
+                local _drs is _das[_dv]
+                for _dj in range of (len of _drs):
+                    local _dr is unwrap of _drs[_dj]
+                    if (len of _dr) > 0:
+                        if _dr[0] == "ident":
+                            local _boxed is 0
+                            for _dp in range of (len of (_df[2])):
+                                if ((_df[2])[_dp]) == _dr[1]:
+                                    local _dc is _dpt[_dp]
+                                    if (_dc == "gen") or (_dc == "dict") or (_dc == "buf") or (_dc == "tensor"):
+                                        _boxed is 1
+                            if g_func_names[_dr[1]] == 1:
+                                _boxed is 1
+                            if (aot_is_builtin_name of _dr[1]) == 1:
+                                _boxed is 1
+                            if _boxed == 1:
+                                nm[_dv] is 0
     # Emit functions with EMPTY value-bounds (params/globals unbounded -> maps
     # inside them stay guarded, sound). Definitions are emitted FIRST (into a
     # buffer): emit_function computes the real signature — its int inference
