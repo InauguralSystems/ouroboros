@@ -6534,6 +6534,31 @@ define emit_args(node, fname, nm, bt) as:
             catch e:
                 throw of ("in call to '" + fname + "' arg " + (str of k) + ": " + e)
         argl is (append of [argl, s])
+    # (round 121, #182) UNDER-applied by name: the VM binds null to every
+    # unsupplied parameter (`two of [7]` -> b = null). A generic (Value*)
+    # parameter takes make_null() -- null is a value it holds on the VM
+    # too; a parameter the body never reads takes a dummy on either C
+    # type (the #69 rule, per slot); a READ parameter of a typed class has
+    # no C null, so the call is refused BY NAME instead of leaking gcc's
+    # "too few arguments" to the user.
+    if (len of elems) < (len of ptypes):
+        local udead is (g_funcs[fname])["deadp"]
+        local upn is (g_funcs[fname])["pnames"]
+        for uk in range of (len of ptypes):
+            if uk < (len of elems):
+                continue
+            local ucls is ptypes[uk]
+            if ucls == "gen":
+                argl is (append of [argl, "make_null()"])
+            elif (udead != null) and (udead[uk] == 1):
+                if ucls == "num":
+                    argl is (append of [argl, "0"])
+                elif ucls == "tensor":
+                    argl is (append of [argl, "aot_tensor_null()"])
+                else:
+                    argl is (append of [argl, "make_null()"])
+            else:
+                throw of ("AOT: call to '" + fname + "' passes " + (str of (len of elems)) + " argument(s) but the callee takes " + (str of (len of ptypes)) + " -- the VM binds null to parameter '" + (str of (upn[uk])) + "' and the callee reads it, and its inferred C class (" + ucls + ") has no null; refused at build time (ouroboros#182). Pass the argument on both sides, or make the callee tolerate a missing one through a generic parameter.")
     local hazard is 0
     if (len of elems) >= 2:
         for hk in range of (len of elems):
@@ -8373,7 +8398,13 @@ define emit_program(ast) as:
         if (len of fn[2]) == 1:
             if (param_unread of [fn[3], (fn[2])[0]]) == 1:
                 nullok is 1
-        g_funcs[fn[1]] is {"ptypes": pt, "ret": (func_ret_type of [fn, ffbt, ffgen, ffdict]), "rettensor": (func_ret_tensor of fn), "retbuf": (func_ret_buf of [fn, ffbt]), "observed": (func_observed of fn), "nullok": nullok}
+        # (round 121, #182) per-parameter deadness, for the under-applied
+        # call site: an unsupplied parameter the body never reads takes a
+        # dummy on either C type; one it reads is a null in a typed slot.
+        local deadp is []
+        for dp in range of (len of fn[2]):
+            deadp is (append of [deadp, (param_unread of [fn[3], (fn[2])[dp]])])
+        g_funcs[fn[1]] is {"ptypes": pt, "ret": (func_ret_type of [fn, ffbt, ffgen, ffdict]), "rettensor": (func_ret_tensor of fn), "retbuf": (func_ret_buf of [fn, ffbt]), "observed": (func_observed of fn), "nullok": nullok, "deadp": deadp, "pnames": fn[2]}
     # Fixpoint rounds (#86): the pass-through signal (find_gen_param_use)
     # reads CALLEES' ptypes, which are definition-order
     # dependent on the first pass. Re-derive ptypes until stable (chains are

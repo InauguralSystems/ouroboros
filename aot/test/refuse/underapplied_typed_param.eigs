@@ -1,0 +1,10 @@
+# EXPECT: binds null to parameter 'b' and the callee reads it
+# ouroboros#182: `add of [7]` binds b = null on the VM; add reads b only under
+# a guard the VM never fails (prints 7, rc 0), but b's inferred C class is a
+# double, which has no null, so the AOT refuses by name instead of leaking
+# gcc's "too few arguments" (the pre-#182 behaviour, no AOT: line).
+define add(a, b) as:
+    if a > 100:
+        return a + b
+    return a
+print of (add of [7])
