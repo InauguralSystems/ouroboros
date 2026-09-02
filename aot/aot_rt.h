@@ -2426,10 +2426,25 @@ static inline int aot_match_eq(Value *subj, Value *pat) {
  * a LIST, and user functions take boxed parameters BORROWED (see emit_args),
  * so this must not incref. Out of range answers NULL, which the callee's own
  * checks then report — the VM likewise sees a missing argument as null. */
+/* (round 142, #175) The argument value of a call THROUGH A VALUE (the
+ * __wrap_ path). A bare list is the argument list (element k); anything
+ * else is the single argument, so k == 0 yields it -- the old form
+ * returned NULL for every k of a non-list, so `fn of "x"` bound a to NULL
+ * (silent null) and a numeric parameter's unbox dereferenced it
+ * (segfault, rc 139). An unsupplied slot is the VM's null: a shared null
+ * Value, never NULL, so the parameter's own check raises. */
+static Value *aot_arg_missing(void) {
+    static Value *nul = NULL;
+    if (!nul) nul = make_null();
+    return nul;
+}
 static inline Value *aot_arg_at(Value *a, int k) {
-    if (a && a->type == VAL_LIST && k >= 0 && k < a->data.list.count)
-        return a->data.list.items[k];
-    return NULL;
+    if (a && a->type == VAL_LIST) {
+        if (k >= 0 && k < a->data.list.count) return a->data.list.items[k];
+        return aot_arg_missing();
+    }
+    if (a && k == 0) return a;
+    return aot_arg_missing();
 }
 
 /* Call a callee that is an EXPRESSION rather than a name (#140) — `m.fn of x`,
