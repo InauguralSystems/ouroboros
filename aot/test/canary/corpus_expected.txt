@@ -60,8 +60,6 @@ test_leaf_call.eigs REFUSE
 test_linalg.eigs REFUSE
 test_listcomp_interrogate.eigs REFUSE
 test_list_truncate.eigs REFUSE
-test_loop_exit.eigs DIVERGE
-test_math_underflow.eigs DIVERGE
 test_meta_parity.eigs REFUSE
 test_module_scope.eigs REFUSE
 test_multiline.eigs REFUSE

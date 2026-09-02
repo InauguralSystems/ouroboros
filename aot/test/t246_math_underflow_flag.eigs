@@ -1,0 +1,24 @@
+# ouroboros#192: the VM sets EIGS_MATH_UNDERFLOW when a product or quotient
+# of two NONZERO operands is exactly zero; the AOT's num_guard saw only the
+# result and never set it, so math_flags read it clear (silent, rc 0).
+# Mirrored at the multiply/divide emission, gated on the program reading
+# math_flags. Controls: a real zero factor and exact cancellation must NOT
+# flag; overflow still flags. (A product inside a FUNCTION does not set
+# the flag on the pinned VM at all -- filed upstream; not pinned here.)
+define uf() as:
+    return (math_flags of null)["underflow"]
+clear_math_flags of null
+a is 1e-300 * 1e-300
+print of [a, uf of null]
+clear_math_flags of null
+b is 1e-300 / 1e300
+print of [b, uf of null]
+clear_math_flags of null
+c is 3.0 * 0.0
+print of [c, uf of null]
+clear_math_flags of null
+d is 5.0 - 5.0
+print of [d, uf of null]
+clear_math_flags of null
+e is 1e300 * 1e300
+print of [(math_flags of null)["overflow"], uf of null]

@@ -2165,8 +2165,12 @@ define emit_num(node, nm, bt, raw) as:
                 return seqpre + ("(" + l + " - " + r + ")") + seqpost
             return seqpre + ("num_guard(" + l + " - " + r + ")") + seqpost
         if op == "*":
+            if g_uf_gate == 1:
+                return seqpre + ("aot_mul_uf(" + l + ", " + r + ")") + seqpost
             return seqpre + ("num_guard(" + l + " * " + r + ")") + seqpost
         if op == "/":
+            if g_uf_gate == 1:
+                return seqpre + ("aot_ddiv_uf(" + l + ", " + r + ")") + seqpost
             return seqpre + ("aot_ddiv(" + l + ", " + r + ")") + seqpost
         if op == "%":
             return seqpre + ("aot_dmod(" + l + ", " + r + ")") + seqpost
@@ -3146,6 +3150,17 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
             if (has_predicate of node[1]) == 1:
                 chk is "eigs_loop_stall_step(__eigs_g)"
             local olg is loop_gf of [node, minits]
+            if (g_loopexit_gate == 1) and ((G_CUR_FN[0]) == "<module>"):
+                # (round 134, #190) the observed arm ran the step (which
+                # stores "stalled"/"limit") but never stored "normal" on
+                # a condition-false exit, so a later normal exit read the
+                # stale reason (corpus test_loop_exit LE2: VM normal, AOT
+                # stalled). Same shape as the unobserved arm below.
+                local ogs is ind + "while (1) {\n"
+                ogs is ogs + ind + "    if (!(" + (emit_cond of [node[1], nm, bt]) + ")) { aot_set(__eigs_g, \"__loop_exit__\", make_str(\"normal\")); break; }\n"
+                ogs is ogs + (emit_stmts of [node[2], ind + "    ", nm, bt, minits, olg])
+                ogs is ogs + ind + "    if (" + chk + ") break;\n"
+                return ogs + ind + "}\n"
             local os is ind + "while (" + (emit_cond of [node[1], nm, bt]) + ") {\n"
             os is os + (emit_stmts of [node[2], ind + "    ", nm, bt, minits, olg])
             os is os + ind + "    if (" + chk + ") break;\n"
@@ -3163,6 +3178,23 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
         if ov != null:
             return emit_outvec of [ov, ind, nm, bt, 1, minits]
         local lg is loop_gf of [node, minits]
+        if g_loopexit_gate == 1:
+            # (round 134, #190) the program reads __loop_exit__ /
+            # __loop_iterations__: run the VM's own per-iteration step
+            # (it stores __loop_iterations__ into the module env and, on
+            # a limit exit, __loop_exit__ = "limit"), and store "normal"
+            # on the CONDITION-FALSE exit only -- measured on the pin: a
+            # `break` leaves the previous value in place (stall, then a
+            # break loop: still "stalled"), and a stall/limit exit stores
+            # its own reason. Emitted at module scope only (a function's
+            # loop stores into its own frame on the VM; refused above).
+            if (G_CUR_FN[0]) != "<module>":
+                throw of ("AOT: this program reads __loop_exit__ / __loop_iterations__ and function '" + (G_CUR_FN[0]) + "' contains a loop; on the VM a function's loop stores those names into its own frame, which the AOT's module-env store cannot mirror (ouroboros#190).")
+            local gs is ind + "while (1) {\n"
+            gs is gs + ind + "    if (!(" + (emit_cond of [node[1], nm, bt]) + ")) { aot_set(__eigs_g, \"__loop_exit__\", make_str(\"normal\")); break; }\n"
+            gs is gs + (emit_stmts of [node[2], ind + "    ", nm, bt, minits, lg])
+            gs is gs + ind + "    if (eigs_loop_cap_step(__eigs_g)) break;\n"
+            return gs + ind + "}\n"
         local s is ind + "while (" + (emit_cond of [node[1], nm, bt]) + ") {\n"
         s is s + (emit_stmts of [node[2], ind + "    ", nm, bt, minits, lg])
         return s + ind + "}\n"
@@ -7787,6 +7819,8 @@ define emit_function(fn, finfo, gnm, gbt) as:
 # capture that is never rebound and does not throw, falsified it on arrival.
 # The nested fn's name stays callable (g_funcs) and usable
 # as a VALUE argument (emit_val emits make_builtin of a boxed wrapper).
+g_uf_gate is 0
+g_loopexit_gate is 0
 G_LIFT_N is [0]
 # names registered by the lift itself (vs real top-level defines), so a
 # second encloser's same-named private helper is renamed, not refused (#165)
@@ -8244,6 +8278,19 @@ define emit_program(ast) as:
     # per-function derivation caused.
     g_prog_traced is has_interrogate of ast
     g_traced is g_prog_traced
+    # (round 134, #192) the underflow flag gate: the VM sets
+    # EIGS_MATH_UNDERFLOW on every zero product/quotient of nonzero
+    # operands; the AOT's num_guard never did (math_flags read it clear,
+    # silent at rc 0). Mirrored only when the program READS math_flags --
+    # the same mention gate as the observer's -- so no hot multiply pays
+    # for a flag nothing reads.
+    g_uf_gate is 0
+    if (uses_ident of [ast, "math_flags"]) == 1:
+        g_uf_gate is 1
+    # (round 134, #190) the loop-exit bookkeeping gate, same shape
+    g_loopexit_gate is 0
+    if ((uses_ident of [ast, "__loop_exit__"]) == 1) or ((uses_ident of [ast, "__loop_iterations__"]) == 1):
+        g_loopexit_gate is 1
     g_interrogated_names is {}
     collect_interrogated of [ast, g_interrogated_names]
     # (this whole-AST set only decides g_prog_traced-adjacent behavior during

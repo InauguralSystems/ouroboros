@@ -1,0 +1,40 @@
+# ouroboros#190: __loop_exit__ / __loop_iterations__ at module scope. The
+# AOT emitted the VM's per-iteration step only for observed programs, so a
+# plain loop never stored either name (undefined variable) and, after a
+# stall exit, a later normal exit read the stale "stalled". Measured on
+# the pin: a condition-false exit stores "normal"; a `break` stores
+# nothing (the previous value stays); a stall stores "stalled" and resets
+# the iteration count; `for` loops do not count. Emitted only when the
+# program reads one of the names.
+n is 0
+loop while n < 3:
+    n is n + 1
+print of __loop_exit__
+print of __loop_iterations__
+m is 0
+loop while m < 10:
+    m is m + 1
+    if m == 4:
+        break
+print of __loop_exit__
+print of __loop_iterations__
+for k in [1, 2]:
+    m is k
+print of __loop_exit__
+print of __loop_iterations__
+y is 0
+loop while not converged:
+    y is y + 1
+print of __loop_exit__
+p is 0
+loop while p < 10:
+    p is p + 1
+    if p == 4:
+        break
+print of __loop_exit__
+print of __loop_iterations__
+q is 0
+loop while q < 2:
+    q is q + 1
+print of __loop_exit__
+print of __loop_iterations__

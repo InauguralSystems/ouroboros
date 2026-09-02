@@ -1,0 +1,15 @@
+# EXPECT: reads __loop_exit__ / __loop_iterations__ and function
+# ouroboros#190: a program that reads the loop bookkeeping names and has a
+# loop inside a FUNCTION. On the VM that loop stores into the function's
+# own frame (the module value is untouched: measured 2 inside, 15 outside);
+# the AOT's module-env store cannot mirror a frame, so it refuses by name.
+define f() as:
+    local i is 0
+    loop while i < 2:
+        i is i + 1
+    return __loop_iterations__
+print of (f of null)
+n is 0
+loop while n < 3:
+    n is n + 1
+print of __loop_exit__

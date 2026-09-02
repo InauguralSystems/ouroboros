@@ -480,6 +480,21 @@ AOT_NUMOP(aot_mod, fmod(x, aot_mod_zero_check(y)))
 /* Specialized (unboxed double) div/mod. Single-eval helpers so the emitter
    doesn't have to duplicate the operand expressions. */
 static inline double aot_ddiv(double a, double b) { return num_guard(a / aot_div_zero_check(b)); }
+/* (round 134, #192) the VM's ARITH_FAST sets EIGS_MATH_UNDERFLOW when a
+ * product or quotient of two nonzero operands is exactly zero; num_guard
+ * sees only the result, so these two see both operands. Emitted only when
+ * the program reads math_flags (the mention gate), so hot loops that never
+ * ask keep the bare num_guard form. */
+static inline double aot_mul_uf(double a, double b) {
+    double r = num_guard(a * b);
+    if (r == 0.0 && a != 0.0 && b != 0.0) g_math_flags |= EIGS_MATH_UNDERFLOW;
+    return r;
+}
+static inline double aot_ddiv_uf(double a, double b) {
+    double r = num_guard(a / aot_div_zero_check(b));
+    if (r == 0.0 && a != 0.0 && b != 0.0) g_math_flags |= EIGS_MATH_UNDERFLOW;
+    return r;
+}
 static inline double aot_dmod(double a, double b) { return num_guard(fmod(a, aot_mod_zero_check(b))); }
 /* Int-classified modulo: raw C `%` is UB on zero (measured: gcc -O3 emitted
  * ud2 -- rc 132 SIGILL, no diagnostic). Negative operands keep C truncated
