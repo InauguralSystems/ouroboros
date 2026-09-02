@@ -5708,6 +5708,14 @@ define is_index_of(node, name) as:
         return 0
     local tgt is unwrap of n[1]
     if (tgt[0] == "ident") and (tgt[1] == name):
+        # (round 135, #149) a STRING-literal subscript can only be a dict
+        # key: `cfg["w"] * cfg["h"]` read as an index into a numeric
+        # buffer, classified cfg buf, and the build died "emit_num on
+        # non-numeric node str" where the dot spelling matched (42).
+        local sub is unwrap of n[2]
+        if (len of sub) > 0:
+            if sub[0] == "str":
+                return 0
         return 1
     return 0
 
@@ -5997,6 +6005,23 @@ define arg_class(node, caller_pt, caller_params, caller_locals) as:
             return "gen"
         if (aot_is_builtin_name of e[1]) == 1:
             return "gen"
+    if e[0] == "index":
+        # (round 135, #148) an INDEX argument gave no verdict, so the
+        # callee's parameter defaulted numeric and `g of (rows[0])` with
+        # a null element died at the caller's unbox where the VM prints n.
+        # An element of a C BUFFER is a number (its parameter stays a
+        # double -- DMG's `mem[addr]` arguments); an element of anything
+        # else is boxed evidence, as local_gen_map has treated an index
+        # RHS all along.
+        local itg is unwrap of e[1]
+        if itg[0] == "ident":
+            if g_btmap[itg[1]] == 1:
+                return "num"
+            for k in range of (len of caller_params):
+                if (caller_params[k]) == itg[1]:
+                    if (caller_pt[k]) == "buf":
+                        return "num"
+        return "gen"
     return "unknown"
 
 # Boxed LOCALS of a function body: a name whose assignments include a

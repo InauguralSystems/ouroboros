@@ -1,0 +1,16 @@
+# ouroboros#149: a dict parameter subscripted with a STRING literal in an
+# arithmetic position. is_index_of never looked at the subscript, so
+# cfg["w"] read as an index into a numeric buffer, cfg classified buf, and
+# the build died "emit_num on non-numeric node str"; the dot spelling
+# matched (42). A string-literal subscript can only be a dict key. Control:
+# the dot spelling, and a numeric subscript into a real list parameter.
+define area(cfg) as:
+    return (cfg["w"]) * (cfg["h"])
+c is {"w": 6, "h": 7}
+print of (area of c)
+define area2(cfg) as:
+    return (cfg.w) * (cfg.h)
+print of (area2 of c)
+define first2(xs) as:
+    return (xs[0]) * (xs[1])
+print of (first2 of ([3, 5]))
