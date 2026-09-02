@@ -1938,7 +1938,10 @@ define emit_num(node, nm, bt, raw) as:
                     pnfn is 1
                 # (round 87) C-emitted value classes take the band too;
                 # see the emit_val arm.
-                if (nm[pna[1]] != 1) and ((bt[pna[1]] == 1) or (g_btmap[pna[1]] == 1) or (g_dict[pna[1]] == 1) or (g_tensor[pna[1]] == 1)):
+                # (round 110) an ASSIGNED buffer is env-stored in observed
+                # scopes now (see the bt assign arm); only a buffer PARAM
+                # keeps the band.
+                if (nm[pna[1]] != 1) and ((((bt[pna[1]] == 1) or (g_btmap[pna[1]] == 1)) and (g_cur_params[pna[1]] == 1)) or (g_dict[pna[1]] == 1) or (g_tensor[pna[1]] == 1)):
                     pnfn is 1
                 return "((double)aot_predicate_of(__eigs_g, \"" + pna[1] + "\", " + (str of callee[1]) + ", " + (str of pnfn) + "))"
             throw of "AOT: a predicate operand must be a name"
@@ -2292,7 +2295,9 @@ define emit_val(node, nm, bt) as:
                 # mutations, not rebinds, so the binding's slot stays
                 # unobserved). Same flag as compiled functions: an env
                 # miss on a known C-emitted name is not an undefined name.
-                if (bt[pa[1]] == 1) or (g_btmap[pa[1]] == 1) or (g_dict[pa[1]] == 1) or (g_tensor[pa[1]] == 1):
+                # (round 110) an ASSIGNED buffer is env-stored now; only a
+                # buffer PARAM keeps the band -- see the bt assign arm.
+                if (((bt[pa[1]] == 1) or (g_btmap[pa[1]] == 1)) and (g_cur_params[pa[1]] == 1)) or (g_dict[pa[1]] == 1) or (g_tensor[pa[1]] == 1):
                     pfn is 1
                 return "make_num((double)aot_predicate_of(__eigs_g, \"" + pa[1] + "\", " + (str of callee[1]) + ", " + (str of pfn) + "))"
             # a non-name operand is `cannot call num` in the VM; refuse loudly
@@ -2341,7 +2346,9 @@ define emit_val(node, nm, bt) as:
                 local rfn is "0"
                 if g_func_names[(ra[1])] == 1:
                     rfn is "1"
-                elif (bt[(ra[1])] == 1) or (g_btmap[(ra[1])] == 1) or (g_dict[(ra[1])] == 1) or (g_tensor[(ra[1])] == 1):
+                elif (((bt[(ra[1])] == 1) or (g_btmap[(ra[1])] == 1)) and (g_cur_params[(ra[1])] == 1)) or (g_dict[(ra[1])] == 1) or (g_tensor[(ra[1])] == 1):
+                    # (round 110) an ASSIGNED buffer is env-stored now (bt
+                    # assign arm); only a buffer PARAM keeps band 2.
                     rfn is "2"
                 local rhelper is "aot_report"
                 if callee[1] == "report_value":
@@ -2740,12 +2747,27 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
             return ind + (cn of name) + " = " + (emit_tensor of [node[2], nm, bt]) + ";\n"
         if bt[name] == 1:
             local cc is unwrap of node[2]
+            # (round 110) In an OBSERVED scope the VM observes a buffer
+            # assignment like any other -- a populated slot at the first
+            # `b is buffer of 4` (entropy of the contents), stable/moving on
+            # rebind, and the #711 query view sees element writes through the
+            # binding. The C static has no env slot, so every observer
+            # surface answered the no-binding constant (round 87's "band 2"
+            # guess: VM ["stable", 3.17, ...] / AOT ["equilibrium", 0, 0, 0],
+            # `diverging of c` VM 1 / AOT 0, all rc 0). So the store ALSO
+            # goes into the env through the observe-store, with the SAME
+            # pointer (the env takes its own ref; element writes through the
+            # C static are visible at query time), and buffer names take the
+            # env lookup in the observer arms instead of band 2.
+            local bobs is ""
+            if g_observed == 1:
+                bobs is ind + "val_incref(" + (cn of name) + "); aot_observe_val(" + (envc of name) + ", \"" + name + "\", " + (cn of name) + ");\n"
             if (is_buf_create of node[2]) == 1:
                 # `buffer of [r, c]` -> a shaped 2-D buffer; pass the list Value.
                 local barg is unwrap of cc[2]
                 if barg[0] == "list":
-                    return ind + (cn of name) + " = aot_call_name(__eigs_g, \"" + (unwrap of cc[1])[1] + "\", " + (emit_val of [cc[2], nm, bt]) + ");\n"
-                return ind + (cn of name) + " = aot_call_name(__eigs_g, \"" + (unwrap of cc[1])[1] + "\", make_num(" + (emit_num of [cc[2], nm, bt, 0]) + "));\n"
+                    return ind + (cn of name) + " = aot_call_name(__eigs_g, \"" + (unwrap of cc[1])[1] + "\", " + (emit_val of [cc[2], nm, bt]) + ");\n" + bobs
+                return ind + (cn of name) + " = aot_call_name(__eigs_g, \"" + (unwrap of cc[1])[1] + "\", make_num(" + (emit_num of [cc[2], nm, bt, 0]) + "));\n" + bobs
             # buffer var assigned from a call: a USER function goes through
             # the typed C call; a BUILTIN callee (e.g. trim/substr on a
             # string riding the buf class) must NOT — g_funcs[builtin] is
@@ -2754,8 +2776,8 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
             # and non-ident callees take the boxed emit_val path instead.
             local rcallee is unwrap of cc[1]
             if (rcallee[0] == "ident") and (g_funcs[rcallee[1]] != null):
-                return ind + (cn of name) + " = " + (emit_call_num of [node[2], nm, bt]) + ";\n"
-            return ind + (cn of name) + " = " + (emit_val of [node[2], nm, bt]) + ";\n"
+                return ind + (cn of name) + " = " + (emit_call_num of [node[2], nm, bt]) + ";\n" + bobs
+            return ind + (cn of name) + " = " + (emit_val of [node[2], nm, bt]) + ";\n" + bobs
         if nm[name] == 1:
             # observed program: numeric assign goes through the runtime observer
             # (store in env + update the slot's entropy/dH + set last-observer).
