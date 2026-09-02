@@ -2831,6 +2831,16 @@ define emit_stmts(stmts, ind, nm, bt, minits, gf) as:
         out is out + (emit_stmt of [stmts[i], ind, nm, bt, minits, gf])
     return out
 
+# (round 139, #172) a C-variable buffer REBIND releases the previous value:
+# `eig_b = <owned expr>;` leaked the whole old buffer on every rebind (200k
+# rebinds of a 256-buffer: AOT 421 MB peak RSS vs the VM's 2.9 MB). Every
+# RHS form here is OWNED (+1): aot_call_name, a compiled function's Value*
+# return, and emit_val all hand back a reference. The new value is bound
+# BEFORE the old one is released, so a rebind to an alias of itself
+# (`b is b`, emit_val incref'd it) never touches a freed value.
+define bt_rebind(name, expr) as:
+    return "{ Value* _bold = " + (cn of name) + "; " + (cn of name) + " = " + expr + "; if (_bold) val_decref(_bold); }\n"
+
 define emit_stmt(node, ind, nm, bt, minits, gf) as:
     local t is node[0]
     if t == "_line":
@@ -2921,8 +2931,8 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
                 # `buffer of [r, c]` -> a shaped 2-D buffer; pass the list Value.
                 local barg is unwrap of cc[2]
                 if barg[0] == "list":
-                    return ind + (cn of name) + " = aot_call_name(__eigs_g, \"" + (unwrap of cc[1])[1] + "\", " + (emit_val of [cc[2], nm, bt]) + ");\n" + bobs
-                return ind + (cn of name) + " = aot_call_name(__eigs_g, \"" + (unwrap of cc[1])[1] + "\", make_num(" + (emit_num of [cc[2], nm, bt, 0]) + "));\n" + bobs
+                    return ind + (bt_rebind of [name, "aot_call_name(__eigs_g, \"" + (unwrap of cc[1])[1] + "\", " + (emit_val of [cc[2], nm, bt]) + ")"]) + bobs
+                return ind + (bt_rebind of [name, "aot_call_name(__eigs_g, \"" + (unwrap of cc[1])[1] + "\", make_num(" + (emit_num of [cc[2], nm, bt, 0]) + "))"]) + bobs
             # buffer var assigned from a call: a USER function goes through
             # the typed C call; a BUILTIN callee (e.g. trim/substr on a
             # string riding the buf class) must NOT — g_funcs[builtin] is
@@ -2931,8 +2941,8 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
             # and non-ident callees take the boxed emit_val path instead.
             local rcallee is unwrap of cc[1]
             if (rcallee[0] == "ident") and (g_funcs[rcallee[1]] != null):
-                return ind + (cn of name) + " = " + (emit_call_num of [node[2], nm, bt]) + ";\n" + bobs
-            return ind + (cn of name) + " = " + (emit_val of [node[2], nm, bt]) + ";\n" + bobs
+                return ind + (bt_rebind of [name, (emit_call_num of [node[2], nm, bt])]) + bobs
+            return ind + (bt_rebind of [name, (emit_val of [node[2], nm, bt])]) + bobs
         if nm[name] == 1:
             # observed program: numeric assign goes through the runtime observer
             # (store in env + update the slot's entropy/dH + set last-observer).

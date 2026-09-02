@@ -1,0 +1,25 @@
+# ouroboros#172: a C-variable buffer REBIND releases the previous value (the
+# old form leaked the whole old buffer on every rebind: 200k rebinds of a
+# 256-buffer, AOT 421 MB peak RSS vs the VM's 2.9 MB; measured in the
+# commit). Parity here: rebinds through buffer(), zeros(), a compiled
+# function returning a buffer, an alias, and a rebind to itself.
+b is buffer of 4
+b[0] is 7
+define fresh(n) as:
+    local r is zeros of n
+    r[0] is n
+    return r
+i is 0
+loop while i < 3:
+    b is buffer of 4
+    b[1] is i
+    i is i + 1
+print of b
+b is fresh of 5
+print of b
+c is b
+b is zeros of 2
+print of c
+print of b
+b is b
+print of b
