@@ -3584,6 +3584,13 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
                 mfirst is 0
             mi is mi + 1
         return mout + ind + "}\n"
+    if t == "func":
+        # (round 127, #199) a define nested in a MODULE-scope loop/branch
+        # body: the lift pass runs over function bodies only, so the node
+        # reached the emitter raw and the refusal named the AST node.
+        # On the VM a define inside a `for` body is loop-scoped (its name
+        # dies with the loop); the module-scope lift is not built.
+        throw of ("AOT: define '" + (str of (node[1])) + "' is nested inside a module-scope block (a loop or branch body); nested defines are lifted inside functions only, and a define inside a module `for` body is loop-scoped on the VM. Move it to top level, or into a function (ouroboros#199).")
     throw of ("AOT: cannot emit statement node '" + t + "'")
 
 # ---- buffer value-bound inference (for guard elision in vectorized maps) ----
