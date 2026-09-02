@@ -1,0 +1,12 @@
+# ouroboros#187 / #157 (round 119): the interrogated local binder whose only
+# other binding is in a NOT-TAKEN branch. VM: 7 8, then `prev of r` dies.
+# The per-call bit stays 0 (the branch never stored), so the AOT dies too.
+define f(q) as:
+    if q == 5:
+        r is 1
+    for r in [7, 8]:
+        print of r
+    print of (prev of r)
+    return 0
+f of 1
+print of "unreachable"

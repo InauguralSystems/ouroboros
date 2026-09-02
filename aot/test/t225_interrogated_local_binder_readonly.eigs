@@ -1,0 +1,15 @@
+# ouroboros#187 residual, lifted in round 119: a `for` binder over a
+# function local, interrogated, body only reads. The VM loop-scopes the
+# binder: 7 8, then the local's own 1, then prev 7. Round 116 REFUSED this
+# (the post-loop read is the other binding's value only if that binding
+# ran first, and the emitter could not tell); the round-117 per-call
+# boundness bit is exactly that fact, so it is emitted now. The two shapes
+# where the other binding did NOT run first die on both sides: t226, t227.
+define f(q) as:
+    local r is q
+    for r in [7, 8]:
+        print of r
+    print of r
+    print of (prev of r)
+    return 0
+f of 1

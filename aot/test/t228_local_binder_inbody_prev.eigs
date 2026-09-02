@@ -1,0 +1,32 @@
+# ouroboros#187 residual (round 119, the critic's a1): `prev of r` INSIDE a
+# lifted function-local binder loop. The loop's block-local carries its own
+# bit = 1 (it is bound on every iteration), the OUTER per-call bit stays 0
+# until `local r is 3` runs after the loop. The first cut emitted the shadow
+# bit only for module-scope names and the in-body prev read the outer bit:
+# died "undefined variable 'r'" where the VM prints 7 null 8 7 3.
+define f(q) as:
+    for r in [7, 8]:
+        print of r
+        print of (prev of r)
+    local r is 3
+    print of r
+    return 0
+f of 1
+# controls: pre-bound local (in-body prev sees the pre-bound history), and a
+# binder-only name with no other binding (its own name, `s`: history is
+# keyed by NAME across functions, so a second `r` would read g's stores --
+# the #1064/#1065 family, true on both sides but not what this control pins)
+define g(q) as:
+    local r is q
+    for r in [7, 8]:
+        print of r
+        print of (prev of r)
+    print of r
+    return 0
+g of 1
+define h(q) as:
+    for s in [7, 8]:
+        print of s
+        print of (prev of s)
+    return 0
+h of 1

@@ -226,7 +226,18 @@ g_cur_localmarked is {}
 g_cur_bound_bit is {}
 
 define bound_bit_of(name, nmap) as:
-    if (g_bound_bit[name] != 1) and (g_cur_bound_bit[name] != 1):
+    if g_cur_bound_bit[name] == 1:
+        # (round 119) a FUNCTION-scope bit: the `local`-mark exclusion below
+        # is for a local shadowing a MODULE bit-name; a conditionally-bound
+        # local declared with `local` IS the name the per-call bit guards
+        # (`for r in ...: ... / print of (prev of r) / local r is 3`: VM
+        # dies, and with the exclusion applied the prev answered 7).
+        if nmap[name] != 1:
+            return 0
+        if g_observed == 1:
+            return 0
+        return 1
+    if g_bound_bit[name] != 1:
         return 0
     return bound_bit_common of [name, nmap]
 
@@ -2898,7 +2909,13 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
                     # so the RHS still resolves to the file-scope var.
                     G_SH_N[0] is G_SH_N[0] + 1
                     local stn is "__aot_sh" + (str of (G_SH_N[0]))
-                    return ind + sty + " " + stn + " = " + srhs + ";\n" + ind + sty + " " + (cn of name) + " = " + stn + ";\n"
+                    local _lbset is ""
+                    if g_cur_bound_bit[name] == 1:
+                        _lbset is ind + (cn of name) + "_b = 1;\n"
+                    return ind + sty + " " + stn + " = " + srhs + ";\n" + ind + sty + " " + (cn of name) + " = " + stn + ";\n" + _lbset
+                if g_cur_bound_bit[name] == 1:
+                    # (round 119) a `local` declaration is a binding too
+                    return ind + sty + " " + (cn of name) + " = " + srhs + ";\n" + ind + (cn of name) + "_b = 1;\n"
                 return ind + sty + " " + (cn of name) + " = " + srhs + ";\n"
             local asn is ind + (cn of name) + " = " + (emit_num of [node[2], nm, bt, raw]) + ";\n"
             if (bound_bit_of of [name, nm]) == 1:
@@ -3215,8 +3232,8 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
             # a post-loop read is an out-of-scope name, loud at build time
             # (the boxed path silently served the stale last value).
             fo is fo + ind + "  double " + (cn of fvar) + " = 0;\n"
-            if g_bound_bit[fvar] == 1:
-                # (round 117) the block-local's own bit shadows the static's:
+            if (g_bound_bit[fvar] == 1) or (g_cur_bound_bit[fvar] == 1):
+                # (round 117/119) the block-local's own bit shadows the outer one's:
                 # in-loop reads pass, post-loop reads see the unset static bit
                 fo is fo + ind + "  int " + (cn of fvar) + "_b = 1;\n"
         fo is fo + ind + "  long " + nv + " = aot_iter_len(" + itv + ");\n"
@@ -3265,8 +3282,12 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
                     # bound-set is whole-body containment and cannot tell
                     # those apart, so the message claims none of them: #195)
                     throw of ("AOT: '" + fvar + "' is a for binder over an INTERROGATED name that is not a parameter, and the loop body WRITES it. On the pinned VM that write is invisible to the next body read yet persists past the loop (EigenScript#1074; the #1064 family), so there is no one answer to emit; refused rather than picking one (ouroboros#187).")
-                if g_cur_bound_nb[fvar] == 1:
-                    throw of ("AOT: '" + fvar + "' is a for binder over an INTERROGATED name that the function also binds outside this loop. The VM loop-scopes the binder, and the post-loop read is the OTHER binding's value only if that binding ran first -- a binding in a not-taken branch or after the loop makes the VM die 'undefined variable' where a C local would read 0 (the #157/#163/#185 live-at-zero class). Refused until the emitter can prove the binding dominates the loop (ouroboros#187).")
+                # (round 119) the round-116 refusal for a read-only body over
+                # a local the function also binds outside the loop is LIFTED:
+                # the per-call boundness bit (round 117) is exactly the
+                # "did the other binding run first" fact it was waiting for.
+                # t225 (pre-bound: 7 8 1 7), t226/t227 (binding after the
+                # loop / in a not-taken branch: `prev of r` dies on both sides).
                 lscope is 1
         if lscope == 1:
             # A function-body binder the VM LOOP-SCOPES: its name is
@@ -3295,8 +3316,8 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
             if bt[fvar] == 1:
                 throw of ("AOT: '" + fvar + "' is a loop-scoped for binder over a BOXED binding; per-iteration ownership past break is not emitted yet (see EigenScript#1056).")
             fo is fo + ind + "    double " + (cn of fvar) + " = aot_num_ck_at(aot_iter_get(" + itv + ", " + kv + "), \"" + (c_escape of (G_CUR_FN[0])) + ": for-in " + (c_escape of fvar) + "\");\n"
-            if g_bound_bit[fvar] == 1:
-                fo is fo + ind + "    int " + (cn of fvar) + "_b = 1;   /* block-local shadow bit (round 117) */\n"
+            if (g_bound_bit[fvar] == 1) or (g_cur_bound_bit[fvar] == 1):
+                fo is fo + ind + "    int " + (cn of fvar) + "_b = 1;   /* block-local shadow bit (round 117/119) */\n"
             if g_traced == 1:
                 fo is fo + ind + "    aot_trace_assign(\"" + fvar + "\", " + (cn of fvar) + ");\n"
             # (round 65) the BODY READS must take the C block-local too. In a
@@ -3405,8 +3426,8 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
                 # already writes the local directly; this mirrors it.
                 if (G_CUR_FN[0]) == "<module>":
                     fo is fo + ind + "    double " + (cn of fvar) + " = aot_num_ck_at(aot_iter_get(" + itv + ", " + kv + "), \"" + (c_escape of (G_CUR_FN[0])) + ": for-in " + (c_escape of fvar) + "\");\n"
-                    if g_bound_bit[fvar] == 1:
-                        fo is fo + ind + "    int " + (cn of fvar) + "_b = 1;   /* block-local shadow bit (round 117) */\n"
+                    if (g_bound_bit[fvar] == 1) or (g_cur_bound_bit[fvar] == 1):
+                        fo is fo + ind + "    int " + (cn of fvar) + "_b = 1;   /* block-local shadow bit (round 117/119) */\n"
                 else:
                     fo is fo + ind + "    " + (cn of fvar) + " = aot_num_ck_at(aot_iter_get(" + itv + ", " + kv + "), \"" + (c_escape of (G_CUR_FN[0])) + ": for-in " + (c_escape of fvar) + "\");\n"
                 if g_traced == 1:
@@ -7041,20 +7062,20 @@ define emit_function(fn, finfo, gnm, gbt) as:
     for cnb in range of (len of _cnbk):
         g_cur_bound_nb[(_cnbk[cnb])] is 1
     collect_for_binders of [body, g_cur_bound]
-    # (round 117) conditional locals get a per-call boundness bit
+    # (round 117/119) every non-parameter LOCAL gets a per-call boundness
+    # bit. Round 117 exempted locals with a top-level-statement assign as
+    # "plainly bound" -- but function scope has no order guard, so a plain
+    # `local r is 3` AFTER a `prev of r` left the read unbound (t226: the VM
+    # dies, the exempted local answered). The bit costs one int and one
+    # store per binding site and only `prev of` checks it.
     g_cur_bound_bit is {}
-    local _cbplain is {}
+    local _cbparam is {}
     for _cbp in range of (len of params):
-        _cbplain[(params[_cbp])] is 1
-    for _cbs in range of (len of body):
-        local _cbu is unwrap of body[_cbs]
-        if ((type of _cbu) == "list") and ((len of _cbu) > 0):
-            if _cbu[0] == "assign":
-                _cbplain[(_cbu[1])] is 1
+        _cbparam[(params[_cbp])] is 1
     local _cbk is keys of g_cur_bound_nb
     for _cbi in range of (len of _cbk):
         local _cbn is _cbk[_cbi]
-        if (_cbplain[_cbn] != 1) and (g_module_names[_cbn] != 1):
+        if (_cbparam[_cbn] != 1) and (g_module_names[_cbn] != 1):
             g_cur_bound_bit[_cbn] is 1
     local _lmn is keys of _lmk
     local _shcand is []
