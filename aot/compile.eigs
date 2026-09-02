@@ -9676,7 +9676,16 @@ define splice_module(mname, base, depth, out) as:
                     append of [out, (rename_ast of [mst1, ren, {}])]
             local pairs is []
             for ri in range of (len of rtop):
-                append of [pairs, [(rtop[ri]), ["ident", (ren[(rtop[ri])])]]]
+                # (round 136, #142) the VM omits `_`-prefixed module
+                # bindings from the module dict (measured: `keys of
+                # checksum` is ["crc32", "adler32", "sum8"]; the AOT's
+                # dict also carried _blen/_byte/_crc_table/_crc_init).
+                # Filtered HERE only: the rename set above still needs
+                # every binding, private ones included.
+                local rtn is rtop[ri]
+                if (substr of [rtn, 0, 1]) == "_":
+                    continue
+                append of [pairs, [rtn, ["ident", (ren[rtn])]]]
             append of [out, ["assign", "__moddict_" + mname, ["dict", pairs]]]
 
 # (round 114, ouroboros#127) A `load_file` whose path is COMPUTED cannot be

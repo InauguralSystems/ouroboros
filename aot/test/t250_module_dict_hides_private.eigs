@@ -1,0 +1,10 @@
+# ouroboros#142: the VM omits `_`-prefixed module bindings from the module
+# dict; the AOT's dict carried every top-level binding, so `keys of
+# <module>` and its length diverged and a program could reach private
+# helpers through the dict. Filtered at the dict build only (the rename
+# set still covers private names, which the public functions call).
+import checksum
+print of (keys of checksum)
+print of (len of (keys of checksum))
+print of (checksum.crc32 of "abc")
+print of (has_key of [checksum, "_blen"])
