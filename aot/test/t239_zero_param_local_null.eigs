@@ -1,0 +1,30 @@
+# ouroboros#150: `local n is null` inside a ZERO-parameter function. The
+# frontend binds a bare `define f()` as `define f(n)` (the implicit
+# parameter is `n`), so this `local` rebinds the parameter; its default
+# class "num" put the rebind through emit_num and the build died
+# "emit_num on non-numeric node null" where the VM runs. Renaming the local
+# (m) always built -- the name collision was the whole mechanism. A body
+# that rebinds a parameter to a non-numeric literal now classifies it
+# generic. Controls: an explicit parameter with the same local (caller2),
+# and a numeric rebind of the implicit n (caller3: still a C double).
+define g(y) as:
+    if y == null:
+        print of "null-arm"
+    else:
+        print of (y * 2)
+    return 0
+define caller() as:
+    local n is null
+    return g of n
+print of (caller of null)
+define caller2(q) as:
+    local n is null
+    if q == 1:
+        n is 4
+    return g of n
+print of (caller2 of 1)
+print of (caller2 of 2)
+define caller3() as:
+    local n is 21
+    return g of n
+print of (caller3 of null)

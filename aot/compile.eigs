@@ -5755,8 +5755,35 @@ define func_ptypes(fn) as:
             cls is "buf"
         elif (find_gen_param_use of [body, params[p]]) == 1:
             cls is "gen"
+        elif (param_assigned_nonnum of [body, params[p]]) == 1:
+            # (round 130, #150) the body REBINDS the parameter to a
+            # non-numeric literal -- `local n is null` in a zero-parameter
+            # function, whose implicit parameter IS `n` (frontend: a bare
+            # `define f()` binds ["n"]). The default "num" put the rebind
+            # through emit_num and the build died "emit_num on non-numeric
+            # node null" where the VM runs (a different name matched).
+            cls is "gen"
         pt is (append of [pt, cls])
     return pt
+
+# Does the body assign `name` (plain or `local`) a null/str/list/dict
+# literal anywhere? Assignment targets are bare strings at node[1].
+define param_assigned_nonnum(node, name) as:
+    if (type of node) != "list":
+        return 0
+    if (len of node) == 0:
+        return 0
+    if node[0] == "func":
+        return 0
+    if (node[0] == "assign") and (node[1] == name):
+        local r is unwrap of node[2]
+        if (len of r) > 0:
+            if (r[0] == "null") or (r[0] == "str") or (r[0] == "list") or (r[0] == "dict"):
+                return 1
+    for k in range of (len of node):
+        if (param_assigned_nonnum of [node[k], name]) == 1:
+            return 1
+    return 0
 
 # ---- call-site widening of parameter classes (#86) ----
 #
