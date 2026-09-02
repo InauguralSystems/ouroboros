@@ -884,10 +884,17 @@ define is_num_expr(node, nm, bt) as:
                 if na[0] == "ident":
                     if bt[na[1]] == 1:
                         return 1
-            if (callee[1] == "exp") and (g_funcs["exp"] == null):
-                return 1
-            if (callee[1] == "sqrt") and (g_funcs["sqrt"] == null):
-                return 1
+            if ((callee[1] == "exp") or (callee[1] == "sqrt")) and (g_funcs[(callee[1])] == null):
+                # (round 137, #183) sqrt/exp are ELEMENTWISE over a list
+                # on the VM (`sqrt of [xs]` is [1, 2, 3]); the intrinsic
+                # arm is numeric only when the ARGUMENT provably is --
+                # otherwise the build died "emit_num on non-numeric node
+                # list", an internal assertion, where the VM runs. Kept
+                # in lockstep with emit_num's arms (they intercept every
+                # shape claimed here, or emit_num/emit_val recurse).
+                if (is_num_expr of [node[2], nm, bt]) == 1:
+                    return 1
+                return 0
             # (round 132, #177) a PARAMETER named like a compiled function
             # shadows it: the call goes through the parameter's value, not the
             # C function (gcc: "called object 'eig_handler' is not a function").
@@ -2068,10 +2075,13 @@ define emit_num(node, nm, bt, raw) as:
                     if (pn[3]) == 1:
                         return seq_slice1 of ["aot_norm_range_v", pn]
                     return "aot_norm_range_v(__eigs_g, " + pn[0] + ", " + pn[1] + ", " + pn[2] + ")"
-            if (callee[1] == "exp") and (g_funcs["exp"] == null):
+            if (callee[1] == "exp") and (g_funcs["exp"] == null) and ((is_num_expr of [node[2], nm, bt]) == 1):
                 # VM exp guards the result (exp of 1000 -> 1e308), so match.
                 return "num_guard(exp(" + (emit_num of [node[2], nm, bt, 0]) + "))"
-            if (callee[1] == "sqrt") and (g_funcs["sqrt"] == null):
+            if (callee[1] == "sqrt") and (g_funcs["sqrt"] == null) and ((is_num_expr of [node[2], nm, bt]) == 1):
+                # (round 137, #183) the intrinsic only for a provably numeric
+                # argument; a boxed one takes the builtin call below, which is
+                # elementwise over a list as the VM is.
                 # VM sqrt guards (sqrt of negative -> NaN -> 0).
                 return "num_guard(sqrt(" + (emit_num of [node[2], nm, bt, 0]) + "))"
             if (g_funcs[callee[1]] != null) and (g_cur_params[callee[1]] != 1):

@@ -1,0 +1,17 @@
+# ouroboros#183: sqrt and exp are ELEMENTWISE over a list on the VM. The
+# emitter intercepted them by name and emitted the C intrinsic without
+# checking the argument, so a list argument died at build time with the
+# internal "emit_num on non-numeric node list". The intrinsic now applies
+# only to a provably numeric argument; anything else takes the builtin
+# call. Controls: numeric arguments at module scope and through a
+# parameter still take the intrinsic (4, 1). A list reaching a numeric
+# parameter (`f of ys`) is the mixed-evidence class (#135/#148), not this.
+xs is [1, 4, 9]
+r is sqrt of [xs]
+print of r
+e is exp of [[0, 0]]
+print of e
+print of (sqrt of 16)
+define f(v) as:
+    return sqrt of v
+print of (f of 1)
