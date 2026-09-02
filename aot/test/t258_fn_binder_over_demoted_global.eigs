@@ -1,0 +1,20 @@
+# ouroboros#161 (cell 1): a function-body for binder over a module global
+# that a later string assign demotes. Binder writes were once invisible to
+# classification and the loop printed 3 where the VM prints 31; measured
+# matching now (the binder is loop-scoped inside the function and the module
+# value is untouched). Pinned with both spellings.
+v is 1
+define f(k) as:
+    for v in [10, 20]:
+        k is k + v
+    return k
+print of (f of 1)
+print of v
+define g(k) as:
+    for v in [10, 20]:
+        k is k + 1
+    return k
+print of (g of 1)
+print of v
+v is "s"
+print of v

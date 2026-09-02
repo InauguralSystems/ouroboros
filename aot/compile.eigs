@@ -3328,6 +3328,13 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
             # raise 'undefined variable'), so the C var lives in this block —
             # a post-loop read is an out-of-scope name, loud at build time
             # (the boxed path silently served the stale last value).
+            # (round 145, #161 cell 2) the block-local is a C double, so the
+            # iterable must PROVABLY yield numbers -- the round-120 rule at
+            # module scope. `for v in ["a", "b"]` over a numeric module name
+            # built and died "non-numeric value in a numeric context at
+            # <module>: for-in v (type str)" where the VM prints a b 1.
+            if (iter_yields_nums of [(unwrap of fiter), nm, bt]) != 1:
+                throw of ("AOT: '" + fvar + "' is a module-scope for binder over a NUMERIC module name, and its iterable is not provably numeric; the loop-scoped binder is a C double, and a boxed loop-scoped binder is not emitted yet (ouroboros#161, #198).")
             fo is fo + ind + "  double " + (cn of fvar) + " = 0;\n"
             if (g_bound_bit[fvar] == 1) or (g_cur_bound_bit[fvar] == 1):
                 # (round 117/119) the block-local's own bit shadows the outer one's:
@@ -3493,6 +3500,13 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
                 if g_traced == 1:
                     fo is fo + ind + "    aot_trace_assign(\"" + fvar + "\", " + (cn of fvar) + ");\n"
             elif (lscope == 0) and (nm[fvar] == 1) and (g_observed == 0):
+                # (round 145, #161 cell 2) the block-local shadow below is a C
+                # double, so the iterable must PROVABLY yield numbers (the round-120
+                # rule, at module scope): `for v in ["a", "b"]` over a numeric
+                # module name built and died "non-numeric value in a numeric
+                # context at <module>: for-in v (type str)" where the VM prints a b 1.
+                if (iter_yields_nums of [(unwrap of fiter), nm, bt]) != 1:
+                    throw of ("AOT: '" + fvar + "' is a for binder over a NUMERIC module name, and its iterable is not provably numeric; the loop-scoped binder is a C double, and a boxed loop-scoped binder is not emitted yet (ouroboros#161, #198).")
                 # (round 106) a MODULE-scope for-var whose unbox was DECLINED
                 # (it is an assignment target, so g_forunbox skipped it) but
                 # whose reads are C-static (`nm` was set by the numeric pass
