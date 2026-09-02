@@ -1,0 +1,25 @@
+# ouroboros#165: two top-level functions each defining their own private
+# `helper`. The second lift collided with the first's already-lifted
+# sibling and refused "collides with a top-level function" -- no such
+# top-level exists. A nested name that is already a lifted name is now
+# renamed per encloser (define node + every reference, recursion included).
+# Control: a nested define colliding with a REAL top-level function is
+# still refused (refuse/duplicate_define family).
+define a(x) as:
+    define helper(d) as:
+        return d + 1
+    return helper of x
+define b(x) as:
+    define helper(d) as:
+        if d == 0:
+            return 0
+        return 2 + (helper of (d - 1))
+    return helper of x
+print of (a of 5)
+print of (b of 5)
+define c(x) as:
+    define helper(d) as:
+        return d * 100
+    local h is helper
+    return h of x
+print of (c of 3)

@@ -7739,6 +7739,9 @@ define emit_function(fn, finfo, gnm, gbt) as:
 # The nested fn's name stays callable (g_funcs) and usable
 # as a VALUE argument (emit_val emits make_builtin of a boxed wrapper).
 G_LIFT_N is [0]
+# names registered by the lift itself (vs real top-level defines), so a
+# second encloser's same-named private helper is renamed, not refused (#165)
+g_lifted_names is {}
 G_CUR_FN is ["<module>"]
 g_fn_as_value is {}
 
@@ -7870,6 +7873,19 @@ define count_ident(node, name) as:
     for k in range of (len of node):
         c is c + (count_ident of [node[k], name])
     return c
+
+# Rename every `func` node named `old` in a subtree (the define's own
+# name field is a bare string, which rename_idents does not touch).
+define rename_func_defs(node, old, new) as:
+    if (type of node) != "list":
+        return 0
+    if (len of node) == 0:
+        return 0
+    if (node[0] == "func") and (node[1] == old):
+        node[1] is new
+    for k in range of (len of node):
+        rename_func_defs of [node[k], old, new]
+    return 0
 
 define collect_nested_defs(node, acc) as:
     if (type of node) != "list":
@@ -8103,6 +8119,7 @@ define lift_nested_at(node, bound, out_funcs, outer_after) as:
                 rename_idents of [fbody, rmap]
                 append of [out_funcs, ["func", fname, fparams, fbody]]
                 g_func_names[fname] is 1
+                g_lifted_names[fname] is 1
                 local cb is ["capbind", fname, caps]
                 if wrapped == 1:
                     st[2] is cb
@@ -8426,6 +8443,7 @@ define emit_program(ast) as:
     # regardless of definition order. (Names only: seeding full g_funcs entries
     # with empty ptypes would break find_buf_param_use on recursive calls.)
     g_func_names is {}
+    g_lifted_names is {}
     for k in range of (len of funcs):
         g_func_names[(funcs[k])[1]] is 1
     # (#86) lift nested defines into ordinary top-level fns BEFORE the
@@ -8456,6 +8474,27 @@ define emit_program(ast) as:
         for j in range of (len of lfbn):
             lbound[(lfbn[j])] is 1
         loopdef_escape_check of [lf[3], lf[3], lf[1]]
+        # (round 131, #165) two enclosers each defining a private helper
+        # of the same name: the second lift collided with the FIRST's
+        # already-lifted sibling in g_func_names and refused "collides
+        # with a top-level function" -- no such top-level exists. A
+        # nested name that is already a LIFTED name is renamed per
+        # encloser before the lift (the define node and every ident
+        # reference in this function, its own recursion included). A
+        # collision with a REAL top-level function keeps the refusal:
+        # references before the define resolve to the top-level one on
+        # the VM, which a rename would silently redirect.
+        local lndefs is {}
+        collect_nested_defs of [lf[3], lndefs]
+        local lndn is keys of lndefs
+        for j in range of (len of lndn):
+            local ldn is lndn[j]
+            if g_lifted_names[ldn] == 1:
+                local lmangled is ldn + "__in_" + (lf[1])
+                local lrm is {}
+                lrm[ldn] is lmangled
+                rename_idents of [lf[3], lrm]
+                rename_func_defs of [lf[3], ldn, lmangled]
         lift_nested of [lf[3], lbound, funcs]
     # (round 60) Lifted functions have no first-use identity: the order
     # tables were built over top-level stmts BEFORE lifting, so a lifted
