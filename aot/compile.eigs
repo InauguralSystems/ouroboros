@@ -3315,6 +3315,15 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
                 throw of ("AOT: '" + fvar + "' is a loop-scoped for binder (module-bound or interrogated name) in an OBSERVED program; observed reads resolve through the env, which a block-scoped C variable cannot shadow (see EigenScript#1056).")
             if bt[fvar] == 1:
                 throw of ("AOT: '" + fvar + "' is a loop-scoped for binder over a BOXED binding; per-iteration ownership past break is not emitted yet (see EigenScript#1056).")
+            # (round 120, #198) the block-local is a C double, so the
+            # iterable must PROVABLY yield numbers (range, a buffer, an
+            # all-numeric literal list -- the unbox scan's own test). A
+            # string binder built and died at run time with the AOT's own
+            # message where the VM prints a null b a; refuse by name at
+            # build time instead. A boxed loop-scoped binder is the
+            # unbuilt arm above.
+            if (iter_yields_nums of [(unwrap of fiter), nm, bt]) != 1:
+                throw of ("AOT: '" + fvar + "' is a loop-scoped for binder (module-bound or interrogated name in a function) over an iterable that is not provably numeric; the block-local is a C double, and a boxed per-iteration binder is not emitted yet (ouroboros#198).")
             fo is fo + ind + "    double " + (cn of fvar) + " = aot_num_ck_at(aot_iter_get(" + itv + ", " + kv + "), \"" + (c_escape of (G_CUR_FN[0])) + ": for-in " + (c_escape of fvar) + "\");\n"
             if (g_bound_bit[fvar] == 1) or (g_cur_bound_bit[fvar] == 1):
                 fo is fo + ind + "    int " + (cn of fvar) + "_b = 1;   /* block-local shadow bit (round 117/119) */\n"
