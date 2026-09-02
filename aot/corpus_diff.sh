@@ -17,6 +17,8 @@
 # baseline is the loop making progress, and the script reports improvements
 # separately from regressions so neither is absorbed silently.
 set -u
+CDT="/tmp/_cd_$$"
+trap 'rm -f "$CDT".* 2>/dev/null' EXIT
 HERE="$(cd "$(dirname "$0")" && pwd)"
 EIGDIR="${EIGS_ROOT:-$HERE/../../EigenScript}"
 BASE="$HERE/test/canary/corpus_expected.txt"
@@ -25,16 +27,22 @@ EIG="$EIGDIR/src/eigenscript"
 
 norm() { grep -vE '^\s+[0-9]+ \||^\s+\|.*\^|^  at ' "$1" | sed -E 's/^Error line [0-9]+:/Error line:/'; }
 got=$(mktemp); n=0
+# (round 113) CDT (PID-scoped scratch, set at top with its cleanup trap)
+# replaced fixed /tmp/_cd_* names: a CONCURRENT corpus run -- a sibling
+# session's gate sharing this box -- stomped those files mid-comparison and
+# produced 60 phantom DIVERGE rows, a FALSE red that refused a verified
+# commit. Every flagged program matched when re-run alone. An instrument a
+# neighbour can corrupt is not an instrument.
 for f in "$EIGDIR"/tests/test_*.eigs; do
   n=$((n + 1)); b=$(basename "$f")
-  ( cd "$EIGDIR" && timeout 60 src/eigenscript "tests/$b" ) >/tmp/_cd_vm.out 2>&1
+  ( cd "$EIGDIR" && timeout 60 src/eigenscript "tests/$b" ) >$CDT.vm 2>&1
   vrc=$?
-  timeout 240 bash "$HERE/build.sh" "$f" /tmp/_cd_bin >/tmp/_cd_b.log 2>&1
+  timeout 240 bash "$HERE/build.sh" "$f" $CDT.bin >$CDT.blog 2>&1
   bst=$?
   if [ "$bst" -eq 0 ]; then
-    ( cd "$EIGDIR" && timeout 60 /tmp/_cd_bin ) >/tmp/_cd_aot.out 2>&1
+    ( cd "$EIGDIR" && timeout 60 $CDT.bin ) >$CDT.aot 2>&1
     brc=$?
-    if [ "$vrc" -ne "$brc" ] || ! diff <(norm /tmp/_cd_vm.out) <(norm /tmp/_cd_aot.out) >/dev/null; then
+    if [ "$vrc" -ne "$brc" ] || ! diff <(norm $CDT.vm) <(norm $CDT.aot) >/dev/null; then
       echo "$b DIVERGE" >>"$got"
     fi
   elif [ "$bst" -eq 124 ]; then
@@ -45,7 +53,7 @@ for f in "$EIGDIR"/tests/test_*.eigs; do
     # does not have.
     echo "$b TIMEOUT" >>"$got"
   else
-    if grep -q 'AOT:' /tmp/_cd_b.log; then echo "$b REFUSE" >>"$got"
+    if grep -q 'AOT:' $CDT.blog; then echo "$b REFUSE" >>"$got"
     else echo "$b BUILDCRASH" >>"$got"; fi
   fi
 done

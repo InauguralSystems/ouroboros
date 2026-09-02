@@ -1,0 +1,65 @@
+# Round 113: return_node_is_boxed presumed an INDEX-READ return numeric
+# (index nodes fell through to "not boxed"), while is_num_expr's index
+# arm says NOT numeric unless the target is a numeric C buffer. The two
+# inferences disagreed at exactly the boundary CLAUDE.md warns about: a
+# string-table lookup function was declared `static double`, its return
+# died through aot_num_ck_at, and the CALLER's accumulator was typed
+# numeric off the "numeric" callee -- `s is s + pick1 of x` died
+# "non-numeric value in a numeric context: name s (type str)" rc 1
+# where the VM runs. The same expression INLINE was already correct;
+# the defect was only the return-position consumer of "what class is a
+# list element?" -- the #178 family's return member.
+#
+# Second half, one level up: `+` is the one polymorphic binop, and
+# return_node_is_boxed had NO arm for it -- chain_has_str catches only
+# a string LITERAL, so `return HEXD[a] + HEXD[b]` (no literal, both
+# sides boxed lookups) also fell through to double.
+#
+# Reach: tidelog/test/test_cbor.eigs byte_hex is exactly that second
+# shape, and it blocked the ENTIRE RFC 8949 CBOR vector suite -- the VM
+# prints "cbor: 73 passed, 0 failed" rc 0, the AOT died rc 1 before
+# printing anything. Verified end-to-end after the fix (2,000+ line
+# concatenated probe). EigenMiniSat's full CDCL differential (first
+# ever, 2,152 lines, 4 CNFs, all counters and models byte-identical)
+# re-verified as the regression control.
+#
+# Discriminators per invariant 22: bare lookup return, two-lookup
+# concat return, nested-list element, dict element -- and the NUMERIC
+# BUFFER element return as the control that must STAY double (the
+# C-buffer fast path t22's matmul win rides on).
+HEXD is ["a", "b", "c", "d"]
+define pick1(b) as:
+    return HEXD[b]
+define go(x) as:
+    local s is ""
+    s is s + pick1 of x
+    return s
+print of (go of 2)
+define byte_hex(b) as:
+    return HEXD[floor of (b / 2)] + HEXD[b % 2]
+print of (byte_hex of 5)
+NEST is [[10, "x"], [20, "y"]]
+define pick_nested(i, j) as:
+    return NEST[i][j]
+print of (pick_nested of [1, 1])
+D is {"k": "vee"}
+define pick_dict(k) as:
+    return D[k]
+print of (pick_dict of "k")
+bufv is buffer of 3
+bufv[0] is 7
+bufv[1] is 8
+bufv[2] is 9
+define pick_buf(i) as:
+    return bufv[i]
+print of ((pick_buf of 1) + 1)
+# Third half, found while fixing: a Value*-returning user call in a
+# forced-numeric context (`1 + (sfn of 3)`) emitted the RAW typed call
+# into a double -- uncompilable C, no AOT: line -- even in a DEAD branch
+# the VM never executes. Now routed through the checked unbox: this
+# branch builds and never fires.
+define sfn(x) as:
+    return "s" + (str of x)
+if 1 == 2:
+    print of (1 + (sfn of 3))
+print of "done"

@@ -7,7 +7,6 @@ test_buf_vectorized.eigs REFUSE
 test_builtin_contracts.eigs REFUSE
 test_builtin_errors.eigs REFUSE
 test_builtin_indirect.eigs REFUSE
-test_byte_value_builtins.eigs DIVERGE
 test_call_semantics.eigs REFUSE
 test_chan_dict_xthread.eigs DIVERGE
 test_channel_nb.eigs REFUSE

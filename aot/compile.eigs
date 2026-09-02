@@ -2008,6 +2008,18 @@ define emit_num(node, nm, bt, raw) as:
                     # for a FIFTH that has not been found yet, converting any
                     # remaining hole from invalid C into a refusal.
                     throw of ("AOT: '" + callee[1] + "' has no return statement, so it yields null (the VM's fall-off-the-end rule), and this position requires a number")
+                if ((g_funcs[callee[1]])["ret"]) == "Value*":
+                    # (round 113) a Value*-returning user call in a numeric
+                    # context emitted the RAW typed call into a double --
+                    # `double _sqbl = eig_sfn(...)` -- uncompilable C with no
+                    # AOT: line, on programs the VM runs (the call in a dead
+                    # branch). Route through the checked unbox instead: a
+                    # numeric value passes, a non-numeric one dies loudly at
+                    # the call's REACHABILITY, exactly like every other boxed
+                    # read in numeric position (the message is the #148/#158
+                    # family's, the VM's is "cannot apply ..." -- honest
+                    # reason, ledgered divergence in wording only).
+                    return "aot_num_ck_at(" + (emit_val of [node, nm, bt]) + ", \"" + (c_escape of (G_CUR_FN[0])) + ": call " + (c_escape of callee[1]) + "\")"
                 return emit_call_num of [node, nm, bt]
             # builtin call in a numeric context (#65 inc. 2): emit the boxed
             # call (emit_val mirrors the VM's arg packing, incl. the one call
@@ -4877,6 +4889,49 @@ define return_node_is_boxed(rnode, fbt, ftt, rba, fgen, fdict) as:
         # transitively through local-to-local aliases.
         if (local_rhs_boxed of [re[1], rba, fgen, fbt, fdict, ftt, {}]) == 1:
             return 1
+    if (re[0] == "binop") and (re[1] == "+"):
+        # (round 113, same finding, one level up) `+` is the ONE polymorphic
+        # binop (str+str concatenates), and this function had no arm for it
+        # at all -- is_boxed_node's chain_has_str catches only a string
+        # LITERAL in the chain, so `return HEXD[a] + HEXD[b]` (no literal,
+        # both sides boxed lookups) fell through to double. That is
+        # tidelog's byte_hex verbatim. A `+` return is boxed if EITHER side
+        # is boxed by this same classification; declaring Value* is safe in
+        # the mixed case too, because the return boundary boxes a numeric
+        # value value-preservingly.
+        if (return_node_is_boxed of [re[2], fbt, ftt, rba, fgen, fdict]) == 1:
+            return 1
+        if (return_node_is_boxed of [re[3], fbt, ftt, rba, fgen, fdict]) == 1:
+            return 1
+    if re[0] == "index":
+        # (round 113) an INDEX-READ return was presumed numeric -- this
+        # function fell through to `return 0` for index nodes while
+        # is_num_expr's index arm says NOT numeric unless the target is a
+        # numeric C buffer. The two inferences disagreed at exactly the
+        # boundary CLAUDE.md warns about: a string-table lookup
+        # (`define pick1(b) as: return HEXD[b]` over a module list of
+        # strings) was declared `static double`, the return died through
+        # aot_num_ck_at, and the CALLER's accumulator was typed numeric off
+        # the "numeric" callee (`s is s + pick1 of x` -> "name s (type
+        # str)"), rc 1 where the VM runs. The same expression INLINE at the
+        # use site was already correct -- the defect was only the
+        # return-position consumer of "what class is a list element?", the
+        # #178 family's return member.
+        #
+        # Reach: tidelog test/test_cbor.eigs byte_hex blocked the ENTIRE
+        # RFC 8949 CBOR vector suite (VM "cbor: 73 passed, 0 failed" rc 0;
+        # AOT rc 1 before printing anything).
+        #
+        # The one shape that stays double: a target ident that is a known
+        # numeric buffer (fbt covers params, buffer locals, and module
+        # buffers -- emit_function seeds it from gbt), mirroring
+        # is_num_expr's own gate. Everything else -- list globals, dicts,
+        # nested m[i][j], non-ident targets -- is boxed; a numeric value
+        # boxes fine, and the boundary coercion is value-preserving.
+        local itgt is unwrap of re[1]
+        if (itgt[0] == "ident") and (fbt[(itgt[1])] == 1):
+            return 0
+        return 1
     if (is_buf_create of rnode) == 1:
         return 1
     if (is_boxed_node of [rnode, fgen]) == 1:
@@ -8135,6 +8190,10 @@ define emit_program(ast) as:
     local rr is 0
     loop while rr < 6:
         local rchanged is 0
+        # module buffers, re-derived per fixpoint iteration because
+        # infer_buffers itself consults g_funcs retbuf (a buffer-returning
+        # call is buffer evidence), which this loop is still settling.
+        local rmgbt is infer_buffers of rest
         for k in range of (len of funcs):
             local rfn is funcs[k]
             local rpt is (g_funcs[rfn[1]])["ptypes"]
@@ -8156,6 +8215,24 @@ define emit_program(ast) as:
             local rlbn is keys of rlb
             for j in range of (len of rlbn):
                 rbt[(rlbn[j])] is 1
+            # (round 113) MODULE buffers count too, for the same t16 reason
+            # one comment up: emit_function seeds its maps from the module
+            # gbt, so `define get(i) as: return B[i]` over a module buffer
+            # emits a numeric return -- but this fixpoint could not see B,
+            # and the round-113 index arm (correctly) boxes an index read
+            # whose target it cannot prove numeric. The two derivations of
+            # ret then DISAGREED: decl Value*, caller emitting a raw typed
+            # double call -- uncompilable C. Params shadow module names, so
+            # a module buffer enters rbt only when no param claims the name.
+            local rmgn is keys of rmgbt
+            for j in range of (len of rmgn):
+                if rbt[(rmgn[j])] == null:
+                    local rshadow is 0
+                    for p in range of (len of rfn[2]):
+                        if ((rfn[2])[p]) == (rmgn[j]):
+                            rshadow is 1
+                    if rshadow == 0:
+                        rbt[(rmgn[j])] is 1
             local rentry is g_funcs[rfn[1]]
             local newret is func_ret_type of [rfn, rbt, rgen, rdict]
             if newret != rentry["ret"]:
