@@ -5206,6 +5206,25 @@ define is_buf_producing(rhs) as:
 
 # Also a buffer if PASSED to an already-analyzed function at a buffer position
 # (so `forward(out, x)` calling `matvec(out, x, …)` infers out/x as buffers).
+# (round 118, #180 #145 #181) The VM's call-arity rule, measured: a 1-param
+# callee RE-COLLECTS a bare literal arg list WHOLE at every count other than
+# one (`g of [a, b]` binds b = [a, b]; `g of []` binds [], EigenScript#733);
+# a 2+-param callee spreads it; more args than params on a 2+-param callee
+# is a hard runtime error ("call passes N arguments but the callee takes M"). The walkers below indexed ptypes by
+# argument position and walked off a 1-param callee's list -- the compiler
+# itself died "index 1 out of range" with no AOT: line (#180; lib/pkg.eigs
+# reached it through `import pkg`, #145).
+define call_elems_for(fname, arg) as:
+    local elems is []
+    if (arg[0] == "list") and ((len of arg) == 2):
+        elems is arg[1]
+    else:
+        elems is [arg]
+    local pts is (g_funcs[fname])["ptypes"]
+    if ((len of pts) == 1) and ((len of elems) != 1) and (arg[0] == "list") and ((len of arg) == 2):
+        return [arg]
+    return elems
+
 define find_buf_param_use(node, name) as:
     if (type of node) != "list":
         return 0
@@ -5216,13 +5235,11 @@ define find_buf_param_use(node, name) as:
         if callee[0] == "ident":
             if g_funcs[callee[1]] != null:
                 local arg is unwrap of node[2]
-                local elems is []
-                if (arg[0] == "list") and ((len of arg) == 2):
-                    elems is arg[1]
-                else:
-                    elems is [arg]
+                local elems is call_elems_for of [callee[1], arg]
                 local pts is (g_funcs[callee[1]])["ptypes"]
                 for k in range of (len of elems):
+                    if k >= (len of pts):
+                        break
                     if (pts[k]) == "buf":
                         local e is unwrap of elems[k]
                         if (e[0] == "ident") and (e[1] == name):
@@ -5595,13 +5612,11 @@ define find_gen_param_use(node, name) as:
         if callee[0] == "ident":
             if g_funcs[callee[1]] != null:
                 local arg is unwrap of node[2]
-                local elems is []
-                if (arg[0] == "list") and ((len of arg) == 2):
-                    elems is arg[1]
-                else:
-                    elems is [arg]
+                local elems is call_elems_for of [callee[1], arg]
                 local pts is (g_funcs[callee[1]])["ptypes"]
                 for k in range of (len of elems):
+                    if k >= (len of pts):
+                        break
                     # dict and tensor positions count too (#86 gap 3): a
                     # param whose ONLY use is flowing into a callee's dict
                     # param holds a dict (EigenMiniSat's
@@ -6349,21 +6364,39 @@ define emit_args(node, fname, nm, bt) as:
         elems is arg[1]
     else:
         elems is [arg]
+    # (round 118, #181) the VM's arity rule, MEASURED (the critic's
+    # p40_vm_rule): a 1-param callee re-collects a bare literal list WHOLE at
+    # every count other than one -- `g of []` binds [] and `g of [a, b]`
+    # binds [a, b] (EigenScript#733); a 2+-param callee given `[]` binds
+    # every parameter null; `f of null` binds null; more args than a
+    # 2+-param callee takes raises "call passes N arguments but the callee
+    # takes M". The old block said "the VM binds null" for `g of []` and
+    # "the VM drops extras" for the overflow -- both false, the #181 class.
+    local lit_list is 0
+    if (arg[0] == "list") and ((len of arg) == 2):
+        lit_list is 1
+    local dead is 0
+    if ((g_funcs[fname])["nullok"]) == 1:
+        dead is 1
+    if (len of ptypes) == 1:
+        if lit_list == 1:
+            if (len of elems) != 1:
+                # the single parameter holds the LIST (or [] at count 0)
+                if dead == 1:
+                    # the parameter is never read: any incoming value matches
+                    return ["", "0"]
+                throw of ("AOT: call to '" + fname + "' passes a " + (str of (len of elems)) + "-element literal list to its single parameter -- the VM re-collects the list WHOLE into that parameter (EigenScript#733: [] at count 0, [a, b] at count 2), and the parameter's C class was inferred from its body, so the call-site pack is not emitted yet (ouroboros#181). Parenthesize the list to pass it as one argument on both sides, or give the callee the parameters it reads.")
     if (len of elems) == 0:
-        # Zero args (`f of null`, or `f of []` under the #405 one-call rule):
-        # every user fn has >= 1 param (zero-param defines get an implicit
-        # `n`), so a bare zero-arg C call is never valid. When the incoming
-        # value of the single param is dead (nullok), pass a dummy 0 (#69);
-        # otherwise the body would see 0 where the VM binds null/nothing —
-        # fail loudly, never guess.
-        if ((g_funcs[fname])["nullok"]) == 1:
+        # `f of null` (or `[]` to a 2+-param callee): the incoming value is
+        # null on every parameter. Dead parameters take a dummy 0 (#69);
+        # otherwise the body would read 0 where the VM reads null.
+        if dead == 1:
             return ["", "0"]
-        throw of ("AOT: zero-arg call to '" + fname + "' — the callee reads its parameter's incoming value (the VM binds null, no C equivalent); only a dead single param (the zero-param define idiom) is supported")
+        if lit_list == 1:
+            throw of ("AOT: zero-arg call to '" + fname + "' with `[]` -- the VM binds every one of its " + (str of (len of ptypes)) + " parameters null, and the callee reads them (no C equivalent for a null in a typed parameter); only a dead single parameter takes the dummy path (#69).")
+        throw of ("AOT: zero-arg call to '" + fname + "' -- the VM binds its parameter null, and the callee reads it (no C equivalent for a null in a typed parameter); only a dead single parameter takes the dummy path (#69).")
     if (len of elems) > (len of ptypes):
-        # more args than params: the VM drops extras, but emitting a C call
-        # with extra arguments is a hard compile error and indexing ptypes
-        # past its end used to crash the emitter with an index error.
-        throw of ("AOT: call to '" + fname + "' passes " + (str of (len of elems)) + " arguments to " + (str of (len of ptypes)) + " parameters (the VM drops extras; parenthesize a literal list to pass it whole)")
+        throw of ("AOT: call to '" + fname + "' passes " + (str of (len of elems)) + " arguments but the callee takes " + (str of (len of ptypes)) + " -- the VM raises exactly that at run time (EigenScript#733 arity rule; ouroboros#181); refused at build time instead.")
     # (round 89) per-arg strings, then SEQUENCING under hazard: bare C
     # argument lists evaluate in unspecified order, and gcc ran a sibling
     # argument's outward-rebinding call BEFORE a global read (VM 105, AOT

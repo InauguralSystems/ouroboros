@@ -19,7 +19,7 @@ test_coercion.eigs REFUSE
 test_concurrent.eigs DIVERGE
 test_contract.eigs REFUSE
 test_control_flow_interactions.eigs REFUSE
-test_convergence_oracle.eigs BUILDCRASH
+test_convergence_oracle.eigs REFUSE
 test_corpus.eigs REFUSE
 test_coverage_gaps.eigs REFUSE
 test_coverage_v2.eigs REFUSE
