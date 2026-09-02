@@ -8926,6 +8926,41 @@ define splice_module(mname, base, depth, out) as:
                 append of [pairs, [(rtop[ri]), ["ident", (ren[(rtop[ri])])]]]
             append of [out, ["assign", "__moddict_" + mname, ["dict", pairs]]]
 
+# (round 114, ouroboros#127) A `load_file` whose path is COMPUTED cannot be
+# spliced, so it would be emitted as a runtime call into the linked VM: the
+# loaded file is interpreted, and interpreted code cannot see the program's
+# compiled functions -- `child_calls_helper of 7.0` transpiles, links, prints
+# a third of the program and dies "undefined variable 'helper'" (rc 1 where
+# the VM prints 14). That was #127's headline; the literal-path half is
+# spliced (t214), the computed half is refused by name rather than
+# accepted-and-dying.
+#
+# SCOPE, measured on the DMG canary: LITERAL loads keep today's runtime-call
+# behaviour wherever they sit. A literal top-level load the splice could not
+# resolve is its documented best-effort case (t76's stdlib prong), and a
+# literal load in a NESTED position (dmg.eigs loads lib/ui.eigs and
+# debugger.eigs inside its debug branch) is conditional code the canary
+# never reaches -- refusing it cut DMG out of the envelope for a branch it
+# does not run. Those nested literal loads are #127's remaining residual
+# (loud at run time if they call compiled functions), recorded on the issue.
+# #147 owns the splice's cwd-vs-script-dir soundness question.
+define has_computed_load_file(node) as:
+    if (type of node) != "list":
+        return 0
+    if (len of node) == 0:
+        return 0
+    if node[0] == "call":
+        local c is unwrap of node[1]
+        if ((type of c) == "list") and ((len of c) > 1):
+            if (c[0] == "ident") and (c[1] == "load_file"):
+                local a is unwrap of node[2]
+                if ((type of a) != "list") or ((len of a) == 0) or (a[0] != "str"):
+                    return 1
+    for k in range of (len of node):
+        if (has_computed_load_file of node[k]) == 1:
+            return 1
+    return 0
+
 define splice_static_loads(blk, base, depth) as:
     if depth > 16:
         throw of "AOT: load_file nesting deeper than 16 — cyclic load?"
@@ -9023,6 +9058,8 @@ loop while ai < (len of argv):
 toks is eigen_tokenize of src
 ast is eigen_parse of toks
 ast is splice_static_loads of [ast, argv[0], 0]
+if (has_computed_load_file of ast) == 1:
+    throw of "AOT: load_file with a computed path cannot be spliced at build time and would run INTERPRETED inside the native program, where the program's compiled functions are not visible by name -- the loaded file transpiles, links, and dies 'undefined variable' at run time (ouroboros#127). Use a literal path (spliced at build time; #147 for the resolution rules) or keep the program on the VM."
 gen_c is emit_program of ast
 if g_dump == 1:
     # deterministic inference report (#65): header + D records, no C output.

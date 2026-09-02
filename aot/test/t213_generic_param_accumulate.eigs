@@ -1,0 +1,23 @@
+# ouroboros#151 (closure pin): rebinding a GENERIC parameter by accumulation
+# (`x is x + "!"`) once refused to build ("emit_num on non-numeric node str")
+# because is_num_expr's `+` arm called a param provably numeric from one
+# arithmetic site while g_genp said the function dispatches on type. The
+# neighbours that always worked are kept as controls (trim rebind, concat into
+# a fresh local, concat in a print).
+define f(x) as:
+    if (type of x) == "str":
+        x is x + "!"
+    else:
+        x is x + 1
+    print of x
+    return 0
+print of (f of "a")
+print of (f of 41)
+define g(x) as:
+    if (type of x) == "str":
+        x is trim of x
+        y is x + "?"
+        print of (x + "!")
+        print of y
+    return 0
+print of (g of " b ")

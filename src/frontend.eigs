@@ -896,7 +896,18 @@ define _p_parse_statement(p) as:
         # return
         if (_p_peek_val of p) == "return":
             _p_advance of p
-            expr is _p_parse_expr of p
+            # Bare `return` yields null -- the ONE legitimate empty-expression
+            # position (parser.c #494). Check the terminator HERE rather than
+            # letting _p_parse_expr bottom out in _p_parse_primary, which
+            # raises on the newline. ouroboros#138: this arm drifted from the
+            # C parser and every program with a bare `return` (liferaft's
+            # cluster.eigs message-drop path) was unparseable by BOTH the AOT
+            # and the self-hosting compiler.
+            local rtt is _p_peek_type of p
+            if (rtt == "newline") or (rtt == "eof") or (rtt == "dedent"):
+                expr is ["null"]
+            else:
+                expr is _p_parse_expr of p
             _p_end_statement of p
             return ["_line", _stmt_line, ["return", expr]]
 

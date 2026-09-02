@@ -1,0 +1,4 @@
+define child_calls_helper(n) as:
+    return helper of n
+define child_calls_twice(n) as:
+    return (helper of n) + (helper of (n + 1))

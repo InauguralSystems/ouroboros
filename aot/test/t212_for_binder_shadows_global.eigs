@@ -1,0 +1,24 @@
+# ouroboros#143 (closure pin): a top-level `for` variable that shadows an
+# existing module global is LOOP-SCOPED in the VM -- the body reads the
+# binder, the global is untouched afterwards. The AOT once reused the global
+# (acc accumulated 5+5+5 = 15, VM 3). The first line matched then too, so a
+# fixture checking only the post-loop value would have passed: the body read
+# is the discriminating line. Both the read-only body and a body that writes
+# the binder, plus a nested loop reusing the same name.
+i is 5
+acc is 0
+for i in range of 3:
+    acc is acc + i
+print of i
+print of acc
+j is 100
+for j in range of 3:
+    j is j + 10
+    acc is acc + j
+print of j
+print of acc
+for i in range of 2:
+    for i in range of 3:
+        acc is acc + i
+print of i
+print of acc

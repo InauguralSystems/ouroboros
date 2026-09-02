@@ -1,0 +1,37 @@
+# ouroboros#138: frontend.eigs -- the parser shared by the AOT and the
+# self-hosting compiler -- could not parse a bare `return`. The canonical C
+# parser fixed exactly this (#494) and checks the statement terminator
+# before parsing an expression; frontend.eigs still let _p_parse_expr bottom
+# out in _p_parse_primary on the newline ("parse error: unexpected token
+# newline 'null'"). liferaft's cluster.eigs message-drop path is a bare
+# `return`, so the whole consumer was outside the envelope.
+#
+# Every terminator the C parser accepts, each in a function that ALSO
+# returns a number (so the mixed null/number return class is exercised):
+# newline, trailing comment (the tokenizer drops it: newline), dedent (last
+# statement of a nested block), and end-of-body.
+define early(n) as:
+    if n > 0:
+        return
+    return 7
+print of (early of 1)
+print of (early of 0)
+define commented(n) as:
+    if n > 0:
+        return   # nothing to report
+    return 8
+print of (commented of 1)
+print of (commented of 0)
+define nested(n) as:
+    if n > 0:
+        if n > 1:
+            return
+    return 9
+print of (nested of 2)
+print of (nested of 1)
+print of (nested of 0)
+define tail(n) as:
+    print of n
+    return
+print of (tail of 3)
+print of (type of (early of 1))
