@@ -137,8 +137,14 @@ define has_predicate(node) as:
             return 1
     return 0
 
-# Does this AST contain a `report of x` call? (also marks a program observed,
-# since report reads x's observed slot — the VM observes every assignment.)
+# Does this AST contain a call to one of the four observer special forms
+# (report / report_value / trajectory / observe)? It marks the program
+# observed: the VM's observer gate (chunk.c const_pool_names_observer)
+# opens on any of these names, and each reads the argument's observed
+# slot. Round 109: this counted only `report`, so a program whose only
+# observer read was `observe of x` stayed UNOBSERVED here -- x a C double
+# never stored to the env -- and the new slot-reading helper would have
+# found nothing to read. Widened to the VM gate's read set.
 define has_report(node) as:
     if (type of node) != "list":
         return 0
@@ -146,8 +152,9 @@ define has_report(node) as:
         return 0
     if node[0] == "call":
         local rc is unwrap of node[1]
-        if (rc[0] == "ident") and (rc[1] == "report"):
-            return 1
+        if rc[0] == "ident":
+            if (rc[1] == "report") or (rc[1] == "report_value") or (rc[1] == "trajectory") or (rc[1] == "observe"):
+                return 1
     for k in range of (len of node):
         if (has_report of node[k]) == 1:
             return 1
@@ -2317,17 +2324,33 @@ define emit_val(node, nm, bt) as:
         # "equilibrium" on any env miss), while a compiled function is
         # env-unbound here yet bound in the VM, whose unobserved slot
         # legitimately reports "equilibrium".
-        if callee[1] == "report":
+        # (round 109) ... and its three siblings. compiler.c special-cases
+        # all FOUR observer forms on an ident argument (observe / report /
+        # report_value / trajectory -> slot-reading opcodes); only `report`
+        # was mirrored. `observe of x` fell to builtin_observe -- the
+        # NO-BINDING fallback, a constant ["equilibrium", 0, 0, 0] -- and
+        # report_value/trajectory are opcodes only, not builtins, so they
+        # died "undefined variable" at runtime after partial output. A
+        # non-ident argument falls through to the ordinary call in both
+        # worlds. Band: 1 = compiled function (the #708 opaque answer;
+        # round 70's "equilibrium" for it was stale against the pin),
+        # 2 = C-emitted value class (round 87's unobserved-binding guess).
+        if (callee[1] == "report") or (callee[1] == "report_value") or (callee[1] == "trajectory") or (callee[1] == "observe"):
             local ra is unwrap of node[2]
             if ra[0] == "ident":
                 local rfn is "0"
                 if g_func_names[(ra[1])] == 1:
                     rfn is "1"
-                # (round 87) same band for C-emitted value classes; see
-                # the predicate arm.
-                if (bt[(ra[1])] == 1) or (g_btmap[(ra[1])] == 1) or (g_dict[(ra[1])] == 1) or (g_tensor[(ra[1])] == 1):
-                    rfn is "1"
-                return "aot_report(__eigs_g, \"" + ra[1] + "\", " + rfn + ")"
+                elif (bt[(ra[1])] == 1) or (g_btmap[(ra[1])] == 1) or (g_dict[(ra[1])] == 1) or (g_tensor[(ra[1])] == 1):
+                    rfn is "2"
+                local rhelper is "aot_report"
+                if callee[1] == "report_value":
+                    rhelper is "aot_report_value"
+                elif callee[1] == "trajectory":
+                    rhelper is "aot_trajectory"
+                elif callee[1] == "observe":
+                    rhelper is "aot_observe_of"
+                return rhelper + "(__eigs_g, \"" + ra[1] + "\", " + rfn + ")"
         # user function returning a Value* (e.g. a tensor-returning forward pass)
         # -> direct native C call.
         if g_funcs[callee[1]] != null:

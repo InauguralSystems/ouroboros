@@ -1,0 +1,56 @@
+# (round 109) compiler.c special-cases FOUR observer forms on an ident
+# argument -- observe / report / report_value / trajectory -- into
+# slot-reading opcodes; the AOT special-cased only `report`. `observe of x`
+# then fell to the env-bound builtin_observe, which by its own comment is
+# the NO-BINDING fallback and returns a constant ["equilibrium", 0, 0, 0]
+# (VM ["stable", 0.159, 0, 0]); report_value/trajectory are not builtins
+# at all and died "undefined variable" at runtime after partial output.
+# Ten corpus rows shared this root. Varied: the value class the slot holds
+# (changing numeric, constant numeric, string, list), a FUNCTION binding
+# (#708 opaque band -- also stale in aot_report, which answered
+# "equilibrium"), a builtin, an unbound name (observe tolerates it), every
+# field of the observe tuple, trajectory's dict + classify, and the
+# function-scope (Part 2a) form.
+define f() as:
+    return 1
+x is 1
+x is 2
+x is 3
+print of report of x
+print of report_value of x
+o is observe of x
+print of o[0]
+print of (o[1] > 0)
+print of (o[2] < 0)
+print of (o[3] < 0)
+t is trajectory of x
+print of (type of t)
+print of (keys of t)
+print of (classify of t)
+c is 5
+c is 5
+c is 5
+print of report_value of c
+print of observe of c
+s is "a"
+s is "ab"
+print of observe of s
+print of report_value of s
+l is [1, 2]
+l is [1, 2, 3]
+print of observe of l
+print of report of f
+print of report_value of f
+print of observe of f
+print of report of print
+print of observe of print
+print of observe of never_bound
+define g() as:
+    z is 1
+    z is 1
+    z is 1
+    r is observe of z
+    print of r[0]
+    print of report_value of z
+    return r[1] > 0
+print of (g of null)

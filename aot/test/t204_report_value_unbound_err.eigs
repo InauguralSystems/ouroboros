@@ -1,0 +1,5 @@
+# (round 109) report_value / trajectory of a NEVER-BOUND name raise
+# "undefined variable" like report does (observe is the one that tolerates).
+x is 1
+print of report_value of x
+print of report_value of nope

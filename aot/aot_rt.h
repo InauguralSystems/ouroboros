@@ -1158,28 +1158,122 @@ static int aot_predicate_of(Env *e, const char *name, int kind, int is_compiled_
     }
     return observer_predicate_at(oe, oidx, kind, 1);
 }
-/* `report of x` — the most-specific predicate of x's observed slot, as a string
- * (mirrors CASE(REPORT_NAME)): resolve the binding's slot, classify it, else
- * "equilibrium" for a BOUND-but-unobserved binding. Round 70: the first
- * version conflated two distinct env misses — a NEVER-BOUND name (oe==NULL)
- * fell into the bound-but-unobserved arm and answered "equilibrium" where the
- * VM raises "undefined variable" rc 1 (silent-wrong: clean exit, plausible
- * verdict). The sibling aot_predicate_of ten lines up already had the split;
- * this mirrors it, compiled-fn opaque band included (a compiled function is
- * not env-bound here but IS bound in the VM, whose unobserved slot reports
- * "equilibrium"). */
-static Value *aot_report(Env *e, const char *name, int is_compiled_fn) {
+/* ---- the four observer special forms on an IDENT argument ----
+ * compiler.c (AST_CALL) special-cases `observe of x`, `report of x`,
+ * `report_value of x` and `trajectory of x` into slot-reading opcodes; a
+ * non-ident argument falls through to an ordinary call in both worlds.
+ * Round 109: the AOT had only `report`. `observe of x` then reached the
+ * env-bound builtin_observe -- by its own comment the NO-BINDING fallback,
+ * which returns a constant ["equilibrium", 0, 0, 0] (VM: ["stable",
+ * 0.159, 0, 0]) -- and report_value/trajectory are not builtins at all
+ * (opcodes only), so they died "undefined variable" at runtime after
+ * partial output. Ten corpus rows shared that root.
+ *
+ * Each helper mirrors its vm.c CASE(*_NAME) line for line. Two of the
+ * VM's building blocks are `static` in vm.c and are re-stated here from
+ * exported primitives (a second copy, kept deliberately tiny and named
+ * after the originals so a drift is a one-line diff):
+ *   vm_slot_query_view (#711): a query-time view of the slot with the
+ *     entropy swapped for the CURRENT value's, never written back.
+ *   vm_slot_value_opaque (#708): the binding's current value is a fn or
+ *     builtin, so every classification surface answers "opaque".
+ *
+ * Third arg `band`: 0 = resolve the name in the env; 1 = the name is a
+ * COMPILED FUNCTION (env-unbound here, a VAL_FN binding in the VM -> the
+ * #708 opaque band; round 70's "equilibrium" answer for this case was
+ * stale against the pinned VM, measured: `report of f` is "opaque");
+ * 2 = a C-emitted value class (buffer/dict/tensor, env-unbound here) ->
+ * the unobserved-binding answer, which is round 87's standing guess. */
+Value* builtin_observe(Value *arg);
+static ObserverSlot aot_slot_query_view(Env *e, int idx, const ObserverSlot *s) {
+    ObserverSlot q = *s;
+    double h;
+    if (observer_entropy_now(e, idx, &h)) q.entropy = h;
+    return q;
+}
+static int aot_slot_value_opaque(Env *e, int idx) {
+    if (!e || idx < 0) return 0;
+    env_dump_lock(e);
+    int r = 0;
+    if (idx < e->count) {
+        EigsSlot s = e->values[idx];
+        if (slot_is_ptr(s)) {
+            Value *v = slot_as_ptr(s);
+            r = v && (v->type == VAL_FN || v->type == VAL_BUILTIN);
+        }
+    }
+    env_dump_unlock(e);
+    return r;
+}
+/* Shared resolve for the three RAISING forms (report / report_value /
+ * trajectory): NULL + the VM's "undefined variable" for a never-bound name
+ * (round 70: the first aot_report conflated that with bound-but-unobserved
+ * and answered "equilibrium" at rc 0). */
+static Env *aot_obs_resolve(Env *e, const char *name, int *oidx) {
+    int odepth = 0;
+    Env *oe = env_resolve_chain(e, name, env_hash_name(name), oidx, &odepth);
+    if (!oe)
+        rt_error(EK_UNDEFINED_NAME, g_trace_current_line, "undefined variable '%s'", name);
+    return oe;
+}
+/* mirrors CASE(REPORT_NAME) */
+static Value *aot_report(Env *e, const char *name, int band) {
+    if (band == 1) return make_str("opaque");
+    if (band == 2) return make_str("equilibrium");
+    int oidx = -1;
+    Env *oe = aot_obs_resolve(e, name, &oidx);
+    if (!oe) return make_str("equilibrium"); /* unreachable: rt_error exited */
+    const ObserverSlot *os_n = env_obs_slot(oe, oidx);
+    if (aot_slot_value_opaque(oe, oidx)) return make_str("opaque");
+    if (os_n && os_n->used) {
+        ObserverSlot q = aot_slot_query_view(oe, oidx, os_n);
+        return make_str(observer_slot_report(&q));
+    }
+    return make_str("equilibrium");
+}
+/* mirrors CASE(REPORT_VALUE_NAME) */
+static Value *aot_report_value(Env *e, const char *name, int band) {
+    if (band == 1) return make_str("opaque");
+    if (band == 2) return make_str("equilibrium");
+    int oidx = -1;
+    Env *oe = aot_obs_resolve(e, name, &oidx);
+    if (!oe) return make_str("equilibrium");
+    const ObserverSlot *vs_n = env_obs_slot(oe, oidx);
+    if (aot_slot_value_opaque(oe, oidx)) return make_str("opaque");
+    if (vs_n) return make_str(observer_slot_report_value(vs_n));
+    return make_str("equilibrium");
+}
+/* mirrors CASE(TRAJECTORY_NAME) */
+static Value *aot_trajectory(Env *e, const char *name, int band) {
+    if (band != 0) return observer_slot_trajectory(NULL);
+    int oidx = -1;
+    Env *oe = aot_obs_resolve(e, name, &oidx);
+    if (!oe) return observer_slot_trajectory(NULL);
+    const ObserverSlot *s = env_obs_slot(oe, oidx);
+    if (s) {
+        ObserverSlot q = aot_slot_query_view(oe, oidx, s);
+        return observer_slot_trajectory(&q);
+    }
+    return observer_slot_trajectory(s);
+}
+/* mirrors CASE(OBSERVE_VALUE_NAME) -- the one form that TOLERATES an
+ * unbound name (no raise: the no-observation tuple). */
+static Value *aot_observe_of(Env *e, const char *name, int band) {
+    if (band != 0) return builtin_observe(NULL);
     int oidx = -1, odepth = 0;
     Env *oe = env_resolve_chain(e, name, env_hash_name(name), &oidx, &odepth);
-    if (!oe) {
-        if (is_compiled_fn) return make_str("equilibrium");
-        rt_error(EK_UNDEFINED_NAME, g_trace_current_line,
-                 "undefined variable '%s'", name);
-        return make_str("equilibrium"); /* unreachable */
+    const ObserverSlot *s = env_obs_slot(oe, oidx);
+    if (s && s->used) {
+        ObserverSlot q = aot_slot_query_view(oe, oidx, s);
+        Value *list = make_list(4);
+        list_append_owned(list, make_str(aot_slot_value_opaque(oe, oidx) ? "opaque"
+                                                                         : observer_slot_report(&q)));
+        list_append_owned(list, make_num(q.entropy));
+        list_append_owned(list, make_num(s->dH));
+        list_append_owned(list, make_num(s->prev_dH));
+        return list;
     }
-    if (oidx >= 0 && oidx < oe->obs_cap && oe->obs[oidx].used)
-        return make_str(observer_slot_report(&oe->obs[oidx]));
-    return make_str("equilibrium");
+    return builtin_observe(NULL);
 }
 /* ---- temporal interrogatives (the trace tape) ----
  * `prev of x`, `what is x at L`. trace_assign feeds the per-name prev-map +
