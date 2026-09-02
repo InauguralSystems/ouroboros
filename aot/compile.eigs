@@ -5624,6 +5624,51 @@ define elem_has_numeric_use(node, name) as:
         k is k + 1
     return 0
 
+# Is a local bound from an element of `name` (`v is name[...]`) then used
+# where only a boxed value makes sense -- as a subscript, as the key
+# argument of has_key/dict_set/dict_get/get, or compared to a string?
+define elem_alias_boxed(body, name) as:
+    local assigns is collect_assigns of [body, {}]
+    local an is keys of assigns
+    for i in range of (len of an):
+        local v is an[i]
+        local rhss is assigns[v]
+        for j in range of (len of rhss):
+            if (is_index_of of [rhss[j], name]) == 1:
+                if (used_as_key of [body, v]) == 1:
+                    return 1
+    return 0
+
+define used_as_key(node, v) as:
+    if (type of node) != "list":
+        return 0
+    if (len of node) == 0:
+        return 0
+    if (node[0] == "index") or (node[0] == "index_assign"):
+        local sub is unwrap of node[2]
+        if (sub[0] == "ident") and (sub[1] == v):
+            return 1
+    if node[0] == "binop":
+        if (node[1] == "==") or (node[1] == "!="):
+            local l is unwrap of node[2]
+            local r is unwrap of node[3]
+            if (l[0] == "ident") and (l[1] == v) and (r[0] == "str"):
+                return 1
+            if (r[0] == "ident") and (r[1] == v) and (l[0] == "str"):
+                return 1
+    if node[0] == "call":
+        local callee is unwrap of node[1]
+        if (callee[0] == "ident") and ((callee[1] == "has_key") or (callee[1] == "dict_set") or (callee[1] == "dict_get") or (callee[1] == "get")):
+            local arg is unwrap of node[2]
+            if (arg[0] == "list") and ((len of arg[1]) >= 2):
+                local ka is unwrap of (arg[1])[1]
+                if (ka[0] == "ident") and (ka[1] == v):
+                    return 1
+    for k in range of (len of node):
+        if (used_as_key of [node[k], v]) == 1:
+            return 1
+    return 0
+
 define elem_is_boxed_use(node, name) as:
     if (type of node) != "list":
         return 0
@@ -5637,8 +5682,18 @@ define elem_is_boxed_use(node, name) as:
             if (is_index_of of [l, name]) == 1:
                 if r[0] == "str":
                     return 1
+                # (round 138) ...or compared to a STRINGISH local -- a name
+                # bound only from string literals, `keys of`, `str of`, or
+                # elements of another stringish local (`k is ks[j]` with
+                # `ks is keys of df[i]`; data.eigs df_drop's `k ==
+                # columns[d]`). Left buf, the element read died in
+                # aot_list_num_at at run time.
+                if (r[0] == "ident") and (g_stringish[r[1]] == 1):
+                    return 1
             if (is_index_of of [r, name]) == 1:
                 if l[0] == "str":
+                    return 1
+                if (l[0] == "ident") and (g_stringish[l[1]] == 1):
                     return 1
         # x[i] inside a string concatenation (incl. desugared f-strings)
         if node[1] == "+":
@@ -5771,9 +5826,51 @@ define find_gen_param_use(node, name) as:
             return 1
     return 0
 
+# (round 138) locals of a body that can only hold STRINGS: every RHS is a
+# string literal, a `keys of` / `str of` / `join of` call, or an element of
+# another stringish local (greatest fixpoint over the aliases).
+define stringish_locals(body) as:
+    local assigns is collect_assigns of [body, {}]
+    local names is keys of assigns
+    local out is {}
+    for i in range of (len of names):
+        out[names[i]] is 1
+    local changed is 1
+    loop while changed == 1:
+        changed is 0
+        for i in range of (len of names):
+            local v is names[i]
+            if out[v] == 1:
+                local rhss is assigns[v]
+                local ok is 1
+                if (len of rhss) == 0:
+                    ok is 0
+                for j in range of (len of rhss):
+                    local r is unwrap of rhss[j]
+                    local rok is 0
+                    if (len of r) > 0:
+                        if r[0] == "str":
+                            rok is 1
+                        if r[0] == "call":
+                            local rc is unwrap of r[1]
+                            if (rc[0] == "ident") and ((rc[1] == "keys") or (rc[1] == "str") or (rc[1] == "join")):
+                                rok is 1
+                        if r[0] == "index":
+                            local rt is unwrap of r[1]
+                            if (rt[0] == "ident") and (out[rt[1]] == 1) and (rt[1] != v):
+                                rok is 1
+                    if rok == 0:
+                        ok is 0
+                if ok == 0:
+                    out[v] is 0
+                    changed is 1
+    return out
+
+g_stringish is {}
 define func_ptypes(fn) as:
     local params is fn[2]
     local body is fn[3]
+    g_stringish is stringish_locals of body
     local pt is []
     # Referenced as a VALUE somewhere in the program? Then its call sites are
     # not statically visible and the body licenses no narrowing: the default
@@ -5808,6 +5905,13 @@ define func_ptypes(fn) as:
             # path. Demotion needs positive evidence, so numeric code is
             # untouched.
             if (elem_is_boxed_use of [body, params[p]]) == 1:
+                cls is "gen"
+            elif (elem_alias_boxed of [body, params[p]]) == 1:
+                # (round 138, gate fallout of #149) `col is columns[j]` then
+                # `has_key of [df[i], col]` / `df[i][col]`: the element is
+                # boxed evidence one LOCAL removed. Left buf, a list of
+                # strings died at run time in aot_list_num_at (corpus
+                # test_data, once the #149 build assertion stopped hiding it).
                 cls is "gen"
             elif (elem_has_numeric_use of [body, params[p]]) == 0:
                 # indexable, but nothing ever uses an element as a number —
@@ -7326,7 +7430,10 @@ define emit_function(fn, finfo, gnm, gbt) as:
                         _isp is 1
                 if _isp == 0:
                     throw of ("AOT: `" + _pan[k] + " is ...` inside a function writes the GLOBAL builtin binding (VM semantics); the AOT has no global-clobber path — use `local " + _pan[k] + " is ...` for a function-local")
-        if (g_func_names[_pan[k]] == 1) and (_lmk[_pan[k]] != 1):
+        if (g_func_names[_pan[k]] == 1) and (_lmk[_pan[k]] != 1) and (g_lifted_names[_pan[k]] != 1):
+            # (a LIFTED name is another function's private define -- invisible
+            # to this body on the VM, so its plain `cb is ...` is a local:
+            # the gate's stdlib sweep caught ui_w_dialog refusing on one)
             # (round 133, #162) a plain assign to a compiled FUNCTION's
             # name: on the VM `g is k` inside f rebinds module g outward
             # (prints 5 then 5 -- the function is gone afterwards). A C

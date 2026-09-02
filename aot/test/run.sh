@@ -33,7 +33,13 @@ for prog in test/*.eigs; do
       # for byte (FP add is non-associative — by design, per the `dot` spec).
       VM="$ref" AOT="$got" python3 - <<'PY' && match=1
 import os, re, sys
-def nums(s): return re.findall(r'-?\d+\.?\d*(?:[eE][-+]?\d+)?', s)
+NUM = r'-?\d+\.?\d*(?:[eE][-+]?\d+)?'
+def nums(s): return re.findall(NUM, s)
+# (#104) everything that is NOT a number must match byte for byte: with the
+# numeric tokens masked, the two outputs are compared as text, so a label,
+# a string, or an error line that differs is a failure -- the old comparator
+# saw only the number sequences and let any surrounding text diverge.
+if re.sub(NUM, '#', os.environ['VM']) != re.sub(NUM, '#', os.environ['AOT']): sys.exit(1)
 a, b = nums(os.environ['VM']), nums(os.environ['AOT'])
 if len(a) != len(b): sys.exit(1)
 for x, y in zip(a, b):
