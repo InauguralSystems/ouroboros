@@ -1,0 +1,38 @@
+# ouroboros#157/#163/#185 CONTROLS (round 117): the same shapes with the
+# binding TAKEN must keep answering, so the bit only ever removes a wrong
+# answer. Module conditional bind taken; function conditional bind taken;
+# `what is z at L` on a never-bound name (the VM answers null, NOT an error
+# -- measured; no bit check on that form); a module name assigned twice
+# (plainly bound: no bit at all); a for-body assign read after the loop
+# (the body ran, the bit is set); a function-local bound in a loop that ran.
+q is 5
+if q == 5:
+    z is 7
+print of (prev of z)
+print of z
+define f(k) as:
+    if k == 5:
+        y is 7
+    print of (prev of y)
+    print of y
+    return 0
+f of 5
+define g(n) as:
+    local acc is 0
+    loop while acc < n:
+        acc is acc + 1
+        w is acc
+    print of (prev of w)
+    return w
+print of (g of 3)
+if q == 6:
+    never is 1
+print of (what is never at 2)
+x is 1
+x is 2
+print of (prev of x)
+s is 0
+for i in range of 3:
+    s is s + i
+    last is i
+print of last

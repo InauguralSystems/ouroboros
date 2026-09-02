@@ -1259,6 +1259,23 @@ static Value *aot_trajectory(Env *e, const char *name, int band) {
 /* mirrors CASE(OBSERVE_VALUE_NAME) -- the one form that TOLERATES an
  * unbound name (no raise: the no-observation tuple). */
 static Value *aot_undefined_name(const char *name);   /* defined with the temporal helpers below */
+/* (round 117) boundness bit check for a module numeric that has no plain
+ * top-level bind: the VM's binding exists only from its first EXECUTED
+ * assignment, the C static from program start. A read that runs before any
+ * store dies "undefined variable" exactly where the VM does. */
+static inline double aot_bound_num(int bound, const char *name, double v) {
+    if (!bound) aot_undefined_name(name);
+    return v;
+}
+/* (round 117) the OBSERVED regime's boundness instrument: module numerics
+ * live in the env there (aot_observe_num creates the binding at the first
+ * executed store), so env membership IS boundness -- the objection in
+ * aot_prev_val's comment (traced-only numerics live in C doubles) does not
+ * apply under g_observed. */
+static inline int aot_env_bound(Env *e, const char *name) {
+    int i = -1, d = 0;
+    return env_resolve_chain(e, name, env_hash_name(name), &i, &d) != NULL;
+}
 static Value *aot_observe_of(Env *e, const char *name, int band) {
     if (band != 0) return builtin_observe(NULL);
     int oidx = -1, odepth = 0;

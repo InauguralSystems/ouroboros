@@ -1,0 +1,10 @@
+# ouroboros#185 (round 117): a post-loop read of a module name bound ONLY as
+# a for binder. The VM loop-scopes the binder and has no outer `i`; HEAD read
+# the file-scope static's 0 at rc 0. The binder writes its C block-local, the
+# static's bit is never set, and the post-loop read dies like the VM.
+t is 0
+for i in range of 3:
+    t is t + i
+print of t
+print of i
+print of "unreachable"

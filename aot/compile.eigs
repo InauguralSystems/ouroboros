@@ -198,6 +198,56 @@ g_module_names is {}
 g_first_bind is {}
 g_first_plain_bind is {}
 g_first_use is {}
+# (round 117, #157 #163 #185) BOUNDNESS BIT. A module numeric is a C static
+# live from program start; the VM's binding exists only from its first
+# EXECUTED assignment. For a name with a plain top-level bind the order
+# guard already refuses earlier uses. For a name bound only inside a
+# conditional body, a loop, or a function (no plain top-level bind) the
+# emitter cannot know statically whether a read runs bound, so it emits a
+# runtime bit beside the static -- `static int eig_x_b`, set at every store
+# -- and the reads that the VM would die on (`prev of x`, a numeric read)
+# check it first. `what is x at L` is not checked: the VM answers null
+# there. A conditional bind BEFORE the plain one also earns the bit: the
+# order guard keys on the first bind of any kind, so reads in that window
+# were not refused. Measured before: `q is 1 / if q == 5:
+# z is 7 / print of (prev of z)` printed null rc 0 where the VM dies rc 1;
+# a post-loop read of a for-only module name printed 0 where the VM dies.
+g_bound_bit is {}
+# `local`-marked names of the CURRENT function (rebuilt per function): a
+# local shadowing a bit-carrying module name is a different C variable, so
+# neither its stores set the bit nor its reads check it.
+g_cur_localmarked is {}
+# The function-scope twin, rebuilt per function: locals bound ONLY inside a
+# conditional body (a name in g_cur_bound_nb that is neither a parameter nor
+# a top-level-statement assign of the body, nor a module name). Their bit is
+# a C local `int eig_x_b = 0` declared with the variable -- per CALL, which is
+# what makes `f of 3` then `f of 0` die on the second call where the tape
+# still holds the first call's history (s_fn_loop_taken_then_not).
+g_cur_bound_bit is {}
+
+define bound_bit_of(name, nmap) as:
+    if (g_bound_bit[name] != 1) and (g_cur_bound_bit[name] != 1):
+        return 0
+    return bound_bit_common of [name, nmap]
+
+# The READ-side predicate: MODULE bits only. A plain read of a never-assigned
+# FUNCTION local answers null on the VM (only `prev of` dies there), so the
+# function-scope bit guards `prev of` alone; a numeric read of such a local
+# stays the pre-existing 0-vs-null residual (ouroboros#196) rather than a
+# death the VM does not have (round-117 critic: p_m4 `return z` -> VM null).
+define bound_bit_read_of(name, nmap) as:
+    if g_bound_bit[name] != 1:
+        return 0
+    return bound_bit_common of [name, nmap]
+
+define bound_bit_common(name, nmap) as:
+    if nmap[name] != 1:
+        return 0
+    if g_observed == 1:
+        return 0
+    if g_cur_localmarked[name] == 1:
+        return 0
+    return 1
 # The CURRENT function's parameter names, set by emit_function and cleared for
 # the module body. The VM's tape records locals and module bindings and NEVER a
 # parameter store -- `define f(x) as: x is 7` leaves x's name history untouched
@@ -962,6 +1012,9 @@ define emit_int(node) as:
         # matched: C types those `long` already.)
         return "((long)" + (str of n[1]) + ")"
     if t == "ident":
+        if (bound_bit_read_of of [n[1], g_int]) == 1:
+            # (round 117) exact below 2^53; the bit check dies like the VM
+            return "((long)aot_bound_num(" + (cn of n[1]) + "_b, \"" + n[1] + "\", (double)" + (cn of n[1]) + "))"
         return cn of n[1]
     if t == "unary":
         # (round 87) minus only -- this was the last emitter that did not
@@ -1839,6 +1892,12 @@ define emit_num(node, nm, bt, raw) as:
             # was ineffective because the raw C long names re-created the
             # long op. Values are bounded < 3e9 << 2^53, so the cast is
             # exact; emit_int reads the raw name and is unaffected.
+            if (bound_bit_read_of of [node[1], nm]) == 1:
+                # (round 117) a read the VM dies on when the binding never
+                # executed: check the bit, die "undefined variable" like the VM.
+                if g_int[node[1]] == 1:
+                    return "aot_bound_num(" + (cn of node[1]) + "_b, \"" + node[1] + "\", (double)" + (cn of node[1]) + ")"
+                return "aot_bound_num(" + (cn of node[1]) + "_b, \"" + node[1] + "\", " + (cn of node[1]) + ")"
             if g_int[node[1]] == 1:
                 return "((double)" + (cn of node[1]) + ")"
             return cn of node[1]
@@ -2168,6 +2227,14 @@ define emit_val(node, nm, bt) as:
                     # in-body (answer from the tape, both sides agree) from
                     # after (raise, both sides agree).
                     return "aot_undefined_name(\"" + ie[1] + "\")"
+                if (bound_bit_of of [ie[1], nm]) == 1:
+                    return "(" + (cn of ie[1]) + "_b ? aot_prev_val(\"" + ie[1] + "\") : aot_undefined_name(\"" + ie[1] + "\"))"
+                if (g_observed == 1) and (g_bound_bit[ie[1]] == 1) and (g_cur_localmarked[ie[1]] != 1):
+                    # (round 117) observed regime: no C static, no bit -- the
+                    # env holds the binding from its first executed store, so
+                    # env membership answers boundness (critic f3: t219 plus a
+                    # `report of q` answered null where the VM dies).
+                    return "(aot_env_bound(__eigs_g, \"" + ie[1] + "\") ? aot_prev_val(\"" + ie[1] + "\") : aot_undefined_name(\"" + ie[1] + "\"))"
                 return "aot_prev_val(\"" + ie[1] + "\")"
             throw of "AOT: temporal interrogative without `at` only supports `prev`"
         # The at-form addresses a NAMED binding; a non-ident operand has no
@@ -2175,6 +2242,9 @@ define emit_val(node, nm, bt) as:
         # refuse rather than emit a garbage name (#99 item 6 hardening).
         if ie[0] != "ident":
             throw of "AOT: `at`-qualified interrogative requires a variable name operand"
+        # (round 117) NO bit check here: `what is z at L` on a never-bound
+        # name answers null on the VM (measured: c_mod_whatis_nottaken, rc 0),
+        # unlike `prev of z`, which dies.
         return "aot_query_at_val(" + (str of ik) + ", \"" + ie[1] + "\", (int)(" + (emit_num of [iat, nm, bt, 0]) + "))"
     if t == "ident":
         # Value-typed C names are NOT in the env: a buffer/dict local or param
@@ -2831,6 +2901,8 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
                     return ind + sty + " " + stn + " = " + srhs + ";\n" + ind + sty + " " + (cn of name) + " = " + stn + ";\n"
                 return ind + sty + " " + (cn of name) + " = " + srhs + ";\n"
             local asn is ind + (cn of name) + " = " + (emit_num of [node[2], nm, bt, raw]) + ";\n"
+            if (bound_bit_of of [name, nm]) == 1:
+                asn is asn + ind + (cn of name) + "_b = 1;\n"
             # temporal: record the new value on the trace tape (prev / at-line)
             if (traced_name of name) == 1:
                 asn is asn + ind + "aot_trace_assign(\"" + name + "\", " + (cn of name) + ");\n"
@@ -3143,6 +3215,10 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
             # a post-loop read is an out-of-scope name, loud at build time
             # (the boxed path silently served the stale last value).
             fo is fo + ind + "  double " + (cn of fvar) + " = 0;\n"
+            if g_bound_bit[fvar] == 1:
+                # (round 117) the block-local's own bit shadows the static's:
+                # in-loop reads pass, post-loop reads see the unset static bit
+                fo is fo + ind + "  int " + (cn of fvar) + "_b = 1;\n"
         fo is fo + ind + "  long " + nv + " = aot_iter_len(" + itv + ");\n"
         fo is fo + ind + "  for (long " + kv + " = 0; " + kv + " < " + nv + "; " + kv + "++) {\n"
         local lscope is 0
@@ -3219,6 +3295,8 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
             if bt[fvar] == 1:
                 throw of ("AOT: '" + fvar + "' is a loop-scoped for binder over a BOXED binding; per-iteration ownership past break is not emitted yet (see EigenScript#1056).")
             fo is fo + ind + "    double " + (cn of fvar) + " = aot_num_ck_at(aot_iter_get(" + itv + ", " + kv + "), \"" + (c_escape of (G_CUR_FN[0])) + ": for-in " + (c_escape of fvar) + "\");\n"
+            if g_bound_bit[fvar] == 1:
+                fo is fo + ind + "    int " + (cn of fvar) + "_b = 1;   /* block-local shadow bit (round 117) */\n"
             if g_traced == 1:
                 fo is fo + ind + "    aot_trace_assign(\"" + fvar + "\", " + (cn of fvar) + ");\n"
             # (round 65) the BODY READS must take the C block-local too. In a
@@ -3327,6 +3405,8 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
                 # already writes the local directly; this mirrors it.
                 if (G_CUR_FN[0]) == "<module>":
                     fo is fo + ind + "    double " + (cn of fvar) + " = aot_num_ck_at(aot_iter_get(" + itv + ", " + kv + "), \"" + (c_escape of (G_CUR_FN[0])) + ": for-in " + (c_escape of fvar) + "\");\n"
+                    if g_bound_bit[fvar] == 1:
+                        fo is fo + ind + "    int " + (cn of fvar) + "_b = 1;   /* block-local shadow bit (round 117) */\n"
                 else:
                     fo is fo + ind + "    " + (cn of fvar) + " = aot_num_ck_at(aot_iter_get(" + itv + ", " + kv + "), \"" + (c_escape of (G_CUR_FN[0])) + ": for-in " + (c_escape of fvar) + "\");\n"
                 if g_traced == 1:
@@ -4381,7 +4461,27 @@ define outvec_loop(node, nm, bt) as:
             return null
     return {"O": O, "OBOUND": OBOUND, "ACC": ACC, "D": D, "IBOUND": IBOUND, "RES": RES, "SIDX": SIDX, "SBASE": SBASE, "TERM": TERM, "ovbufs": (keys of ovb), "node": node}
 
+# (round 117) see the recognizers' heads: every NAME in a recognized shape is
+# bound by construction on each path the lowering emits. Recurses one level
+# for matmul's nested "ov" descriptor.
+define drop_recog_bits(desc) as:
+    local _rbk is keys of desc
+    for _rbi in range of (len of _rbk):
+        local _rbv is desc[(_rbk[_rbi])]
+        if (type of _rbv) == "str":
+            g_bound_bit[_rbv] is null
+        elif (type of _rbv) == "dict":
+            drop_recog_bits of _rbv
+    return 0
+
 define emit_outvec(d, ind, nm, bt, guard, minits) as:
+    # (round 117) every NAME in the recognized shape -- counters, the
+    # accumulator, the buffers -- is bound by construction on each path this
+    # lowering emits (it re-inits the inner counter itself for the vector
+    # and scalar-tail passes, outside the assign arm that sets a boundness
+    # bit), so their bits are dropped here: reads inside stay raw, and the
+    # gate's t141/t145/t154/t155 died "undefined variable 'd'" before this.
+    drop_recog_bits of d
     local O is d["O"]
     local OB is emit_num of [d["OBOUND"], nm, bt, 0]
     local IB is emit_num of [d["IBOUND"], nm, bt, 0]
@@ -4559,6 +4659,13 @@ define matmul_loop(node, nm, bt) as:
     return {"icond": node[1], "oinit": raw[0], "iincr": raw[2], "ov": ov, "bufA": (unwrap of ta[1])[1], "bufB": (unwrap of tb[1])[1]}
 
 define emit_matmul(d, ind, nm, bt, minits) as:
+    # (round 117) every NAME in the recognized shape -- counters, the
+    # accumulator, the buffers -- is bound by construction on each path this
+    # lowering emits (it re-inits the inner counter itself for the vector
+    # and scalar-tail passes, outside the assign arm that sets a boundness
+    # bit), so their bits are dropped here: reads inside stay raw, and the
+    # gate's t141/t145/t154/t155 died "undefined variable 'd'" before this.
+    drop_recog_bits of d
     local ov is d["ov"]
     local IB is emit_num of [(ov["IBOUND"]), nm, bt, 0]
     local i2 is ind + "    "
@@ -4658,6 +4765,13 @@ define rowmap_loop(node, nm, bt) as:
     return {"D": D, "BOUND": BOUND, "RES": RES, "SBASE": SBASE, "SIDX": SIDX, "VEXPR": VEXPR, "vbufs": vbufs, "node": node}
 
 define emit_rowmap(d, ind, nm, bt, minits) as:
+    # (round 117) every NAME in the recognized shape -- counters, the
+    # accumulator, the buffers -- is bound by construction on each path this
+    # lowering emits (it re-inits the inner counter itself for the vector
+    # and scalar-tail passes, outside the assign arm that sets a boundness
+    # bit), so their bits are dropped here: reads inside stay raw, and the
+    # gate's t141/t145/t154/t155 died "undefined variable 'd'" before this.
+    drop_recog_bits of d
     local D is d["D"]
     local OB is emit_num of [d["BOUND"], nm, bt, 0]
     local RES is d["RES"]
@@ -6870,6 +6984,7 @@ define emit_function(fn, finfo, gnm, gbt) as:
 
     local _lmk is {}
     collect_local_marked of [body, _lmk]
+    g_cur_localmarked is _lmk
     g_cur_interrogated is {}
     collect_interrogated of [body, g_cur_interrogated]
     # (round 64) the never-bound set for the function-scope `prev of` guard:
@@ -6893,6 +7008,21 @@ define emit_function(fn, finfo, gnm, gbt) as:
     for cnb in range of (len of _cnbk):
         g_cur_bound_nb[(_cnbk[cnb])] is 1
     collect_for_binders of [body, g_cur_bound]
+    # (round 117) conditional locals get a per-call boundness bit
+    g_cur_bound_bit is {}
+    local _cbplain is {}
+    for _cbp in range of (len of params):
+        _cbplain[(params[_cbp])] is 1
+    for _cbs in range of (len of body):
+        local _cbu is unwrap of body[_cbs]
+        if ((type of _cbu) == "list") and ((len of _cbu) > 0):
+            if _cbu[0] == "assign":
+                _cbplain[(_cbu[1])] is 1
+    local _cbk is keys of g_cur_bound_nb
+    for _cbi in range of (len of _cbk):
+        local _cbn is _cbk[_cbi]
+        if (_cbplain[_cbn] != 1) and (g_module_names[_cbn] != 1):
+            g_cur_bound_bit[_cbn] is 1
     local _lmn is keys of _lmk
     local _shcand is []
     local _bshcand is []
@@ -7374,6 +7504,8 @@ define emit_function(fn, finfo, gnm, gbt) as:
                 decls is decls + "    long " + (cn of v) + " = 0;\n"
             else:
                 decls is decls + "    double " + (cn of v) + " = 0;\n"
+            if (g_cur_bound_bit[v] == 1) and (g_tensor[v] != 1) and (fbt[v] != 1):
+                decls is decls + "    int " + (cn of v) + "_b = 0;   /* boundness bit (round 117) */\n"
     # unboxed for-in vars that are neither params, assigned locals, nor
     # globals still need a function-scope C decl (the VM's slot semantics:
     # post-loop reads see the last iterate).
@@ -8330,6 +8462,22 @@ define emit_program(ast) as:
     g_scalbound is {}
     g_bufbound is {}
     local fdefs is ""
+    # (round 117) boundness bits: every module name with NO plain top-level
+    # bind (bound only inside a conditional, a loop, or a function). Filled
+    # before any function body is emitted, so reads and stores in functions
+    # and at module level agree with the decl loop below.
+    g_bound_bit is {}
+    local _bbk is keys of g_module_names
+    for _bbi in range of (len of _bbk):
+        local _bbn is _bbk[_bbi]
+        if g_first_plain_bind[_bbn] == null:
+            g_bound_bit[_bbn] is 1
+        elif (g_first_bind[_bbn] != null) and (g_first_bind[_bbn] < g_first_plain_bind[_bbn]):
+            # a CONDITIONAL bind precedes the plain one: reads between them
+            # are not order-guarded (the guard keys on the first bind of any
+            # kind), so `if q == 5: x is 7 / print of x / x is 3` read 0 where
+            # the VM dies (critic p_a1). The bit covers that window too.
+            g_bound_bit[_bbn] is 1
     for k in range of (len of funcs):
         fdefs is fdefs + "\n" + (emit_function of [funcs[k], g_funcs[(funcs[k])[1]], nm, bt])
     local fc is ""
@@ -8364,6 +8512,15 @@ define emit_program(ast) as:
             if mub[mubn[k]] == 1:
                 g_forunbox[mubn[k]] is 2
                 nm[mubn[k]] is 1
+                # (round 117, #185) a for-only module name has no plain
+                # top-level bind, so it carries a boundness bit: the decl
+                # loop below declares the static AND the bit (it used to skip
+                # forunbox==2 names entirely, so a post-loop read was a gcc
+                # "undeclared" error -- the earlier form printed the static's
+                # 0). The loop's block-local shadows both with its own bit =
+                # 1: in-loop reads pass, a post-loop read dies like the VM.
+                if g_first_plain_bind[(mubn[k])] == null:
+                    g_bound_bit[(mubn[k])] is 1
     # --dump-inference: module-scope records. These are the tape-joinable ones
     # (A records track top-level bindings), so the audit's evidence lives here.
     if g_dump == 1:
@@ -8393,6 +8550,10 @@ define emit_program(ast) as:
                 if g_forunbox[mdfvn[k]] != null:
                     mfvk is "double"
                 dump_rec of ["module", "for", mdfvn[k], mfvk, mdl[mdfvn[k]]]
+    # (round 117) which module names carry a boundness bit: every module
+    # name with NO plain top-level bind. Populated here, before the decl
+    # loop; function bodies were emitted earlier against g_bound_bit filled
+    # by the pre-pass below, so the two must agree -- see the pre-pass.
     local gdecls is ""
     local names is keys of nm
     for i in range of (len of names):
@@ -8400,11 +8561,19 @@ define emit_program(ast) as:
         # no file-scope decl; otherwise emit static long/double.
         # unboxed module for-vars (g_forunbox==2) are declared INSIDE their
         # loop's C block, not file-scope — the VM loop-scopes the binding.
-        if (nm[names[i]] == 1) and (g_observed == 0) and (g_forunbox[names[i]] != 2):
+        if (nm[names[i]] == 1) and (g_observed == 0) and ((g_forunbox[names[i]] != 2) or (g_bound_bit[names[i]] == 1)):
+            # (round 117) a for-only module name (g_forunbox == 2) had NO
+            # file-scope decl since round 106, so a post-loop read was a gcc
+            # "undeclared" error (#185's silent 0 in its earlier form). It
+            # gets the static AND a bit the binder never sets (the binder
+            # writes its C block-local, which carries its own bit = 1), so a
+            # post-loop read dies "undefined variable" like the VM.
             if g_int[names[i]] == 1:
                 gdecls is gdecls + "static long " + (cn of names[i]) + " = 0;\n"
             else:
                 gdecls is gdecls + "static double " + (cn of names[i]) + " = 0;\n"
+            if g_bound_bit[names[i]] == 1:
+                gdecls is gdecls + "static int " + (cn of names[i]) + "_b = 0;   /* boundness bit (round 117) */\n"
     local bnames is keys of bt
     for i in range of (len of bnames):
         if bt[bnames[i]] == 1:
@@ -8423,6 +8592,11 @@ define emit_program(ast) as:
     # binding) — clear the last function's maps before emitting main.
     g_locshadow is {}
     g_boxshadow is {}
+    # (round 117) the module body is not a function: no `local` marks, no
+    # per-call bits (the critic's p_d1: the LAST function's marks leaked here
+    # and a module bit-name it had `local`-shadowed skipped its check).
+    g_cur_localmarked is {}
+    g_cur_bound_bit is {}
     local body is emit_stmts of [rest, "    ", nm, bt, minits, {}]
     local obshdr is ""
     if g_obs_traced == 1:

@@ -1,0 +1,14 @@
+# ouroboros#163 item 2 / #157 (round 117): the bit is PER CALL. The first
+# call binds w inside its loop and answers prev 2; the second call's loop
+# never runs, w is unbound in THAT frame, and the VM dies -- while the
+# name-keyed tape still holds the first call's history, which HEAD answered
+# (2, rc 0). A C local `int eig_w_b = 0` per call is what the tape cannot be.
+define f(n) as:
+    local acc is 0
+    loop while acc < n:
+        acc is acc + 1
+        w is acc
+    return prev of w
+print of (f of 3)
+print of (f of 0)
+print of "unreachable"
