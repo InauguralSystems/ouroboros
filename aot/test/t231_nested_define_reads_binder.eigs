@@ -1,0 +1,25 @@
+# ouroboros#194: a nested define inside a `for` body that reads the loop
+# BINDER. The binder was not in the lift's bound-set, so the read was not a
+# capture and the lifted body died "undefined variable 'x'" at run time
+# where the VM prints 36. Now the binder is captured at the definition
+# site each iteration. Second function: the closure escapes through a
+# value and is called after the loop -- the VM's closure reads the last
+# binder (3), so `g of 100` is 103 and the total 139.
+define f() as:
+    local acc is 0
+    for x in [1, 2, 3]:
+        define inner(d) as:
+            return x + d
+        acc is acc + (inner of 10)
+    return acc
+print of (f of null)
+define h() as:
+    local acc is 0
+    local g is null
+    for y in [1, 2, 3]:
+        define inner2(d) as:
+            return y + d
+        g is inner2
+        acc is acc + (inner2 of 10)
+    return acc + (g of 100)
+print of (h of null)

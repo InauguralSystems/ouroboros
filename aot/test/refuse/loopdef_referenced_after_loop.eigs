@@ -1,0 +1,17 @@
+# EXPECT: defined inside a loop body and referenced by name outside that loop
+# ouroboros#194 sibling: a define inside a `for` body is loop-scoped on the
+# VM -- the post-loop `inner of 100` dies "undefined variable 'inner'" -- but
+# the lifted C function is module-wide and would answer 139. Refused by
+# name. The VM runs the program up to that death (prints nothing before it
+# because the death is inside f); the refuse tier needs a VM rc 0 program,
+# so the escaping reference sits in a branch the VM does not take.
+define f(q) as:
+    local acc is 0
+    for x in [1, 2, 3]:
+        define inner(d) as:
+            return x + d
+        acc is acc + (inner of 10)
+    if q == 99:
+        acc is acc + (inner of 100)
+    return acc
+print of (f of 1)

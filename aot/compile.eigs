@@ -7753,6 +7753,78 @@ define collect_for_binders(node, out) as:
         collect_for_binders of [node[fk], out]
     return 0
 
+# (round 123, #194) A define inside a `for` body is loop-scoped on the VM:
+# a reference to its name after the loop dies "undefined variable" (measured
+# on the pin: `for x in [1,2,3]: define inner ...` then `inner of 100` after
+# the loop, inside a function). A `loop while` body is NOT (measured: the
+# same shape prints 136; the gate's sibling_block_rebind family defines
+# inside `loop while` and calls after it, VM 8) -- the `for` binder's env
+# is what scopes the definition. The lifted C function is module-wide, so
+# such a reference would answer instead. Count the name's ident uses in the
+# whole function body against those inside the loop node; any use outside
+# refuses by name. Escaping through a VALUE (`g is inner` in the body, `g of
+# 100` after) is not a name use and is emitted: the VM's closure reads the
+# last binder (139).
+# The enclosing function's OWN for binders: the generic collector descends
+# into nested define bodies, and a nested define's own binder then read as
+# an enclosing binding -- its plain `x is 7` refused as an outward mutation
+# (gate: nested_forbinder_plain_is refused for the wrong reason). Stop at
+# `func` nodes, as collect_assigns does for the bound-set.
+define collect_for_binders_nofunc(node, out) as:
+    if (type of node) != "list":
+        return 0
+    if (len of node) == 0:
+        return 0
+    if node[0] == "func":
+        return 0
+    if node[0] == "for":
+        out[node[1]] is 1
+    for fk in range of (len of node):
+        collect_for_binders_nofunc of [node[fk], out]
+    return 0
+
+define count_ident(node, name) as:
+    if (type of node) != "list":
+        return 0
+    if (len of node) == 0:
+        return 0
+    if node[0] == "ident":
+        if node[1] == name:
+            return 1
+        return 0
+    local c is 0
+    for k in range of (len of node):
+        c is c + (count_ident of [node[k], name])
+    return c
+
+define collect_nested_defs(node, acc) as:
+    if (type of node) != "list":
+        return 0
+    if (len of node) == 0:
+        return 0
+    if node[0] == "func":
+        acc[node[1]] is 1
+    for k in range of (len of node):
+        collect_nested_defs of [node[k], acc]
+    return 0
+
+define loopdef_escape_check(node, fbody, fname) as:
+    if (type of node) != "list":
+        return 0
+    if (len of node) == 0:
+        return 0
+    if node[0] == "for":
+        local ldefs is {}
+        collect_nested_defs of [node, ldefs]
+        local ldn is keys of ldefs
+        for k in range of (len of ldn):
+            local dn is ldn[k]
+            if (count_ident of [fbody, dn]) > (count_ident of [node, dn]):
+                throw of ("AOT: nested define '" + dn + "' in '" + fname + "' is defined inside a loop body and referenced by name outside that loop. On the pinned VM the definition is loop-scoped (undefined variable '" + dn + "' after the loop), while the lifted C function would answer; refused rather than answering (ouroboros#194).")
+    for k in range of (len of node):
+        loopdef_escape_check of [node[k], fbody, fname]
+    return 0
+
 define lift_nested(node, bound, out_funcs) as:
     return lift_nested_at of [node, bound, out_funcs, []]
 
@@ -8293,6 +8365,23 @@ define emit_program(ast) as:
         local lan is keys of lassigns
         for j in range of (len of lan):
             lbound[(lan[j])] is 1
+        # (round 123, #194) `for` binders are enclosing-function bindings
+        # too. Left out of the bound-set, a nested define reading the
+        # binder was not a capture at all: the lifted body read `x` from
+        # the env by name and died "undefined variable" where the VM
+        # prints 36. As a capture the capbind runs at the definition
+        # site -- inside the body, every iteration -- so the snapshot is
+        # the current binder, which is what the VM's closure reads at a
+        # call in the same iteration (11+12+13) and, escaping through a
+        # value, after the loop (measured: the closure reads the last
+        # binder, 3, and `g of 100` is 103). The loop's own binder is
+        # excluded from the rebind suffix by the round-115 widening.
+        local lfb is {}
+        collect_for_binders_nofunc of [lf[3], lfb]
+        local lfbn is keys of lfb
+        for j in range of (len of lfbn):
+            lbound[(lfbn[j])] is 1
+        loopdef_escape_check of [lf[3], lf[3], lf[1]]
         lift_nested of [lf[3], lbound, funcs]
     # (round 60) Lifted functions have no first-use identity: the order
     # tables were built over top-level stmts BEFORE lifting, so a lifted
