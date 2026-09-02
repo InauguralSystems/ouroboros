@@ -7705,6 +7705,33 @@ define lift_nested_at(node, bound, out_funcs, outer_after) as:
                     sk is sk + 1
                 for oa2 in range of (len of outer_after):
                     append of [sub_after, outer_after[oa2]]
+                # (round 115, #154) Descending into a LOOP body: textual order
+                # is the wrong model there. A rebind that sits BEFORE the
+                # nested define in the source -- an earlier sibling, the other
+                # branch of the same `if`, an earlier `match` case -- runs
+                # AFTER the definition on the next iteration, and the snapshot
+                # capture is stale exactly as in the forward case the suffix
+                # already refuses:
+                #
+                #   loop while i < 2: if i == z: x is 7
+                #                     else: define inner(d) as: return x + d
+                #   VM 8   AOT 101   both build, both rc 0
+                #
+                # So the suffix handed to a loop's body carries the WHOLE body
+                # (both directions), not just the forward siblings. The BODY,
+                # not the loop node: the loop's own `for` binder is bound
+                # before each iteration's define runs and both sides read the
+                # current value, so it must not count as a rebind. The model,
+                # stated once: "can this rebind execute after the definition"
+                # is, for structured control flow, "textually after it, or
+                # anywhere inside an enclosing loop body". Straight-line
+                # `if`/`else` needs no widening -- only one branch runs.
+                local stu is unwrap of st
+                if ((type of stu) == "list") and ((len of stu) > 0):
+                    if stu[0] == "loop":
+                        append of [sub_after, stu[2]]
+                    if stu[0] == "for":
+                        append of [sub_after, stu[3]]
                 lift_nested_at of [st, bound, out_funcs, sub_after]
     return 0
 

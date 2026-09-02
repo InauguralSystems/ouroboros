@@ -1,0 +1,17 @@
+# EXPECT: which the enclosing function rebinds after this definition
+# ouroboros#154: the mirror of sibling_block_rebind.eigs -- the rebind is
+# in the THEN branch and the define in the ELSE branch, so the rebind is
+# BEFORE the define in the source but AFTER it in execution (the loop
+# re-enters). A forward-only suffix accepted it: VM 8, AOT 101, rc 0 both.
+define f(z) as:
+    local x is 100
+    local i is 0
+    loop while i < 2:
+        if i == z:
+            x is 7
+        else:
+            define inner(d) as:
+                return x + d
+        i is i + 1
+    return inner of 1
+print of (f of 1)

@@ -1,0 +1,16 @@
+# ouroboros#154 CONTROL for the widened capture-rebind suffix: a define inside
+# a `loop while` body that reads names the loop never rebinds (a pre-loop
+# local, a module global) must still BUILD and match. The suffix now carries
+# the whole loop body, so only names actually rebound somewhere in it refuse.
+G is 5
+define f() as:
+    local base is 100
+    local acc is 0
+    local i is 0
+    loop while i < 3:
+        define inner(d) as:
+            return base + G + d
+        acc is acc + (inner of i)
+        i is i + 1
+    return acc
+print of (f of null)

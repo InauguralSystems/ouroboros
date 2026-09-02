@@ -1,0 +1,21 @@
+# EXPECT: which the enclosing function rebinds after this definition
+# ouroboros#154, the `for` half of the loop-body suffix. A for-body define
+# whose NAME is called after the loop is undefined on both sides (the VM
+# scopes it to the iteration), so the two `loop while` mirrors cannot pin
+# the `for` arm -- the blind critic deleted it and the tier stayed green.
+# The define's VALUE escapes instead: appended to a list in iteration 0,
+# the rebind runs in iteration 1, the call comes after the loop.
+# VM 8; HEAD's AOT built and printed 101 (the stale snapshot), rc 0 both.
+define f() as:
+    local x is 100
+    local fns is []
+    for i in range of 2:
+        if i == 1:
+            x is 7
+        else:
+            define inner(d) as:
+                return x + d
+            append of [fns, inner]
+    local g is fns[0]
+    return g of 1
+print of (f of null)
