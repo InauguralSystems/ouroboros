@@ -7999,6 +7999,27 @@ define lift_nested_at(node, bound, out_funcs, outer_after) as:
                         append of [sub_after, stu[2]]
                     if stu[0] == "for":
                         append of [sub_after, stu[3]]
+                    # (round 122, #195) Straight-line `if`/`match`: only ONE
+                    # arm runs, so a rebind in a SIBLING arm cannot execute
+                    # after a define in this arm. The generic descent below
+                    # walks the if node as a list, and the else body is a
+                    # later ELEMENT of that list -- it entered the suffix as
+                    # if it were a following statement, and the refusal named
+                    # a rebind that cannot happen (VM 101, refused with a false
+                    # reason). Descend into each arm with the suffix of the
+                    # `if` STATEMENT (its following siblings + outer), not of
+                    # the arm's position inside the node. Inside a loop body
+                    # the loop's own widening above already carries every arm.
+                    if stu[0] == "if":
+                        lift_nested_at of [stu[2], bound, out_funcs, sub_after]
+                        if (type of stu[3]) == "list":
+                            lift_nested_at of [stu[3], bound, out_funcs, sub_after]
+                        continue
+                    if stu[0] == "match":
+                        local mcs is stu[2]
+                        for mci in range of (len of mcs):
+                            lift_nested_at of [(mcs[mci])[1], bound, out_funcs, sub_after]
+                        continue
                 lift_nested_at of [st, bound, out_funcs, sub_after]
     return 0
 

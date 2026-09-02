@@ -1,0 +1,29 @@
+# ouroboros#195: a nested define in one if/match arm with the captured name
+# rebound in ANOTHER arm. Only one arm runs, so no rebind can execute after
+# the definition; the walker used to hand the else body to the define's
+# suffix as if it were a following statement and refused with a false
+# reason. Controls (existing refuse fixtures, re-measured): the same
+# sibling-arm shape inside a loop body still refuses
+# (refuse/sibling_block_rebind -- the other arm runs on the next iteration),
+# a define BEFORE a match whose case rebinds still refuses
+# (refuse/match_case_rebind), and the forward/backward sibling-statement
+# shapes still refuse (refuse/backward_sibling_rebind, refuse/capture_rebind).
+define f(z) as:
+    local x is 100
+    if z == 1:
+        define inner(d) as:
+            return x + d
+    else:
+        x is 7
+    return inner of 1
+print of (f of 1)
+define g(z) as:
+    local y is 200
+    match z:
+        case 1:
+            define inner2(d) as:
+                return y + d
+        case 2:
+            y is 9
+    return inner2 of 1
+print of (g of 1)
