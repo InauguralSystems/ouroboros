@@ -8682,6 +8682,30 @@ define emit_program(ast) as:
             # kind), so `if q == 5: x is 7 / print of x / x is 3` read 0 where
             # the VM dies (critic p_a1). The bit covers that window too.
             g_bound_bit[_bbn] is 1
+        else:
+            # (round 125, #163 item 1) a plainly-bound name READ by a
+            # function that can run BEFORE that plain bind: the order guard
+            # sees module-level uses only, so `define f() as: return v + 1 /
+            # print of (f of 0) / v is 1` read the static's 0 where the VM
+            # dies. The function's first-use index (the closure over
+            # mentions, round 57) against the plain bind's index is the same
+            # test the outward-write guard makes for stores; a read side
+            # earns the bit instead of a refusal, and dies exactly where
+            # the VM does. A function bound after its readers' plain binds
+            # (the common shape: DMG binds its state before its main loop)
+            # earns nothing, so no hot read gains a check. NUMERIC names
+            # only: the bit's decl and store sites live on the numeric
+            # path, and a boxed name granted a bit left `eig_cpu_b`
+            # undeclared at a read site (DMG's `cpu`/`mem`, bound after
+            # the functions that read them are first usable -- the gate
+            # caught it). A boxed read before its bind stays the silent
+            # residual, noted on #163.
+            if nm[_bbn] == 1:
+                for _bfi in range of (len of funcs):
+                    local _bfn is (funcs[_bfi])[1]
+                    if (g_first_use[_bfn] != null) and (g_first_use[_bfn] <= g_first_plain_bind[_bbn]):
+                        if (uses_ident of [(funcs[_bfi])[3], _bbn]) == 1:
+                            g_bound_bit[_bbn] is 1
     for k in range of (len of funcs):
         fdefs is fdefs + "\n" + (emit_function of [funcs[k], g_funcs[(funcs[k])[1]], nm, bt])
     local fc is ""

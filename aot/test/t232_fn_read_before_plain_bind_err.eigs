@@ -1,0 +1,16 @@
+# ouroboros#163 item 1: a function READS a module name before the name's
+# plain top-level bind has executed. The name has a plain bind, so it
+# earned no boundness bit, and the order guard sees only module-level
+# uses: the AOT read the static's 0 where the VM dies. Now a plainly-bound
+# name read by a function whose first possible use precedes the plain bind
+# carries the bit, and the read dies exactly where the VM's does. Control
+# first: g reads w AFTER w's plain bind and matches (2).
+define g() as:
+    return w + 1
+w is 1
+print of (g of 0)
+define f() as:
+    return v + 1
+print of (f of 0)
+v is 1
+print of v
