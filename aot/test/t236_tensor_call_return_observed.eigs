@@ -1,0 +1,15 @@
+# ouroboros#167: a function that RETURNS a tensor call directly. The return
+# coercion once typed it double and died 'non-numeric value in a numeric
+# context at fw: return (type list)' at run time; the VM prints [4, 6].
+define fw(m, o) as:
+    return matmul of [o, m]
+w is [[1, 0], [0, 1]]
+x is [[4, 6]]
+print of (fw of [w, x])
+define ad(p, q) as:
+    return add of [p, q]
+print of (ad of [[1, 2], [3, 4]])
+define rl(p) as:
+    return relu of p
+print of (rl of [[0 - 1, 2]])
+print of (report of w)
