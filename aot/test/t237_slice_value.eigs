@@ -1,0 +1,15 @@
+# ouroboros#179: a slice in VALUE position. emit_val had no `slice` arm and
+# refused ("cannot emit value node 'slice'") on programs the VM runs; the
+# runtime helper (aot_slice_any, the OP_SLICE_GET mirror) already existed.
+lst is [1, 2, 3, 4]
+a is 1
+b is 3
+print of lst[a : b]
+print of lst[:2]
+print of lst[2:]
+s is "hello"
+print of s[1:4]
+define f(xs, i) as:
+    local t is xs[i:]
+    return len of t
+print of (f of [lst, 2])

@@ -2581,6 +2581,23 @@ define emit_val(node, nm, bt) as:
             return "({ " + hc1[0] + "Value* _sqcf = aot_call_resolve(__eigs_g, \"" + callee[1] + "\", " + hc1[1] + "); Value* _sqca = " + (emit_val of [(barg[1])[0], nm, bt]) + "; aot_call_dispatch(_sqcf, _sqca); })"
         local hc2 is ic_cache of 0
         return "({ " + hc2[0] + "Value* _sqcf = aot_call_resolve(__eigs_g, \"" + callee[1] + "\", " + hc2[1] + "); Value* _sqca = " + (emit_val of [node[2], nm, bt]) + "; aot_call_dispatch(_sqcf, _sqca); })"
+    if t == "slice":
+        # (round 129, #179) a slice in VALUE position. The runtime mirror of
+        # OP_SLICE_GET (aot_slice_any: per-type length rule, negative
+        # resolution, the VM's error text) existed for the ranged
+        # reductions; this arm wires it to emit_val. Target first, then lo,
+        # then hi -- the VM's push order (round 91's bound-order hazard) --
+        # inside one statement expression so the target is evaluated once.
+        # A NUMERIC target arrives boxed and raises "cannot slice number"
+        # from the helper's own type rule, as the VM does. Default lo is 0;
+        # default hi is the target's own length by type.
+        local sl_lo is "0"
+        if node[2] != null:
+            sl_lo is emit_num of [node[2], nm, bt, 0]
+        local sl_hi is "aot_slice_len(_sl)"
+        if node[3] != null:
+            sl_hi is emit_num of [node[3], nm, bt, 0]
+        return "({ Value* _sl = " + (emit_val of [node[1], nm, bt]) + "; double _slo = " + sl_lo + "; double _shi = " + sl_hi + "; Value* _sr = aot_slice_any(_sl, _slo, _shi); val_decref(_sl); _sr; })"
     throw of ("AOT: cannot emit value node '" + t + "'")
 
 # Render a tensor-valued expression as a C `AotTensor` expr. Producers (matmul/
