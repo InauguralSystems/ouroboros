@@ -7846,6 +7846,11 @@ define emit_function(fn, finfo, gnm, gbt) as:
                         fnm[v] is 0
                         g_int[v] is 0
             isglobal is 1
+        if (g_mod_tensor[v] == 1) and (_lmk[v] != 1) and (isparam == 0) and (shadowed[v] != 1):
+            # (round 143, #164) a plain assign to a MODULE tensor is outward:
+            # no local AotTensor is declared, so the body's reads and writes
+            # of the C name reach the module static.
+            isglobal is 1
         if (g_module_names[v] == 1) and (_lmk[v] != 1) and (gnm[v] != 1) and (gbt[v] != 1) and (g_tensor[v] != 1) and (shadowed[v] != 1):
             # ORDER GUARD, demoted arm (see g_first_bind's declaration):
             # outward routing is only sound when the module binding provably
@@ -7975,6 +7980,7 @@ define emit_function(fn, finfo, gnm, gbt) as:
 # as a VALUE argument (emit_val emits make_builtin of a boxed wrapper).
 g_uf_gate is 0
 g_loopexit_gate is 0
+g_mod_tensor is {}
 G_LIFT_N is [0]
 # names registered by the lift itself (vs real top-level defines), so a
 # second encloser's same-named private helper is renamed, not refused (#165)
@@ -9061,6 +9067,14 @@ define emit_program(ast) as:
     g_scalbound is {}
     g_bufbound is {}
     local fdefs is ""
+    # (round 143, #164) the module's tensor names, known BEFORE any function
+    # body is emitted: a function's plain assign to one is an outward
+    # store to the static AotTensor (round 126), not a fresh local. The
+    # per-function infer_tensors used to declare a local AotTensor of the
+    # same name, so the body read its own empty shadow and never wrote the
+    # module value (VM [3, 6]; AOT "tensor add on mismatched shapes (0x0
+    # vs 1x2)", and before round 126 a raw gcc type error).
+    g_mod_tensor is infer_tensors of rest
     # (round 117) boundness bits: every module name with NO plain top-level
     # bind (bound only inside a conditional, a loop, or a function). Filled
     # before any function body is emitted, so reads and stores in functions
