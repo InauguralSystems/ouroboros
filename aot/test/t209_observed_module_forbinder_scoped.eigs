@@ -1,0 +1,41 @@
+# (round 112) In an OBSERVED program a module-level `for` over a PRE-BOUND
+# module name wrote the module env slot -- the round-68 must-bind
+# exemption encoded "a binder over an existing binding overwrites it",
+# which the pinned VM refutes: the binder lives in a loop env, the module
+# binding is untouched after the loop, and the module slot's observation
+# history is untouched too (the in-loop rebind polluted it here: VM
+# `equilibrium`, AOT `moving`). The traced regime already had the rule
+# (t199, a C block-local); the observed regime cannot shadow env reads
+# with a C local, so the binder is RENAMED to a fresh env name per loop
+# (nested same-name loops get their own), which is what a child env is in
+# a name-keyed world. Varied: numeric and string binders, pre-bound and
+# never-bound, in-loop rebind, nested same-name loops, a post-loop write,
+# and the module's verdicts after each.
+i is 0
+i is 0
+t is 0
+for i in range of 3:
+    if i == 1:
+        i is i + 10
+    t is t + i
+print of t
+print of i
+print of report of i
+s is "pre"
+for s in ["a", "b"]:
+    print of s
+print of s
+for i in [5, 6]:
+    for i in [7, 8]:
+        print of i
+    print of i
+print of i
+i is 42
+print of i
+print of report of i
+for k in [1, 2]:
+    k is k * 100
+    print of k
+b is 1
+b is 1
+print of report of b

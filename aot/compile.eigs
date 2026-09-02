@@ -3082,6 +3082,30 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
         local fvar is node[1]
         local fiter is node[2]
         local fbody is node[3]
+        # (round 112) An OBSERVED program's module-level `for` over a
+        # PRE-BOUND module name wrote the module env slot (the round-68
+        # must-bind exemption encoded "a binder over an existing binding
+        # overwrites it"); the pinned VM loop-scopes it in EVERY regime --
+        # the binder lives in a loop env, the module binding and its
+        # observation history are untouched afterwards (VM `0 /
+        # equilibrium`, AOT `2 / moving`, rc 0 both). The traced regime
+        # already shadows with a C block-local; observed reads resolve
+        # through the env by name, which a C local cannot shadow -- so the
+        # binder is RENAMED to a fresh env name per loop, which is exactly
+        # what a child env is in a name-keyed world. Two refusals first:
+        # an observer read of the binder inside its own loop answers
+        # differently per loop-env TIER in the VM (EigenScript#1062), and
+        # under trace the tape is process-global and name-keyed, so an
+        # interrogated binder would read a different history renamed.
+        if (g_observed == 1) and ((G_CUR_FN[0]) == "<module>"):
+            if (observes_name of [fbody, fvar]) == 1:
+                throw of ("AOT: observer read of the loop binder inside its own loop ('" + fvar + "'): the history a report/observe/predicate sees there depends on the loop-env tier the VM's compiler picks (persist-overwrite skips the per-iteration CLEAR when the name was bound before the loop) -- refused rather than mirror a tier (EigenScript#1062).")
+            if (g_traced == 1) and (g_interrogated_names[fvar] == 1):
+                throw of ("AOT: interrogated module for binder in an observed program ('" + fvar + "'): the binder is loop-scoped through a renamed env slot, but the tape is process-global and name-keyed, so `prev of`/`what is` would read a different history. Refused rather than answer from the wrong slot.")
+            G_FORREN[0] is (G_FORREN[0]) + 1
+            local frn is fvar + "__for" + (str of (G_FORREN[0]))
+            rename_binder_uses of [fbody, fvar, frn]
+            fvar is frn
         local itv is "_it_" + fvar
         local nv is "_n_" + fvar
         local kv is "_k_" + fvar
@@ -7334,6 +7358,61 @@ define rename_idents(node, rmap) as:
     for k in range of (len of node):
         rename_idents of [node[k], rmap]
     return 0
+
+# (round 112) Scope-aware sibling of rename_idents for a `for` BINDER: rename
+# every use of `old` in the loop body EXCEPT inside a nested `for` that
+# binds the same name (its body refers to the inner binder; its iterable
+# is evaluated in the outer scope and IS renamed) and inside `func` nodes
+# (hoisted; they never see the loop env). Used to express the VM's loop
+# env in a name-keyed world: the binder becomes a fresh env name per loop.
+define rename_binder_uses(node, old, new) as:
+    if (type of node) != "list":
+        return 0
+    if (len of node) == 0:
+        return 0
+    if node[0] == "ident":
+        if node[1] == old:
+            node[1] is new
+        return 0
+    if node[0] == "func":
+        return 0
+    if (node[0] == "for") and (node[1] == old):
+        rename_binder_uses of [node[2], old, new]
+        return 0
+    # an ASSIGN target is a bare string, not an ident node -- the first
+    # version renamed reads only, and the in-loop rebind still hit the
+    # module name (t209: post-loop 11 for 0).
+    if (node[0] == "assign") and (node[1] == old):
+        node[1] is new
+    for k in range of (len of node):
+        rename_binder_uses of [node[k], old, new]
+    return 0
+
+# Does `node` read NAME through an observer surface -- one of the four
+# special forms or a predicate with NAME as the operand? (round 112: the
+# observer history of a module for binder inside its own loop depends on
+# the loop-env tier the VM's compiler picks, EigenScript#1062, so the AOT
+# refuses this shape rather than mirror a tier.)
+define observes_name(node, name) as:
+    if (type of node) != "list":
+        return 0
+    if (len of node) == 0:
+        return 0
+    if node[0] == "call":
+        local oc is unwrap of node[1]
+        local oa is unwrap of node[2]
+        if (oa[0] == "ident") and (oa[1] == name):
+            if oc[0] == "predicate":
+                return 1
+            if oc[0] == "ident":
+                if (oc[1] == "report") or (oc[1] == "report_value") or (oc[1] == "trajectory") or (oc[1] == "observe"):
+                    return 1
+    for k in range of (len of node):
+        if (observes_name of [node[k], name]) == 1:
+            return 1
+    return 0
+
+G_FORREN is [0]
 
 # Lift every nested func in `node` (a stmt list or block), given the
 # ENCLOSING function's bound-name dict. Appends lifted fns to out_funcs

@@ -1,0 +1,13 @@
+# EXPECT: interrogated module for binder in an observed program
+#
+# (round 112) Under trace+observe the binder is renamed to a fresh env
+# name (loop scoping in a name-keyed env), but the tape is process-global
+# and name-keyed, so `prev of i` anywhere would read a different history.
+# Refused by name. The VM RUNS this (rc 0).
+i is 0
+i is 0
+for i in [1, 2, 3]:
+    i is i + 10
+print of i
+print of (prev of i)
+print of report of i

@@ -1,0 +1,14 @@
+# EXPECT: observer read of the loop binder inside its own loop
+#
+# (round 112) The observer history a `report of <binder>` sees INSIDE a
+# module-level loop depends on the loop-env TIER the VM's compiler picks
+# (persist-overwrite skips the per-iteration CLEAR when the name was bound
+# before the loop; fresh/clear tiers reset each iteration) -- identical
+# bodies answer differently for a pre-bound vs never-bound name. That is an
+# optimization leaking into semantics (filed upstream); the AOT refuses
+# rather than mirror a tier. The VM RUNS this (rc 0).
+i is 0
+for i in [1, 2, 3]:
+    i is i + 10
+    print of report of i
+print of i
