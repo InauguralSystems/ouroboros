@@ -79,9 +79,6 @@ test_pipe_lambda.eigs REFUSE
 test_predicate_matrix.eigs REFUSE
 test_raise_on_bad_input.eigs REFUSE
 test_recursion_guard.eigs REFUSE
-test_sandbox_allow.eigs DIVERGE
-test_sandbox_backedge_cap.eigs DIVERGE
-test_sandbox_budget.eigs DIVERGE
 test_scope_semantics.eigs REFUSE
 test_security_hardening.eigs REFUSE
 test_simulation.eigs REFUSE

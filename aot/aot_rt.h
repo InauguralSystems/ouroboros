@@ -14,6 +14,7 @@
 #include "eigenscript.h"
 #include "value_slot.h"
 #include "trace.h"
+#include "vm.h"          /* round 144, #191: g_vm.current_line for VM-running builtins */
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -822,6 +823,7 @@ static inline double aot_dot(Value *a, Value *b) {
  * LISTS yields 0 while sum/norm fold elementwise), so the oracle answers by
  * construction at a cost only non-buffer shapes pay. */
 static Value *aot_call_name(Env *g, const char *name, Value *arg);
+static Value *aot_call_vm_builtin(Value *fn, Value *arg);   /* round 144, #191 */
 static inline long aot_any_len(Value *A) {
     if (A && A->type == VAL_LIST) return A->data.list.count;
     if (A && A->type == VAL_BUFFER) return A->data.buffer.count;
@@ -2383,7 +2385,7 @@ static Value *aot_call_name(Env *g, const char *name, Value *arg) {
         rt_error(EK_TYPE, g_trace_current_line, "cannot call %s",
                  val_type_name(fn->type));
     Value *res;
-    if (fn->type == VAL_BUILTIN) res = fn->data.builtin(arg);
+    if (fn->type == VAL_BUILTIN) res = aot_call_vm_builtin(fn, arg);
     else                         res = call_eigs_fn(fn, arg);
     /* `exit of N` unwinds via g_has_error TOO (builtin_exit sets both flags);
      * it is a clean requested exit, not an error — honor the code, print
@@ -2461,7 +2463,7 @@ static Value *aot_call_value(Value *fn, Value *arg) {
                  fn ? val_type_name(fn->type) : "null");
     }
     Value *res;
-    if (fn->type == VAL_BUILTIN) res = fn->data.builtin(arg);
+    if (fn->type == VAL_BUILTIN) res = aot_call_vm_builtin(fn, arg);
     else                         res = call_eigs_fn(fn, arg);
     if (g_exit_requested) exit(g_exit_code);
     if (g_has_error) aot_error_exit();
@@ -2499,11 +2501,42 @@ static Value *aot_call_resolve(Env *g, const char *name, AotNameIC *c) {
     val_incref(fn);
     return fn;
 }
+/* (round 144, #191) Builtins that RUN THE VM (sandbox_run, vm_run_bytecode)
+ * execute under the linked interpreter, where the VM's own error printing
+ * is safe and is what the oracle prints: a descriptor's uncaught error
+ * prints "Error line N: ..." (CHECK_ERROR's deferred flush) before
+ * sandbox_run turns it into {ok: 0}. aot_boot's process-wide g_try_depth
+ * = 1 (the pretend-caught that keeps rt_error off the NULL VM) silenced
+ * those prints too -- 33 stderr lines missing on corpus test_sandbox_budget.
+ * Inside such a call the depth is 0, as in the VM; an error that ESCAPES
+ * the call was already printed by the VM (immediately, or via the flush),
+ * so the exit here does not print it a second time. */
+Value *builtin_sandbox_run(Value *arg);
+Value *builtin_vm_run_bytecode(Value *arg);
+static Value *aot_call_vm_builtin(Value *fn, Value *arg) {
+    if (fn->data.builtin == builtin_sandbox_run || fn->data.builtin == builtin_vm_run_bytecode) {
+        g_try_depth = 0;
+        /* the VM reports a descriptor's error at the HOST call line
+         * (g_vm.current_line, kept fresh by the host's OP_LINE); the AOT's
+         * stamp is that line, so hand it to the VM before the run */
+        if (eigs_current && eigs_current->vm) g_vm.current_line = g_trace_current_line;
+        Value *res = fn->data.builtin(arg);
+        g_try_depth = 1;
+        if (g_exit_requested) exit(g_exit_code);
+        if (g_has_error) {
+            if (g_error_print_pending) { g_error_print_pending = 0; fprintf(stderr, "%s\n", g_error_msg); }
+            exit(1);
+        }
+        return res;
+    }
+    return fn->data.builtin(arg);
+}
+
 static Value *aot_call_dispatch(Value *fn, Value *arg) {
     if (fn->type != VAL_BUILTIN && fn->type != VAL_FN)
         rt_error(EK_TYPE, g_trace_current_line, "cannot call %s", val_type_name(fn->type));
     Value *res;
-    if (fn->type == VAL_BUILTIN) res = fn->data.builtin(arg);
+    if (fn->type == VAL_BUILTIN) res = aot_call_vm_builtin(fn, arg);
     else                         res = call_eigs_fn(fn, arg);
     if (g_exit_requested) exit(g_exit_code);
     if (g_has_error) aot_error_exit();
@@ -2528,7 +2561,7 @@ static Value *aot_call_name_ic(Env *g, const char *name, Value *arg, AotNameIC *
         rt_error(EK_TYPE, g_trace_current_line, "cannot call %s",
                  val_type_name(fn->type));
     Value *res;
-    if (fn->type == VAL_BUILTIN) res = fn->data.builtin(arg);
+    if (fn->type == VAL_BUILTIN) res = aot_call_vm_builtin(fn, arg);
     else                         res = call_eigs_fn(fn, arg);
     /* `exit of N` unwinds via g_has_error TOO (builtin_exit sets both flags);
      * it is a clean requested exit, not an error — honor the code, print
