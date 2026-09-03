@@ -5358,6 +5358,12 @@ define return_node_is_num(rnode, rba, fbt, fgen, fdict, ftt, seen) as:
             return 1
         seen[re[1]] is 1
         local rhss is rba[re[1]]
+        if (rhss != null) and (g_cur_ret_body != null):
+            # (round 161, #196) a local read before it is definitely
+            # assigned is a boxed slot (null when unassigned), so the
+            # return is boxed too -- the emitter's view, kept in lockstep.
+            if (def_before_reads of [g_cur_ret_body, re[1]]) == 0:
+                return 0
         if rhss == null:
             # not assigned here: a module-level name with positive numeric
             # evidence (DMG's `return CYCLES_PER_LINE`, `return frame_cycles`)
@@ -5404,8 +5410,10 @@ g_cur_params_rt is {}
 g_mod_num_names is {}
 g_mod_assigned is {}
 g_mod_rba is {}
+g_cur_ret_body is null
 define func_ret_type(fn, fbt, fgen, fdict) as:
     g_cur_params_rt is {}
+    g_cur_ret_body is fn[3]
     for pi in range of (len of fn[2]):
         g_cur_params_rt[((fn[2])[pi])] is 1
     local rets is []
@@ -7516,6 +7524,117 @@ define aot_is_builtin_name(name) as:
     AOT_BUILTIN_NAMES[name] is r
     return r
 
+# (round 161, #196) DEFINITE ASSIGNMENT for a function local: is every read
+# of `name` preceded, on every path, by an assignment? A never-assigned
+# local reads as null on the VM (only the consuming op decides -- `z + 1`
+# dies "cannot apply '+' to null and num", `return z` yields null); a C
+# double reads as 0. A local that fails this stays a boxed slot, whose
+# unassigned read IS null. Straight-line: an assignment turns the state on;
+# `if`: on after the statement only if on in BOTH arms (a missing else arm
+# never assigns); loops: the body is walked from the pre-loop state and its
+# assignments do not count after the loop (it may run zero times); a `for`
+# binder counts as assigned inside its body only; nested defines are
+# opaque (their own scope). Returns 1 if every read is definitely preceded.
+define da_reads_in(node, name) as:
+    if (type of node) != "list":
+        return 0
+    if (len of node) == 0:
+        return 0
+    if node[0] == "func":
+        return 0
+    if (node[0] == "ident") and (node[1] == name):
+        return 1
+    for k in range of (len of node):
+        if (da_reads_in of [node[k], name]) == 1:
+            return 1
+    return 0
+
+# walks a statement list; `st` is [ok, assigned] and is updated in place.
+define da_walk(stmts, name, st) as:
+    for i in range of (len of stmts):
+        local n is unwrap of stmts[i]
+        if (type of n) != "list":
+            continue
+        if (len of n) == 0:
+            continue
+        local t is n[0]
+        if t == "_line":
+            da_walk of [[n[2]], name, st]
+            continue
+        if t == "func":
+            continue
+        if (t == "assign") or (t == "local"):
+            # rhs is read first
+            if (st[1] == 0) and ((da_reads_in of [n[2], name]) == 1):
+                st[0] is 0
+            if n[1] == name:
+                st[1] is 1
+            continue
+        if t == "if":
+            if (st[1] == 0) and ((da_reads_in of [n[1], name]) == 1):
+                st[0] is 0
+            local a is [st[0], st[1]]
+            da_walk of [n[2], name, a]
+            local b is [a[0], st[1]]
+            if (len of n) > 3:
+                if n[3] != null:
+                    da_walk of [n[3], name, b]
+            st[0] is b[0]
+            if (a[1] == 1) and (b[1] == 1) and ((len of n) > 3) and (n[3] != null):
+                st[1] is 1
+            continue
+        if (t == "loop") or (t == "while"):
+            if (st[1] == 0) and ((da_reads_in of [n[1], name]) == 1):
+                st[0] is 0
+            local c is [st[0], st[1]]
+            da_walk of [n[2], name, c]
+            st[0] is c[0]
+            continue
+        if t == "for":
+            if (st[1] == 0) and ((da_reads_in of [n[2], name]) == 1):
+                st[0] is 0
+            local d is [st[0], st[1]]
+            if n[1] == name:
+                d[1] is 1
+            da_walk of [n[3], name, d]
+            st[0] is d[0]
+            continue
+        if (t == "unobserved") or (t == "observed"):
+            # transparent block: same scope, same state
+            da_walk of [n[1], name, st]
+            continue
+        if t == "match":
+            if (st[1] == 0) and ((da_reads_in of [n[1], name]) == 1):
+                st[0] is 0
+            local mcs is n[2]
+            local mok is st[0]
+            for mi in range of (len of mcs):
+                local m1 is [st[0], st[1]]
+                da_walk of [(mcs[mi])[1], name, m1]
+                if m1[0] == 0:
+                    mok is 0
+            st[0] is mok
+            continue
+        if t == "try":
+            local e1 is [st[0], st[1]]
+            da_walk of [n[1], name, e1]
+            local e2 is [e1[0], st[1]]
+            if n[2] == name:
+                e2[1] is 1
+            da_walk of [n[3], name, e2]
+            st[0] is e2[0]
+            continue
+        # any other statement: a read while unassigned breaks it; an
+        # unknown statement kind never assigns.
+        if (st[1] == 0) and ((da_reads_in of [n, name]) == 1):
+            st[0] is 0
+    return 0
+
+define def_before_reads(body, name) as:
+    local st is [1, 0]
+    da_walk of [body, name, st]
+    return st[0]
+
 define emit_function(fn, finfo, gnm, gbt) as:
     local name is fn[1]
     G_CUR_FN[0] is name
@@ -7821,6 +7940,18 @@ define emit_function(fn, finfo, gnm, gbt) as:
     local lnm is infer_numeric_seeded of [body, fbt, fnm]
     local lnk is keys of lnm
     for k in range of (len of lnk):
+        # (round 161, #196) a numeric local read before it is definitely
+        # assigned stays a boxed slot (an unassigned slot reads null, as on
+        # the VM; a C double would read 0). Parameters are assigned by the
+        # call and are not in this test.
+        # An INTERROGATED local (`prev of z`, `what is z`) keeps its C double
+        # and per-call boundness bit: that bit is what makes `prev of` on an
+        # unassigned local die "undefined variable" as on the VM (t221, t222,
+        # t226, t227 went red when the first cut demoted them -- a boxed slot
+        # answers prev from the tape, across calls). The plain-read-is-0
+        # residual stays for that intersection only; #196 records it.
+        if (lnm[lnk[k]] == 1) and (fnm[lnk[k]] != 1) and (g_cur_interrogated[lnk[k]] != 1) and ((def_before_reads of [body, lnk[k]]) == 0):
+            lnm[lnk[k]] is 0
         if (lnm[lnk[k]] == 1) and (fbt[lnk[k]] != 1) and (g_tensor[lnk[k]] != 1):
             # ...but NEVER re-promote a parameter whose ptype is boxed. The
             # seeded inference classifies from body assignments alone, so a
