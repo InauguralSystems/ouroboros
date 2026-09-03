@@ -20,6 +20,8 @@ test_concurrent.eigs DIVERGE
 test_contract.eigs REFUSE
 test_control_flow_interactions.eigs REFUSE
 test_convergence_oracle.eigs REFUSE
+test_copy_into_buffer.eigs REFUSE
+test_copy_into_neg.eigs REFUSE
 test_corpus.eigs REFUSE
 test_coverage_gaps.eigs REFUSE
 test_coverage_v2.eigs REFUSE
@@ -114,5 +116,3 @@ test_unobserved.eigs REFUSE
 test_utf8.eigs DIVERGE
 test_vm_run_bytecode.eigs REFUSE
 test_walker_matrix.eigs REFUSE
-test_copy_into_buffer.eigs REFUSE
-test_copy_into_neg.eigs REFUSE
