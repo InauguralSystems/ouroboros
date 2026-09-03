@@ -1,0 +1,10 @@
+# Round 154: the first depth the VM refuses (4096 nested frames). Before
+# the bracket the AOT printed 100000 for `down of 100000` (rc 0) where the
+# VM dies at line 4 with rc 1. The error line is the CALL site's, as on
+# the VM: the check runs before the callee's first line stamp.
+define down(n) as:
+    if n == 0:
+        return 0
+    return 1 + (down of (n - 1))
+print of (down of 4095)
+print of "unreachable"

@@ -65,6 +65,17 @@ static Value *aot_take_error_value(void) {   /* vm_take_error_value's shape */
     dict_set_owned(d, "line", make_num((double)g_error_line));
     return d;
 }
+/* (round 154) the VM's call-depth cap is a semantic: the 4096th nested
+ * frame raises EK_LIMIT "call stack overflow" at the CALL site's line
+ * (VM_FRAMES_MAX, frame 0 being the module). Compiled code had no cap:
+ * `down of 100000` printed 100000 where the VM dies at depth 4096, and an
+ * unbounded self-call was tail-call-optimised into an infinite loop
+ * (rc 124). Every compiled function enters through aot_depth_enter and
+ * leaves through a cleanup-attribute local, so every C return path
+ * decrements; a catch restores the depth it saved (longjmp runs no
+ * cleanups). The check runs BEFORE the callee's first line stamp, so the
+ * reported line is the caller's, as on the VM. */
+static int aot_depth = 0;
 static void aot_error_exit(void) {
     if (aot_try_n > 0) longjmp(*aot_try_bufs[aot_try_n - 1], 1);
     fprintf(stderr, "%s\n", g_error_msg);
@@ -73,6 +84,20 @@ static void aot_error_exit(void) {
 /* Painting the name blue: the macro's inner rt_error is the real function;
  * every call site in this header and in generated C dies cleanly after it. */
 #define rt_error(...) do { rt_error(__VA_ARGS__); aot_error_exit(); } while (0)
+/* (round 154) below the macro on purpose: the first cut sat above it, so
+ * its rt_error was the plain VM function -- the error went PENDING and the
+ * program ran on (`down of 100000` printed 100000, then the message at
+ * exit; the unbounded probe overflowed the C stack). */
+static void __attribute__((noinline, cold)) aot_depth_overflow(void) {
+    rt_error(EK_LIMIT, g_trace_current_line, "call stack overflow");
+}
+static inline int aot_depth_enter(void) {
+    /* inc / cmp / jcc on the hot path; the raise is out of line and cold
+     * (the inlined rt_error cost 4.5% on the DMG canary, n=5 vs n=5). */
+    if (__builtin_expect(++aot_depth >= VM_FRAMES_MAX, 0)) aot_depth_overflow();
+    return 0;
+}
+static inline void aot_depth_leave(int *p) { (void)p; aot_depth--; }
 
 /* ---- portable SIMD layer for vectorized element-wise numeric loops ----
  * The emitter writes vectorized loops in terms of AOT_VW / aot_v*; this maps

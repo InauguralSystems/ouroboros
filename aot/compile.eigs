@@ -237,6 +237,11 @@ g_cur_shadowbit is {}
 g_cur_has_try is 0
 g_cur_try_depth is 0
 g_mod_has_try is 0
+# (round 154) does the program's call graph admit unbounded nesting? Only
+# then does every compiled function carry the frame-depth bracket (the VM's
+# 4096-frame cap). An acyclic graph bounds nesting by its longest path, far
+# below the cap, so the bracket would only cost (3-4.5% on the DMG canary).
+g_need_depth is 0
 g_cur_bound_bit is {}
 
 define bound_bit_of(name, nmap) as:
@@ -3717,14 +3722,14 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
         # value (the VM's {kind, message, line} dict, or a thrown Value)
         # bound to the catch name in the current env, and the catch body
         # runs. The no-error path pops the handler on the way out.
-        local tb is ind + "{ jmp_buf _tj; aot_try_push(&_tj);\n"
+        local tb is ind + "{ jmp_buf _tj; aot_try_push(&_tj); int _tdepth = aot_depth;\n"
         tb is tb + ind + "  if (setjmp(_tj) == 0) {\n"
         g_cur_try_depth is g_cur_try_depth + 1
         tb is tb + (emit_stmts of [node[1], ind + "    ", nm, bt, minits, gf])
         g_cur_try_depth is g_cur_try_depth - 1
         tb is tb + ind + "    aot_try_pop();\n"
         tb is tb + ind + "  } else {\n"
-        tb is tb + ind + "    aot_try_pop(); g_has_error = 0; g_error_print_pending = 0;\n"
+        tb is tb + ind + "    aot_try_pop(); aot_depth = _tdepth; g_has_error = 0; g_error_print_pending = 0;\n"
         if node[2] != null:
             tb is tb + ind + "    aot_set(" + (envc of node[2]) + ", \"" + node[2] + "\", aot_take_error_value());\n"
         else:
@@ -8047,6 +8052,10 @@ define emit_function(fn, finfo, gnm, gbt) as:
                 decls is decls + "    double " + (cn of v) + " = 0;\n"
             if (g_cur_bound_bit[v] == 1) and (g_tensor[v] != 1) and (fbt[v] != 1):
                 decls is decls + "    int " + (cn of v) + "_b = 0;   /* boundness bit (round 117) */\n"
+    # (round 154) the VM's frame cap: enter/leave bracket every compiled
+    # function (cleanup attribute = every C return path).
+    if g_need_depth == 1:
+        decls is decls + "    int _dg __attribute__((cleanup(aot_depth_leave))) = aot_depth_enter(); (void)_dg;\n"
     if g_cur_has_try == 1:
         decls is decls + "    int _tryb = aot_try_n;   /* handler depth at entry (round 153) */\n"
     local _sbdk is keys of g_cur_shadowbit
@@ -8573,6 +8582,91 @@ define lift_nested_at(node, bound, out_funcs, outer_after) as:
                 lift_nested_at of [st, bound, out_funcs, sub_after]
     return 0
 
+# (round 154) call-graph walk for the depth bracket. Per function body:
+# `direct` = compiled functions called by name; `opaque` = any other call
+# (builtin, value callee, module-qualified) -- such a call may invoke any
+# function whose name is taken as a VALUE anywhere (`values`); nested
+# defines count as the enclosing function's (conservative direction).
+# Builtins that can run program code: the C functions reaching
+# call_eigs_fn / vm_execute / thread_entry in the pinned runtime
+# (builtins.c, builtins_tensor.c, vm.c), plus the code-running and
+# task/channel builtins (a yield point lets another task's function run).
+# Any other genuine builtin cannot call back, so a call to it is not an
+# edge. An unknown callee name IS opaque (see cg_walk).
+CALLBACK_BUILTINS is {"dispatch": 1, "eval": 1, "sandbox_run": 1, "vm_run_bytecode": 1, "load_file": 1, "import": 1, "spawn": 1, "thread_join": 1, "task_spawn": 1, "task_sleep": 1, "task_yield": 1, "must_not_yield": 1, "sort_by": 1, "numerical_grad": 1, "numerical_grad_rows": 1, "numerical_grad_cols": 1, "send": 1, "recv": 1, "try_recv": 1, "recv_timeout": 1, "eigen_run": 1, "exec": 1}
+
+define cg_walk(node, direct, values, opaque) as:
+    if (type of node) != "list":
+        return 0
+    if (len of node) == 0:
+        return 0
+    if node[0] == "call":
+        local c is unwrap of node[1]
+        if c[0] == "ident":
+            if g_funcs[c[1]] != null:
+                direct[c[1]] is 1
+            elif CALLBACK_BUILTINS[c[1]] == 1:
+                opaque["x"] is 1
+            elif (aot_is_builtin_name of c[1]) == 0:
+                # not a runtime builtin: an imported / module / parameter
+                # callee whose body is unknown here.
+                opaque["x"] is 1
+        else:
+            opaque["x"] is 1
+            cg_walk of [node[1], direct, values, opaque]
+        cg_walk of [node[2], direct, values, opaque]
+        return 0
+    if node[0] == "ident":
+        if g_funcs[node[1]] != null:
+            values[(node[1])] is 1
+        return 0
+    for k in range of (len of node):
+        cg_walk of [node[k], direct, values, opaque]
+    return 0
+
+# DFS cycle detection over name -> {callee: 1}. color 1 = on the stack.
+define cg_has_cycle_from(name, edges, color) as:
+    if color[name] == 2:
+        return 0
+    if color[name] == 1:
+        return 1
+    color[name] is 1
+    local es is edges[name]
+    if es != null:
+        local ks is keys of es
+        for i in range of (len of ks):
+            if (cg_has_cycle_from of [ks[i], edges, color]) == 1:
+                return 1
+    color[name] is 2
+    return 0
+
+define call_graph_cyclic(funcs, rest) as:
+    local values is {}
+    local dummy_d is {}
+    local dummy_o is {}
+    cg_walk of [rest, dummy_d, values, dummy_o]
+    local per is {}
+    for k in range of (len of funcs):
+        local fn is funcs[k]
+        local d is {}
+        local o is {}
+        cg_walk of [fn[3], d, values, o]
+        per[(fn[1])] is [d, o]
+    local edges is {}
+    local vnames is keys of values
+    for k in range of (len of funcs):
+        local nm2 is (funcs[k])[1]
+        local d2 is (per[nm2])[0]
+        if ((per[nm2])[1])["x"] == 1:
+            for j in range of (len of vnames):
+                d2[(vnames[j])] is 1
+        edges[nm2] is d2
+    local color is {}
+    for k in range of (len of funcs):
+        if (cg_has_cycle_from of [((funcs[k])[1]), edges, color]) == 1:
+            return 1
+    return 0
+
 define emit_program(ast) as:
     local stmts is ast
     if ast[0] == "block":
@@ -9046,6 +9140,8 @@ define emit_program(ast) as:
         if fp_changed == 0:
             fp_round is 4
         fp_round is fp_round + 1
+    # (round 154) frame-depth bracket only when the call graph can recurse.
+    g_need_depth is call_graph_cyclic of [funcs, rest]
     # (round 108) Concurrency builtins the native runtime cannot EXECUTE were
     # admitted through generic dispatch (compile.eigs had no mention of
     # spawn/task/chan at all). Two arms, one root, both refused by name;

@@ -52,7 +52,6 @@ test_obs_mt_race.eigs REFUSE
 test_optimize.eigs REFUSE
 test_pipe_lambda.eigs REFUSE
 test_predicate_matrix.eigs REFUSE
-test_recursion_guard.eigs DIVERGE
 test_scope_semantics.eigs REFUSE
 test_simulation.eigs REFUSE
 test_slicing.eigs DIVERGE
