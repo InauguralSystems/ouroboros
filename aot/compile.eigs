@@ -2563,6 +2563,10 @@ define emit_val(node, nm, bt) as:
         # emit the stack-vector form, which avoids a make_list plus a boxed
         # key on a path DMG executes once per emulated instruction (#130).
         if (callee[1] == "dispatch") and (barg[0] == "list") and ((len of barg) == 2) and ((len of barg[1]) == 3):
+            local dtb is unwrap of (barg[1])[0]
+            if (dtb[0] == "ident") and (g_shadow_tbl[(dtb[1])] == 1):
+                # (round 164) direct C call through the shadow table
+                return seq_call3 of ["aot_dispatch_sh_" + (cn of dtb[1]), [[(emit_val of [(barg[1])[0], nm, bt]), (has_call_node of (barg[1])[0])], [(emit_val of [(barg[1])[1], nm, bt]), (has_call_node of (barg[1])[1])], [(emit_val of [(barg[1])[2], nm, bt]), (has_call_node of (barg[1])[2])]], ["Value*", "Value*", "Value*"]]
             if (is_num_expr of [(barg[1])[1], nm, bt]) == 1:
                 return seq_call3 of ["aot_dispatch", [[(emit_val of [(barg[1])[0], nm, bt]), (has_call_node of (barg[1])[0])], [(emit_num of [(barg[1])[1], nm, bt, 0]), (has_call_node of (barg[1])[1])], [(emit_val of [(barg[1])[2], nm, bt]), (has_call_node of (barg[1])[2])]], ["Value*", "double", "Value*"]]
         # (round 71) calling a name that is an UNBOXED C numeric: the env has
@@ -2880,6 +2884,7 @@ define emit_stmts(stmts, ind, nm, bt, minits, gf) as:
     local out is ""
     for i in range of (len of stmts):
         out is out + (emit_stmt of [stmts[i], ind, nm, bt, minits, gf])
+        out is out + (sh_after_stmt of [stmts[i], ind, nm, bt])
     return out
 
 # (round 139, #172) a C-variable buffer REBIND releases the previous value:
@@ -9016,6 +9021,134 @@ define call_graph_cyclic(funcs, rest) as:
             return 1
     return 0
 
+# (round 164, DMG lever 1) SHADOW DISPATCH TABLES. A module list that is
+# only ever (a) bound to `[]` at module level, (b) grown by `append of [T,
+# F]` and (c) written by `T[K] is F`, where every F is a compiled function
+# with ONE Value* parameter and a double return, and that is otherwise
+# mentioned only as the table of `dispatch of [T, key, ctx]` or in `len of
+# T`, gets a parallel C function-pointer table kept in lockstep at those
+# same sites. A dispatch through it is a direct C call: no argument list,
+# no name resolution, no wrapper, no boxing of ctx. Anything the fast path
+# cannot prove at runtime (non-number or non-integer key, out of range, a
+# NULL shadow slot, the shadow disabled after 1024 appends) takes the
+# builtin's own path, so every error text and null answer is the VM's.
+g_shadow_tbl is {}
+SH_TBL_CAP is 1024
+
+define sh_fn_ok(name) as:
+    local fi is g_funcs[name]
+    if fi == null:
+        return 0
+    if (fi["ret"]) != "double":
+        return 0
+    if (len of (fi["ptypes"])) != 1:
+        return 0
+    local pc is (fi["ptypes"])[0]
+    if (pc == "gen") or (pc == "dict") or (pc == "buf"):
+        return 1
+    return 0
+
+# walks any node; info = [ok, stores] updated in place
+define sh_walk(node, T, info) as:
+    if (type of node) != "list":
+        return 0
+    if (len of node) == 0:
+        return 0
+    local t is node[0]
+    if t == "index_assign":
+        local tg is unwrap of node[1]
+        if (tg[0] == "ident") and (tg[1] == T):
+            local rhs is unwrap of node[3]
+            if (len of node) >= 5:
+                info[0] is 0
+            elif (rhs[0] != "ident") or ((sh_fn_ok of rhs[1]) == 0):
+                info[0] is 0
+            elif (has_call_node of node[2]) == 1:
+                info[0] is 0
+            else:
+                info[1] is info[1] + 1
+            sh_walk of [node[2], T, info]
+            return 0
+    if t == "assign":
+        if node[1] == T:
+            local ar is unwrap of node[2]
+            if (ar[0] != "list") or ((len of ar) != 2) or ((len of (ar[1])) != 0):
+                info[0] is 0
+            return 0
+    if t == "call":
+        local c is unwrap of node[1]
+        local a is unwrap of node[2]
+        if (c[0] == "ident") and (c[1] == "append") and (a[0] == "list") and ((len of a) == 2) and ((len of (a[1])) == 2):
+            local a0 is unwrap of (a[1])[0]
+            local a1 is unwrap of (a[1])[1]
+            if (a0[0] == "ident") and (a0[1] == T):
+                if (a1[0] != "ident") or ((sh_fn_ok of a1[1]) == 0):
+                    info[0] is 0
+                else:
+                    info[1] is info[1] + 1
+                return 0
+        if (c[0] == "ident") and (c[1] == "dispatch") and (a[0] == "list") and ((len of a) == 2) and ((len of (a[1])) == 3):
+            local d0 is unwrap of (a[1])[0]
+            if (d0[0] == "ident") and (d0[1] == T):
+                sh_walk of [(a[1])[1], T, info]
+                sh_walk of [(a[1])[2], T, info]
+                return 0
+        if (c[0] == "ident") and (c[1] == "len"):
+            local l0 is unwrap of node[2]
+            if (l0[0] == "ident") and (l0[1] == T):
+                return 0
+    if (t == "ident") and (node[1] == T):
+        info[0] is 0
+        return 0
+    if (t == "for") and (node[1] == T):
+        info[0] is 0
+    for k in range of (len of node):
+        sh_walk of [node[k], T, info]
+    return 0
+
+define find_shadow_tables(funcs, rest) as:
+    g_shadow_tbl is {}
+    local names is keys of g_mod_rba
+    for i in range of (len of names):
+        local T is names[i]
+        if g_funcs[T] != null:
+            continue
+        local info is [1, 0]
+        sh_walk of [rest, T, info]
+        for k in range of (len of funcs):
+            sh_walk of [(funcs[k])[3], T, info]
+        if (info[0] == 1) and (info[1] > 0):
+            g_shadow_tbl[T] is 1
+    return 0
+
+# the per-statement shadow maintenance, appended after the statement's own
+# emission by emit_stmts (module and function bodies alike).
+define sh_after_stmt(st, ind, nm, bt) as:
+    local n is unwrap of st
+    if (type of n) != "list":
+        return ""
+    if (len of n) == 0:
+        return ""
+    if n[0] == "_line":
+        return sh_after_stmt of [n[2], ind, nm, bt]
+    if (n[0] == "assign") and (g_shadow_tbl[(n[1])] == 1):
+        return ind + "__sh_" + (cn of n[1]) + "_n = 0;\n"
+    if n[0] == "index_assign":
+        local tg is unwrap of n[1]
+        if (tg[0] == "ident") and (g_shadow_tbl[(tg[1])] == 1):
+            local rhs is unwrap of n[3]
+            return ind + "{ long _shk = (long)(" + (emit_num of [n[2], nm, bt, 0]) + "); if (__sh_" + (cn of tg[1]) + "_n >= 0 && _shk >= 0 && _shk < __sh_" + (cn of tg[1]) + "_n) __sh_" + (cn of tg[1]) + "[_shk] = " + (cn of rhs[1]) + "; }\n"
+    if n[0] == "call":
+        local c is unwrap of n[1]
+        local a is unwrap of n[2]
+        if (c[0] == "ident") and (c[1] == "append") and (a[0] == "list") and ((len of a) == 2) and ((len of (a[1])) == 2):
+            local a0 is unwrap of (a[1])[0]
+            local a1 is unwrap of (a[1])[1]
+            if (a0[0] == "ident") and (g_shadow_tbl[(a0[1])] == 1):
+                local sn is "__sh_" + (cn of a0[1])
+                return ind + "if (" + sn + "_n >= 0) { if (" + sn + "_n < SH_TBL_CAP) " + sn + "[" + sn + "_n++] = " + (cn of a1[1]) + "; else " + sn + "_n = -1; }\n"
+    return ""
+
 define emit_program(ast) as:
     local stmts is ast
     if ast[0] == "block":
@@ -9505,6 +9638,8 @@ define emit_program(ast) as:
         fp_round is fp_round + 1
     # (round 154) frame-depth bracket only when the call graph can recurse.
     g_need_depth is call_graph_cyclic of [funcs, rest]
+    # (round 164) shadow dispatch tables.
+    find_shadow_tables of [funcs, rest]
     # (round 163, #124) an OBSERVED function's locals live in the global env
     # by bare name (Part 2a), so a local of `setter` is readable from
     # `reader` where the VM raises "undefined variable". Refuse by name when
@@ -9872,6 +10007,11 @@ define emit_program(ast) as:
     for i in range of (len of tnames):
         if g_tensor[tnames[i]] == 1:
             gdecls is gdecls + "static AotTensor " + (cn of tnames[i]) + " = {0};   /* tensor (round 126) */\n"
+    local shnames is keys of g_shadow_tbl
+    for i in range of (len of shnames):
+        gdecls is gdecls + "static inline Value *aot_dispatch_sh_" + (cn of shnames[i]) + "(Value *table, Value *keyv, Value *ctx);\n"
+        gdecls is gdecls + "#define SH_TBL_CAP " + (str of SH_TBL_CAP) + "\nstatic double (*__sh_" + (cn of shnames[i]) + "[SH_TBL_CAP])(Value*) = {0}; static int __sh_" + (cn of shnames[i]) + "_n = 0;   /* shadow dispatch table (round 164) */\n"
+        gdecls is gdecls + "static inline Value *aot_dispatch_sh_" + (cn of shnames[i]) + "(Value *table, Value *keyv, Value *ctx) { return aot_dispatch_sh(table, keyv, ctx, __sh_" + (cn of shnames[i]) + ", __sh_" + (cn of shnames[i]) + "_n); }\n"
     # emit_function sets G_CUR_FN; the module body has no emit_function, so
     # reset it or every site label in main() inherits the LAST function's
     # name (that stale label sent an earlier debugging session chasing

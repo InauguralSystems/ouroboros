@@ -2409,6 +2409,40 @@ static Value *aot_call_name_ic(Env *g, const char *name, Value *arg, AotNameIC *
  * res == ctx case is builtin_dispatch's documented raw borrow (it passes
  * caller_owns_arg=1 to vm_borrow_compensate precisely so the caller settles
  * it), so ctx's ref transfers to the result instead of being dropped. */
+/* (round 164) the generic dispatch with a Value key: the builtin runs its
+ * own key checks ("key must be a number", "must be an integer") so the
+ * shadow fast path can hand it anything it could not prove. Consumes all
+ * three, returns owned, like aot_dispatch. */
+static Value *aot_dispatch_v(Value *table, Value *keyv, Value *ctx) {
+    Value *items[3] = { table, keyv, ctx };
+    Value lst;
+    memset(&lst, 0, sizeof lst);
+    lst.type = VAL_LIST; lst.arena = 1;
+    lst.data.list.items = items; lst.data.list.count = 3; lst.data.list.capacity = 3;
+    Value *res = builtin_dispatch(&lst);
+    if (g_exit_requested) exit(g_exit_code);
+    if (g_has_error) aot_error_exit();
+    if (res == ctx || res == table || res == keyv) val_incref(res);
+    val_decref(table); val_decref(keyv); val_decref(ctx);
+    return res;
+}
+/* (round 164) shadow dispatch: a direct C call when the key is an in-range
+ * integer with a compiled handler in the shadow slot (the slot is written in
+ * lockstep with the Value table at every store site); otherwise the
+ * builtin's path, byte-for-byte. ctx is passed BORROWED, as compiled code
+ * passes every Value* argument to a compiled callee. */
+static inline Value *aot_dispatch_sh(Value *table, Value *keyv, Value *ctx,
+                                     double (**sh)(Value*), int shn) {
+    if (shn >= 0 && keyv && keyv->type == VAL_NUM && table && table->type == VAL_LIST) {
+        double d = keyv->data.num; int k = (int)d;
+        if ((double)k == d && k >= 0 && k < shn && k < table->data.list.count && sh[k]) {
+            double r = sh[k](ctx);
+            val_decref(keyv); val_decref(table); val_decref(ctx);
+            return make_num(r);
+        }
+    }
+    return aot_dispatch_v(table, keyv, ctx);
+}
 static Value *aot_dispatch(Value *table, double key, Value *ctx) {
     Value keyv;
     memset(&keyv, 0, sizeof keyv);

@@ -1,0 +1,41 @@
+# Round 164 (DMG lever 1): a module list of compiled one-parameter handlers,
+# grown by append and written by literal and computed keys, dispatched with
+# numeric and boxed keys. The AOT keeps a C function-pointer shadow of the
+# table at those same sites and dispatches through it directly; every case
+# the fast path cannot prove -- out of range (null on the VM), a NULL slot,
+# a non-number key -- takes the builtin's own path. `len of` reads the
+# Value table. Output must be byte-identical either way.
+define h_nop(ctx) as:
+    return 4
+define h_add(ctx) as:
+    ctx[1] is ctx[1] + ctx[0]
+    return 8
+define h_undef(ctx) as:
+    return 0 - 1
+tbl is []
+for _i in range of 8:
+    append of [tbl, h_undef]
+tbl[0] is h_nop
+tbl[1] is h_add
+for _j in range of 2:
+    tbl[4 + _j] is h_add
+ctx is [3, 10]
+print of (dispatch of [tbl, 0, ctx])
+print of (dispatch of [tbl, 1, ctx])
+print of ctx[1]
+print of (dispatch of [tbl, 5, ctx])
+print of ctx[1]
+print of (dispatch of [tbl, 7, ctx])
+print of (dispatch of [tbl, 9, ctx])
+k is 1
+print of (dispatch of [tbl, k, ctx])
+ks is [0, 1, 2]
+print of (dispatch of [tbl, ks[2], ctx])
+print of (len of tbl)
+total is 0
+i is 0
+loop while i < 100:
+    total is total + (dispatch of [tbl, i % 8, ctx])
+    i is i + 1
+print of total
+print of ctx[1]
