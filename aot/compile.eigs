@@ -229,6 +229,14 @@ g_cur_localmarked is {}
 # such name gets a call-local shadow (`<cn>__loc` / `<cn>__isloc`); stores
 # route on the module bit, reads on the shadow flag.
 g_cur_shadowbit is {}
+# (round 153) try/catch: does the CURRENT function (or the module body)
+# contain a `try`? Its C locals must survive a longjmp, so the function is
+# compiled at -O0 and declares `_tryb` (the handler depth at entry) so a
+# `return` inside a try body pops back to it. g_cur_try_depth counts the
+# try bodies being emitted (break/continue inside one are refused).
+g_cur_has_try is 0
+g_cur_try_depth is 0
+g_mod_has_try is 0
 g_cur_bound_bit is {}
 
 define bound_bit_of(name, nmap) as:
@@ -2822,9 +2830,16 @@ define emit_cond(node, nm, bt) as:
 # control leaves. `pre` carries any extra pre-return cleanup (the tensor
 # frame-pool release).
 define emit_return(ctype, expr, ind, pre) as:
-    if (g_envactive == 0) and (pre == ""):
+    if (g_envactive == 0) and (pre == "") and (g_cur_try_depth == 0):
         return ind + "return " + expr + ";\n"
     local s is ind + "{ " + ctype + " _rv = " + expr + ";"
+    if g_cur_try_depth > 0:
+        # (round 153) a return INSIDE a try body: the value is evaluated
+        # under the handler (an error in it must still reach the catch),
+        # then the handlers this function pushed are popped back to the
+        # depth it entered with. Popping BEFORE the expression let
+        # `return a / b` with b == 0 escape its own catch (first cut).
+        s is s + " aot_try_pop_to(_tryb);"
     if pre != "":
         s is s + " " + pre
     if g_lowerloc == 1:
@@ -3293,8 +3308,12 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
             return emit_return of ["double", "aot_num_ck_at(" + vv + ", \"" + (c_escape of (G_CUR_FN[0])) + ": return\")", ind, ""]
         return emit_return of ["Value*", vv, ind, ""]
     if t == "break":
+        if g_cur_try_depth > 0:
+            throw of ("AOT: `break` inside a `try` body is not emitted yet -- the handler would stay pushed across the jump (round 153).")
         return ind + "break;\n"
     if t == "continue":
+        if g_cur_try_depth > 0:
+            throw of ("AOT: `continue` inside a `try` body is not emitted yet -- the handler would stay pushed across the jump (round 153).")
         return ind + "continue;\n"
     if t == "for":
         # `for var in iter` — materialize the iterable (a list/buffer; `range of`
@@ -3691,6 +3710,28 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
                 mfirst is 0
             mi is mi + 1
         return mout + ind + "}\n"
+    if t == "try":
+        # (round 153) ["try", try_body, err_name, catch_body]. A jmp_buf per
+        # try; the body runs under the handler; an error longjmps back with
+        # 1, the handler is popped, the error state cleared, the error
+        # value (the VM's {kind, message, line} dict, or a thrown Value)
+        # bound to the catch name in the current env, and the catch body
+        # runs. The no-error path pops the handler on the way out.
+        local tb is ind + "{ jmp_buf _tj; aot_try_push(&_tj);\n"
+        tb is tb + ind + "  if (setjmp(_tj) == 0) {\n"
+        g_cur_try_depth is g_cur_try_depth + 1
+        tb is tb + (emit_stmts of [node[1], ind + "    ", nm, bt, minits, gf])
+        g_cur_try_depth is g_cur_try_depth - 1
+        tb is tb + ind + "    aot_try_pop();\n"
+        tb is tb + ind + "  } else {\n"
+        tb is tb + ind + "    aot_try_pop(); g_has_error = 0; g_error_print_pending = 0;\n"
+        if node[2] != null:
+            tb is tb + ind + "    aot_set(" + (envc of node[2]) + ", \"" + node[2] + "\", aot_take_error_value());\n"
+        else:
+            tb is tb + ind + "    { Value* _ev = aot_take_error_value(); val_decref(_ev); }\n"
+        tb is tb + (emit_stmts of [node[3], ind + "    ", nm, bt, minits, gf])
+        tb is tb + ind + "  }\n" + ind + "}\n"
+        return tb
     if t == "func":
         # (round 127, #199) a define nested in a MODULE-scope loop/branch
         # body: the lift pass runs over function bodies only, so the node
@@ -7035,6 +7076,31 @@ define collect_local_marked(node, acc) as:
 # Collect names targeted by a PLAIN (unmarked) assign anywhere in a subtree —
 # the round-6 companion of collect_local_marked, feeding the builtin-name
 # clobber refusal in emit_function.
+# (round 153) main's signature and handler-depth decl when the module body
+# contains a try (see has_try / the function attribute).
+define main_sig(has) as:
+    if has == 1:
+        return "__attribute__((optimize(\"O0\"))) int main(int argc, char **argv) {\n"
+    return "int main(int argc, char **argv) {\n"
+define main_tryb(has) as:
+    if has == 1:
+        return "    int _tryb = aot_try_n;   /* handler depth at entry (round 153) */\n"
+    return ""
+
+define has_try(node) as:
+    if (type of node) != "list":
+        return 0
+    if (len of node) == 0:
+        return 0
+    if node[0] == "func":
+        return 0
+    if node[0] == "try":
+        return 1
+    for k in range of (len of node):
+        if (has_try of node[k]) == 1:
+            return 1
+    return 0
+
 define collect_plain_assigns(node, acc) as:
     if (type of node) != "list":
         return 0
@@ -7808,7 +7874,14 @@ define emit_function(fn, finfo, gnm, gbt) as:
                 if g_forunbox[dfvn[k]] != null:
                     fvk is "double"
                 dump_rec of [name, "for", dfvn[k], fvk, dl[dfvn[k]]]
+    g_cur_has_try is has_try of body
+    g_cur_try_depth is 0
     local sig is "static " + finfo["ret"] + " " + (cn of name) + "("
+    if g_cur_has_try == 1:
+        # (round 153) -O0 for this function: its C locals must hold their
+        # values across the catch's longjmp (only volatile locals are
+        # guaranteed to otherwise).
+        sig is "static " + finfo["ret"] + " __attribute__((optimize(\"O0\"))) " + (cn of name) + "("
     if (len of params) == 0:
         sig is sig + "void"
     for k in range of (len of params):
@@ -7974,6 +8047,8 @@ define emit_function(fn, finfo, gnm, gbt) as:
                 decls is decls + "    double " + (cn of v) + " = 0;\n"
             if (g_cur_bound_bit[v] == 1) and (g_tensor[v] != 1) and (fbt[v] != 1):
                 decls is decls + "    int " + (cn of v) + "_b = 0;   /* boundness bit (round 117) */\n"
+    if g_cur_has_try == 1:
+        decls is decls + "    int _tryb = aot_try_n;   /* handler depth at entry (round 153) */\n"
     local _sbdk is keys of g_cur_shadowbit
     for _sbdi in range of (len of _sbdk):
         decls is decls + "    double " + (cn of (_sbdk[_sbdi])) + "__loc = 0; int " + (cn of (_sbdk[_sbdi])) + "__isloc = 0;   /* call-local shadow of a conditionally-bound module name (round 151, #197) */\n"
@@ -9315,6 +9390,9 @@ define emit_program(ast) as:
     g_cur_localmarked is {}
     g_cur_bound_bit is {}
     g_cur_shadowbit is {}
+    g_mod_has_try is has_try of rest
+    g_cur_has_try is g_mod_has_try
+    g_cur_try_depth is 0
     local body is emit_stmts of [rest, "    ", nm, bt, minits, {}]
     local obshdr is ""
     if g_obs_traced == 1:
@@ -9383,7 +9461,7 @@ define emit_program(ast) as:
             wraps is wraps + "static Value* __wrap_" + (cn of wn) + "(Value* __a) { return " + wcall + "; }\n"
         else:
             wraps is wraps + "static Value* __wrap_" + (cn of wn) + "(Value* __a) { " + wcall + "; return make_null(); }\n"
-    local hdr is "#include \"aot_rt.h\"\n\nstatic Env* __eigs_g = NULL;\n" + gdecls + "\n" + wprotos + fc + "\n" + wraps + "\nint main(int argc, char **argv) {\n    __eigs_g = aot_boot(); (void)__eigs_g;\n    aot_args(argc, argv);\n" + obshdr
+    local hdr is "#include \"aot_rt.h\"\n\nstatic Env* __eigs_g = NULL;\n" + gdecls + "\n" + wprotos + fc + "\n" + wraps + "\n" + (main_sig of g_mod_has_try) + "    __eigs_g = aot_boot(); (void)__eigs_g;\n    aot_args(argc, argv);\n" + (main_tryb of g_mod_has_try) + obshdr
     local ftr is "    aot_shutdown(__eigs_g);\n    return 0;\n}\n"
     return hdr + body + ftr
 

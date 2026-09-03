@@ -1,0 +1,9 @@
+# EXPECT: `continue` inside a `try` body
+# Round 153: same as break_inside_try for `continue`.
+for i in range of 5:
+    try:
+        if i == 2:
+            continue
+        print of i
+    catch e:
+        print of "never"

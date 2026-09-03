@@ -19,6 +19,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <setjmp.h>      /* round 153: try/catch handlers */
 
 /* ---- uncaught-error death (#103) ------------------------------------------
  * The AOT has no try/catch, so EVERY runtime error is uncaught and fatal —
@@ -36,7 +37,36 @@
  * only RECORDS the error — never touching the NULL VM — and the AOT prints
  * the recorded message and exits 1 itself: clean nonzero death, same code
  * and same message frame as the VM. */
+/* (round 153) try/catch. The VM's OP_TRY_BEGIN pushes a handler; an error
+ * raised inside unwinds to it and the catch binds the error value (a dict
+ * {kind, message, line}, or the Value a `throw of` carried). The AOT keeps
+ * a stack of jmp_bufs: every error path funnels through aot_error_exit --
+ * the rt_error macro below and the `if (g_has_error)` checks after builtin
+ * calls -- which longjmps to the innermost handler when one is active and
+ * exits as before when none is. Owned temporaries live at the longjmp are
+ * leaked (a one-shot process; the leak tier bounds it). A function whose
+ * body contains a `try` is compiled at -O0 (an attribute on its signature)
+ * so its C locals keep their values across the longjmp, which the C
+ * standard guarantees only for volatile ones. */
+enum { AOT_TRY_MAX = 64 };
+static jmp_buf *aot_try_bufs[AOT_TRY_MAX];
+static int aot_try_n = 0;
+static void aot_try_push(jmp_buf *b) {
+    if (aot_try_n >= AOT_TRY_MAX) { fprintf(stderr, "Error: 'try' nested more than %d deep\n", AOT_TRY_MAX); exit(1); }
+    aot_try_bufs[aot_try_n++] = b;
+}
+static void aot_try_pop(void) { if (aot_try_n > 0) aot_try_n--; }
+static void aot_try_pop_to(int n) { if (n >= 0 && n < aot_try_n) aot_try_n = n; }
+static Value *aot_take_error_value(void) {   /* vm_take_error_value's shape */
+    if (g_error_value) { Value *v = g_error_value; g_error_value = NULL; return v; }
+    Value *d = make_dict(3);
+    dict_set_owned(d, "kind", make_str(err_kind_name((ErrKind)g_error_kind)));
+    dict_set_owned(d, "message", make_str(g_error_raw));
+    dict_set_owned(d, "line", make_num((double)g_error_line));
+    return d;
+}
 static void aot_error_exit(void) {
+    if (aot_try_n > 0) longjmp(*aot_try_bufs[aot_try_n - 1], 1);
     fprintf(stderr, "%s\n", g_error_msg);
     exit(1);
 }
@@ -442,19 +472,30 @@ static Value *aot_add(Value *a, Value *b) {
         memcpy(s, a->data.str, la); memcpy(s + la, b->data.str, lb); s[la + lb] = 0;
         r = make_str_owned(s);
     } else {
-        fprintf(stderr, "cannot apply '+' to mixed types\n"); exit(1);
+        /* (round 153) the VM's three '+' diagnoses, verbatim: now that a
+         * `try` can catch this, kind and message are program-visible data
+         * (a fixture printed e.message and got the old AOT-only text). */
+        const char *ta = val_type_name(a->type), *tb = val_type_name(b->type);
+        if ((a->type == VAL_STR) != (b->type == VAL_STR))
+            rt_error(EK_TYPE, g_trace_current_line, "cannot apply '+' to %s and %s (use an f-string or 'str of' to concatenate)", ta, tb);
+        else if (a->type == VAL_LIST || b->type == VAL_LIST)
+            rt_error(EK_TYPE, g_trace_current_line, "cannot apply '+' to %s and %s (use 'append of [xs, v]' to add an element, or 'concat of [a, b]' to join two lists)", ta, tb);
+        else
+            rt_error(EK_TYPE, g_trace_current_line, "cannot apply '+' to %s and %s", ta, tb);
+        r = make_null();
     }
     val_decref(a); val_decref(b); return r;
 }
-#define AOT_NUMOP(NAME, EXPR) \
+#define AOT_NUMOP(NAME, EXPR, OPNAME) \
     static Value *NAME(Value *a, Value *b) { \
-        if (a->type != VAL_NUM || b->type != VAL_NUM) { \
-            fprintf(stderr, "non-numeric operand\n"); exit(1); } \
+        if (a->type != VAL_NUM || b->type != VAL_NUM) \
+            rt_error(EK_TYPE, g_trace_current_line, "cannot apply '%s' to %s and %s", \
+                     OPNAME, val_type_name(a->type), val_type_name(b->type)); \
         double x = a->data.num, y = b->data.num; (void)x; (void)y; \
         Value *r = make_num(num_guard(EXPR)); \
         val_decref(a); val_decref(b); return r; }
-AOT_NUMOP(aot_sub, x - y)
-AOT_NUMOP(aot_mul, x * y)
+AOT_NUMOP(aot_sub, x - y, "-")
+AOT_NUMOP(aot_mul, x * y, "*")
 
 /* Round 72: division/modulo by zero RAISES, mirroring vm.c's OP_DIV/OP_MOD
  * (rt_error EK_VALUE "division by zero"/"modulo by zero"). The old b==0->0
@@ -475,8 +516,8 @@ static inline double aot_mod_zero_check(double y) {
         rt_error(EK_VALUE, g_trace_current_line, "modulo by zero");
     return y;
 }
-AOT_NUMOP(aot_div, x / aot_div_zero_check(y))
-AOT_NUMOP(aot_mod, fmod(x, aot_mod_zero_check(y)))
+AOT_NUMOP(aot_div, x / aot_div_zero_check(y), "/")
+AOT_NUMOP(aot_mod, fmod(x, aot_mod_zero_check(y)), "%")
 
 /* Specialized (unboxed double) div/mod. Single-eval helpers so the emitter
    doesn't have to duplicate the operand expressions. */
@@ -692,13 +733,12 @@ static long aot_idx_k(double d, int count, int is_list) {
      * "index must be an integer, got 4.29497e+09" there while a long-width
      * check here reported an out-of-range bound instead. */
     int ii = (int)d;
-    if ((double)ii != d) { fprintf(stderr, "Error line %d: index must be an integer, got %g\n", g_trace_current_line, d); exit(1); }
+    if ((double)ii != d) rt_error(EK_VALUE, g_trace_current_line, "index must be an integer, got %g", d);
     long i = (long)d;
     if (i < 0) i += count;
     if (i < 0 || i >= count) {
-        if (is_list) fprintf(stderr, "Error line %d: index %ld out of range (list length %d)\n", g_trace_current_line, (long)d, count);
-        else         fprintf(stderr, "Error line %d: buffer index %ld out of range (length %d)\n", g_trace_current_line, (long)d, count);
-        exit(1);
+        if (is_list) rt_error(EK_INDEX, g_trace_current_line, "index %ld out of range (list length %d)", (long)d, count);
+        else         rt_error(EK_INDEX, g_trace_current_line, "buffer index %ld out of range (length %d)", (long)d, count);
     }
     return i;
 }
@@ -740,13 +780,12 @@ static long aot_idx_ik(long i, int count, int is_list) {
     /* (round 96) the int-width integer test applies here too: this path is
      * reached with a long computed by native integer arithmetic, and a
      * value past INT_MAX is what the VM calls a non-integer index. */
-    if ((long)(int)i != i) { fprintf(stderr, "Error line %d: index must be an integer, got %g\n", g_trace_current_line, (double)i); exit(1); }
+    if ((long)(int)i != i) rt_error(EK_VALUE, g_trace_current_line, "index must be an integer, got %g", (double)i);
     if (i < 0) i += count;
     if (i < 0 || i >= count) {
         /* (round 97) name the container kind -- see aot_idx_k. */
-        if (is_list) fprintf(stderr, "Error line %d: index %ld out of range (list length %d)\n", g_trace_current_line, i, count);
-        else         fprintf(stderr, "Error line %d: buffer index %ld out of range (length %d)\n", g_trace_current_line, i, count);
-        exit(1);
+        if (is_list) rt_error(EK_INDEX, g_trace_current_line, "index %ld out of range (list length %d)", i, count);
+        else         rt_error(EK_INDEX, g_trace_current_line, "buffer index %ld out of range (length %d)", i, count);
     }
     return i;
 }
@@ -2515,7 +2554,10 @@ Value *builtin_sandbox_run(Value *arg);
 Value *builtin_vm_run_bytecode(Value *arg);
 static Value *aot_call_vm_builtin(Value *fn, Value *arg) {
     if (fn->data.builtin == builtin_sandbox_run || fn->data.builtin == builtin_vm_run_bytecode) {
-        g_try_depth = 0;
+        /* (round 153) inside an AOT `try` the VM must not print either:
+         * the depth mirrors an enclosing handler, as the VM's g_try_depth
+         * counts enclosing try blocks. */
+        g_try_depth = (aot_try_n > 0) ? 1 : 0;
         /* the VM reports a descriptor's error at the HOST call line
          * (g_vm.current_line, kept fresh by the host's OP_LINE); the AOT's
          * stamp is that line, so hand it to the VM before the run */

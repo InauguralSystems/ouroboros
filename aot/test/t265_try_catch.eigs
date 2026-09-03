@@ -1,0 +1,90 @@
+# Round 153: `try`/`catch` emitted (was "AOT: cannot emit statement node
+# 'try'", the largest refusal class in the corpus ledger: 48 rows).
+# Each try pushes a jmp_buf on a handler stack; rt_error's exit path
+# longjmps to the innermost handler instead of exiting; the catch binds the
+# VM-shaped error value ({kind, message, line} for runtime errors, the thrown
+# Value for `throw`). Functions whose body contains a try compile at -O0 so
+# their C locals survive the jump; `return` inside a try body evaluates its
+# value UNDER the handler and then pops back to the entry depth (the first
+# cut popped first, and `return a / b` with b == 0 escaped its own catch).
+# Also covered: nested try + rethrow, error inside a called function caught
+# by the caller's handler, a try inside a `for` body, a thrown dict, and the
+# arithmetic/index error sites of aot_rt.h that were bare exit(1)s and are
+# now catchable with the VM's kind and text.
+try:
+    print of "in try"
+    x is 1 / 0
+    print of "not reached"
+catch e:
+    print of e.kind
+    print of e.message
+print of "after"
+try:
+    throw of "custom"
+catch err:
+    print of err
+define safe_div(a, b) as:
+    try:
+        return a / b
+    catch e2:
+        return 0 - 1
+print of (safe_div of [6, 3])
+print of (safe_div of [6, 0])
+try:
+    print of "clean"
+catch e3:
+    print of "never"
+define risky(n) as:
+    if n > 2:
+        throw of "too big"
+    return n * 10
+define outer(n) as:
+    try:
+        local v is risky of n
+        return v + 1
+    catch e:
+        return 0 - n
+print of (outer of 1)
+print of (outer of 5)
+try:
+    try:
+        xs is [1, 2, 3]
+        print of xs[10]
+    catch inner:
+        print of ("inner: " + inner.kind)
+        throw of "rethrown"
+catch outer_e:
+    print of ("outer: " + outer_e)
+try:
+    throw of {"code": 7}
+catch e5:
+    print of e5.code
+count is 0
+for i in range of 5:
+    try:
+        if i == 3:
+            throw of "skip"
+        count is count + i
+    catch e6:
+        count is count + 100
+print of count
+try:
+    y is "abc" + 5
+catch e7:
+    print of e7.message
+b is buffer of 4
+try:
+    print of b[9]
+catch e8:
+    print of e8.message
+try:
+    print of xs[1.5]
+catch e9:
+    print of e9.kind
+    print of e9.message
+    print of e9.line
+try:
+    print of ([1] + [2])
+catch e10:
+    print of e10.message
+print of "done"

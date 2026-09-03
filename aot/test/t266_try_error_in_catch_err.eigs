@@ -1,0 +1,12 @@
+# Round 153 control: an error raised INSIDE a catch body is not caught by the
+# try it belongs to -- the handler is popped before the catch body runs. The
+# outer error must reach the process exit with the VM's line and text.
+define f(n) as:
+    try:
+        throw of "first"
+    catch e:
+        print of ("caught " + e)
+        return n / 0
+print of "start"
+print of (f of 4)
+print of "unreachable"
