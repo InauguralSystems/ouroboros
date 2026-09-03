@@ -6930,6 +6930,17 @@ define widen_ptypes(funcs, rest) as:
             for p2 in range of (len of fn2[2]):
                 if ((pt2s[p2]) == "gen") or ((pt2s[p2]) == "dict"):
                     seed2[((fn2[2])[p2])] is "gen"
+            # (round 166) a parameter's field map, recorded by pf_scan from
+            # this function's call sites, is part of the seed: pf_scan reads
+            # `<arg>.#fields` from the CALLER's map, so without it a record
+            # handed down a chain (DMG: main -> run_frame -> fetch8 ->
+            # mem_read) lost its field classes at the first hop.
+            local pf2 is (g_funcs[fn2[1]])["pfields"]
+            if pf2 != null:
+                for p3 in range of (len of fn2[2]):
+                    if p3 < (len of pf2):
+                        if (pf2[p3]) != null:
+                            seed2[((fn2[2])[p3]) + ".#fields"] is pf2[p3]
             if (widen_scan of [fn2[3], pt2s, fn2[2], local_gen_map_for_seeded of [fn2[1], fn2[3], seed2], fn2[1]]) == 1:
                 changed is 1
         if (widen_scan of [rest, [], [], local_gen_map_for of ["<module>", rest], "<module>"]) == 1:
