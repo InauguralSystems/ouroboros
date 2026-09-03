@@ -6463,24 +6463,28 @@ define local_gen_map_seeded(body, seed) as:
                 if r[0] == "index":
                     isgen is 1
                 if r[0] == "call":
+                    # (round 157, #178) a local assigned from a call is
+                    # boxed unless the callee is a compiled function
+                    # declared double or a NUM_RET builtin -- the default
+                    # arg_class took in round 156. The old arm boxed only
+                    # Value*/void compiled callees and BOXED_RET builtins:
+                    # `local t is fn of items[i]` with `fn` a generic
+                    # parameter left t numeric and the AOT died "at outer:
+                    # name t (type str)" where the VM prints. (A void
+                    # callee yields null -- `x is (shout of "a")` -- and a
+                    # BOXED_RET builtin -- EigenMiniSat's `text is read_text
+                    # of path` -- are both covered by the default.)
                     local rc is unwrap of r[1]
                     if rc[0] == "ident":
                         if g_funcs[rc[1]] != null:
-                            if ((g_funcs[rc[1]])["ret"]) == "Value*":
+                            if ((g_funcs[rc[1]])["ret"]) != "double":
                                 isgen is 1
                             if g_func_void[rc[1]] == 1:
-                                # a function with no return yields null, which
-                                # is boxed. Testing only "Value*" missed it:
-                                #   x is (shout of "a") / g of x
-                                #   VM  a / null, rc 0
-                                #   AOT a, then "non-numeric value in a numeric
-                                #       context at <module>: name x", rc 1
                                 isgen is 1
-                        elif BOXED_RET_BUILTINS[rc[1]] == 1:
-                            # a BUILTIN with a known non-numeric return
-                            # (EigenMiniSat's `text is read_text of path`,
-                            # then `parse_dimacs_text of text`)
+                        elif NUM_RET_BUILTINS[rc[1]] != 1:
                             isgen is 1
+                    else:
+                        isgen is 1
         # DIRECT numeric evidence only (arithmetic / index position) — a
         # "passed to a num param" signal would deadlock: that param's class
         # is exactly what this evidence is meant to decide.
