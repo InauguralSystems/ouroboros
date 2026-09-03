@@ -1,0 +1,6 @@
+# ouroboros#181 (round 152): the count-0 form -- `g of []` binds the single
+# parameter to [] on the VM (measured: `len of b` is 0). Packed the same way.
+# (Was refuse/arity1_recollect_empty.)
+define g(b) as:
+    return len of b
+print of (g of [])

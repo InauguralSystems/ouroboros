@@ -1,0 +1,12 @@
+# ouroboros#181 (round 152): a 2-element literal arg list to a 1-parameter
+# callee whose parameter is a Value* class. The VM re-collects the list
+# WHOLE (EigenScript#733): g's `b` is [a, b] and `len of b` is 2. Refused
+# until round 152 ("the call-site pack is not emitted yet"); the call site
+# now builds the list the VM re-collects and passes it as the one argument.
+# (Was refuse/arity1_recollect.)
+define g(b) as:
+    return len of b
+define h(a, b) as:
+    return g of [a, b]
+buf is zeros of 4
+print of (h of [buf, 2])

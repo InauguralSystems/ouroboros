@@ -22,7 +22,6 @@ test_control_flow_interactions.eigs REFUSE
 test_convergence_oracle.eigs REFUSE
 test_copy_into_buffer.eigs REFUSE
 test_copy_into_neg.eigs REFUSE
-test_corpus.eigs REFUSE
 test_coverage_gaps.eigs REFUSE
 test_coverage_v2.eigs REFUSE
 test_db.eigs REFUSE
@@ -50,7 +49,6 @@ test_http.eigs REFUSE
 test_import.eigs REFUSE
 test_import_errors.eigs REFUSE
 test_import_toplevel_scope.eigs REFUSE
-test_index_after_call.eigs REFUSE
 test_inflate.eigs REFUSE
 test_interrogative_spec.eigs REFUSE
 test_jit_paths.eigs REFUSE
@@ -104,7 +102,6 @@ test_tasks.eigs REFUSE
 test_task_sleep_order.eigs REFUSE
 test_temporal.eigs REFUSE
 test_temporal_param.eigs REFUSE
-test_temporal_pruning.eigs REFUSE
 test_temporal_when.eigs REFUSE
 test_terminal.eigs REFUSE
 test_throw_unwind.eigs REFUSE

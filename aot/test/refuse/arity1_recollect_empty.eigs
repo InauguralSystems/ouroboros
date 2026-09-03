@@ -1,9 +1,0 @@
-# EXPECT: passes a 0-element literal list to its single parameter
-# ouroboros#181, count 0: `g of []` binds g's single parameter to [] on the
-# VM (measured: `type of b` is list, `len of b` is 0, rc 0) -- the same
-# re-collection as `g of [a, b]`. The old zero-arg refusal said "the VM
-# binds null", which is only true of `g of null`. Refused with the measured
-# reason until the call-site pack is emitted.
-define g(b) as:
-    return len of b
-print of (g of [])

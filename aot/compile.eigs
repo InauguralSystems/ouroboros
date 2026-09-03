@@ -6741,6 +6741,16 @@ define emit_args(node, fname, nm, bt) as:
                 if dead == 1:
                     # the parameter is never read: any incoming value matches
                     return ["", "0"]
+                # (round 152, #181) the PACK: when the single parameter is a
+                # Value* class (gen/dict/buf -- the body indexes or passes it
+                # whole, utf8's `_u8_decode_at of [s, i]` with `n[0]`/`n[1]`),
+                # build the list the VM re-collects and pass it as the one
+                # argument. A numeric parameter still refuses below.
+                if ((ptypes[0]) == "gen") or ((ptypes[0]) == "dict") or ((ptypes[0]) == "buf"):
+                    local _pk is "({ Value* _pl = make_list(" + (str of (len of elems)) + ");"
+                    for _pi in range of (len of elems):
+                        _pk is _pk + " list_append_owned(_pl, " + (emit_val of [elems[_pi], nm, bt]) + ");"
+                    return ["", _pk + " _pl; })"]
                 throw of ("AOT: call to '" + fname + "' passes a " + (str of (len of elems)) + "-element literal list to its single parameter -- the VM re-collects the list WHOLE into that parameter (EigenScript#733: [] at count 0, [a, b] at count 2), and the parameter's C class was inferred from its body, so the call-site pack is not emitted yet (ouroboros#181). Parenthesize the list to pass it as one argument on both sides, or give the callee the parameters it reads.")
     if (len of elems) == 0:
         # `f of null` (or `[]` to a 2+-param callee): the incoming value is
@@ -7488,6 +7498,14 @@ define emit_function(fn, finfo, gnm, gbt) as:
                 for p in range of (len of params):
                     if params[p] == _pan[k]:
                         _isp is 1
+                # (round 152) MEASURED on the eb26afd pin, and the claim below
+                # HOLDS: `dot is a * 2` inside a function with no module-level
+                # `dot` leaves `type of dot` = num afterwards, and a later
+                # `dot of [...]` dies "cannot call num". (Under `import` the
+                # rebind lands in the module's own env -- geometry's reflect2d
+                # leaves the host's builtin intact -- but a host program's
+                # function clobbers the process-wide builtin.) The refusal
+                # stands; four stdlib modules carry the shape.
                 if _isp == 0:
                     throw of ("AOT: `" + _pan[k] + " is ...` inside a function writes the GLOBAL builtin binding (VM semantics); the AOT has no global-clobber path — use `local " + _pan[k] + " is ...` for a function-local")
         if (g_func_names[_pan[k]] == 1) and (_lmk[_pan[k]] != 1) and (g_lifted_names[_pan[k]] != 1):
