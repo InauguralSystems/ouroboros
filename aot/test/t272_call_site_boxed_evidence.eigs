@@ -1,0 +1,45 @@
+# Round 156: three defaults that put a boxed value into a numeric slot.
+#  (1) a value-called function's parameter counted "passed to a builtin"
+#      as numeric evidence: `send of [c, x * y]` kept the channel `c`
+#      numeric (corpus test_spawn_args);
+#  (2) the call-site argument classifier answered "unknown" for any call
+#      not in BOXED_RET_BUILTINS -- an unlisted builtin (try_recv -> null),
+#      an imported name, a value or module-qualified callee -- so the
+#      callee's numeric parameter was never widened (test_channel_nb,
+#      test_meta_parity, test_observer_slots);
+#  (3) a module-assigned name with positive BOXED evidence (`msg is "hi"`)
+#      passed to a numeric parameter widened nothing. (A module name of
+#      UNKNOWN class -- `ch is channel of 1` -- still keeps the checked
+#      unbox at the call site, loud when wrong: boxing every unknown
+#      module name cost DMG 5.7%; #202.)
+# Each exited "non-numeric value in a numeric context ..." rc 1 where the
+# VM runs (rc 0). Evidence now: a numbers-only use, `+` with a numeric
+# operand, or a compiled callee's numeric position; everything else boxed.
+define producer(c, x, y) as:
+    send of [c, x * y]
+define shout(m) as:
+    return m
+define twice(n) as:
+    return n * 2
+define via(c, n) as:
+    send of [c, twice of n]
+define check(name, got, want) as:
+    if got == want:
+        print of ("ok " + name)
+    else:
+        print of ("FAIL " + name)
+define offset_of(base, off) as:
+    return (base * 4) + off
+ch is channel of 1
+t is spawn of [producer, ch, 6, 7]
+thread_join of t
+print of (recv of ch)
+msg is "hi"
+print of (shout of msg)
+t2 is spawn of [via, ch, 5]
+thread_join of t2
+print of (recv of ch)
+check of ["empty", try_recv of ch, null]
+check of ["str", str of 42, "42"]
+check of ["num", 1 + 1, 2]
+print of (offset_of of [3, 5])

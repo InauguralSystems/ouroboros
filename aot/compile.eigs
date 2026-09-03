@@ -277,6 +277,14 @@ define bound_bit_common(name, nmap) as:
         return 0
     if g_cur_localmarked[name] == 1:
         return 0
+    # (round 156) a PARAMETER of the current function shadows the module
+    # name; its binding is the call itself, never the module bit. Latent
+    # until a value-passed function's numeric parameter shared a name with
+    # a bit-carrying module numeric (t187: `define g(x) as: return x + 1`
+    # with module `x is reg of [...]` -> "undefined variable 'x'" at the
+    # param read once `x + 1` counted as numeric evidence).
+    if g_cur_params[name] == 1:
+        return 0
     return 1
 # The CURRENT function's parameter names, set by emit_function and cleared for
 # the module body. The VM's tape records locals and module bindings and NEVER a
@@ -5394,6 +5402,8 @@ define return_node_is_num(rnode, rba, fbt, fgen, fdict, ftt, seen) as:
 
 g_cur_params_rt is {}
 g_mod_num_names is {}
+g_mod_assigned is {}
+g_mod_rba is {}
 define func_ret_type(fn, fbt, fgen, fdict) as:
     g_cur_params_rt is {}
     for pi in range of (len of fn[2]):
@@ -5524,6 +5534,33 @@ define call_elems_for(fname, arg) as:
     if ((len of pts) == 1) and ((len of elems) != 1) and (arg[0] == "list") and ((len of arg) == 2):
         return [arg]
     return elems
+
+# (round 156) is `name` passed to a compiled function at a position whose
+# parameter is classified numeric? The shape of find_buf_param_use, for the
+# "num" class.
+define param_in_compiled_num_arg(node, name) as:
+    if (type of node) != "list":
+        return 0
+    if (len of node) == 0:
+        return 0
+    if node[0] == "call":
+        local callee is unwrap of node[1]
+        if callee[0] == "ident":
+            if g_funcs[callee[1]] != null:
+                local arg is unwrap of node[2]
+                local elems is call_elems_for of [callee[1], arg]
+                local pts is (g_funcs[callee[1]])["ptypes"]
+                for k in range of (len of elems):
+                    if k >= (len of pts):
+                        break
+                    if (pts[k]) == "num":
+                        local e is unwrap of elems[k]
+                        if (e[0] == "ident") and (e[1] == name):
+                            return 1
+    for k in range of (len of node):
+        if (param_in_compiled_num_arg of [node[k], name]) == 1:
+            return 1
+    return 0
 
 define find_buf_param_use(node, name) as:
     if (type of node) != "list":
@@ -5660,6 +5697,18 @@ define contains_ident(node, name) as:
             return 1
     return 0
 
+# (round 156) is this `+` operand a number by its own shape? A numeric
+# literal, a numbers-only binop, or a unary minus/bitnot of one.
+define plus_side_numeric(n) as:
+    local u is unwrap of n
+    if u[0] == "num":
+        return 1
+    if (u[0] == "binop") and (NUMONLY_OPS[u[1]] == 1):
+        return 1
+    if (u[0] == "unary") and ((u[1] == "-") or (u[1] == "~")):
+        return plus_side_numeric of u[2]
+    return 0
+
 define find_numeric_use_direct(node, name) as:
     if (type of node) != "list":
         return 0
@@ -5672,6 +5721,19 @@ define find_numeric_use_direct(node, name) as:
             if (l[0] == "ident") and (l[1] == name):
                 return 1
             if (r[0] == "ident") and (r[1] == name):
+                return 1
+        if node[1] == "+":
+            # (round 156) `name + <positively numeric>` (or mirrored): the
+            # VM raises on num + non-num, so a non-number here dies either
+            # way; the other side must be a literal or a numbers-only
+            # operation. `(bank * 0x4000) + offset` (DMG read_rom_bank) was
+            # no evidence at all, and every caller's address parameter
+            # widened to boxed through the #86 fixpoint.
+            local pl is unwrap of node[2]
+            local pr is unwrap of node[3]
+            if (pl[0] == "ident") and (pl[1] == name) and ((plus_side_numeric of pr) == 1):
+                return 1
+            if (pr[0] == "ident") and (pr[1] == name) and ((plus_side_numeric of pl) == 1):
                 return 1
     if node[0] == "index":
         local ix is unwrap of node[2]
@@ -6058,8 +6120,14 @@ define func_ptypes(fn) as:
             # a call. `define h(ctx) as: return ctx` and `define _op_nop(ctx)
             # as: return 4` qualify — and those are exactly the shapes whose
             # wrapper coerced a dict or list argument to 0.0.
+            # (round 156) "handed onward to a call" counted a BUILTIN's
+            # argument as numeric evidence: `send of [c, x * y]` kept the
+            # channel parameter `c` numeric (corpus test_spawn_args:
+            # "non-numeric value in a numeric context at producer parameter
+            # 0 (type dict)", rc 1, VM rc 0). Only a compiled callee's
+            # numeric position is evidence now.
             if (find_numeric_use_direct of [body, params[p]]) == 0:
-                if (param_in_call_arg of [body, params[p]]) == 0:
+                if (param_in_compiled_num_arg of [body, params[p]]) == 0:
                     cls is "gen"
         if (uses_as_dot of [body, params[p]]) == 1:
             cls is "dict"
@@ -6209,47 +6277,32 @@ define arg_class(node, caller_pt, caller_params, caller_locals) as:
     if t == "num":
         return "num"
     if t == "call":
-        # `g of (shout of "a")` where `shout` has no return. The VM binds null
-        # to g's parameter and prints "null"; the AOT inferred `g` numeric from
-        # this site contributing NO constraint, declared `double eig_n`, and
-        # emitted `eig_g(eig_shout(...))` — a C void expression where a double
-        # is required, so gcc failed the build outright:
-        #
-        #   VM   a / null, rc 0     AOT  "invalid use of void expression", no binary
-        #
-        # That is worse than a wrong answer: it is not an `AOT:` refusal, so it
-        # carries no diagnostic naming the construct. A void call yields null,
-        # which is boxed evidence exactly like a str or list argument.
+        # (round 156) a call's class defaults to BOXED: only a compiled
+        # function declared double or a NUM_RET builtin is numeric. The old
+        # arm (rounds 101/111) boxed void and Value* compiled callees and
+        # BOXED_RET builtins, and answered "unknown" for every other
+        # builtin, every imported name and every value or module-qualified
+        # callee -- so no widening happened and the callee unboxed a null
+        # (test_channel_nb: try_recv), a list (test_meta_parity: eigen_run)
+        # or a string (test_observer_slots: observer_slots.verdict):
+        # "non-numeric value in a numeric context", rc 1, VM rc 0
+        # (#202/#203). `g of (shout of "a")` (void callee -> null) and
+        # `guarded of (passthru of "x")` (Value* callee) keep their answers.
         local vac is unwrap of e[1]
         if vac[0] == "ident":
             if g_func_void[vac[1]] == 1:
                 return "gen"
-            # A user function declared Value* returns a boxed value, which is
-            # the same evidence. Returning "unknown" for it left
-            # `guarded of (passthru of "x")` -- where passthru is `return
-            # (shout of m)`, so Value* precisely BECAUSE of the void rule --
-            # reaching gcc as "incompatible type for argument 1 of
-            # 'eig_guarded'": no binary and no `AOT:` diagnostic, against a VM
-            # that runs it at rc 0. ret is computed for every function before
-            # widen_ptypes runs, so it is available here; a callee not yet in
-            # g_funcs (first pass, later definition) stays unknown and the
-            # fixpoint revisits it.
             local vcf is g_funcs[vac[1]]
             if vcf != null:
                 if (vcf["ret"]) == "Value*":
                     return "gen"
-            # (round 111) a BUILTIN callee with a known boxed return is the
-            # same evidence. This arm consulted user functions only, so
-            # `check of [tag, report_value of x, want]` left `got` numeric
-            # and the string died at the coercion -- a runtime death where
-            # the VM prints; `report of x` as an argument had died the same
-            # way all along. NUM_RET_BUILTINS' comment records that the
-            # boxed-allowlist polarity is backwards for RETURN classes; this
-            # arm keeps "unknown" for an unlisted builtin (the widening to
-            # boxed-by-default here is a separate, measured change).
-            elif (g_func_names[vac[1]] != 1) and (BOXED_RET_BUILTINS[vac[1]] == 1):
-                return "gen"
-        return "unknown"
+                if (vcf["ret"]) == "double":
+                    return "num"
+                return "unknown"
+            if NUM_RET_BUILTINS[vac[1]] == 1:
+                return "num"
+            return "gen"
+        return "gen"
     if t == "ident":
         for k in range of (len of caller_params):
             if (caller_params[k]) == e[1]:
@@ -6282,6 +6335,24 @@ define arg_class(node, caller_pt, caller_params, caller_locals) as:
             # lib/eigen.eigs registers builtins into an env dict at 16
             # sites this way.
             return "gen"
+        # (round 156) a module-assigned name: numeric on positive numeric
+        # evidence, boxed on positive BOXED evidence (every assignment a
+        # container/string/null literal, a Value* compiled call or a
+        # BOXED_RET builtin), else unknown -- the call site keeps its
+        # CHECKED unbox, loud when wrong (#202). Boxing every unknown
+        # module name was measured first: DMG's `total_cycles` (assigned
+        # from a dict index) widened run_headless_loop's parameter and the
+        # headless loop's accumulator went boxed, -5.7% on the canary.
+        if g_mod_assigned[e[1]] == 1:
+            if g_mod_num_names[e[1]] == 1:
+                return "num"
+            local _mr is g_mod_rba[e[1]]
+            local _allb is 1
+            for _mi in range of (len of _mr):
+                if (is_boxed_node of [_mr[_mi], {}]) == 0:
+                    _allb is 0
+            if _allb == 1:
+                return "gen"
         return "unknown"
     if e[0] == "ident":
         if g_func_names[e[1]] == 1:
@@ -9151,11 +9222,14 @@ define emit_program(ast) as:
     # return classifier: every module-level assignment is numeric by the
     # same rule the returns use (no function-call evidence needed).
     g_mod_num_names is {}
+    g_mod_assigned is {}
     g_cur_params_rt is {}
     local _mrba is collect_assigns of [rest, {}]
+    g_mod_rba is _mrba
     local _mbt is infer_buffers of rest
     local _mnames is keys of _mrba
     for mi in range of (len of _mnames):
+        g_mod_assigned[(_mnames[mi])] is 1
         if (return_node_is_num of [["ident", (_mnames[mi])], _mrba, _mbt, {}, {}, {}, {}]) == 1:
             g_mod_num_names[(_mnames[mi])] is 1
     for k in range of (len of funcs):

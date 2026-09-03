@@ -4,8 +4,6 @@ test_break_continue.eigs REFUSE
 test_buffer_store_type.eigs REFUSE
 test_builtin_errors.eigs REFUSE
 test_call_semantics.eigs REFUSE
-test_chan_dict_xthread.eigs DIVERGE
-test_channel_nb.eigs DIVERGE
 test_chunk_verify_stack.eigs DIVERGE
 test_closure_cycles.eigs REFUSE
 test_closure_mutation.eigs REFUSE
@@ -38,7 +36,6 @@ test_jit_paths.eigs REFUSE
 test_keyword_reservation.eigs REFUSE
 test_leaf_call.eigs REFUSE
 test_listcomp_interrogate.eigs REFUSE
-test_meta_parity.eigs DIVERGE
 test_module_scope.eigs REFUSE
 test_multiline.eigs REFUSE
 test_numerics.eigs REFUSE
@@ -46,7 +43,6 @@ test_observer_coherence.eigs REFUSE
 test_observer_interactions.eigs REFUSE
 test_observer_park.eigs DIVERGE
 test_observer_saturation.eigs REFUSE
-test_observer_slots.eigs DIVERGE
 test_obs_mt_race.eigs REFUSE
 test_optimize.eigs REFUSE
 test_pipe_lambda.eigs REFUSE
@@ -54,7 +50,6 @@ test_predicate_matrix.eigs REFUSE
 test_scope_semantics.eigs REFUSE
 test_simulation.eigs REFUSE
 test_soft_keyword_idents.eigs REFUSE
-test_spawn_args.eigs DIVERGE
 test_spawn_gc.eigs DIVERGE
 test_spawn_parallel.eigs DIVERGE
 test_stable_band.eigs REFUSE
@@ -75,6 +70,5 @@ test_trycatch.eigs REFUSE
 test_ui_containment_gfx.eigs REFUSE
 test_ui.eigs REFUSE
 test_unobserved.eigs REFUSE
-test_utf8.eigs DIVERGE
 test_vm_run_bytecode.eigs DIVERGE
 test_walker_matrix.eigs REFUSE
