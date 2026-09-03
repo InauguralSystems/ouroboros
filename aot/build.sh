@@ -38,7 +38,15 @@ DEFS="-DEIGENSCRIPT_EXT_HTTP=0 -DEIGENSCRIPT_EXT_MODEL=0 -DEIGENSCRIPT_EXT_DB=0 
 # (AVX2 -march=native), diverging from the VM's two-rounding mul-then-add. The
 # guarded path's vguard already blocks fusion; this makes the elided path match.
 CFLAGS="-O3 -ffp-contract=off ${AOT_ARCH:--march=native}"   # widest host SIMD; AOT_ARCH overrides (e.g. -msse2 to force 2-wide)
-LIB="build/libeigsrt.a"
+BDIR="build"
+# (round 146, #136) AOT_SAN=asan: an AddressSanitizer/LeakSanitizer build of
+# the runtime library AND the program, in its own object dir so it never
+# shares a stamp with the release lib. test/leak.sh uses it; nothing else.
+if [ "${AOT_SAN:-}" = "asan" ]; then
+    CFLAGS="-O1 -g -fno-omit-frame-pointer -fsanitize=address -ffp-contract=off ${AOT_ARCH:--march=native}"
+    BDIR="build/asan"
+fi
+LIB="$BDIR/libeigsrt.a"
 # CORE must stay exactly upstream's `SOURCES` minus `CLI_ONLY` (Makefile). It
 # has now drifted twice (ext_http.c after a VM refactor; builtins_host.c when
 # upstream #741/#812 split the host-only builtins — including read_file_util,
@@ -67,15 +75,15 @@ CORE="eigenscript lexer parser builtins builtins_host builtins_tensor hash arena
 # exact stale-lib scatter described above; and a CFLAGS/AOT_ARCH/DEFS change
 # linked objects built under the old flags. Content hashing also drops the
 # recency fallback for good: a bare touch is not a new identity.
-mkdir -p build
-STAMP="build/.libsrc"
+mkdir -p "$BDIR"
+STAMP="$BDIR/.libsrc"
 SHA="sha256sum"; command -v sha256sum >/dev/null 2>&1 || SHA="shasum -a 256"
 SIG="$(cd "$SRC" && printf '%s\n%s\n' "$(pwd -P)" "$CFLAGS $DEFS $CORE" && $SHA *.c *.h 2>/dev/null)"
 if [ ! -f "$LIB" ] || [ "$SIG" != "$(cat "$STAMP" 2>/dev/null)" ]; then
     objs=""
     for f in $CORE; do
-        eval gcc $CFLAGS $DEFS -I"$SRC" -c "$SRC/$f.c" -o "build/$f.o"
-        objs="$objs build/$f.o"
+        eval gcc $CFLAGS $DEFS -I"$SRC" -c "$SRC/$f.c" -o "$BDIR/$f.o"
+        objs="$objs $BDIR/$f.o"
     done
     ar rcs "$LIB" $objs
     printf '%s' "$SIG" > "$STAMP"
