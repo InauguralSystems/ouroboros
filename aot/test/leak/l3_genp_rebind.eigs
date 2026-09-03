@@ -1,0 +1,12 @@
+# leak tier fixture (#152): a generic parameter REBOUND in a loop. The
+# rebind arm stores an owned value into the C variable; without a release
+# of the previous owned value the frame leaks one Value per iteration
+# (35 MB peak at 300k, vs 2.4 MB for a numeric local). The first rebind
+# replaces the CALLER's borrowed reference and must not release it.
+define rebind(x, n) as:
+    local i is 0
+    loop while i < n:
+        x is trim of x
+        i is i + 1
+    return x
+print of (rebind of ["  hi  ", 3000])

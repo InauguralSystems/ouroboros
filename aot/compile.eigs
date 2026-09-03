@@ -237,6 +237,13 @@ g_cur_shadowbit is {}
 g_cur_has_try is 0
 g_cur_try_depth is 0
 g_mod_has_try is 0
+# (round 162, #152) generic parameters REBOUND in the current function:
+# each carries an ownership flag (<cn>__own) -- the incoming reference is
+# the caller's (borrowed), every rebind stores an OWNED value; the flag says
+# whether the current value is ours to release. g_cur_genp_release is the
+# epilogue that releases them on every exit path.
+g_cur_genp_rebound is {}
+g_cur_genp_release is ""
 # (round 154) does the program's call graph admit unbounded nesting? Only
 # then does every compiled function carry the frame-depth bracket (the VM's
 # 4096-frame cap). An acyclic graph bounds nesting by its longest path, far
@@ -2843,9 +2850,13 @@ define emit_cond(node, nm, bt) as:
 # control leaves. `pre` carries any extra pre-return cleanup (the tensor
 # frame-pool release).
 define emit_return(ctype, expr, ind, pre) as:
-    if (g_envactive == 0) and (pre == "") and (g_cur_try_depth == 0):
+    if (g_envactive == 0) and (pre == "") and (g_cur_try_depth == 0) and (g_cur_genp_release == ""):
         return ind + "return " + expr + ";\n"
     local s is ind + "{ " + ctype + " _rv = " + expr + ";"
+    if g_cur_genp_release != "":
+        # (round 162) the value is evaluated (and incref'd if it IS the
+        # parameter) before the frame's owned rebinds are released.
+        s is s + " " + g_cur_genp_release
     if g_cur_try_depth > 0:
         # (round 153) a return INSIDE a try body: the value is evaluated
         # under the handler (an error in it must still reach the catch),
@@ -2931,7 +2942,11 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
             # false reassurance faster than the code decays. The fixture is the
             # durable half; if the class needs to be re-checked, re-run the
             # grep, do not read a sentence about it.
-            return ind + (cn of name) + " = " + (emit_val of [node[2], nm, bt]) + ";\n"
+            # (round 162, #152) release the previous OWNED value: the first
+            # rebind replaces the caller's borrowed reference (not ours),
+            # every later one replaces a value this frame owns. Measured
+            # before: `x is trim of x` 300k times, 35 MB peak RSS vs 2.4 MB.
+            return ind + "{ Value* _old = " + (cn of name) + "; " + (cn of name) + " = " + (emit_val of [node[2], nm, bt]) + "; if (" + (cn of name) + "__own) val_decref(_old); " + (cn of name) + "__own = 1; }\n"
         if g_boxshadow[name] == 1:
             # boxed module-shadow (#86, F-OURO-35): the `local` decl binds
             # the per-call frame env; a plain write goes wherever the VM's
@@ -3528,7 +3543,10 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
                 # the C variable is also the right post-loop semantics: measured,
                 # a `for` binder over an existing binding OVERWRITES it and the
                 # value persists (VM prints 3 after the loop, not the incoming 5).
-                fo is fo + ind + "    " + (cn of fvar) + " = aot_iter_get(" + itv + ", " + kv + ");\n"
+                # (round 162, #152) same release as the rebind arm: a genp
+                # binder over a list took an owned element per iteration and
+                # dropped the previous one (73 MB peak at 300k x 3).
+                fo is fo + ind + "    { Value* _old = " + (cn of fvar) + "; " + (cn of fvar) + " = aot_iter_get(" + itv + ", " + kv + "); if (" + (cn of fvar) + "__own) val_decref(_old); " + (cn of fvar) + "__own = 1; }\n"
                 if g_traced == 1:
                     # see the unboxed arm: binder stores trace in every scope
                     fo is fo + ind + "    aot_trace_assign_val(\"" + fvar + "\", " + (cn of fvar) + ");\n"
@@ -7635,6 +7653,24 @@ define def_before_reads(body, name) as:
     da_walk of [body, name, st]
     return st[0]
 
+# (round 162) is `name` written in this body by a plain assignment or as a
+# `for` binder (nested defines excluded -- their own scope)?
+define genp_rebound_in(node, name) as:
+    if (type of node) != "list":
+        return 0
+    if (len of node) == 0:
+        return 0
+    if node[0] == "func":
+        return 0
+    if (node[0] == "assign") and (node[1] == name):
+        return 1
+    if (node[0] == "for") and (node[1] == name):
+        return 1
+    for k in range of (len of node):
+        if (genp_rebound_in of [node[k], name]) == 1:
+            return 1
+    return 0
+
 define emit_function(fn, finfo, gnm, gbt) as:
     local name is fn[1]
     G_CUR_FN[0] is name
@@ -7888,6 +7924,7 @@ define emit_function(fn, finfo, gnm, gbt) as:
     # tensor RHS) + tensor/dict params.
     g_dict is {}
     g_genp is {}
+    g_cur_genp_rebound is {}
     g_tensor is infer_tensors of body
     for k in range of (len of params):
         if (ptypes[k]) == "buf":
@@ -7901,6 +7938,10 @@ define emit_function(fn, finfo, gnm, gbt) as:
             g_genp[params[k]] is 1
             fbt[params[k]] is 0
             fnm[params[k]] is 0
+            # (round 162, #152) rebound in the body (plain assign or a `for`
+            # binder)? then an ownership flag and a release at every exit.
+            if (genp_rebound_in of [body, params[k]]) == 1:
+                g_cur_genp_rebound[params[k]] is 1
         elif (ptypes[k]) == "tensor":
             g_tensor[params[k]] is 1
             fbt[params[k]] is 0
@@ -8359,6 +8400,11 @@ define emit_function(fn, finfo, gnm, gbt) as:
         decls is decls + "    int _dg __attribute__((cleanup(aot_depth_leave))) = aot_depth_enter(); (void)_dg;\n"
     if g_cur_has_try == 1:
         decls is decls + "    int _tryb = aot_try_n;   /* handler depth at entry (round 153) */\n"
+    g_cur_genp_release is ""
+    local _gpk is keys of g_cur_genp_rebound
+    for _gi in range of (len of _gpk):
+        decls is decls + "    int " + (cn of (_gpk[_gi])) + "__own = 0;   /* owns the current value? (round 162) */\n"
+        g_cur_genp_release is g_cur_genp_release + "if (" + (cn of (_gpk[_gi])) + "__own) val_decref(" + (cn of (_gpk[_gi])) + ");"
     local _sbdk is keys of g_cur_shadowbit
     for _sbdi in range of (len of _sbdk):
         decls is decls + "    double " + (cn of (_sbdk[_sbdi])) + "__loc = 0; int " + (cn of (_sbdk[_sbdi])) + "__isloc = 0;   /* call-local shadow of a conditionally-bound module name (round 151, #197) */\n"
@@ -8398,6 +8444,8 @@ define emit_function(fn, finfo, gnm, gbt) as:
     elif g_envactive == 1:
         # fallthrough exit (no return statement taken): free the call env.
         tailret is "    env_decref(__eigs_l);\n"
+    if g_cur_genp_release != "":
+        tailret is tailret + "    " + g_cur_genp_release + "\n"
     if (finfo["ret"]) == "double":
         tailret is tailret + "    return 0;\n"
     elif (finfo["ret"]) == "Value*":

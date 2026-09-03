@@ -1,0 +1,10 @@
+# ouroboros#200: a BOXED module name read by a function before the name's
+# plain top-level bind. The VM dies "undefined variable 'xs'" at the read;
+# the AOT once read a NULL static silently. The read goes through the env
+# (aot_get_named_ic) now, which raises the same error at the same line;
+# this fixture pins it (the _err comparator checks the prints before death
+# and the error line/text).
+define f() as:
+    return len of xs
+print of (f of 0)
+xs is [1, 2, 3]
