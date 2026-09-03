@@ -1,0 +1,15 @@
+# ouroboros#193 (round 160): a number rebound to a compiled function. The
+# observe tuple's entropy field read 0 (VAL_BUILTIN) where the VM's VAL_FN
+# binding has 1.0. EigenScript PR #1092 makes a NAMED native function
+# (the round-158 make_native_fn box) answer 1.0 like VAL_FN, so the tuple
+# matches; a rebind to a real builtin stays 0 (control).
+define h() as:
+    return 1
+x is 1
+x is 2
+x is h
+print of observe of x
+y is 1
+y is 2
+y is len
+print of observe of y
