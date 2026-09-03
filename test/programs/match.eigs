@@ -1,0 +1,36 @@
+# ouroboros#159: `match` through the self-host compiler (codegen.eigs had no
+# emitter; the VM lowers it to DUP/EQ/JUMP_IF_FALSE chains with a wildcard
+# arm and a NULL fall-through). Value cases, a wildcard, no wildcard, a
+# match inside a function, and the block value of a matched arm.
+x is 2
+match x:
+    case 1:
+        print of "one"
+    case 2:
+        print of "two"
+    case _:
+        print of "other"
+match "b":
+    case "a":
+        print of "A"
+    case _:
+        print of "not A"
+match 9:
+    case 1:
+        print of "never"
+print of "no case matched, fell through"
+define classify(n) as:
+    match n:
+        case 0:
+            return "zero"
+        case 1:
+            return "one"
+    return "many"
+print of (classify of 0)
+print of (classify of 1)
+print of (classify of 5)
+y is 3
+match y:
+    case 3:
+        y is y + 10
+print of y
