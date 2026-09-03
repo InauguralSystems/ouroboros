@@ -6429,10 +6429,17 @@ define local_gen_map_seeded(body, seed) as:
         local v is names[i]
         local rhss is assigns[v]
         local isgen is 0
+        # (round 159, #135) CERTAIN boxed evidence: a literal container /
+        # string / null, or a call whose result class is boxed. This wins
+        # over a numeric use elsewhere in the body -- the VM runs such a
+        # type-changing local fine on the paths that never reach the
+        # arithmetic, and the AOT died at the boxed read (at f: name q).
+        local isgen_lit is 0
         for j in range of (len of rhss):
             local r is unwrap of rhss[j]
             if (len of r) > 0:
                 if (r[0] == "str") or (r[0] == "dict") or (r[0] == "list") or (r[0] == "null"):
+                    isgen_lit is 1
                     # `null` belongs in this list and its absence was the
                     # plainest instance of the whole boxed-value class:
                     #
@@ -6479,16 +6486,26 @@ define local_gen_map_seeded(body, seed) as:
                         if g_funcs[rc[1]] != null:
                             if ((g_funcs[rc[1]])["ret"]) != "double":
                                 isgen is 1
+                                isgen_lit is 1
                             if g_func_void[rc[1]] == 1:
                                 isgen is 1
+                                isgen_lit is 1
                         elif NUM_RET_BUILTINS[rc[1]] != 1:
                             isgen is 1
+                            # certain only for a KNOWN boxed builtin; an
+                            # unlisted builtin, an import or a module
+                            # function may well return a number (DMG's
+                            # `total_cycles is debugger_run of [...]`
+                            # widened the headless loop's accumulator when
+                            # this counted as certain: -5.7% on the canary).
+                            if BOXED_RET_BUILTINS[rc[1]] == 1:
+                                isgen_lit is 1
                     else:
                         isgen is 1
         # DIRECT numeric evidence only (arithmetic / index position) — a
         # "passed to a num param" signal would deadlock: that param's class
         # is exactly what this evidence is meant to decide.
-        if (isgen == 1) and ((find_numeric_use_direct of [body, v]) == 0):
+        if (isgen_lit == 1) or ((isgen == 1) and ((find_numeric_use_direct of [body, v]) == 0)):
             out[v] is "gen"
         # Field types of a name built from a dict LITERAL, stored under a
         # side key so arg_class can resolve `name.field` statically.
