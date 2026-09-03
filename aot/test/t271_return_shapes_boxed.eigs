@@ -1,0 +1,41 @@
+# Round 155: the return classifier's DEFAULT was numeric -- a return shape
+# none of its boxed arms named declared the function `double`, and the
+# checked unbox at the call site killed programs the VM runs (corpus
+# test_slicing `return xs[1:n]`: "non-numeric value in a numeric context
+# at mid: return (type list)" rc 1, VM rc 0; test_error_propagation
+# `return explode`). A return is numeric only on positive evidence now.
+# Shapes below: a slice, a nested define's name, a for binder over a list,
+# a module string, a null, and two numeric controls (arithmetic; a local
+# assigned only numbers).
+define mid(xs) as:
+    return xs[1:len of xs - 1]
+define make_greeter(who) as:
+    define greet as:
+        return "hi " + who
+    return greet
+define last_of(xs) as:
+    local r is null
+    for x in xs:
+        r is x
+    return r
+label is "module-str"
+define tag as:
+    return label
+define nothing as:
+    return null
+define twice(n) as:
+    return n * 2
+define count_to(n) as:
+    local c is 0
+    for i in range of n:
+        c is c + i
+    return c
+print of (mid of [1, 2, 3, 4, 5])
+g is make_greeter of "jon"
+print of (g of null)
+print of (last_of of ["a", "b", "c"])
+print of (tag of null)
+print of (nothing of null)
+print of (twice of 21)
+print of (count_to of 5)
+print of ((twice of 3) + (count_to of 3))

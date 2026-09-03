@@ -5317,9 +5317,87 @@ define return_node_is_boxed(rnode, fbt, ftt, rba, fgen, fdict) as:
         return 1
     if (is_boxed_node of [rnode, fgen]) == 1:
         return 1
+    # (round 155) the DEFAULT was numeric: every shape the arms above did
+    # not name -- a slice, a nested define's name, a for binder, a module
+    # name -- declared the function `double`, and the checked unbox at the
+    # call site killed programs the VM runs (`return xs[1:n]` in
+    # test_slicing, `return explode` in test_error_propagation: "non-numeric
+    # value in a numeric context at mid: return (type list)", rc 1, VM rc 0;
+    # ouroboros#202/#203). A return is numeric only on POSITIVE evidence.
+    if (return_node_is_num of [rnode, rba, fbt, fgen, fdict, ftt, {}]) == 1:
+        return 0
+    return 1
+
+# (round 155) positive numeric evidence for a return expression. Params keep
+# the classifier's own view (a param not boxed by evidence is numeric --
+# the param default is its own question); everything else must show a
+# number: a literal, arithmetic/comparison/logic, a double-returning
+# compiled function, a NUM_RET builtin, a buffer element, or a local whose
+# every assignment is one of these.
+define return_node_is_num(rnode, rba, fbt, fgen, fdict, ftt, seen) as:
+    local re is unwrap of rnode
+    local t is re[0]
+    if t == "num":
+        return 1
+    if t == "ident":
+        if (fbt[re[1]] == 1) or (fdict[re[1]] == 1) or (fgen[re[1]] == 1) or (ftt[re[1]] == 1):
+            return 0
+        if g_cur_params_rt[re[1]] == 1:
+            return 1
+        if seen[re[1]] == 1:
+            # co-inductive: a name is numeric if every assignment is,
+            # assuming itself numeric (`c is c + i`), as infer_numeric does.
+            return 1
+        seen[re[1]] is 1
+        local rhss is rba[re[1]]
+        if rhss == null:
+            # not assigned here: a module-level name with positive numeric
+            # evidence (DMG's `return CYCLES_PER_LINE`, `return frame_cycles`)
+            # or nothing (a function name, an import, a binder).
+            if g_mod_num_names[re[1]] == 1:
+                return 1
+            return 0
+        if (len of rhss) == 0:
+            return 0
+        for j in range of (len of rhss):
+            if (return_node_is_num of [rhss[j], rba, fbt, fgen, fdict, ftt, seen]) == 0:
+                return 0
+        return 1
+    if t == "binop":
+        if (NUMONLY_OPS[re[1]] == 1) or (re[1] == "<") or (re[1] == ">") or (re[1] == "<=") or (re[1] == ">=") or (re[1] == "==") or (re[1] == "!=") or (re[1] == "and") or (re[1] == "or"):
+            return 1
+        if re[1] == "+":
+            if (return_node_is_num of [re[2], rba, fbt, fgen, fdict, ftt, seen]) == 1:
+                if (return_node_is_num of [re[3], rba, fbt, fgen, fdict, ftt, seen]) == 1:
+                    return 1
+        return 0
+    if t == "unary":
+        # `-x`, `~x`, `not x` all yield numbers (`return -1` was the shape
+        # that demoted DMG's cart_ram_offset in the first cut).
+        return 1
+    if t == "call":
+        local c is unwrap of re[1]
+        if c[0] == "ident":
+            if g_funcs[c[1]] != null:
+                if ((g_funcs[c[1]])["ret"]) == "double":
+                    return 1
+                return 0
+            if NUM_RET_BUILTINS[c[1]] == 1:
+                return 1
+        return 0
+    if t == "index":
+        local itgt is unwrap of re[1]
+        if (itgt[0] == "ident") and (fbt[(itgt[1])] == 1):
+            return 1
+        return 0
     return 0
 
+g_cur_params_rt is {}
+g_mod_num_names is {}
 define func_ret_type(fn, fbt, fgen, fdict) as:
+    g_cur_params_rt is {}
+    for pi in range of (len of fn[2]):
+        g_cur_params_rt[((fn[2])[pi])] is 1
     local rets is []
     collect_return_nodes of [fn[3], rets]
     if (len of rets) == 0:
@@ -9069,6 +9147,17 @@ define emit_program(ast) as:
     # the module-level statements, AFTER nested lifting so lifted bodies are
     # in `funcs`. Must run before the ptypes build below reads it.
     g_fnval_params is {}
+    # (round 155) module names with positive numeric evidence, for the
+    # return classifier: every module-level assignment is numeric by the
+    # same rule the returns use (no function-call evidence needed).
+    g_mod_num_names is {}
+    g_cur_params_rt is {}
+    local _mrba is collect_assigns of [rest, {}]
+    local _mbt is infer_buffers of rest
+    local _mnames is keys of _mrba
+    for mi in range of (len of _mnames):
+        if (return_node_is_num of [["ident", (_mnames[mi])], _mrba, _mbt, {}, {}, {}, {}]) == 1:
+            g_mod_num_names[(_mnames[mi])] is 1
     for k in range of (len of funcs):
         collect_fn_value_refs of [(funcs[k])[3], g_func_names, g_fnval_params]
     collect_fn_value_refs of [rest, g_func_names, g_fnval_params]
