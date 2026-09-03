@@ -9505,6 +9505,49 @@ define emit_program(ast) as:
         fp_round is fp_round + 1
     # (round 154) frame-depth bracket only when the call graph can recurse.
     g_need_depth is call_graph_cyclic of [funcs, rest]
+    # (round 163, #124) an OBSERVED function's locals live in the global env
+    # by bare name (Part 2a), so a local of `setter` is readable from
+    # `reader` where the VM raises "undefined variable". Refuse by name when
+    # any other function, or the module body, reads a name that an observed
+    # function binds as a plain local and does not bind itself.
+    for k in range of (len of funcs):
+        local ofn is funcs[k]
+        if ((g_funcs[ofn[1]])["observed"]) != 1:
+            continue
+        local oassigns is collect_assigns of [ofn[3], {}]
+        local onames is keys of oassigns
+        for oi in range of (len of onames):
+            local oname is onames[oi]
+            if g_module_names[oname] == 1:
+                continue
+            local isparam is 0
+            for pi in range of (len of (ofn[2])):
+                if ((ofn[2])[pi]) == oname:
+                    isparam is 1
+            if isparam == 1:
+                continue
+            for k2 in range of (len of funcs):
+                if k2 == k:
+                    continue
+                local rfn is funcs[k2]
+                if (da_reads_in of [rfn[3], oname]) == 0:
+                    continue
+                local rbinds is collect_assigns of [rfn[3], {}]
+                # a `for` binder is a binding too (the first gate refused
+                # lib/simulation.eigs: analyze_stability's `i` "read" by
+                # heat_equation_1d, whose `for i in ...` binds it).
+                local rfor is {}
+                collect_for_binders_nofunc of [rfn[3], rfor]
+                local rparam is 0
+                for pj in range of (len of (rfn[2])):
+                    if ((rfn[2])[pj]) == oname:
+                        rparam is 1
+                if (rbinds[oname] == null) and (rfor[oname] != 1) and (rparam == 0):
+                    throw of ("AOT: `" + oname + "` is a local of the OBSERVED function '" + ofn[1] + "' and is read by '" + rfn[1] + "', which does not bind it. Part 2a keys an observed function's numerics into the global env by name, so the read would answer the other frame's value where the VM raises \"undefined variable\" (ouroboros#124). Rename one of them, or bind it in the reader.")
+            local mfor is {}
+            collect_for_binders_nofunc of [rest, mfor]
+            if ((da_reads_in of [rest, oname]) == 1) and (mfor[oname] != 1) and (_mrba[oname] == null):
+                throw of ("AOT: `" + oname + "` is a local of the OBSERVED function '" + ofn[1] + "' and is read by the module body, which does not bind it. Part 2a keys an observed function's numerics into the global env by name, so the read would answer the frame's value where the VM raises \"undefined variable\" (ouroboros#124). Rename it, or bind it at module level.")
     # (round 108) Concurrency builtins the native runtime cannot EXECUTE were
     # admitted through generic dispatch (compile.eigs had no mention of
     # spawn/task/chan at all). Two arms, one root, both refused by name;

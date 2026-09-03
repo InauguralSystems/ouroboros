@@ -1,0 +1,13 @@
+# ouroboros#124 control (round 163): the same observed function, but the
+# reader binds its own name -- no cross-frame read, so no refusal and
+# byte-identical output.
+define setter(x) as:
+    t is x
+    t is x + 1.0
+    print of (report of t)
+    return 0
+define reader(y) as:
+    return converged of y
+n is setter of 2.0
+print of (reader of 0.0)
+print of "done"
