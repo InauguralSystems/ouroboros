@@ -2326,7 +2326,7 @@ define emit_val(node, nm, bt) as:
             g_fn_as_value[node[1]] is 1
             # (round 98) the per-function singleton; increfed per read so a
             # consuming caller cannot free the shared identity.
-            return "({ if (!__fnv_" + (cn of node[1]) + ") __fnv_" + (cn of node[1]) + " = make_builtin(__wrap_" + (cn of node[1]) + "); val_incref(__fnv_" + (cn of node[1]) + "); __fnv_" + (cn of node[1]) + "; })"
+            return "({ if (!__fnv_" + (cn of node[1]) + ") __fnv_" + (cn of node[1]) + " = make_native_fn(__wrap_" + (cn of node[1]) + ", \"" + (c_escape of node[1]) + "\"); val_incref(__fnv_" + (cn of node[1]) + "); __fnv_" + (cn of node[1]) + "; })"
         return env_read of node[1]
     if t == "index":
         # target[idx] on a boxed value (list/dict/string/buffer). A buffer index
