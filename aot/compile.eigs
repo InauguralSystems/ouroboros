@@ -855,6 +855,10 @@ define is_num_expr(node, nm, bt) as:
         if tgt[0] == "ident":
             if bt[tgt[1]] == 1:
                 return is_num_expr of [node[2], nm, bt]
+        if (index_of_buf_field of [node, g_cur_fmap]) == 1:
+            # (round 165) `x.f[i]` on a buffer-created field: emitted through
+            # aot_index_num_ib (a checked, borrowed buffer read).
+            return is_num_expr of [node[2], nm, bt]
         return 0
     if t == "call":
         local callee is unwrap of node[1]
@@ -5343,6 +5347,9 @@ define return_node_is_boxed(rnode, fbt, ftt, rba, fgen, fdict) as:
         local itgt is unwrap of re[1]
         if (itgt[0] == "ident") and (fbt[(itgt[1])] == 1):
             return 0
+        if (index_of_buf_field of [re, g_ret_fmap]) == 1:
+            # (round 165) a buffer-created field's element is a number
+            return 0
         return 1
     if (is_buf_create of rnode) == 1:
         return 1
@@ -5426,6 +5433,8 @@ define return_node_is_num(rnode, rba, fbt, fgen, fdict, ftt, seen) as:
         local itgt is unwrap of re[1]
         if (itgt[0] == "ident") and (fbt[(itgt[1])] == 1):
             return 1
+        if (index_of_buf_field of [re, g_ret_fmap]) == 1:
+            return 1
         return 0
     return 0
 
@@ -5437,6 +5446,7 @@ g_cur_ret_body is null
 define func_ret_type(fn, fbt, fgen, fdict) as:
     g_cur_params_rt is {}
     g_cur_ret_body is fn[3]
+    g_ret_fmap is fmap_for_fn of fn
     for pi in range of (len of fn[2]):
         g_cur_params_rt[((fn[2])[pi])] is 1
     local rets is []
@@ -6557,6 +6567,12 @@ define local_gen_map_seeded(body, seed) as:
                                 fmap[kn] is "gen"
                             elif pv[0] == "num":
                                 fmap[kn] is "num"
+                            elif (is_buf_create of (pr[1])) == 1:
+                                # (round 165, DMG lever 2) a field created as a
+                                # buffer: an index read of it is a number, like
+                                # a "num" field's read -- checked at runtime
+                                # by the same borrowed index helper.
+                                fmap[kn] is "buf"
                     out[v + ".#fields"] is fmap
             # ...or from a call to a function that RETURNS a dict literal
             # (EigenMiniSat's `cfg is parse_args of null`): adopt the
@@ -6776,6 +6792,8 @@ define dict_literal_fields(dictnode, lm) as:
                 fmap[kn] is "gen"
             elif pv[0] == "num":
                 fmap[kn] is "num"
+            elif (is_buf_create of (pr[1])) == 1:
+                fmap[kn] is "buf"   # (round 165) a buffer-created field of a returned literal
             elif pv[0] == "dot":
                 # `"clauses": state.clauses` — inherit from the source
                 # record's field map when we know it (#86)
@@ -7679,6 +7697,7 @@ define genp_rebound_in(node, name) as:
 define emit_function(fn, finfo, gnm, gbt) as:
     local name is fn[1]
     G_CUR_FN[0] is name
+    g_cur_fmap is fmap_for_fn of fn
     local params is fn[2]
     local body is fn[3]
     # Per-function observation: a function is observed/traced by ITS OWN body, so
@@ -9149,6 +9168,43 @@ define sh_after_stmt(st, ind, nm, bt) as:
                 return ind + "if (" + sn + "_n >= 0) { if (" + sn + "_n < SH_TBL_CAP) " + sn + "[" + sn + "_n++] = " + (cn of a1[1]) + "; else " + sn + "_n = -1; }\n"
     return ""
 
+# (round 165, DMG lever 2) the current function's dict-field maps
+# (`<name>.#fields` -> {field: "num"|"gen"|"buf"}), seeded from the
+# call-site field maps the widen fixpoint recorded for its parameters
+# (g_funcs[..]["pfields"]) plus the dict literals it binds itself. Read by
+# is_num_expr / return_node_is_num for `x.f[i]` where f is a "buf" field:
+# DMG's fetch8 / mem_read return `mem.data[addr]`, which was never
+# positively numeric, so the byte readers returned Value* and every
+# caller's `val` parameter widened to boxed (26 functions).
+g_cur_fmap is {}
+g_ret_fmap is {}
+define fmap_for_fn(fn) as:
+    local pseed is {}
+    local fe is g_funcs[fn[1]]
+    if fe != null:
+        local pf is fe["pfields"]
+        if pf != null:
+            for pi in range of (len of (fn[2])):
+                if pi < (len of pf):
+                    if (pf[pi]) != null:
+                        pseed[((fn[2])[pi]) + ".#fields"] is pf[pi]
+    return local_gen_map_for_seeded of [fn[1], fn[3], pseed]
+
+# is `["index", ["dot", ["ident", m], f], i]` a read of a "buf" field?
+define index_of_buf_field(node, fmap) as:
+    local tgt is unwrap of node[1]
+    if tgt[0] != "dot":
+        return 0
+    local dm is unwrap of tgt[1]
+    if dm[0] != "ident":
+        return 0
+    local fl is fmap[(dm[1]) + ".#fields"]
+    if fl == null:
+        return 0
+    if fl[(tgt[2])] == "buf":
+        return 1
+    return 0
+
 define emit_program(ast) as:
     local stmts is ast
     if ast[0] == "block":
@@ -9617,7 +9673,7 @@ define emit_program(ast) as:
         local deadp is []
         for dp in range of (len of fn[2]):
             deadp is (append of [deadp, (param_unread of [fn[3], (fn[2])[dp]])])
-        g_funcs[fn[1]] is {"ptypes": pt, "ret": (func_ret_type of [fn, ffbt, ffgen, ffdict]), "rettensor": (func_ret_tensor of fn), "retbuf": (func_ret_buf of [fn, ffbt]), "observed": (func_observed of fn), "nullok": nullok, "deadp": deadp, "pnames": fn[2]}
+        g_funcs[fn[1]] is {"ffbt": ffbt, "ffgen": ffgen, "ffdict": ffdict, "ptypes": pt, "ret": (func_ret_type of [fn, ffbt, ffgen, ffdict]), "rettensor": (func_ret_tensor of fn), "retbuf": (func_ret_buf of [fn, ffbt]), "observed": (func_observed of fn), "nullok": nullok, "deadp": deadp, "pnames": fn[2]}
     # Fixpoint rounds (#86): the pass-through signal (find_gen_param_use)
     # reads CALLEES' ptypes, which are definition-order
     # dependent on the first pass. Re-derive ptypes until stable (chains are
@@ -9741,6 +9797,21 @@ define emit_program(ast) as:
     # at the phase boundary.
     G_LGM_CACHE[0] is {}
     widen_ptypes of [funcs, rest]
+    # (round 165) return types were classified before the widen fixpoint
+    # recorded the parameters' field maps, so a `return m.data[a]` on a
+    # buffer field could not be numeric then. Re-derive every return type
+    # with the maps in hand; a change re-runs the widening once, because
+    # callers classify a call by the callee's declared return.
+    local _rt_changed is 0
+    for k in range of (len of funcs):
+        local rfn is funcs[k]
+        local rfe is g_funcs[rfn[1]]
+        local nret is func_ret_type of [rfn, rfe["ffbt"], rfe["ffgen"], rfe["ffdict"]]
+        if nret != rfe["ret"]:
+            rfe["ret"] is nret
+            _rt_changed is 1
+    if _rt_changed == 1:
+        widen_ptypes of [funcs, rest]
     # Return-type inference reads the param classes (a function returning a
     # param returns ITS type), so it must be re-derived after widening —
     # otherwise a widened param returned as `double` yields 0 (t58's
@@ -10033,6 +10104,7 @@ define emit_program(ast) as:
     g_cur_bound_bit is {}
     g_cur_shadowbit is {}
     g_mod_has_try is has_try of rest
+    g_cur_fmap is local_gen_map_for of ["<module>", rest]
     g_cur_has_try is g_mod_has_try
     g_cur_try_depth is 0
     local body is emit_stmts of [rest, "    ", nm, bt, minits, {}]
