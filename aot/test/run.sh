@@ -90,25 +90,18 @@ PY
       # so a divergence in message text, error kind, ordering, or any stdout
       # line still fails. Diagnostic parity itself is tracked separately —
       # when the AOT can site its errors, delete this class and re-diff.
-      # (round 140, #201) the LINE NUMBER is compared wherever the AOT
-      # reports one: every program stamps g_trace_current_line per
-      # statement and every AOT helper reports through it. A BUILTIN of
-      # the linked runtime raises with line 0 and rt_error maps that to
-      # the VM's live frame line, which a native binary does not have
-      # (EigenScript#1082) -- so when the AOT side says "Error line 0:"
-      # the number is dropped on both sides, as before. The VM's source
-      # excerpt and its `at <frame> (line N)` trace lines are always
-      # dropped (the AOT does not print them).
+      # (round 140, #201; unconditional since the round-147 pin bump) the
+      # LINE NUMBER is compared: every program stamps g_trace_current_line
+      # per statement, every AOT helper reports through it, and since
+      # EigenScript#1082 a builtin's line-0 raise with no live VM frame
+      # reports that stamp too. The VM's source excerpt and its
+      # `at <frame> (line N)` trace lines are dropped (the AOT does not
+      # print them).
       norm() {
         printf '%s\n' "$1" \
           | grep -vE '^\s+[0-9]+ \||^\s+\|.*\^|^  at '
       }
-      normz() { norm "$1" | sed -E 's/^Error line [0-9]+:/Error line:/'; }
-      if printf '%s\n' "$got" | grep -qE '^Error line 0:'; then
-        [ "$(normz "$ref")" = "$(normz "$got")" ] && match=1
-      else
-        [ "$(norm "$ref")" = "$(norm "$got")" ] && match=1
-      fi
+      [ "$(norm "$ref")" = "$(norm "$got")" ] && match=1
       ;;
     *) [ "$ref" = "$got" ] && match=1 ;;
   esac
