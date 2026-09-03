@@ -1,0 +1,21 @@
+# ouroboros#197 controls: the same function with the branch TAKEN stores
+# outward (module x becomes 1); a name bound in no executed branch stays a
+# call-local across calls (each call reads its own 7, the module never
+# learns it); a read inside the call sees the call-local. (A bit that
+# becomes set between two calls would flip the second call outward, but a
+# plain bind AFTER a function's first use is refused by the round-57 order
+# guard, so that shape has no fixture.)
+define f() as:
+    x is 1
+    return x + 1
+if 1 == 1:
+    x is 5
+print of (f of null)
+print of x
+if 1 == 2:
+    y is 5
+define g() as:
+    y is 7
+    return y * 2
+print of (g of null)
+print of (g of null)

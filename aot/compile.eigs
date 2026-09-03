@@ -223,6 +223,12 @@ g_cur_localmarked is {}
 # a C local `int eig_x_b = 0` declared with the variable -- per CALL, which is
 # what makes `f of 3` then `f of 0` die on the second call where the tape
 # still holds the first call's history (s_fn_loop_taken_then_not).
+# (round 151, #197) module names with a boundness bit that the CURRENT
+# function stores plainly: on the VM the store is outward only if the
+# module binding exists at call time, else it creates a call-local. Each
+# such name gets a call-local shadow (`<cn>__loc` / `<cn>__isloc`); stores
+# route on the module bit, reads on the shadow flag.
+g_cur_shadowbit is {}
 g_cur_bound_bit is {}
 
 define bound_bit_of(name, nmap) as:
@@ -1035,6 +1041,8 @@ define emit_int(node) as:
     if t == "ident":
         if (bound_bit_read_of of [n[1], g_int]) == 1:
             # (round 117) exact below 2^53; the bit check dies like the VM
+            if g_cur_shadowbit[n[1]] == 1:
+                return "((long)(" + (cn of n[1]) + "__isloc ? " + (cn of n[1]) + "__loc : aot_bound_num(" + (cn of n[1]) + "_b, \"" + n[1] + "\", (double)" + (cn of n[1]) + ")))"
             return "((long)aot_bound_num(" + (cn of n[1]) + "_b, \"" + n[1] + "\", (double)" + (cn of n[1]) + "))"
         return cn of n[1]
     if t == "unary":
@@ -1916,6 +1924,10 @@ define emit_num(node, nm, bt, raw) as:
             if (bound_bit_read_of of [node[1], nm]) == 1:
                 # (round 117) a read the VM dies on when the binding never
                 # executed: check the bit, die "undefined variable" like the VM.
+                # (round 151, #197) inside a function that stored a call-local
+                # shadow of this name, the shadow wins.
+                if g_cur_shadowbit[node[1]] == 1:
+                    return "(" + (cn of node[1]) + "__isloc ? " + (cn of node[1]) + "__loc : aot_bound_num(" + (cn of node[1]) + "_b, \"" + node[1] + "\", (double)" + (cn of node[1]) + "))"
                 if g_int[node[1]] == 1:
                     return "aot_bound_num(" + (cn of node[1]) + "_b, \"" + node[1] + "\", (double)" + (cn of node[1]) + ")"
                 return "aot_bound_num(" + (cn of node[1]) + "_b, \"" + node[1] + "\", " + (cn of node[1]) + ")"
@@ -2986,6 +2998,13 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
                     # (round 119) a `local` declaration is a binding too
                     return ind + sty + " " + (cn of name) + " = " + srhs + ";\n" + ind + (cn of name) + "_b = 1;\n"
                 return ind + sty + " " + (cn of name) + " = " + srhs + ";\n"
+            if g_cur_shadowbit[name] == 1:
+                # (round 151, #197) outward only if the module binding exists
+                # at call time (its bit); otherwise a call-local, which does
+                # NOT mark the module bound -- the old form set the bit and
+                # `print of x` after the call read 1 where the VM dies.
+                local _sbx is emit_num of [node[2], nm, bt, raw]
+                return ind + "if (" + (cn of name) + "_b) { " + (cn of name) + " = " + _sbx + "; } else { " + (cn of name) + "__loc = " + _sbx + "; " + (cn of name) + "__isloc = 1; }\n"
             local asn is ind + (cn of name) + " = " + (emit_num of [node[2], nm, bt, raw]) + ";\n"
             if (bound_bit_of of [name, nm]) == 1:
                 asn is asn + ind + (cn of name) + "_b = 1;\n"
@@ -7410,6 +7429,21 @@ define emit_function(fn, finfo, gnm, gbt) as:
     # dies, the exempted local answered). The bit costs one int and one
     # store per binding site and only `prev of` checks it.
     g_cur_bound_bit is {}
+    g_cur_shadowbit is {}
+    local _sbp is {}
+    collect_plain_assigns of [body, _sbp]
+    local _sbl is {}
+    collect_local_marked of [body, _sbl]
+    local _sbk is keys of _sbp
+    for _sbi in range of (len of _sbk):
+        local _sbv is _sbk[_sbi]
+        if (g_bound_bit[_sbv] == 1) and (gnm[_sbv] == 1) and (_sbl[_sbv] != 1):
+            local _sbisp is 0
+            for _sbq in range of (len of params):
+                if (params[_sbq]) == _sbv:
+                    _sbisp is 1
+            if _sbisp == 0:
+                g_cur_shadowbit[_sbv] is 1
     local _cbparam is {}
     for _cbp in range of (len of params):
         _cbparam[(params[_cbp])] is 1
@@ -7922,6 +7956,9 @@ define emit_function(fn, finfo, gnm, gbt) as:
                 decls is decls + "    double " + (cn of v) + " = 0;\n"
             if (g_cur_bound_bit[v] == 1) and (g_tensor[v] != 1) and (fbt[v] != 1):
                 decls is decls + "    int " + (cn of v) + "_b = 0;   /* boundness bit (round 117) */\n"
+    local _sbdk is keys of g_cur_shadowbit
+    for _sbdi in range of (len of _sbdk):
+        decls is decls + "    double " + (cn of (_sbdk[_sbdi])) + "__loc = 0; int " + (cn of (_sbdk[_sbdi])) + "__isloc = 0;   /* call-local shadow of a conditionally-bound module name (round 151, #197) */\n"
     # unboxed for-in vars that are neither params, assigned locals, nor
     # globals still need a function-scope C decl (the VM's slot semantics:
     # post-loop reads see the last iterate).
@@ -9259,6 +9296,7 @@ define emit_program(ast) as:
     # and a module bit-name it had `local`-shadowed skipped its check).
     g_cur_localmarked is {}
     g_cur_bound_bit is {}
+    g_cur_shadowbit is {}
     local body is emit_stmts of [rest, "    ", nm, bt, minits, {}]
     local obshdr is ""
     if g_obs_traced == 1:

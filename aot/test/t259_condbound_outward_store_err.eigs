@@ -1,0 +1,14 @@
+# ouroboros#197: a function's `x is 1` where module x is bound only in a
+# branch that did NOT run. On the VM the store creates a call-local (no
+# outer binding exists at call time), so the module read after the call
+# dies "undefined variable 'x'". The AOT used to take the store outward
+# and set the module boundness bit (printed 1). Now a function's plain
+# store to a bit-carrying module name routes on the bit: outward if set,
+# else into a call-local shadow that reads back inside the call.
+define f() as:
+    x is 1
+    return x + 1
+if 1 == 2:
+    x is 5
+print of (f of null)
+print of x
