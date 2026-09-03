@@ -53,7 +53,7 @@ LIB="$BDIR/libeigsrt.a"
 # which eigs_embed.c calls — into their own TU at v0.35.0). The symptom is a
 # link error at pin-bump time, which is loud but burns a sweep: re-diff this
 # list against the Makefile at every EIGS_REF bump.
-CORE="eigenscript lexer parser builtins builtins_host builtins_tensor hash arena state strbuf \
+CORE="eigenscript lexer parser builtins builtins_host builtins_tensor hash arena state strbuf lint_host \
       ext_store fmt lint chunk compiler vm jit trace eigs_embed"
 
 # (Re)build the runtime static lib if missing, or if the runtime it was built
