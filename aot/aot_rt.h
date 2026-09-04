@@ -1900,6 +1900,29 @@ static double aot_index_num_ib(Value *target, double d, const char *site) {
     return aot_num_ck_at(v, site);
 }
 
+/* (round 169) a NUMERIC store into a list element or buffer slot without
+ * boxing: a list slot holding an exclusive heap number is updated in place
+ * (the VM's OP_INDEX_SET stores a Value; an exclusively owned number's
+ * identity is unobservable, the same reuse aot_dot_set_num_tb_ic makes),
+ * a buffer slot takes the double, and anything else -- a shared or
+ * non-number slot, an out-of-range index, an arena value -- goes through
+ * aot_index_set_ib with a fresh box so every error text is the VM's.
+ * DMG's `_exec_ctx[2] is op` boxed once per emulated instruction. */
+static void aot_index_set_ib(Value *target, double d, Value *val);
+static inline void aot_index_set_num_ib(Value *target, double d, double v) {
+    if (target) {
+        int i;
+        if (target->type == VAL_LIST && aot_idx_is_int(d, &i)
+            && aot_idx_resolve(&i, target->data.list.count)) {
+            Value *old = target->data.list.items[i];
+            if (old && old->type == VAL_NUM && old->refcount == 1 && !old->arena) {
+                old->data.num = num_guard(v);
+                return;
+            }
+        }
+    }
+    aot_index_set_ib(target, d, make_num(v));
+}
 static void aot_index_set_ib(Value *target, double d, Value *val) {
     int i;
     if (target && target->type == VAL_LIST) {
@@ -2431,6 +2454,33 @@ static Value *aot_dispatch_v(Value *table, Value *keyv, Value *ctx) {
  * lockstep with the Value table at every store site); otherwise the
  * builtin's path, byte-for-byte. ctx is passed BORROWED, as compiled code
  * passes every Value* argument to a compiled callee. */
+/* (round 169) the shadow dispatch in a NUMERIC context: the direct call's
+ * double is returned unboxed (no make_num per emulated instruction); the
+ * builtin's path is unboxed with the checked unbox, which is loud where
+ * the VM would carry a null into the next operation (ouroboros#202). */
+static Value *aot_dispatch_v(Value *table, Value *keyv, Value *ctx);
+static inline double aot_dispatch_sh_num(Value *table, Value *keyv, Value *ctx,
+                                         double (**sh)(Value*), int shn, const char *site) {
+    if (shn >= 0 && keyv && keyv->type == VAL_NUM && table && table->type == VAL_LIST) {
+        double d = keyv->data.num; int k = (int)d;
+        if ((double)k == d && k >= 0 && k < shn && k < table->data.list.count && sh[k]) {
+            double r = sh[k](ctx);
+            val_decref(keyv); val_decref(table); val_decref(ctx);
+            return r;
+        }
+    }
+    /* the builtin's path answered; a number unboxes, anything else -- the
+     * null of a missing entry, a handler that is not compiled -- raises a
+     * CATCHABLE type error here. The VM would carry the value into the
+     * consuming operator and raise that operator's own message; the kind
+     * (type_mismatch) agrees, the text names this site instead (#202). */
+    Value *r = aot_dispatch_v(table, keyv, ctx);
+    if (r && r->type == VAL_NUM) { double d = r->data.num; val_decref(r); return d; }
+    rt_error(EK_TYPE, g_trace_current_line, "%s: dispatch answered %s where a number was needed",
+             site, r ? val_type_name(r->type) : "null");
+    if (r) val_decref(r);
+    return 0;
+}
 static inline Value *aot_dispatch_sh(Value *table, Value *keyv, Value *ctx,
                                      double (**sh)(Value*), int shn) {
     if (shn >= 0 && keyv && keyv->type == VAL_NUM && table && table->type == VAL_LIST) {

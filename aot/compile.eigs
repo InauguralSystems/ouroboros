@@ -866,6 +866,14 @@ define is_num_expr(node, nm, bt) as:
         if callee[0] == "predicate":
             return 1
         if callee[0] == "ident":
+            # (round 169) a dispatch through a SHADOW table yields a double
+            # (every handler is declared double): numeric.
+            if callee[1] == "dispatch":
+                local sdarg is unwrap of node[2]
+                if (sdarg[0] == "list") and ((len of sdarg) == 2) and ((len of (sdarg[1])) == 3):
+                    local sdt is unwrap of (sdarg[1])[0]
+                    if (sdt[0] == "ident") and (g_shadow_tbl[(sdt[1])] == 1):
+                        return 1
             # (round 105) EVERY builtin-name arm below is gated on the name
             # NOT being a user function. These recognizers tested the NAME
             # first and reached the g_funcs check only by falling through, so
@@ -2159,6 +2167,14 @@ define emit_num(node, nm, bt, raw) as:
             # otherwise. The fast paths above intercept every call shape
             # is_num_expr claims, so this can't recurse through emit_val's
             # is_num_expr head.
+            if callee[1] == "dispatch":
+                local edarg is unwrap of node[2]
+                if (edarg[0] == "list") and ((len of edarg) == 2) and ((len of (edarg[1])) == 3):
+                    local edt is unwrap of (edarg[1])[0]
+                    if (edt[0] == "ident") and (g_shadow_tbl[(edt[1])] == 1):
+                        # (round 169) unboxed shadow dispatch: the three
+                        # operands are evaluated in source order into temps.
+                        return "({ Value* _dt = " + (emit_val of [(edarg[1])[0], nm, bt]) + "; Value* _dk = " + (emit_val of [(edarg[1])[1], nm, bt]) + "; Value* _dc = " + (emit_val of [(edarg[1])[2], nm, bt]) + "; aot_dispatch_sh_num_" + (cn of edt[1]) + "(_dt, _dk, _dc, \"" + (c_escape of (G_CUR_FN[0])) + ": dispatch\"); })"
             return "aot_num_ck_at(" + (emit_val of [node, nm, bt]) + ", \"" + (c_escape of (G_CUR_FN[0])) + ": builtin " + (c_escape of callee[1]) + "\")"
         # A callee that is an EXPRESSION, in a NUMERIC context (#121/#140):
         # `complex.mag of a` inside arithmetic. emit_val handles the boxed
@@ -2240,6 +2256,21 @@ define emit_num(node, nm, bt, raw) as:
     throw of ("AOT: emit_num on non-numeric node " + t)
 
 define emit_val(node, nm, bt) as:
+    # (round 169) a shadow-table dispatch is "numeric" to the classifier
+    # (every handler returns a double) but may answer NULL for a missing
+    # entry; in a VALUE context it goes through the null-capable helper,
+    # never through make_num(emit_num(...)) -- t279's out-of-range print
+    # died at the numeric fallback when the shortcut below took it.
+    local _vn is unwrap of node
+    if (type of _vn) == "list":
+        if (len of _vn) > 0:
+            if _vn[0] == "call":
+                local _vc is unwrap of _vn[1]
+                local _va is unwrap of _vn[2]
+                if (_vc[0] == "ident") and (_vc[1] == "dispatch") and (_va[0] == "list") and ((len of _va) == 2) and ((len of (_va[1])) == 3):
+                    local _vt is unwrap of (_va[1])[0]
+                    if (_vt[0] == "ident") and (g_shadow_tbl[(_vt[1])] == 1):
+                        return seq_call3 of ["aot_dispatch_sh_" + (cn of _vt[1]), [[(emit_val of [(_va[1])[0], nm, bt]), (has_call_node of (_va[1])[0])], [(emit_val of [(_va[1])[1], nm, bt]), (has_call_node of (_va[1])[1])], [(emit_val of [(_va[1])[2], nm, bt]), (has_call_node of (_va[1])[2])]], ["Value*", "Value*", "Value*"]]
     if (is_num_expr of [node, nm, bt]) == 1:
         return "make_num(" + (emit_num of [node, nm, bt, 0]) + ")"
     local t is node[0]
@@ -3158,6 +3189,12 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
         # Value* — aot_index_set mirrors OP_INDEX_SET and consumes/adopts.
         if (is_num_expr of [node[2], nm, bt]) == 1:
             local sib is emit_val_borrow of [node[1], nm, bt, [node[2], node[3]]]
+            if (sib != "") and ((is_num_expr of [node[3], nm, bt]) == 1):
+                # (round 169) a numeric store into a list element or a buffer
+                # slot without boxing (in place when the slot holds an
+                # exclusive number; DMG's `_exec_ctx[2] is op` and `mem.data[i]
+                # is v` boxed once per emulated instruction).
+                return ind + "{ double _sai = " + (emit_num of [node[2], nm, bt, 0]) + "; aot_index_set_num_ib(" + sib + ", _sai, " + (emit_num of [node[3], nm, bt, 0]) + "); }\n"
             if sib != "":
                 return ind + "{ double _sai = " + (emit_num of [node[2], nm, bt, 0]) + "; aot_index_set_ib(" + sib + ", _sai, " + (emit_val of [node[3], nm, bt]) + "); }\n"
             # (round 88) SEQUENCE the target before the rhs: C argument
@@ -10392,8 +10429,10 @@ define emit_program(ast) as:
     local shnames is keys of g_shadow_tbl
     for i in range of (len of shnames):
         gdecls is gdecls + "static inline Value *aot_dispatch_sh_" + (cn of shnames[i]) + "(Value *table, Value *keyv, Value *ctx);\n"
+        gdecls is gdecls + "static inline double aot_dispatch_sh_num_" + (cn of shnames[i]) + "(Value *table, Value *keyv, Value *ctx, const char *site);\n"
         gdecls is gdecls + "#define SH_TBL_CAP " + (str of SH_TBL_CAP) + "\nstatic double (*__sh_" + (cn of shnames[i]) + "[SH_TBL_CAP])(Value*) = {0}; static int __sh_" + (cn of shnames[i]) + "_n = 0;   /* shadow dispatch table (round 164) */\n"
         gdecls is gdecls + "static inline Value *aot_dispatch_sh_" + (cn of shnames[i]) + "(Value *table, Value *keyv, Value *ctx) { return aot_dispatch_sh(table, keyv, ctx, __sh_" + (cn of shnames[i]) + ", __sh_" + (cn of shnames[i]) + "_n); }\n"
+        gdecls is gdecls + "static inline double aot_dispatch_sh_num_" + (cn of shnames[i]) + "(Value *table, Value *keyv, Value *ctx, const char *site) { return aot_dispatch_sh_num(table, keyv, ctx, __sh_" + (cn of shnames[i]) + ", __sh_" + (cn of shnames[i]) + "_n, site); }\n"
     # emit_function sets G_CUR_FN; the module body has no emit_function, so
     # reset it or every site label in main() inherits the LAST function's
     # name (that stale label sent an earlier debugging session chasing

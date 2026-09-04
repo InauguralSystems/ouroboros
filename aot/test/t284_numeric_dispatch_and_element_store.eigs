@@ -1,0 +1,40 @@
+# Round 169 (DMG lever 2, fifth step): (1) a dispatch through a shadow table
+# in a NUMERIC context returns its double unboxed -- `cycles is cycles +
+# (dispatch of [...])` keeps `cycles` a C double; (2) a numeric store into
+# a list element updates an exclusively owned number in place (`ctx[2] is
+# op`), and a numeric store into a buffer-created field takes the double
+# (`m.data[i] is v`). The out-of-range dispatch answers null on the VM and
+# is caught with try on both sides; a shared element (aliased through a
+# second list) must NOT be updated in place -- the alias keeps its value.
+define new_mem() as:
+    return {"data": buffer of 4, "n": 0}
+define h_a(ctx) as:
+    ctx[1].data[ctx[2] & 3] is ctx[2] * 3
+    return 4
+define h_b(ctx) as:
+    ctx[1].n is ctx[1].n + ctx[2]
+    return 8
+tbl is []
+append of [tbl, h_a]
+append of [tbl, h_b]
+m is new_mem of null
+ectx is [null, m, 0]
+cycles is 0
+op is 0
+loop while op < 6:
+    ectx[2] is op
+    cycles is cycles + (dispatch of [tbl, op % 2, ectx])
+    op is op + 1
+print of cycles
+print of m.n
+print of m.data[1]
+print of m.data[3]
+shared is [5, 6]
+alias is [shared[0], 1]
+shared[0] is 9
+print of alias[0]
+print of shared[0]
+try:
+    print of (cycles + (dispatch of [tbl, 7, ectx]))
+catch e:
+    print of e.kind
