@@ -1,0 +1,20 @@
+# ouroboros#148: an INDEX expression as a call argument gave arg_class no
+# verdict, so the callee's parameter defaulted numeric and `g of (rows[0])`
+# with a null element died at the caller's unbox where the VM prints n.
+# An element of anything but a C buffer is boxed evidence now. Control: a
+# buffer element keeps the parameter a C double (the DMG shape).
+define g(y) as:
+    if y == null:
+        print of "n"
+    else:
+        print of (y * 2)
+    return 0
+rows is [null]
+g of (rows[0])
+xs is [4]
+g of (xs[0])
+define h(v) as:
+    return v + 1
+buf is zeros of 3
+buf[1] is 41
+print of (h of (buf[1]))

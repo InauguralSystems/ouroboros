@@ -1,0 +1,19 @@
+# EXPECT: defined more than once
+#
+# Round 60: two defines for one name died as a raw gcc error
+# (redefinition of 'eig_f') -- loud but UNNAMED, failing the
+# naming-the-real-reason half of the bar. The VM rebinds the name at each
+# define's execution point (calls between the two defines use the first
+# body); one C function cannot express both, so the AOT refuses by name
+# rather than letting the toolchain error stand in for a reason.
+#
+# Envelope shape: the VM RUNS this (rc 0, prints 2 -- the second define
+# has rebound f before the call).
+
+define f() as:
+    return 1
+
+define f() as:
+    return 2
+
+print of (f of [])

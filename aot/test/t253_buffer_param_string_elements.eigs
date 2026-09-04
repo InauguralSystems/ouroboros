@@ -1,0 +1,44 @@
+# Gate fallout of #149 (round 138): a parameter indexed with a numeric loop
+# variable whose elements are STRINGS. Buffer-class evidence saw `columns[j]`
+# and never looked past the local it was bound to, so a list of strings hit
+# aot_list_num_at at run time (corpus test_data, once the #149 build
+# assertion stopped hiding it). Two new kinds of evidence demote the
+# parameter: an element aliased into a local that is then used as a dict
+# key (select), and an element compared to a STRINGISH local -- a name bound
+# only from string literals, `keys of`, `str of`, or elements of another
+# stringish local (drop's `k is ks[j]`). Control: a numeric list parameter
+# stays a buffer (total).
+define select(df, columns) as:
+    result is []
+    for i in range of (len of df):
+        row is {}
+        for j in range of (len of columns):
+            col is columns[j]
+            if has_key of [df[i], col]:
+                dict_set of [row, col, df[i][col]]
+        append of [result, row]
+    return result
+define drop(df, columns) as:
+    result is []
+    for i in range of (len of df):
+        row is {}
+        ks is keys of df[i]
+        for j in range of (len of ks):
+            k is ks[j]
+            keep is 1
+            for d in range of (len of columns):
+                if k == columns[d]:
+                    keep is 0
+            if keep == 1:
+                dict_set of [row, k, df[i][k]]
+        append of [result, row]
+    return result
+define total(xs) as:
+    t is 0
+    for j in range of (len of xs):
+        t is t + xs[j]
+    return t
+df is [{"name": "A", "age": 3, "x": 1}, {"name": "B", "age": 4, "x": 2}]
+print of (select of [df, ["name", "x"]])
+print of (drop of [df, ["age"]])
+print of (total of ([1, 2, 3]))

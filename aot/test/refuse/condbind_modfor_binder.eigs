@@ -1,0 +1,23 @@
+# EXPECT: used after its loop in an observed/traced program
+#
+# Round 68: the binder guard's pre-bound exemption trusted g_first_bind's
+# CONTAINMENT optimism -- a bind inside a never-taken branch statically
+# "preceded" the loop, so the exemption answered a runtime question ("did
+# a binding exist when the for executed?") with a bind that never ran,
+# and the leak returned: VM rc 1 "undefined variable 'i'", AOT printed
+# the leaked 8, rc 0 (both halves of the guard, executed). The exemption
+# now keys on the MUST-bind table: plain top-level assigns, or an earlier
+# sibling plain assign in the same block (which shares the loop's branch
+# path). A conditional earlier bind refuses conservatively-loud.
+#
+# Envelope shape: the VM RUNS this (rc 0 -- the branch bind never runs
+# AND the post-loop use is dead).
+
+v is 1
+if v == 2:
+    i is 100
+for i in [7, 8]:
+    v is i
+if 1 == 2:
+    print of i
+print of (str of stable)

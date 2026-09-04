@@ -1,0 +1,14 @@
+# Round 65: in a TRACED program a function's interrogated for binder was
+# WRITTEN to a C block-local but READ through the env (an interrogated
+# non-module binder is in no numeric map) -- storage disagreement,
+# invariant 14, inside the arm five rounds had hardened: the AOT died
+# rc 1 "undefined variable 'q'" on this VM-valid program. The loop-scope
+# arm now seeds the numeric map for the body emission (restored after),
+# so body reads take the block-local and the tape still records.
+define f(a) as:
+    acc is 0
+    for q in [7, 8]:
+        acc is acc + q
+        print of (prev of q)
+    return acc
+print of (f of 1)

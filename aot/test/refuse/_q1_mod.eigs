@@ -1,0 +1,14 @@
+# The `define` is load-bearing, not scenery: the first version of the guard
+# that refuses this module did `if u[0] == "func": return 0` inside its scan
+# loop — a return where a skip was meant — so it stopped at the first define
+# and never saw the conditional binding below. A module that declares a
+# function before a conditional binding is the NORMAL shape (stdlib pkg:
+# define line 54, binding line 573), so without this define the fixture passes
+# against a guard that is blind to every real module.
+define f() as:
+    return 1
+
+a is 1
+if a == 1:
+    b is 2
+c is 3

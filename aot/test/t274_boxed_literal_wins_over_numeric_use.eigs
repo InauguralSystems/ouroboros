@@ -1,0 +1,27 @@
+# ouroboros#135 (round 159): a local with CERTAIN boxed evidence (a
+# string / list / dict / null literal, a Value*-returning compiled call, a
+# BOXED_RET builtin) was still classified numeric when the body ALSO used
+# it arithmetically -- the guard "gen only without a direct numeric use"
+# let the arithmetic win, and every read of the local was emitted through
+# the numeric path, including the call-argument read that hands a LIST to
+# `takes`. The VM runs the program (the arithmetic paths never see the
+# list); the AOT died "non-numeric value in a numeric context at f: name
+# q" rc 1. Certain boxed evidence wins now; the numeric uses unbox checked.
+# An index read (`x is xs[i]`) or an unlisted builtin's result is NOT
+# certain and keeps the old rule (DMG's headless accumulator depends on it).
+define takes(v) as:
+    return v
+define f(n) as:
+    local q is 0
+    if n > 500:
+        q is "s"
+    q is 7
+    print of (takes of q)
+    q is q + 1
+    print of q
+    print of (takes of q)
+    q is [1, 2]
+    print of (takes of q)      # <-- q holds a LIST here
+    q is 3
+    return q * 2
+print of (f of 1)

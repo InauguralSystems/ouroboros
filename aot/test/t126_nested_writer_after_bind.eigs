@@ -1,0 +1,14 @@
+# Round 60: pins the ACCEPTED half of the lifted-writer order rule. The
+# module binding (v is 10) provably precedes the encloser's only top-level
+# use, the lifted inner writer g inherits that first-use through the
+# post-lift closure, and its outward write must reach the module binding
+# exactly as the VM's does -- byte-identical, not refused.
+v is 10
+define f() as:
+    define g() as:
+        v is v + 1
+        return 0
+    x is g of []
+    return 0
+y is f of []
+print of v

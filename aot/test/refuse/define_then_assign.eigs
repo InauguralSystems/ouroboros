@@ -1,0 +1,15 @@
+# EXPECT: both a function definition and a plain top-level binding
+#
+# Round 60: a define/assign kind-flip died as a raw gcc error ('eig_v'
+# redeclared as a different kind of symbol) -- loud but unnamed. The VM
+# flips the name's kind at the assignment's execution point; a C function
+# and a C global cannot share one name, so the AOT refuses by name.
+#
+# Envelope shape: the VM RUNS this (rc 0, prints 3 -- v is a function
+# until the assignment rebinds it to a number).
+
+define v() as:
+    return 1
+
+v is 3
+print of v

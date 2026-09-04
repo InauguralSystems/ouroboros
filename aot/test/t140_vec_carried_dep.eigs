@@ -1,0 +1,35 @@
+# Round 76: vec_loop vectorized loops with LOOP-CARRIED buffer
+# dependencies -- the first strike on the SIMD recognizers since their
+# construction. Two-sided, both executed: a self-read at negative offset
+# (`b[i] is b[i-1] + 1`, the prefix chain) read stale lanes (AOT
+# 1 2 1 2... vs the VM's 1 2 3 4...), and a cross-statement read at +1 of
+# a buffer the loop writes inverted the other way -- both rc 0. The
+# recognizer's "always correct regardless of the static analysis" comment
+# was refuted: the runtime guard defends bounds, not dependence. The rule
+# now: a NONZERO-offset read of any buffer the loop WRITES bails to the
+# scalar path (byte-exact by construction); zero-offset reads of written
+# buffers stay vectorized (per-statement emission preserves same-lane
+# ordering both directions), and offset reads of UNWRITTEN buffers keep
+# the stencil path (t13 pins that half).
+n is 12
+b is buffer of n
+i is 0
+loop while i < n:
+    b[i] is b[i - 1] + 1
+    i is i + 1
+j is 0
+loop while j < n:
+    print of b[j]
+    j is j + 1
+c is buffer of n
+d is buffer of n
+m is n - 1
+k is 0
+loop while k < m:
+    c[k] is k * 1.0
+    d[k] is c[k + 1] * 10
+    k is k + 1
+q is 0
+loop while q < m:
+    print of d[q]
+    q is q + 1

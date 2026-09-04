@@ -1,0 +1,14 @@
+# Round 58: pins the first-use SLIDE. `w is f` is a pure-data mention -- it
+# cannot invoke anything -- so f's first-use slides forward to the next
+# call-bearing statement (the print), which the binding `v is 10` provably
+# precedes. The pre-slide rule counted the mention itself as the first use
+# and refused this VM-valid program (the module-scope function-table idiom:
+# table built above the data globals its handlers write). The alias-call-
+# before-bind shape stays refused: invocation through any alias still
+# requires executing a call-bearing statement, and the slide lands on it.
+define f() as:
+    v is v + 1
+    return v
+w is f
+v is 10
+print of (w of [])

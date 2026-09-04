@@ -1,0 +1,18 @@
+# EXPECT: read in a numeric context
+#
+# Round 99: a compiled function name in a numeric context can never be a
+# number in any execution, and it is not in the env either -- the emitted
+# read could only miss, so the binary died "undefined variable 'g'" where
+# the VM raises "cannot apply '+' to fn and num". Refused at BUILD time
+# with the real reason now, exactly as the buffer/dict/tensor arm three
+# lines above it has always done.
+#
+# Envelope shape: the VM RUNS this (rc 0) -- the arithmetic is in a dead
+# branch -- but the name is statically a function, so the refusal is
+# unconditional.
+define g(x) as:
+    return x + 1
+print of "start"
+if 1 == 2:
+    print of (g + 1)
+print of "done"

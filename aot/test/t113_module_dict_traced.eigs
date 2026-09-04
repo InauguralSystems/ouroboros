@@ -1,0 +1,29 @@
+# t112's shape PLUS one temporal read — the traced twin.
+#
+# THE POINT OF THIS FIXTURE is an empty intersection. The suite had temporal
+# fixtures and boxed-assign fixtures, and no fixture where BOTH held, so the
+# traced arm of the observed boxed store was unreachable by any gate. Round 35
+# caught a slot_from_value consume-use-after-free in aot_observe_val — and the
+# same author rebuilt the same bug in the same round, in the sibling function
+# aot_trace_assign_val, under a comment claiming "Borrows val". slot_from_value
+# TAKES OWNERSHIP: the trace call freed the numeric box one line before the
+# observe increfed it.
+#
+#   VM   130 / diverging / 1 / done      AOT  10 / moving / 0 / done
+#   both build, both rc 0 — wrong prev, wrong report, wrong predicate
+#
+# Valgrind stays silent (freelist-recycled box, the known arena blind spot), so
+# this fixture is the only durable guard. The `prev of a` below is what sets
+# g_traced and is load-bearing: without it this file is t112 again.
+
+import _t113m
+
+a is 100.0
+a is _t113m.step of a
+a is _t113m.step of a
+a is _t113m.step of a
+a is _t113m.step of a
+print of (prev of a)
+print of (report of a)
+print of (diverging of a)
+print of "done"

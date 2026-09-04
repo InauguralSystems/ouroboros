@@ -14,10 +14,12 @@
 #include "eigenscript.h"
 #include "value_slot.h"
 #include "trace.h"
+#include "vm.h"          /* round 144, #191: g_vm.current_line for VM-running builtins */
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <setjmp.h>      /* round 153: try/catch handlers */
 
 /* ---- uncaught-error death (#103) ------------------------------------------
  * The AOT has no try/catch, so EVERY runtime error is uncaught and fatal —
@@ -35,13 +37,67 @@
  * only RECORDS the error — never touching the NULL VM — and the AOT prints
  * the recorded message and exits 1 itself: clean nonzero death, same code
  * and same message frame as the VM. */
+/* (round 153) try/catch. The VM's OP_TRY_BEGIN pushes a handler; an error
+ * raised inside unwinds to it and the catch binds the error value (a dict
+ * {kind, message, line}, or the Value a `throw of` carried). The AOT keeps
+ * a stack of jmp_bufs: every error path funnels through aot_error_exit --
+ * the rt_error macro below and the `if (g_has_error)` checks after builtin
+ * calls -- which longjmps to the innermost handler when one is active and
+ * exits as before when none is. Owned temporaries live at the longjmp are
+ * leaked (a one-shot process; the leak tier bounds it). A function whose
+ * body contains a `try` is compiled at -O0 (an attribute on its signature)
+ * so its C locals keep their values across the longjmp, which the C
+ * standard guarantees only for volatile ones. */
+enum { AOT_TRY_MAX = 64 };
+static jmp_buf *aot_try_bufs[AOT_TRY_MAX];
+static int aot_try_n = 0;
+static void aot_try_push(jmp_buf *b) {
+    if (aot_try_n >= AOT_TRY_MAX) { fprintf(stderr, "Error: 'try' nested more than %d deep\n", AOT_TRY_MAX); exit(1); }
+    aot_try_bufs[aot_try_n++] = b;
+}
+static void aot_try_pop(void) { if (aot_try_n > 0) aot_try_n--; }
+static void aot_try_pop_to(int n) { if (n >= 0 && n < aot_try_n) aot_try_n = n; }
+static Value *aot_take_error_value(void) {   /* vm_take_error_value's shape */
+    if (g_error_value) { Value *v = g_error_value; g_error_value = NULL; return v; }
+    Value *d = make_dict(3);
+    dict_set_owned(d, "kind", make_str(err_kind_name((ErrKind)g_error_kind)));
+    dict_set_owned(d, "message", make_str(g_error_raw));
+    dict_set_owned(d, "line", make_num((double)g_error_line));
+    return d;
+}
+/* (round 154) the VM's call-depth cap is a semantic: the 4096th nested
+ * frame raises EK_LIMIT "call stack overflow" at the CALL site's line
+ * (VM_FRAMES_MAX, frame 0 being the module). Compiled code had no cap:
+ * `down of 100000` printed 100000 where the VM dies at depth 4096, and an
+ * unbounded self-call was tail-call-optimised into an infinite loop
+ * (rc 124). Every compiled function enters through aot_depth_enter and
+ * leaves through a cleanup-attribute local, so every C return path
+ * decrements; a catch restores the depth it saved (longjmp runs no
+ * cleanups). The check runs BEFORE the callee's first line stamp, so the
+ * reported line is the caller's, as on the VM. */
+static int aot_depth = 0;
 static void aot_error_exit(void) {
+    if (aot_try_n > 0) longjmp(*aot_try_bufs[aot_try_n - 1], 1);
     fprintf(stderr, "%s\n", g_error_msg);
     exit(1);
 }
 /* Painting the name blue: the macro's inner rt_error is the real function;
  * every call site in this header and in generated C dies cleanly after it. */
 #define rt_error(...) do { rt_error(__VA_ARGS__); aot_error_exit(); } while (0)
+/* (round 154) below the macro on purpose: the first cut sat above it, so
+ * its rt_error was the plain VM function -- the error went PENDING and the
+ * program ran on (`down of 100000` printed 100000, then the message at
+ * exit; the unbounded probe overflowed the C stack). */
+static void __attribute__((noinline, cold)) aot_depth_overflow(void) {
+    rt_error(EK_LIMIT, g_trace_current_line, "call stack overflow");
+}
+static inline int aot_depth_enter(void) {
+    /* inc / cmp / jcc on the hot path; the raise is out of line and cold
+     * (the inlined rt_error cost 4.5% on the DMG canary, n=5 vs n=5). */
+    if (__builtin_expect(++aot_depth >= VM_FRAMES_MAX, 0)) aot_depth_overflow();
+    return 0;
+}
+static inline void aot_depth_leave(int *p) { (void)p; aot_depth--; }
 
 /* ---- portable SIMD layer for vectorized element-wise numeric loops ----
  * The emitter writes vectorized loops in terms of AOT_VW / aot_v*; this maps
@@ -66,9 +122,11 @@ static inline aot_vec aot_vguard(aot_vec x){
     return _mm256_max_pd(x, _mm256_set1_pd(-1e308));
 }
 static inline aot_vec aot_viota(long base){ return _mm256_add_pd(_mm256_set1_pd((double)base), _mm256_set_pd(3.0,2.0,1.0,0.0)); }
-static inline aot_vec aot_vdiv(aot_vec a, aot_vec b){   /* b==0 -> 0, else clamp(a/b) */
-    aot_vec nz = _mm256_cmp_pd(b, _mm256_setzero_pd(), _CMP_NEQ_OQ);
-    return aot_vguard(_mm256_and_pd(_mm256_div_pd(a, b), nz));
+static inline aot_vec aot_vdiv(aot_vec a, aot_vec b){   /* any b==0 lane RAISES (round 72: the VM raises post-fail-soft-reform; the old lane mask was the same fossil as aot_ddiv's) */
+    aot_vec z = _mm256_cmp_pd(b, _mm256_setzero_pd(), _CMP_EQ_OQ);
+    if (_mm256_movemask_pd(z))
+        rt_error(EK_VALUE, g_trace_current_line, "division by zero");
+    return aot_vguard(_mm256_div_pd(a, b));
 }
 static inline double aot_vhsum(aot_vec x){
     __m128d lo = _mm256_castpd256_pd128(x), hi = _mm256_extractf128_pd(x, 1);
@@ -90,9 +148,11 @@ static inline aot_vec aot_vguard(aot_vec x){
     return _mm_max_pd(x, _mm_set1_pd(-1e308));
 }
 static inline aot_vec aot_viota(long base){ return _mm_add_pd(_mm_set1_pd((double)base), _mm_set_pd(1.0,0.0)); }
-static inline aot_vec aot_vdiv(aot_vec a, aot_vec b){   /* b==0 -> 0, else clamp(a/b) */
-    aot_vec nz = _mm_cmpneq_pd(b, _mm_setzero_pd());
-    return aot_vguard(_mm_and_pd(_mm_div_pd(a, b), nz));
+static inline aot_vec aot_vdiv(aot_vec a, aot_vec b){   /* any b==0 lane RAISES (round 72, see the AVX2 variant) */
+    aot_vec z = _mm_cmpeq_pd(b, _mm_setzero_pd());
+    if (_mm_movemask_pd(z))
+        rt_error(EK_VALUE, g_trace_current_line, "division by zero");
+    return aot_vguard(_mm_div_pd(a, b));
 }
 static inline double aot_vhsum(aot_vec x){ return _mm_cvtsd_f64(_mm_add_pd(x, _mm_unpackhi_pd(x, x))); }
 #else
@@ -106,7 +166,7 @@ typedef double aot_vec;
 #define aot_vsub(a,b)   ((a)-(b))
 static inline aot_vec aot_vguard(aot_vec x){ return num_guard(x); }
 static inline aot_vec aot_viota(long base){ return (double)base; }
-static inline aot_vec aot_vdiv(aot_vec a, aot_vec b){ return b == 0.0 ? 0.0 : num_guard(a / b); }
+static inline aot_vec aot_vdiv(aot_vec a, aot_vec b){ if (b == 0.0) rt_error(EK_VALUE, g_trace_current_line, "division by zero"); return num_guard(a / b); }
 static inline double aot_vhsum(aot_vec x){ return x; }
 #endif
 
@@ -270,14 +330,14 @@ static inline Value *aot_slot_value(EigsSlot *sp) {
 
 static Value *aot_get_named_ic(Env *g, const char *name, AotNameIC *c) {
     EigsSlot *sp = aot_name_slot(g, name, c);
-    if (!sp) rt_error(EK_UNDEFINED_NAME, 0, "undefined variable '%s'", name);
+    if (!sp) rt_error(EK_UNDEFINED_NAME, g_trace_current_line, "undefined variable '%s'", name);
     Value *v = aot_slot_value(sp);
     val_incref(v);
     return v;
 }
 static Value *aot_getb_named_ic(Env *g, const char *name, AotNameIC *c) {
     EigsSlot *sp = aot_name_slot(g, name, c);
-    if (!sp) rt_error(EK_UNDEFINED_NAME, 0, "undefined variable '%s'", name);
+    if (!sp) rt_error(EK_UNDEFINED_NAME, g_trace_current_line, "undefined variable '%s'", name);
     return aot_slot_value(sp);
 }
 static Value *aot_get_ic(Env *l, const char *name, AotNameIC *c) {
@@ -300,14 +360,14 @@ static Value *aot_get(Env *g, const char *name) {
 }
 static Value *aot_get_named(Env *g, const char *name) {
     Value *v = env_get(g, name);
-    if (!v) rt_error(EK_UNDEFINED_NAME, 0, "undefined variable '%s'", name);
+    if (!v) rt_error(EK_UNDEFINED_NAME, g_trace_current_line, "undefined variable '%s'", name);
     val_incref(v);
     return v;
 }
 /* borrowed variant (call-argument reads: no incref, callee doesn't consume) */
 static Value *aot_getb_named(Env *g, const char *name) {
     Value *v = env_get(g, name);
-    if (!v) rt_error(EK_UNDEFINED_NAME, 0, "undefined variable '%s'", name);
+    if (!v) rt_error(EK_UNDEFINED_NAME, g_trace_current_line, "undefined variable '%s'", name);
     return v;
 }
 static void aot_set(Env *g, const char *name, Value *val) {
@@ -341,6 +401,85 @@ static void aot_set_sh(Env *l, Env *g, const char *name, Value *val) {
     else env_set_local_owned(g, name, val);
 }
 
+/* forward declarations: the out-of-line bodies live further down, next to the
+ * other dict/index helpers they belong with. */
+static Value *aot_dot_get_tb_slow(Value *target, const char *key, int *ic, const char **ick);
+static double aot_dot_num_tb_slow(Value *target, const char *key, int *ic, const char **ick, const char *site);
+static void   aot_dot_set_num_tb_slow(Value *target, const char *key, double d, int *ic, const char **ick);
+static Value *aot_index_get_ib_slow(Value *target, double d);
+
+/* ---- inlinable fast paths (#133) -----------------------------------------
+ * The three dict-field helpers plus the integer index read are 20.8% of DMG's
+ * runtime across 968 call sites, and each was a plain out-of-line `static`:
+ * every access paid a real call for what is, on a cache hit, a bounds check, a
+ * pointer compare and an array index. Split them — an inlinable fast path that
+ * handles exactly the hit, and the original body kept out of line behind
+ * `noinline` so the fast path stays small enough not to cost I-cache on a
+ * machine where that is the binding constraint.
+ *
+ * Semantics are unchanged BY CONSTRUCTION: every case the fast path does not
+ * itself answer (wrong type, cold cache, missing key, negative or non-integral
+ * index, a shared or non-numeric slot) falls through to the untouched original.
+ * There is no second implementation to keep in step. */
+static inline Value *aot_dot_get_tb_ic(Value *target, const char *key,
+                                       int *ic, const char **ick) {
+    if (__builtin_expect(target != NULL && target->type == VAL_DICT, 1)) {
+        int i = *ic;
+        if (__builtin_expect(i >= 0 && i < target->data.dict.count
+                             && target->data.dict.keys[i] == *ick, 1)) {
+            Value *v = target->data.dict.vals[i];
+            if (v) { val_incref(v); return v; }
+        }
+    }
+    return aot_dot_get_tb_slow(target, key, ic, ick);
+}
+static inline double aot_dot_num_tb_ic(Value *target, const char *key,
+                                       int *ic, const char **ick, const char *site) {
+    if (__builtin_expect(target != NULL && target->type == VAL_DICT, 1)) {
+        int i = *ic;
+        if (__builtin_expect(i >= 0 && i < target->data.dict.count
+                             && target->data.dict.keys[i] == *ick, 1)) {
+            Value *v = target->data.dict.vals[i];
+            if (v && v->type == VAL_NUM) return v->data.num;
+        }
+    }
+    return aot_dot_num_tb_slow(target, key, ic, ick, site);
+}
+static inline void aot_dot_set_num_tb_ic(Value *target, const char *key, double d,
+                                         int *ic, const char **ick) {
+    if (__builtin_expect(target != NULL && target->type == VAL_DICT, 1)) {
+        int i = *ic;
+        if (__builtin_expect(i >= 0 && i < target->data.dict.count
+                             && target->data.dict.keys[i] == *ick, 1)) {
+            Value *old = target->data.dict.vals[i];
+            if (old && old->type == VAL_NUM && old->refcount == 1) {
+                old->data.num = num_guard(d);
+                return;
+            }
+        }
+    }
+    aot_dot_set_num_tb_slow(target, key, d, ic, ick);
+}
+static inline Value *aot_index_get_ib(Value *target, double d) {
+    if (__builtin_expect(target != NULL && target->type == VAL_LIST, 1)) {
+        long i = (long)d;
+        if (__builtin_expect((double)i == d && i >= 0
+                             && i < (long)target->data.list.count, 1)) {
+            Value *r = target->data.list.items[i];
+            /* The `if (r)` mirrors the slow path's `result ? result :
+             * make_null()` and the dict fast paths' own guard. val_incref is
+             * NULL-safe, so without it a NULL live slot would hand back a bare
+             * NULL where the slow path hands back a VAL_NULL. A review traced
+             * every list-slot writer and found no reachable NULL-within-count,
+             * so this is not a live bug — but the asymmetry was real, and a
+             * fast path that answers a case differently from the arm it
+             * shortcuts is the one thing this split must never do. */
+            if (r) { val_incref(r); return r; }
+        }
+    }
+    return aot_index_get_ib_slow(target, d);
+}
+
 /* ---- truthiness (consumes) ---- */
 static int aot_truthy(Value *v) { int t = is_truthy(v); val_decref(v); return t; }
 
@@ -358,26 +497,80 @@ static Value *aot_add(Value *a, Value *b) {
         memcpy(s, a->data.str, la); memcpy(s + la, b->data.str, lb); s[la + lb] = 0;
         r = make_str_owned(s);
     } else {
-        fprintf(stderr, "cannot apply '+' to mixed types\n"); exit(1);
+        /* (round 153) the VM's three '+' diagnoses, verbatim: now that a
+         * `try` can catch this, kind and message are program-visible data
+         * (a fixture printed e.message and got the old AOT-only text). */
+        const char *ta = val_type_name(a->type), *tb = val_type_name(b->type);
+        if ((a->type == VAL_STR) != (b->type == VAL_STR))
+            rt_error(EK_TYPE, g_trace_current_line, "cannot apply '+' to %s and %s (use an f-string or 'str of' to concatenate)", ta, tb);
+        else if (a->type == VAL_LIST || b->type == VAL_LIST)
+            rt_error(EK_TYPE, g_trace_current_line, "cannot apply '+' to %s and %s (use 'append of [xs, v]' to add an element, or 'concat of [a, b]' to join two lists)", ta, tb);
+        else
+            rt_error(EK_TYPE, g_trace_current_line, "cannot apply '+' to %s and %s", ta, tb);
+        r = make_null();
     }
     val_decref(a); val_decref(b); return r;
 }
-#define AOT_NUMOP(NAME, EXPR) \
+#define AOT_NUMOP(NAME, EXPR, OPNAME) \
     static Value *NAME(Value *a, Value *b) { \
-        if (a->type != VAL_NUM || b->type != VAL_NUM) { \
-            fprintf(stderr, "non-numeric operand\n"); exit(1); } \
+        if (a->type != VAL_NUM || b->type != VAL_NUM) \
+            rt_error(EK_TYPE, g_trace_current_line, "cannot apply '%s' to %s and %s", \
+                     OPNAME, val_type_name(a->type), val_type_name(b->type)); \
         double x = a->data.num, y = b->data.num; (void)x; (void)y; \
         Value *r = make_num(num_guard(EXPR)); \
         val_decref(a); val_decref(b); return r; }
-AOT_NUMOP(aot_sub, x - y)
-AOT_NUMOP(aot_mul, x * y)
-AOT_NUMOP(aot_div, (y == 0.0 ? 0.0 : x / y))
-AOT_NUMOP(aot_mod, (y == 0.0 ? 0.0 : fmod(x, y)))
+AOT_NUMOP(aot_sub, x - y, "-")
+AOT_NUMOP(aot_mul, x * y, "*")
 
-/* Specialized (unboxed double) div/mod, matching the VM (b==0 -> 0). Single-eval
-   helpers so the emitter doesn't have to duplicate the operand expressions. */
-static inline double aot_ddiv(double a, double b) { return b == 0.0 ? 0.0 : num_guard(a / b); }
-static inline double aot_dmod(double a, double b) { return b == 0.0 ? 0.0 : num_guard(fmod(a, b)); }
+/* Round 72: division/modulo by zero RAISES, mirroring vm.c's OP_DIV/OP_MOD
+ * (rt_error EK_VALUE "division by zero"/"modulo by zero"). The old b==0->0
+ * arms carried a comment saying "matching the VM" -- a FOSSIL of the
+ * pre-fail-soft-reform VM (the 2026-08 reform made these raise upstream;
+ * the pinned oracle raises, and `print of (7 / 0)` printed 0 rc 0 here
+ * against the VM's rc 1 -- silent-wrong on the most common operator pair,
+ * with zero fixtures covering it). Same rule in every storage regime:
+ * boxed NUMOP, unboxed ddiv/dmod, and the int-classified emit (aot_imod
+ * below -- raw C `%` by zero compiled to ud2/SIGILL under -O3). */
+static inline double aot_div_zero_check(double y) {
+    if (y == 0.0)
+        rt_error(EK_VALUE, g_trace_current_line, "division by zero");
+    return y;
+}
+static inline double aot_mod_zero_check(double y) {
+    if (y == 0.0)
+        rt_error(EK_VALUE, g_trace_current_line, "modulo by zero");
+    return y;
+}
+AOT_NUMOP(aot_div, x / aot_div_zero_check(y), "/")
+AOT_NUMOP(aot_mod, fmod(x, aot_mod_zero_check(y)), "%")
+
+/* Specialized (unboxed double) div/mod. Single-eval helpers so the emitter
+   doesn't have to duplicate the operand expressions. */
+static inline double aot_ddiv(double a, double b) { return num_guard(a / aot_div_zero_check(b)); }
+/* (round 134, #192) the VM's ARITH_FAST sets EIGS_MATH_UNDERFLOW when a
+ * product or quotient of two nonzero operands is exactly zero; num_guard
+ * sees only the result, so these two see both operands. Emitted only when
+ * the program reads math_flags (the mention gate), so hot loops that never
+ * ask keep the bare num_guard form. */
+static inline double aot_mul_uf(double a, double b) {
+    double r = num_guard(a * b);
+    if (r == 0.0 && a != 0.0 && b != 0.0) g_math_flags |= EIGS_MATH_UNDERFLOW;
+    return r;
+}
+static inline double aot_ddiv_uf(double a, double b) {
+    double r = num_guard(a / aot_div_zero_check(b));
+    if (r == 0.0 && a != 0.0 && b != 0.0) g_math_flags |= EIGS_MATH_UNDERFLOW;
+    return r;
+}
+static inline double aot_dmod(double a, double b) { return num_guard(fmod(a, aot_mod_zero_check(b))); }
+/* Int-classified modulo: raw C `%` is UB on zero (measured: gcc -O3 emitted
+ * ud2 -- rc 132 SIGILL, no diagnostic). Negative operands keep C truncated
+ * semantics, which match the VM's (probed both paths). */
+static inline long aot_imod(long a, long b) {
+    if (b == 0)
+        rt_error(EK_VALUE, g_trace_current_line, "modulo by zero");
+    return a % b;
+}
 
 /* Ordering comparisons — the VM's NUM_CMP macro exactly (vm.c ~3100):
  * num/num numeric compare; str/str byte-wise strcmp with the SAME operator
@@ -402,7 +595,7 @@ static const char *aot_cmp_type_name(Value *v) {
                            b->data.str ? b->data.str : ""); \
             res = (c OP 0) ? 1.0 : 0.0; \
         } else { \
-            rt_error(EK_TYPE, 0, "cannot compare %s and %s with '%s'", \
+            rt_error(EK_TYPE, g_trace_current_line, "cannot compare %s and %s with '%s'", \
                      aot_cmp_type_name(a), aot_cmp_type_name(b), OPNAME); \
         } \
         val_decref(a); val_decref(b); \
@@ -546,13 +739,35 @@ static void aot_buf_expect_at(Value *b, const char *site) {
     }
 }
 static void aot_buf_expect(Value *b) { aot_buf_expect_at(b, "?"); }
-static long aot_idx(double d, int count) {
+/* (round 80) these deaths carry the "Error line N:" frame the VM's raises
+ * print -- the bare fprintf form failed the _err tier's normalization on
+ * the frame prefix alone (line number is blanked by the normalizer; the
+ * prefix is semantics). Line is g_trace_current_line: 0 unless traced,
+ * per the documented siting contract. */
+/* (round 97) The raise names the CONTAINER KIND. The bt class is
+ * "indexable value" and lists route through this helper, but it carried a
+ * single hardcoded "buffer index ..." text, so an out-of-range LIST index
+ * said "buffer index 5 out of range (length 3)" where the VM says
+ * "index 5 out of range (list length 3)". Same rc, different text -- and
+ * the _err tier compares text. The generic aot_index_get family already
+ * keeps the two apart; this one now takes the kind from its caller. */
+static long aot_idx_k(double d, int count, int is_list) {
+    /* (round 96) INT width, mirroring the VM's vm_index_is_int: its check
+     * is `int i = (int)d; (double)i != d`, so an index past INT_MAX fails
+     * the INTEGER test, not the bounds test -- `b[65536 * 65536]` says
+     * "index must be an integer, got 4.29497e+09" there while a long-width
+     * check here reported an out-of-range bound instead. */
+    int ii = (int)d;
+    if ((double)ii != d) rt_error(EK_VALUE, g_trace_current_line, "index must be an integer, got %g", d);
     long i = (long)d;
-    if ((double)i != d) { fprintf(stderr, "index must be an integer, got %g\n", d); exit(1); }
     if (i < 0) i += count;
-    if (i < 0 || i >= count) { fprintf(stderr, "buffer index %ld out of range (length %d)\n", (long)d, count); exit(1); }
+    if (i < 0 || i >= count) {
+        if (is_list) rt_error(EK_INDEX, g_trace_current_line, "index %ld out of range (list length %d)", (long)d, count);
+        else         rt_error(EK_INDEX, g_trace_current_line, "buffer index %ld out of range (length %d)", (long)d, count);
+    }
     return i;
 }
+static inline long aot_idx(double d, int count) { return aot_idx_k(d, count, 0); }
 /* The "buf" class is really INDEXABLE VALUE: inference assigns it from
  * `x[i]` / `len of x` usage, and in consumer code the runtime value is as
  * often a VAL_LIST of numbers as a VAL_BUFFER (EigenMiniSat's DIMACS
@@ -568,14 +783,16 @@ static double aot_list_num_at(Value *b, long i, const char *site) {
     return e->data.num;
 }
 static double aot_buf_get_at(Value *b, double idx, const char *site) {
-    if (b && b->type == VAL_LIST) return aot_list_num_at(b, aot_idx(idx, b->data.list.count), site);
+    if (b && b->type == VAL_LIST) return aot_list_num_at(b, aot_idx_k(idx, b->data.list.count, 1), site);
     aot_buf_expect_at(b, site); return b->data.buffer.data[aot_idx(idx, b->data.buffer.count)];
 }
 static void   aot_buf_set_at(Value *b, double idx, double v, const char *site) {
     if (b && b->type == VAL_LIST) {
-        long i = aot_idx(idx, b->data.list.count);
+        long i = aot_idx_k(idx, b->data.list.count, 1);
         Value *old = b->data.list.items[i];
-        b->data.list.items[i] = make_num(v);
+        /* (round 107) #873: heap-force the box when an arena window is open
+         * and the list is heap -- mirrors OP_INDEX_SET's numeric fast path. */
+        b->data.list.items[i] = (g_arena.active && !b->arena) ? make_num_permanent(v) : make_num(v);
         if (old) val_decref(old);
         return;
     }
@@ -584,20 +801,31 @@ static void   aot_buf_set_at(Value *b, double idx, double v, const char *site) {
 /* Integer-index fast path: the index was computed in native `long` arithmetic
    (provably-integer induction vars + dimensions), so skip the float integer
    check. Negative-resolve + bounds-check still mirror the VM. */
-static long aot_idx_i(long i, int count) {
+static long aot_idx_ik(long i, int count, int is_list) {
+    /* (round 96) the int-width integer test applies here too: this path is
+     * reached with a long computed by native integer arithmetic, and a
+     * value past INT_MAX is what the VM calls a non-integer index. */
+    if ((long)(int)i != i) rt_error(EK_VALUE, g_trace_current_line, "index must be an integer, got %g", (double)i);
     if (i < 0) i += count;
-    if (i < 0 || i >= count) { fprintf(stderr, "buffer index %ld out of range (length %d)\n", i, count); exit(1); }
+    if (i < 0 || i >= count) {
+        /* (round 97) name the container kind -- see aot_idx_k. */
+        if (is_list) rt_error(EK_INDEX, g_trace_current_line, "index %ld out of range (list length %d)", i, count);
+        else         rt_error(EK_INDEX, g_trace_current_line, "buffer index %ld out of range (length %d)", i, count);
+    }
     return i;
 }
+static inline long aot_idx_i(long i, int count) { return aot_idx_ik(i, count, 0); }
 static double aot_buf_get_i_at(Value *b, long idx, const char *site) {
-    if (b && b->type == VAL_LIST) return aot_list_num_at(b, aot_idx_i(idx, b->data.list.count), site);
+    if (b && b->type == VAL_LIST) return aot_list_num_at(b, aot_idx_ik(idx, b->data.list.count, 1), site);
     aot_buf_expect_at(b, site); return b->data.buffer.data[aot_idx_i(idx, b->data.buffer.count)];
 }
 static void   aot_buf_set_i_at(Value *b, long idx, double v, const char *site) {
     if (b && b->type == VAL_LIST) {
-        long i = aot_idx_i(idx, b->data.list.count);
+        long i = aot_idx_ik(idx, b->data.list.count, 1);
         Value *old = b->data.list.items[i];
-        b->data.list.items[i] = make_num(v);
+        /* (round 107) #873: heap-force the box when an arena window is open
+         * and the list is heap -- mirrors OP_INDEX_SET's numeric fast path. */
+        b->data.list.items[i] = (g_arena.active && !b->arena) ? make_num_permanent(v) : make_num(v);
         if (old) val_decref(old);
         return;
     }
@@ -650,6 +878,36 @@ static inline double aot_dot(Value *a, Value *b) {
     return num_guard(s);
 }
 
+/* (round 91) The fast reductions index data.buffer.data with NO type check,
+ * but the `bt` class is "indexable value" and `zeros of N` produces a LIST in
+ * this VM -- `sum of z` returned 2.05e-309 and `norm of z` returned 0 against
+ * the VM's 3 and 2.236, rc 0 both sides. The _v wrappers keep the SIMD path
+ * for real buffers and defer every other shape to the runtime's OWN builtin:
+ * a hand-written fallback is not faithful (measured, this VM's `dot` over
+ * LISTS yields 0 while sum/norm fold elementwise), so the oracle answers by
+ * construction at a cost only non-buffer shapes pay. */
+static Value *aot_call_name(Env *g, const char *name, Value *arg);
+static Value *aot_call_vm_builtin(Value *fn, Value *arg);   /* round 144, #191 */
+static inline long aot_any_len(Value *A) {
+    if (A && A->type == VAL_LIST) return A->data.list.count;
+    if (A && A->type == VAL_BUFFER) return A->data.buffer.count;
+    return 0;
+}
+static inline double aot_any_at(Value *A, long i) {
+    if (A && A->type == VAL_LIST) {
+        Value *e = A->data.list.items[i];
+        return (e && e->type == VAL_NUM) ? e->data.num : 0.0;
+    }
+    return A->data.buffer.data[i];
+}
+static double aot_reduce_poly1(Env *g, const char *name, Value *a) {
+    if (a) val_incref(a);
+    Value *r = aot_call_name(g, name, a);
+    double d = (r && r->type == VAL_NUM) ? r->data.num : 0.0;
+    if (r) val_decref(r);
+    return d;
+}
+
 /* sum of a / norm of a — sibling association-unspecified reductions (same
  * reassociated-SIMD license as aot_dot; tolerance oracle, not byte-exact). */
 static inline double aot_sum(Value *a) {
@@ -675,23 +933,69 @@ static inline double aot_norm(Value *a) {
     return num_guard(sqrt(s));
 }
 
+static inline double aot_sum_v(Env *g, Value *a) {
+    if (a && a->type == VAL_BUFFER) return aot_sum(a);
+    return aot_reduce_poly1(g, "sum", a);
+}
+static inline double aot_norm_v(Env *g, Value *a) {
+    if (a && a->type == VAL_BUFFER) return aot_norm(a);
+    return aot_reduce_poly1(g, "norm", a);
+}
+static inline double aot_dot_v(Env *g, Value *a, Value *b) {
+    if (a && b && a->type == VAL_BUFFER && b->type == VAL_BUFFER) return aot_dot(a, b);
+    Value *l = make_list(2);
+    if (a) val_incref(a);
+    list_append_owned(l, a);
+    if (b) val_incref(b);
+    list_append_owned(l, b);
+    Value *r = aot_call_name(g, "dot", l);
+    double d = (r && r->type == VAL_NUM) ? r->data.num : 0.0;
+    if (r) val_decref(r);
+    return d;
+}
+
 /* ---- ranged reductions over a slice `buf[lo:hi]` (zero-copy) ----
  * `dot of [A[sa:ea], B[sb:eb]]` / `sum of A[s:e]` / `norm of A[s:e]` lower to
  * these instead of materializing the slice. Bound resolution mirrors the VM's
  * OP_SLICE_GET exactly (vm.c): integer-only, negatives count from len, then
  * 0<=start<=end<=len (<= upper end; out-of-range errors like the VM). */
+/* (round 97) INT width, mirroring the VM's READ_SLICE_BOUND -> the same
+ * vm_index_is_int round 96 taught the index helpers. A long-width test
+ * admitted everything in (INT_MAX, LONG_MAX] that is an exact double, and
+ * aot_slice_any then TRUNCATED the admitted value to int -- testing at one
+ * width and storing at another, which is why `xs[-4294967296 : 3]` printed
+ * a plausible 60, rc 0, where the VM refuses the bound. */
+static inline int aot_sbound_is_int(double d, int *out) {
+    int i = (int)d;
+    if ((double)i != d) return 0;
+    *out = i;
+    return 1;
+}
 static inline long aot_sbound(double x, long len) {
-    long i = (long)x;
-    if ((double)i != x) { fprintf(stderr, "slice bound must be an integer, got %g\n", x); exit(1); }
-    if (i < 0) i += len;
-    if (i < 0 || i > len) { fprintf(stderr, "slice bound %ld out of range (length %ld)\n", (long)x, len); exit(1); }
-    return i;
+    int i;
+    if (!aot_sbound_is_int(x, &i)) { rt_error(EK_VALUE, g_trace_current_line, "slice bound must be an integer, got %g", x); aot_error_exit(); return 0; }
+    long r = (long)i;
+    if (r < 0) r += len;
+    return r;
+}
+/* (round 92) The VM raises ONE message for every bad slice -- out-of-range and
+ * start>end alike -- naming the ORIGINAL (pre-negative-resolve) bounds:
+ * "slice %d:%d out of range (length %d)". The per-bound checks printed a
+ * different text ("slice bound %ld out of range") and a bare "slice start >
+ * end", so these deaths matched on rc and diverged on stderr. Resolve both
+ * bounds, then check once, exactly as OP_SLICE_GET does. */
+static inline void aot_srange(double sa, double ea, long len, long *s_out, long *e_out) {
+    long s = aot_sbound(sa, len), e = aot_sbound(ea, len);
+    if (s < 0 || s > len || e < 0 || e > len || s > e)
+        rt_error(EK_INDEX, g_trace_current_line, "slice %d:%d out of range (length %d)",
+                 (int)sa, (int)ea, (int)len);
+    *s_out = s; *e_out = e;
 }
 static inline double aot_dot_range(Value *A, double sa, double ea, Value *B, double sb, double eb) {
     long la = A->data.buffer.count, lb = B->data.buffer.count;
-    long s1 = aot_sbound(sa, la), e1 = aot_sbound(ea, la);
-    long s2 = aot_sbound(sb, lb), e2 = aot_sbound(eb, lb);
-    if (s1 > e1 || s2 > e2) { fprintf(stderr, "slice start > end\n"); exit(1); }
+    long s1, e1, s2, e2;
+    aot_srange(sa, ea, la, &s1, &e1);
+    aot_srange(sb, eb, lb, &s2, &e2);
     long n1 = e1 - s1, n2 = e2 - s2, n = n1 < n2 ? n1 : n2, i = 0;
     double *a = A->data.buffer.data + s1, *b = B->data.buffer.data + s2;
     aot_vec acc = aot_vset(0.0);
@@ -703,8 +1007,8 @@ static inline double aot_dot_range(Value *A, double sa, double ea, Value *B, dou
 }
 static inline double aot_sum_range(Value *A, double sa, double ea) {
     long la = A->data.buffer.count;
-    long s1 = aot_sbound(sa, la), e1 = aot_sbound(ea, la);
-    if (s1 > e1) { fprintf(stderr, "slice start > end\n"); exit(1); }
+    long s1, e1;
+    aot_srange(sa, ea, la, &s1, &e1);
     long n = e1 - s1, i = 0;
     double *a = A->data.buffer.data + s1;
     aot_vec acc = aot_vset(0.0);
@@ -716,8 +1020,8 @@ static inline double aot_sum_range(Value *A, double sa, double ea) {
 }
 static inline double aot_norm_range(Value *A, double sa, double ea) {
     long la = A->data.buffer.count;
-    long s1 = aot_sbound(sa, la), e1 = aot_sbound(ea, la);
-    if (s1 > e1) { fprintf(stderr, "slice start > end\n"); exit(1); }
+    long s1, e1;
+    aot_srange(sa, ea, la, &s1, &e1);
     long n = e1 - s1, i = 0;
     double *a = A->data.buffer.data + s1;
     aot_vec acc = aot_vset(0.0);
@@ -729,6 +1033,97 @@ static inline double aot_norm_range(Value *A, double sa, double ea) {
     for (; i < n; i++) s = num_guard(s + num_guard(a[i] * a[i]));
     return num_guard(sqrt(s));
 }
+/* (round 92) Ranged siblings of the _v wrappers. Round 91 shipped these with
+ * a HAND-WRITTEN materializer -- breaking the rule its own commit stated for
+ * the scalar ones. Measured consequences: a nested list element was coerced
+ * to 0.0 (`sum of [[1,2],[3,4]][0:2]` gave 0 where the VM FLATTENS to 10);
+ * VAL_STR was called length-0 though the bt class carries strings; and dict/
+ * num/null were treated as empty containers, turning the VM's "cannot slice
+ * dict" into a silent 0. The slice is now a faithful mirror of the VM's
+ * OP_SLICE_GET -- same length rule per type, same negative resolution, same
+ * error text with the ORIGINAL bounds, element VALUES rather than doubles --
+ * and its result goes to the runtime's own builtin, so the oracle answers. */
+/* (round 93) The VM computes a slice's default upper bound by TYPE and
+ * raises "cannot slice %s" for anything unsliceable. The emitter's default
+ * `hi` was aot_buf_len, whose own message ("buffer op on a non-buffer
+ * value") fired first and made aot_slice_any unreachable for dicts/numbers
+ * -- the mirror could not mirror. */
+static inline long aot_slice_len(Value *A) {
+    if (!A || A->type == VAL_NUM) { rt_error(EK_TYPE, g_trace_current_line, "cannot slice number"); return 0; }
+    if (A->type == VAL_LIST)   return A->data.list.count;
+    if (A->type == VAL_STR)    return (long)strlen(A->data.str);
+    if (A->type == VAL_BUFFER) return A->data.buffer.count;
+    rt_error(EK_TYPE, g_trace_current_line, "cannot slice %s", val_type_name(A->type));
+    return 0;
+}
+static Value *aot_slice_any(Value *A, double sa, double ea) {
+    if (!A || A->type == VAL_NUM) {
+        rt_error(EK_TYPE, g_trace_current_line, "cannot slice number");
+        return make_null();
+    }
+    int len;
+    if (A->type == VAL_LIST)        len = A->data.list.count;
+    else if (A->type == VAL_STR)    len = (int)strlen(A->data.str);
+    else if (A->type == VAL_BUFFER) len = A->data.buffer.count;
+    else {
+        rt_error(EK_TYPE, g_trace_current_line, "cannot slice %s", val_type_name(A->type));
+        return make_null();
+    }
+    int orig_start, orig_end;
+    if (!aot_sbound_is_int(sa, &orig_start)) { rt_error(EK_VALUE, g_trace_current_line, "slice bound must be an integer, got %g", sa); aot_error_exit(); return make_null(); }
+    if (!aot_sbound_is_int(ea, &orig_end))   { rt_error(EK_VALUE, g_trace_current_line, "slice bound must be an integer, got %g", ea); aot_error_exit(); return make_null(); }
+    int start = orig_start, end = orig_end;
+    if (start < 0) start += len;
+    if (end   < 0) end   += len;
+    if (start < 0 || start > len || end < 0 || end > len || start > end) {
+        rt_error(EK_INDEX, g_trace_current_line,
+                 "slice %d:%d out of range (length %d)", orig_start, orig_end, len);
+        return make_null();
+    }
+    int n = end - start;
+    if (A->type == VAL_LIST) {
+        Value *r = make_list(n > 0 ? n : 1);
+        for (int i = 0; i < n; i++) {
+            Value *e = A->data.list.items[start + i];
+            val_incref(e);
+            list_append_owned(r, e);
+        }
+        return r;
+    }
+    if (A->type == VAL_STR) {
+        char *buf = (char *)xmalloc((size_t)n + 1);
+        if (n > 0) memcpy(buf, A->data.str + start, (size_t)n);
+        buf[n] = '\0';
+        return make_str_owned(buf);
+    }
+    Value *r = make_list(n > 0 ? n : 1);
+    for (int i = 0; i < n; i++) list_append_owned(r, make_num(A->data.buffer.data[start + i]));
+    return r;
+}
+static inline double aot_range_poly(Env *g, const char *name, Value *A, double sa, double ea) {
+    Value *r = aot_call_name(g, name, aot_slice_any(A, sa, ea));
+    double d = (r && r->type == VAL_NUM) ? r->data.num : 0.0;
+    if (r) val_decref(r);
+    return d;
+}
+static inline double aot_sum_range_v(Env *g, Value *A, double sa, double ea) {
+    if (A && A->type == VAL_BUFFER) return aot_sum_range(A, sa, ea);
+    return aot_range_poly(g, "sum", A, sa, ea);
+}
+static inline double aot_norm_range_v(Env *g, Value *A, double sa, double ea) {
+    if (A && A->type == VAL_BUFFER) return aot_norm_range(A, sa, ea);
+    return aot_range_poly(g, "norm", A, sa, ea);
+}
+static inline double aot_dot_range_v(Env *g, Value *A, double sa, double ea, Value *B, double sb, double eb) {
+    if (A && B && A->type == VAL_BUFFER && B->type == VAL_BUFFER) return aot_dot_range(A, sa, ea, B, sb, eb);
+    Value *l = make_list(2);
+    list_append_owned(l, aot_slice_any(A, sa, ea));
+    list_append_owned(l, aot_slice_any(B, sb, eb));
+    Value *r = aot_call_name(g, "dot", l);
+    double d = (r && r->type == VAL_NUM) ? r->data.num : 0.0;
+    if (r) val_decref(r);
+    return d;
+}
 
 /* ---- observer system ----
  * An observed numeric variable lives in the env (so it has a tracked slot) and
@@ -737,6 +1132,37 @@ static inline double aot_norm_range(Value *A, double sa, double ea) {
  * predicates (converged/stable/...) read that last-observer's slot — exactly
  * CASE(PREDICATE). Both call the runtime's observer fns, so the VM stays the
  * oracle. (Unboxing is off for observed programs — observation needs the slot.) */
+/* Boxed sibling of aot_observe_num: same store + slot update + last-observer,
+ * via the runtime's own observer_slot_update, which handles every value type
+ * (containers walk entropy exactly as the VM does — it IS the VM's updater).
+ * Added when a module-dict call RHS demoted an observed variable off the
+ * numeric class: the boxed store recorded nothing, the history stayed empty,
+ * and every predicate answered from an empty window (VM 1 / AOT 0, both rc 0).
+ * Takes ownership of val, like the set it replaces. */
+static void aot_observe_val(Env *e, const char *name, Value *val) {
+    /* Hold a ref across the store: env_set_local_owned consumes val, and for a
+     * numeric Value slot_from_value collapses it -- reading it afterwards for
+     * the observer update was use-after-free. The symptom was subtle, not a
+     * crash: trajectories agreed for four samples and split on the fifth (VM
+     * `diverging`, AOT `moving`), because the freed box's bytes still LOOKED
+     * like a plausible number. */
+    val_incref(val);
+    env_set_local_owned(e, name, val);
+    if (g_unobserved_depth != 0) { val_decref(val); return; }
+    int oidx = -1, odepth = 0;
+    Env *oe = env_resolve_chain(e, name, env_hash_name(name), &oidx, &odepth);
+    if (oe && oidx >= 0) {
+        observer_slot_update(oe, oidx, val);
+        g_last_obs_slot_env = oe;
+        g_last_obs_slot_idx = oidx;
+        if (g_trace_obs_hist) {
+            const ObserverSlot *os = &oe->obs[oidx];
+            trace_record_obs(name, os->entropy, os->dH, os->last_entropy);
+        }
+    }
+    val_decref(val);
+}
+
 static void aot_observe_num(Env *e, const char *name, double val) {
     env_set_local_owned(e, name, make_num(val));
     if (g_unobserved_depth != 0) return;
@@ -813,15 +1239,144 @@ static int aot_predicate_of(Env *e, const char *name, int kind, int is_compiled_
     }
     return observer_predicate_at(oe, oidx, kind, 1);
 }
-/* `report of x` — the most-specific predicate of x's observed slot, as a string
- * (mirrors CASE(REPORT_NAME)): resolve the binding's slot, classify it, else
- * "equilibrium" for an unobserved binding. */
-static Value *aot_report(Env *e, const char *name) {
+/* ---- the four observer special forms on an IDENT argument ----
+ * compiler.c (AST_CALL) special-cases `observe of x`, `report of x`,
+ * `report_value of x` and `trajectory of x` into slot-reading opcodes; a
+ * non-ident argument falls through to an ordinary call in both worlds.
+ * Round 109: the AOT had only `report`. `observe of x` then reached the
+ * env-bound builtin_observe -- by its own comment the NO-BINDING fallback,
+ * which returns a constant ["equilibrium", 0, 0, 0] (VM: ["stable",
+ * 0.159, 0, 0]) -- and report_value/trajectory are not builtins at all
+ * (opcodes only), so they died "undefined variable" at runtime after
+ * partial output. Ten corpus rows shared that root.
+ *
+ * Each helper mirrors its vm.c CASE(*_NAME) line for line. Two of the
+ * VM's building blocks are `static` in vm.c and are re-stated here from
+ * exported primitives (a second copy, kept deliberately tiny and named
+ * after the originals so a drift is a one-line diff):
+ *   vm_slot_query_view (#711): a query-time view of the slot with the
+ *     entropy swapped for the CURRENT value's, never written back.
+ *   vm_slot_value_opaque (#708): the binding's current value is a fn or
+ *     builtin, so every classification surface answers "opaque".
+ *
+ * Third arg `band`: 0 = resolve the name in the env; 1 = the name is a
+ * COMPILED FUNCTION (env-unbound here, a VAL_FN binding in the VM -> the
+ * #708 opaque band; round 70's "equilibrium" answer for this case was
+ * stale against the pinned VM, measured: `report of f` is "opaque");
+ * 2 = a C-emitted value class (buffer/dict/tensor, env-unbound here) ->
+ * the unobserved-binding answer, which is round 87's standing guess. */
+Value* builtin_observe(Value *arg);
+static ObserverSlot aot_slot_query_view(Env *e, int idx, const ObserverSlot *s) {
+    ObserverSlot q = *s;
+    double h;
+    if (observer_entropy_now(e, idx, &h)) q.entropy = h;
+    return q;
+}
+static int aot_slot_value_opaque(Env *e, int idx) {
+    if (!e || idx < 0) return 0;
+    env_dump_lock(e);
+    int r = 0;
+    if (idx < e->count) {
+        EigsSlot s = e->values[idx];
+        if (slot_is_ptr(s)) {
+            Value *v = slot_as_ptr(s);
+            r = v && (v->type == VAL_FN || v->type == VAL_BUILTIN);
+        }
+    }
+    env_dump_unlock(e);
+    return r;
+}
+/* Shared resolve for the three RAISING forms (report / report_value /
+ * trajectory): NULL + the VM's "undefined variable" for a never-bound name
+ * (round 70: the first aot_report conflated that with bound-but-unobserved
+ * and answered "equilibrium" at rc 0). */
+static Env *aot_obs_resolve(Env *e, const char *name, int *oidx) {
+    int odepth = 0;
+    Env *oe = env_resolve_chain(e, name, env_hash_name(name), oidx, &odepth);
+    if (!oe)
+        rt_error(EK_UNDEFINED_NAME, g_trace_current_line, "undefined variable '%s'", name);
+    return oe;
+}
+/* mirrors CASE(REPORT_NAME) */
+static Value *aot_report(Env *e, const char *name, int band) {
+    if (band == 1) return make_str("opaque");
+    if (band == 2) return make_str("equilibrium");
+    int oidx = -1;
+    Env *oe = aot_obs_resolve(e, name, &oidx);
+    if (!oe) return make_str("equilibrium"); /* unreachable: rt_error exited */
+    const ObserverSlot *os_n = env_obs_slot(oe, oidx);
+    if (aot_slot_value_opaque(oe, oidx)) return make_str("opaque");
+    if (os_n && os_n->used) {
+        ObserverSlot q = aot_slot_query_view(oe, oidx, os_n);
+        return make_str(observer_slot_report(&q));
+    }
+    return make_str("equilibrium");
+}
+/* mirrors CASE(REPORT_VALUE_NAME) */
+static Value *aot_report_value(Env *e, const char *name, int band) {
+    if (band == 1) return make_str("opaque");
+    if (band == 2) return make_str("equilibrium");
+    int oidx = -1;
+    Env *oe = aot_obs_resolve(e, name, &oidx);
+    if (!oe) return make_str("equilibrium");
+    const ObserverSlot *vs_n = env_obs_slot(oe, oidx);
+    if (aot_slot_value_opaque(oe, oidx)) return make_str("opaque");
+    if (vs_n) return make_str(observer_slot_report_value(vs_n));
+    return make_str("equilibrium");
+}
+/* mirrors CASE(TRAJECTORY_NAME) */
+static Value *aot_trajectory(Env *e, const char *name, int band) {
+    if (band != 0) return observer_slot_trajectory(NULL);
+    int oidx = -1;
+    Env *oe = aot_obs_resolve(e, name, &oidx);
+    if (!oe) return observer_slot_trajectory(NULL);
+    const ObserverSlot *s = env_obs_slot(oe, oidx);
+    if (s) {
+        ObserverSlot q = aot_slot_query_view(oe, oidx, s);
+        return observer_slot_trajectory(&q);
+    }
+    return observer_slot_trajectory(s);
+}
+/* mirrors CASE(OBSERVE_VALUE_NAME) -- the one form that TOLERATES an
+ * unbound name (no raise: the no-observation tuple). */
+static Value *aot_undefined_name(const char *name);   /* defined with the temporal helpers below */
+/* (round 117) boundness bit check for a module numeric that has no plain
+ * top-level bind: the VM's binding exists only from its first EXECUTED
+ * assignment, the C static from program start. A read that runs before any
+ * store dies "undefined variable" exactly where the VM does. */
+static inline double aot_bound_num(int bound, const char *name, double v) {
+    if (!bound) aot_undefined_name(name);
+    return v;
+}
+/* (round 117) the OBSERVED regime's boundness instrument: module numerics
+ * live in the env there (aot_observe_num creates the binding at the first
+ * executed store), so env membership IS boundness -- the objection in
+ * aot_prev_val's comment (traced-only numerics live in C doubles) does not
+ * apply under g_observed. */
+static inline int aot_env_bound(Env *e, const char *name) {
+    int i = -1, d = 0;
+    return env_resolve_chain(e, name, env_hash_name(name), &i, &d) != NULL;
+}
+static Value *aot_observe_of(Env *e, const char *name, int band) {
+    if (band != 0) return builtin_observe(NULL);
     int oidx = -1, odepth = 0;
     Env *oe = env_resolve_chain(e, name, env_hash_name(name), &oidx, &odepth);
-    if (oe && oidx >= 0 && oidx < oe->obs_cap && oe->obs[oidx].used)
-        return make_str(observer_slot_report(&oe->obs[oidx]));
-    return make_str("equilibrium");
+    /* (round 116) EigenScript#1059: `observe of v` on an unbound name dies
+     * "undefined variable" like every other read (pinned 90bcec0+). It
+     * answered the no-observation tuple here, silently, while the VM died. */
+    if (!oe) return aot_undefined_name(name);
+    const ObserverSlot *s = env_obs_slot(oe, oidx);
+    if (s && s->used) {
+        ObserverSlot q = aot_slot_query_view(oe, oidx, s);
+        Value *list = make_list(4);
+        list_append_owned(list, make_str(aot_slot_value_opaque(oe, oidx) ? "opaque"
+                                                                         : observer_slot_report(&q)));
+        list_append_owned(list, make_num(q.entropy));
+        list_append_owned(list, make_num(s->dH));
+        list_append_owned(list, make_num(s->prev_dH));
+        return list;
+    }
+    return builtin_observe(NULL);
 }
 /* ---- temporal interrogatives (the trace tape) ----
  * `prev of x`, `what is x at L`. trace_assign feeds the per-name prev-map +
@@ -829,6 +1384,25 @@ static Value *aot_report(Env *e, const char *name) {
  * and independent of any flag, stamping each entry with g_trace_current_line —
  * which the emitter sets per source line, mirroring OP_LINE. Numeric values
  * only for now; an unknown/one-assignment name yields 0 (as the VM's miss). */
+/* Boxed sibling of aot_trace_assign. Genuinely borrows val -- which means
+ * slot_from_value is EXACTLY the wrong constructor: it TAKES OWNERSHIP,
+ * collapsing (freeing) a numeric box. The first version used it anyway, under
+ * a comment saying "Borrows val", and the traced+observed boxed store then
+ * freed the box one line before aot_observe_val increfed it -- the SAME
+ * consume-use-after-free caught in aot_observe_val the round before, rebuilt
+ * by the same author in the sibling function the fixture did not reach
+ * (t112 has no interrogate, so g_traced was 0 there). Symptom, all silent:
+ *
+ *   ... prev of a / report of a / diverging of a
+ *   VM  130 / diverging / 1        AOT  10 / moving / 0     both rc 0
+ *
+ * Wrap by hand exactly as vm.c's dot-read does, per its own NOTE: num ->
+ * slot_from_num, heap -> slot_from_heap (borrow, no incref), null -> null. */
+static void aot_trace_assign_val(const char *name, Value *val) {
+    if (!val || val->type == VAL_NULL) { EigsSlot s0 = slot_null(); trace_assign(name, s0); return; }
+    if (val->type == VAL_NUM) { trace_assign(name, slot_from_num(val->data.num)); return; }
+    trace_assign(name, slot_from_heap(val));
+}
 static void aot_trace_assign(const char *name, double v) {
     EigsSlot s; s.d = v;
     trace_assign(name, s);
@@ -836,7 +1410,21 @@ static void aot_trace_assign(const char *name, double v) {
 /* The query result is polymorphic — a number, a string (`who`), or `null` on a
  * miss — so route the slot through slot_to_value (exactly like the VM's
  * INTERROGATE_NAMED_AT) rather than assuming a double, then drop the slot's ref. */
+/* Compile-time-known "undefined variable" raise, in Value* position: the VM's
+ * exact error for a module-scope interrogate of a never-module-bound name. */
+static Value *aot_undefined_name(const char *name) {
+    rt_error(EK_UNDEFINED_NAME, g_trace_current_line, "undefined variable '%s'", name);
+    return NULL; /* unreachable */
+}
 static Value *aot_prev_val(const char *name) {
+    /* NO env bound-check here, deliberately -- and one was added and reverted.
+     * The VM does require the name bound in scope before the tape is read
+     * (`prev of t` of a returned function's local raises "undefined
+     * variable"), but an env resolve is the WRONG instrument: traced-only
+     * numeric variables live in C doubles, not the env, so the check raised on
+     * every unboxed temporal variable and broke t33/t36 at runtime. Boundness
+     * is a compile-time fact; the emitter decides it (g_module_names) and
+     * emits aot_undefined_name for the unbound case. */
     EigsSlot out;
     if (trace_query_prev(name, &out)) {
         Value *v = slot_to_value(out);
@@ -896,6 +1484,56 @@ static double aot_num_ck(Value *v) {
     val_decref(v);
     return d;
 }
+
+/* ---- LOWERED FRAME LOCALS (#132) ------------------------------------------
+ * A function's boxed locals used to live in a per-call `Env* __eigs_l`, so
+ * every read and write paid a name lookup — 16% of DMG's runtime across
+ * aot_get_ic / aot_set_ic / env_set_local_hashed / env_decref even with a
+ * per-site inline cache in front of it. The names are private to one call and
+ * statically known, so they can simply be C variables.
+ *
+ * They are lowered to EigsSlot, NOT Value*. That is the whole point: an env
+ * slot is NaN-boxed, so a number lives there UNBOXED, and lowering to Value*
+ * would reintroduce a malloc/free per numeric assignment — trading a lookup
+ * for an allocation and losing. An EigsSlot is a plain 8-byte union that GCC
+ * register-allocates, so the representation is preserved exactly and only the
+ * lookup disappears.
+ *
+ * GET_LOCAL semantics are preserved: an unset local is slot_null(), and
+ * slot_to_value turns that into a fresh null Value — the same answer aot_get
+ * gave for a miss. Lowering is refused for any function carrying a boxed
+ * module shadow, because #86's aot_get_sh dispatches on binding PRESENCE in
+ * __eigs_l and a C variable has no presence to test. `when is x` reads
+ * assign_counts, which a C local does not have — but a `when` qualifier parses
+ * to an interrogate node, and env-locals only exist when the body has none
+ * (g_traced == 0), so no lowered function can observe it. */
+static inline Value *aot_lv_get(EigsSlot *s) {      /* owned; miss -> null */
+    return slot_to_value(*s);
+}
+static inline Value *aot_lv_getb(EigsSlot *s) {     /* borrowed, like env_get */
+    if (slot_is_ptr(*s)) return slot_as_ptr(*s);
+    Value *v = slot_to_value(*s);
+    slot_decref(*s);
+    *s = slot_from_heap(v);                          /* the local now owns it */
+    return v;
+}
+static inline void aot_lv_set(EigsSlot *s, Value *val) {   /* adopts val */
+    Value *p = promote_if_arena(val);
+    if (p == val) val_incref(p);
+    EigsSlot ns = slot_from_value(p);
+    slot_decref(*s);
+    *s = ns;
+    val_decref(val);
+}
+static inline void aot_lv_set_num(EigsSlot *s, double d) {
+    slot_decref(*s);
+    *s = slot_from_num(num_guard(d));
+}
+static inline double aot_lv_num(EigsSlot *s, const char *site) {
+    if (slot_is_num(*s)) return s->d;
+    return aot_num_ck_at(slot_to_value(*s), site);
+}
+
 
 /* ---- numeric env access straight through the NaN-boxed slot (#130) --------
  * An env slot holds a number as an IMMEDIATE double (value_slot.h); only heap
@@ -1011,7 +1649,7 @@ static inline void aot_set_num_sh(Env *l, Env *g, const char *name,
  * (#100 item 5). Consumes v, returns owned. */
 static Value *aot_neg(Value *v) {
     if (!v || v->type != VAL_NUM)
-        rt_error(EK_TYPE, 0, "cannot negate non-numeric");
+        rt_error(EK_TYPE, g_trace_current_line, "cannot negate non-numeric");
     double d = v->data.num;
     val_decref(v);
     return make_num(-d);
@@ -1138,7 +1776,7 @@ static AotTensor aot_tensor_matmul(AotTensor a, AotTensor b) {
      * 1xN on both tiers). The old silent null tensor serialized to `[]` and the
      * program ran on (#100 item 8). */
     if (a.cols != b.rows)
-        rt_error(EK_VALUE, 0, "matmul: incompatible shapes (%ldx%ld · %ldx%ld)",
+        rt_error(EK_VALUE, g_trace_current_line, "matmul: incompatible shapes (%ldx%ld · %ldx%ld)",
                  a.rows, a.cols, b.rows, b.cols);
     o.rows = a.rows; o.cols = b.cols;
     o.is1d = a.is1d;                           /* 1-D result iff the left operand is a vector */
@@ -1223,32 +1861,32 @@ static int aot_idx_resolve(int *i, int len) { int r = (*i < 0) ? *i + len : *i; 
  * emulator's single commonest expression, and the container it indexes is a
  * dict slot that outlives the expression. Borrowing it removes the last
  * refcount pair on that path. Result ownership is unchanged. */
-static Value *aot_index_get_ib(Value *target, double d) {
+static __attribute__((noinline)) Value *aot_index_get_ib_slow(Value *target, double d) {
     Value *result = NULL;
     int i;
     if (target && target->type == VAL_LIST) {
         if (!aot_idx_is_int(d, &i))
-            rt_error(EK_VALUE, 0, "index must be an integer, got %g", d);
+            rt_error(EK_VALUE, g_trace_current_line, "index must be an integer, got %g", d);
         else if (aot_idx_resolve(&i, target->data.list.count)) {
             result = target->data.list.items[i]; val_incref(result);
         } else
-            rt_error(EK_INDEX, 0, "index %d out of range (list length %d)", i, target->data.list.count);
+            rt_error(EK_INDEX, g_trace_current_line, "index %d out of range (list length %d)", i, target->data.list.count);
     } else if (target && target->type == VAL_STR) {
         if (!aot_idx_is_int(d, &i))
-            rt_error(EK_VALUE, 0, "index must be an integer, got %g", d);
+            rt_error(EK_VALUE, g_trace_current_line, "index must be an integer, got %g", d);
         else if (aot_idx_resolve(&i, (int)strlen(target->data.str))) {
             char b[2] = { target->data.str[i], 0 }; result = make_str(b);
         } else
-            rt_error(EK_INDEX, 0, "string index %d out of range (length %d)", i, (int)strlen(target->data.str));
+            rt_error(EK_INDEX, g_trace_current_line, "string index %d out of range (length %d)", i, (int)strlen(target->data.str));
     } else if (target && target->type == VAL_BUFFER) {
         if (!aot_idx_is_int(d, &i))
-            rt_error(EK_VALUE, 0, "index must be an integer, got %g", d);
+            rt_error(EK_VALUE, g_trace_current_line, "index must be an integer, got %g", d);
         else if (aot_idx_resolve(&i, target->data.buffer.count))
             result = make_num(target->data.buffer.data[i]);
         else
-            rt_error(EK_INDEX, 0, "buffer index %d out of range (length %d)", i, target->data.buffer.count);
+            rt_error(EK_INDEX, g_trace_current_line, "buffer index %d out of range (length %d)", i, target->data.buffer.count);
     } else {
-        rt_error(EK_TYPE, 0, "cannot index %s",
+        rt_error(EK_TYPE, g_trace_current_line, "cannot index %s",
                  target ? val_type_name(target->type) : "null");
     }
     return result ? result : make_null();
@@ -1262,29 +1900,104 @@ static double aot_index_num_ib(Value *target, double d, const char *site) {
     return aot_num_ck_at(v, site);
 }
 
+/* (round 169) a NUMERIC store into a list element or buffer slot without
+ * boxing: a list slot holding an exclusive heap number is updated in place
+ * (the VM's OP_INDEX_SET stores a Value; an exclusively owned number's
+ * identity is unobservable, the same reuse aot_dot_set_num_tb_ic makes),
+ * a buffer slot takes the double, and anything else -- a shared or
+ * non-number slot, an out-of-range index, an arena value -- goes through
+ * aot_index_set_ib with a fresh box so every error text is the VM's.
+ * DMG's `_exec_ctx[2] is op` boxed once per emulated instruction. */
+/* (round 170, #204) a BORROWED element read: the list's own reference,
+ * no incref, for an argument position whose callee takes the parameter
+ * borrowed and whose container (a parameter or module list) outlives the
+ * call. The emitter uses it only for a base proven to be a list (it has
+ * an element map), so the non-list arm is unreachable in practice and
+ * raises the VM's dict-index text if it is ever reached. */
+static Value *aot_index_get_ib_slow(Value *target, double d);
+static inline Value *aot_index_borrow_ib(Value *target, long k) {
+    if (__builtin_expect(target != NULL && target->type == VAL_LIST
+                         && k >= 0 && k < (long)target->data.list.count, 1)) {
+        Value *r = target->data.list.items[k];
+        if (r) return r;
+    }
+    if (target && target->type == VAL_LIST)
+        rt_error(EK_INDEX, g_trace_current_line, "index %ld out of range (list length %d)", k, target->data.list.count);
+    else
+        rt_error(EK_TYPE, g_trace_current_line, "cannot index %s", target ? val_type_name(target->type) : "null");
+    return NULL;
+}
+/* (round 171, #204 half 2) STATEMENT-SCOPED TEMPORARIES. An owned Value
+ * built for a compiled callee's borrowed parameter -- a call result, a
+ * literal, an element or field the emitter could not prove borrowable --
+ * is pushed here and released when the statement that built it ends (or
+ * when a loop condition has been tested, or before a return's value is
+ * handed back). The callee stores what it keeps with its own incref, so
+ * the release is exact. Before this the temporary was simply never
+ * released: a refcount that only grew, invisible to RSS, LSan and the
+ * leak tier. */
+static __thread Value **aot_tmp_v = NULL; static __thread int aot_tmp_n = 0, aot_tmp_cap = 0;
+static inline Value *aot_tmp(Value *v) {
+    if (aot_tmp_n == aot_tmp_cap) {
+        aot_tmp_cap = aot_tmp_cap ? aot_tmp_cap * 2 : 16;
+        aot_tmp_v = (Value **)xrealloc(aot_tmp_v, (size_t)aot_tmp_cap * sizeof(Value *));
+    }
+    aot_tmp_v[aot_tmp_n++] = v;
+    return v;
+}
+static inline void aot_tmp_drain(void) {
+    while (aot_tmp_n > 0) { Value *v = aot_tmp_v[--aot_tmp_n]; if (v) val_decref(v); }
+}
+static inline int aot_tmp_mark(void) { return aot_tmp_n; }
+static inline void aot_tmp_drain_to(int m) {
+    while (aot_tmp_n > m) { Value *v = aot_tmp_v[--aot_tmp_n]; if (v) val_decref(v); }
+}
+static void aot_index_set_ib(Value *target, double d, Value *val);
+static inline void aot_index_set_num_ib(Value *target, double d, double v) {
+    if (target) {
+        int i;
+        if (target->type == VAL_LIST && aot_idx_is_int(d, &i)
+            && aot_idx_resolve(&i, target->data.list.count)) {
+            Value *old = target->data.list.items[i];
+            if (old && old->type == VAL_NUM && old->refcount == 1 && !old->arena) {
+                old->data.num = num_guard(v);
+                return;
+            }
+        }
+    }
+    aot_index_set_ib(target, d, make_num(v));
+}
 static void aot_index_set_ib(Value *target, double d, Value *val) {
     int i;
     if (target && target->type == VAL_LIST) {
         if (!aot_idx_is_int(d, &i))
-            rt_error(EK_VALUE, 0, "index must be an integer, got %g", d);
+            rt_error(EK_VALUE, g_trace_current_line, "index must be an integer, got %g", d);
         else if (aot_idx_resolve(&i, target->data.list.count)) {
             Value *old = target->data.list.items[i];
-            target->data.list.items[i] = val; val = NULL;   /* adopt */
+            /* (round 107) #873: an arena value stored into a HEAP list must be
+             * PROMOTED, exactly as OP_INDEX_SET / set_at / list_append do. The
+             * adopted arena pointer dangled after arena_reset and the next
+             * arena user's allocation landed in the slot -- wrong value, wrong
+             * type, then a free() abort (t198). Same shape as aot_lv_set:
+             * promote, adopt the promoted ref, drop val's below. */
+            Value *nv = promote_if_arena(val);
+            if (nv == val) { target->data.list.items[i] = val; val = NULL; }   /* adopt */
+            else target->data.list.items[i] = nv;   /* fresh heap ref; the arena val is dropped below */
             if (old) val_decref(old);
         } else
-            rt_error(EK_INDEX, 0, "index %d out of range (list length %d)", i, target->data.list.count);
+            rt_error(EK_INDEX, g_trace_current_line, "index %d out of range (list length %d)", i, target->data.list.count);
     } else if (target && target->type == VAL_BUFFER) {
         if (val && val->type == VAL_NUM) {
             if (!aot_idx_is_int(d, &i))
-                rt_error(EK_VALUE, 0, "index must be an integer, got %g", d);
+                rt_error(EK_VALUE, g_trace_current_line, "index must be an integer, got %g", d);
             else if (aot_idx_resolve(&i, target->data.buffer.count))
                 target->data.buffer.data[i] = val->data.num;
             else
-                rt_error(EK_INDEX, 0, "buffer index %d out of range (length %d)", i, target->data.buffer.count);
+                rt_error(EK_INDEX, g_trace_current_line, "buffer index %d out of range (length %d)", i, target->data.buffer.count);
         } else
-            rt_error(EK_TYPE, 0, "buffer elements must be numbers");
+            rt_error(EK_TYPE, g_trace_current_line, "buffer elements must be numbers");
     } else {
-        rt_error(EK_TYPE, 0, "cannot index-assign into %s",
+        rt_error(EK_TYPE, g_trace_current_line, "cannot index %s for assignment",
                  target ? val_type_name(target->type) : "null");
     }
     if (val) val_decref(val);
@@ -1301,29 +2014,29 @@ static Value *aot_index_get_i(Value *target, double d) {
     int i;
     if (target->type == VAL_LIST) {
         if (!aot_idx_is_int(d, &i))
-            rt_error(EK_VALUE, 0, "index must be an integer, got %g", d);
+            rt_error(EK_VALUE, g_trace_current_line, "index must be an integer, got %g", d);
         else if (aot_idx_resolve(&i, target->data.list.count)) {
             result = target->data.list.items[i]; val_incref(result);
         } else
-            rt_error(EK_INDEX, 0, "index %d out of range (list length %d)", i, target->data.list.count);
+            rt_error(EK_INDEX, g_trace_current_line, "index %d out of range (list length %d)", i, target->data.list.count);
     } else if (target->type == VAL_STR) {
         if (!aot_idx_is_int(d, &i))
-            rt_error(EK_VALUE, 0, "index must be an integer, got %g", d);
+            rt_error(EK_VALUE, g_trace_current_line, "index must be an integer, got %g", d);
         else if (aot_idx_resolve(&i, (int)strlen(target->data.str))) {
             char b[2] = { target->data.str[i], 0 }; result = make_str(b);
         } else
-            rt_error(EK_INDEX, 0, "string index %d out of range (length %d)", i, (int)strlen(target->data.str));
+            rt_error(EK_INDEX, g_trace_current_line, "string index %d out of range (length %d)", i, (int)strlen(target->data.str));
     } else if (target->type == VAL_BUFFER) {
         if (!aot_idx_is_int(d, &i))
-            rt_error(EK_VALUE, 0, "index must be an integer, got %g", d);
+            rt_error(EK_VALUE, g_trace_current_line, "index must be an integer, got %g", d);
         else if (aot_idx_resolve(&i, target->data.buffer.count))
             result = make_num(target->data.buffer.data[i]);
         else
-            rt_error(EK_INDEX, 0, "buffer index %d out of range (length %d)", i, target->data.buffer.count);
+            rt_error(EK_INDEX, g_trace_current_line, "buffer index %d out of range (length %d)", i, target->data.buffer.count);
     } else {
         /* A VAL_DICT with a numeric index falls here in the oracle too: its
          * dict arm requires VAL_STR, so the final else raises. */
-        rt_error(EK_TYPE, 0, "cannot index %s", val_type_name(target->type));
+        rt_error(EK_TYPE, g_trace_current_line, "cannot index %s", val_type_name(target->type));
     }
     val_decref(target);
     return result ? result : make_null();
@@ -1334,35 +2047,35 @@ static Value *aot_index_get(Value *target, Value *idx) {
     if (target->type == VAL_LIST && idx->type == VAL_NUM) {
         int i;
         if (!aot_idx_is_int(idx->data.num, &i))
-            rt_error(EK_VALUE, 0, "index must be an integer, got %g", idx->data.num);
+            rt_error(EK_VALUE, g_trace_current_line, "index must be an integer, got %g", idx->data.num);
         else if (aot_idx_resolve(&i, target->data.list.count)) {
             result = target->data.list.items[i]; val_incref(result);
         } else
-            rt_error(EK_INDEX, 0, "index %d out of range (list length %d)", i, target->data.list.count);
+            rt_error(EK_INDEX, g_trace_current_line, "index %d out of range (list length %d)", i, target->data.list.count);
     } else if (target->type == VAL_DICT && idx->type == VAL_STR) {
         Value *v = dict_get(target, idx->data.str);
         if (v) { result = v; val_incref(result); }
     } else if (target->type == VAL_STR && idx->type == VAL_NUM) {
         int i;
         if (!aot_idx_is_int(idx->data.num, &i))
-            rt_error(EK_VALUE, 0, "index must be an integer, got %g", idx->data.num);
+            rt_error(EK_VALUE, g_trace_current_line, "index must be an integer, got %g", idx->data.num);
         else if (aot_idx_resolve(&i, (int)strlen(target->data.str))) {
             char b[2] = { target->data.str[i], 0 }; result = make_str(b);
         } else
-            rt_error(EK_INDEX, 0, "string index %d out of range (length %d)", i, (int)strlen(target->data.str));
+            rt_error(EK_INDEX, g_trace_current_line, "string index %d out of range (length %d)", i, (int)strlen(target->data.str));
     } else if (target->type == VAL_BUFFER && idx->type == VAL_NUM) {
         int i;
         if (!aot_idx_is_int(idx->data.num, &i))
-            rt_error(EK_VALUE, 0, "index must be an integer, got %g", idx->data.num);
+            rt_error(EK_VALUE, g_trace_current_line, "index must be an integer, got %g", idx->data.num);
         else if (aot_idx_resolve(&i, target->data.buffer.count))
             result = make_num(target->data.buffer.data[i]);
         else
-            rt_error(EK_INDEX, 0, "buffer index %d out of range (length %d)", i, target->data.buffer.count);
+            rt_error(EK_INDEX, g_trace_current_line, "buffer index %d out of range (length %d)", i, target->data.buffer.count);
     } else {
         /* The oracle's final else (vm.c ~2018). Missing here, an unindexable
          * target — `null["k"]` above all, the index-side twin of the #898 dot
          * read — answered null instead of raising. */
-        rt_error(EK_TYPE, 0, "cannot index %s", val_type_name(target->type));
+        rt_error(EK_TYPE, g_trace_current_line, "cannot index %s", val_type_name(target->type));
     }
     val_decref(target);
     val_decref(idx);
@@ -1393,25 +2106,33 @@ static void aot_index_set_i(Value *target, double d, Value *val) {
     int i;
     if (target && target->type == VAL_LIST) {
         if (!aot_idx_is_int(d, &i))
-            rt_error(EK_VALUE, 0, "index must be an integer, got %g", d);
+            rt_error(EK_VALUE, g_trace_current_line, "index must be an integer, got %g", d);
         else if (aot_idx_resolve(&i, target->data.list.count)) {
             Value *old = target->data.list.items[i];
-            target->data.list.items[i] = val; val = NULL;   /* adopt */
+            /* (round 107) #873: an arena value stored into a HEAP list must be
+             * PROMOTED, exactly as OP_INDEX_SET / set_at / list_append do. The
+             * adopted arena pointer dangled after arena_reset and the next
+             * arena user's allocation landed in the slot -- wrong value, wrong
+             * type, then a free() abort (t198). Same shape as aot_lv_set:
+             * promote, adopt the promoted ref, drop val's below. */
+            Value *nv = promote_if_arena(val);
+            if (nv == val) { target->data.list.items[i] = val; val = NULL; }   /* adopt */
+            else target->data.list.items[i] = nv;   /* fresh heap ref; the arena val is dropped below */
             if (old) val_decref(old);
         } else
-            rt_error(EK_INDEX, 0, "index %d out of range (list length %d)", i, target->data.list.count);
+            rt_error(EK_INDEX, g_trace_current_line, "index %d out of range (list length %d)", i, target->data.list.count);
     } else if (target && target->type == VAL_BUFFER) {
         if (val && val->type == VAL_NUM) {
             if (!aot_idx_is_int(d, &i))
-                rt_error(EK_VALUE, 0, "index must be an integer, got %g", d);
+                rt_error(EK_VALUE, g_trace_current_line, "index must be an integer, got %g", d);
             else if (aot_idx_resolve(&i, target->data.buffer.count))
                 target->data.buffer.data[i] = val->data.num;
             else
-                rt_error(EK_INDEX, 0, "buffer index %d out of range (length %d)", i, target->data.buffer.count);
+                rt_error(EK_INDEX, g_trace_current_line, "buffer index %d out of range (length %d)", i, target->data.buffer.count);
         } else
-            rt_error(EK_TYPE, 0, "buffer elements must be numbers");
+            rt_error(EK_TYPE, g_trace_current_line, "buffer elements must be numbers");
     } else {
-        rt_error(EK_TYPE, 0, "cannot index-assign into %s",
+        rt_error(EK_TYPE, g_trace_current_line, "cannot index %s for assignment",
                  target ? val_type_name(target->type) : "null");
     }
     if (val) val_decref(val);
@@ -1422,28 +2143,36 @@ static void aot_index_set(Value *target, Value *idx, Value *val) {
     if (target && target->type == VAL_LIST && idx && idx->type == VAL_NUM) {
         int i;
         if (!aot_idx_is_int(idx->data.num, &i))
-            rt_error(EK_VALUE, 0, "index must be an integer, got %g", idx->data.num);
+            rt_error(EK_VALUE, g_trace_current_line, "index must be an integer, got %g", idx->data.num);
         else if (aot_idx_resolve(&i, target->data.list.count)) {
             Value *old = target->data.list.items[i];
-            target->data.list.items[i] = val; val = NULL;   /* adopt */
+            /* (round 107) #873: an arena value stored into a HEAP list must be
+             * PROMOTED, exactly as OP_INDEX_SET / set_at / list_append do. The
+             * adopted arena pointer dangled after arena_reset and the next
+             * arena user's allocation landed in the slot -- wrong value, wrong
+             * type, then a free() abort (t198). Same shape as aot_lv_set:
+             * promote, adopt the promoted ref, drop val's below. */
+            Value *nv = promote_if_arena(val);
+            if (nv == val) { target->data.list.items[i] = val; val = NULL; }   /* adopt */
+            else target->data.list.items[i] = nv;   /* fresh heap ref; the arena val is dropped below */
             if (old) val_decref(old);
         } else
-            rt_error(EK_INDEX, 0, "index %d out of range (list length %d)", i, target->data.list.count);
+            rt_error(EK_INDEX, g_trace_current_line, "index %d out of range (list length %d)", i, target->data.list.count);
     } else if (target && target->type == VAL_DICT && idx && idx->type == VAL_STR) {
         dict_set_owned(target, idx->data.str, val); val = NULL;
     } else if (target && target->type == VAL_BUFFER && idx && idx->type == VAL_NUM) {
         if (val && val->type == VAL_NUM) {
             int i;
             if (!aot_idx_is_int(idx->data.num, &i))
-                rt_error(EK_VALUE, 0, "index must be an integer, got %g", idx->data.num);
+                rt_error(EK_VALUE, g_trace_current_line, "index must be an integer, got %g", idx->data.num);
             else if (aot_idx_resolve(&i, target->data.buffer.count))
                 target->data.buffer.data[i] = val->data.num;
             else
-                rt_error(EK_INDEX, 0, "buffer index %d out of range (length %d)", i, target->data.buffer.count);
+                rt_error(EK_INDEX, g_trace_current_line, "buffer index %d out of range (length %d)", i, target->data.buffer.count);
         } else
-            rt_error(EK_TYPE, 0, "buffer elements must be numbers");
+            rt_error(EK_TYPE, g_trace_current_line, "buffer elements must be numbers");
     } else {
-        rt_error(EK_TYPE, 0, "cannot index-assign into %s",
+        rt_error(EK_TYPE, g_trace_current_line, "cannot index %s for assignment",
                  target ? val_type_name(target->type) : "null");
     }
     if (val) val_decref(val);
@@ -1468,7 +2197,7 @@ static Value *aot_dot_get(Value *target, const char *key) {
         Value *v = dict_get(target, key);
         if (v) { result = v; val_incref(v); }
     } else if (target) {
-        rt_error(EK_TYPE, 0, "cannot access field '%s' on %s",
+        rt_error(EK_TYPE, g_trace_current_line, "cannot access field '%s' on %s",
                  key, val_type_name(target->type));
     }
     if (target) val_decref(target);
@@ -1513,7 +2242,7 @@ static inline Value *aot_dot_borrow_ic(Value *target, const char *key,
         return (i >= 0) ? target->data.dict.vals[i] : NULL;
     }
     if (target)
-        rt_error(EK_TYPE, 0, "cannot access field '%s' on %s",
+        rt_error(EK_TYPE, g_trace_current_line, "cannot access field '%s' on %s",
                  key, val_type_name(target->type));
     return NULL;   /* null target reads null, silently — the #898 contract */
 }
@@ -1524,8 +2253,8 @@ static inline Value *aot_dot_borrow_ic(Value *target, const char *key,
  * runtime across val_incref/val_decref once the boxes were gone. These do not
  * consume the target; the RESULT keeps the same ownership as the form each
  * mirrors, so only the emitter's target expression changes. */
-static Value *aot_dot_get_tb_ic(Value *target, const char *key,
-                                int *ic, const char **ick) {
+static __attribute__((noinline)) Value *aot_dot_get_tb_slow(Value *target, const char *key,
+                                                           int *ic, const char **ick) {
     if (target && target->type == VAL_DICT) {
         int i = aot_ic_slot(target, key, ic, ick);
         Value *v = (i >= 0) ? target->data.dict.vals[i] : NULL;
@@ -1533,13 +2262,13 @@ static Value *aot_dot_get_tb_ic(Value *target, const char *key,
         return make_null();
     }
     if (target)
-        rt_error(EK_TYPE, 0, "cannot access field '%s' on %s",
+        rt_error(EK_TYPE, g_trace_current_line, "cannot access field '%s' on %s",
                  key, val_type_name(target->type));
     return make_null();
 }
 
-static double aot_dot_num_tb_ic(Value *target, const char *key,
-                                int *ic, const char **ick, const char *site) {
+static __attribute__((noinline)) double aot_dot_num_tb_slow(Value *target, const char *key,
+                                                           int *ic, const char **ick, const char *site) {
     if (target && target->type == VAL_DICT) {
         int i = aot_ic_slot(target, key, ic, ick);
         Value *v = (i >= 0) ? target->data.dict.vals[i] : NULL;
@@ -1549,14 +2278,14 @@ static double aot_dot_num_tb_ic(Value *target, const char *key,
         exit(1);
     }
     if (target)
-        rt_error(EK_TYPE, 0, "cannot access field '%s' on %s",
+        rt_error(EK_TYPE, g_trace_current_line, "cannot access field '%s' on %s",
                  key, val_type_name(target->type));
     fprintf(stderr, "non-numeric value in a numeric context at %s (null)\n", site);
     exit(1);
 }
 
-static void aot_dot_set_num_tb_ic(Value *target, const char *key, double d,
-                                  int *ic, const char **ick) {
+static __attribute__((noinline)) void aot_dot_set_num_tb_slow(Value *target, const char *key, double d,
+                                                             int *ic, const char **ick) {
     d = num_guard(d);
     if (target && target->type == VAL_DICT) {
         int i = aot_ic_slot(target, key, ic, ick);
@@ -1573,7 +2302,7 @@ static void aot_dot_set_num_tb_ic(Value *target, const char *key, double d,
             dict_set_owned(target, key, make_num(d));
         }
     } else if (target && target->type != VAL_NULL) {
-        rt_error(EK_TYPE, 0, "cannot set field '%s' on %s",
+        rt_error(EK_TYPE, g_trace_current_line, "cannot set field '%s' on %s",
                  key, val_type_name(target->type));
     }
 }
@@ -1593,7 +2322,7 @@ static double aot_dot_num_ic(Value *target, const char *key,
         exit(1);
     }
     if (target) {
-        rt_error(EK_TYPE, 0, "cannot access field '%s' on %s",
+        rt_error(EK_TYPE, g_trace_current_line, "cannot access field '%s' on %s",
                  key, val_type_name(target->type));
     }
     fprintf(stderr, "non-numeric value in a numeric context at %s (null)\n", site);
@@ -1615,7 +2344,7 @@ static Value *aot_dot_get_ic(Value *target, const char *key,
         return v ? v : make_null();
     }
     if (target) {
-        rt_error(EK_TYPE, 0, "cannot access field '%s' on %s",
+        rt_error(EK_TYPE, g_trace_current_line, "cannot access field '%s' on %s",
                  key, val_type_name(target->type));
         val_decref(target);
     }
@@ -1652,7 +2381,7 @@ static void aot_dot_set_num_ic(Value *target, const char *key, double d,
             dict_set_owned(target, key, make_num(d));
         }
     } else if (target && target->type != VAL_NULL) {
-        rt_error(EK_TYPE, 0, "cannot set field '%s' on %s",
+        rt_error(EK_TYPE, g_trace_current_line, "cannot set field '%s' on %s",
                  key, val_type_name(target->type));
     }
     if (target) val_decref(target);
@@ -1681,7 +2410,7 @@ static void aot_dot_set_ic(Value *target, const char *key, Value *val,
         }
     } else {
         if (target && target->type != VAL_NULL)
-            rt_error(EK_TYPE, 0, "cannot set field '%s' on %s",
+            rt_error(EK_TYPE, g_trace_current_line, "cannot set field '%s' on %s",
                      key, val_type_name(target->type));
         if (val) val_decref(val);
     }
@@ -1693,24 +2422,36 @@ static void aot_dot_set(Value *target, const char *key, Value *val) {
         dict_set_owned(target, key, val);   /* adopts val's ref */
     } else {
         if (target && target->type != VAL_NULL)
-            rt_error(EK_TYPE, 0, "cannot set field '%s' on %s",
+            rt_error(EK_TYPE, g_trace_current_line, "cannot set field '%s' on %s",
                      key, val_type_name(target->type));
         if (val) val_decref(val);
     }
     if (target) val_decref(target);
 }
 
-/* ---- for-loop iteration over a list/buffer (range materializes to a list) --- */
+/* ---- for-loop iteration over a list/buffer (range materializes to a list) ---
+ * Round 71: the first version conflated "not iterable" with "iterable of
+ * length 0" — a `for` over a runtime number/string/null/dict silently ran
+ * zero iterations and execution continued (VM: "'for' requires a list or
+ * buffer, got num", rc 1; AOT printed the untouched accumulator, rc 0 — a
+ * silent wrong number). The iterable's kind is a runtime fact (`xs[1]`),
+ * so no static refusal can stand in for this check. */
 static long aot_iter_len(Value *v) {
-    if (!v) return 0;
-    if (v->type == VAL_LIST)   return v->data.list.count;
-    if (v->type == VAL_BUFFER) return v->data.buffer.count;
-    return 0;
+    if (v) {
+        if (v->type == VAL_LIST)   return v->data.list.count;
+        if (v->type == VAL_BUFFER) return v->data.buffer.count;
+    }
+    rt_error(EK_TYPE, g_trace_current_line,
+             "'for' requires a list or buffer, got %s",
+             v ? val_type_name(v->type) : "null");
+    return 0; /* unreachable */
 }
 static Value *aot_iter_get(Value *v, long k) {   /* owned element k */
     if (v->type == VAL_LIST)   { Value *e = v->data.list.items[k]; val_incref(e); return e; }
     if (v->type == VAL_BUFFER) return make_num(v->data.buffer.data[k]);
-    return make_null();
+    rt_error(EK_TYPE, g_trace_current_line,
+             "'for' requires a list or buffer, got %s", val_type_name(v->type));
+    return make_null(); /* unreachable */
 }
 
 /* Same as aot_call_name with the callee resolution cached per site. The AOT
@@ -1735,6 +2476,95 @@ static Value *aot_call_name_ic(Env *g, const char *name, Value *arg, AotNameIC *
  * res == ctx case is builtin_dispatch's documented raw borrow (it passes
  * caller_owns_arg=1 to vm_borrow_compensate precisely so the caller settles
  * it), so ctx's ref transfers to the result instead of being dropped. */
+/* (round 164) the generic dispatch with a Value key: the builtin runs its
+ * own key checks ("key must be a number", "must be an integer") so the
+ * shadow fast path can hand it anything it could not prove. Consumes all
+ * three, returns owned, like aot_dispatch. */
+static Value *aot_dispatch_v(Value *table, Value *keyv, Value *ctx) {
+    Value *items[3] = { table, keyv, ctx };
+    Value lst;
+    memset(&lst, 0, sizeof lst);
+    lst.type = VAL_LIST; lst.arena = 1;
+    lst.data.list.items = items; lst.data.list.count = 3; lst.data.list.capacity = 3;
+    Value *res = builtin_dispatch(&lst);
+    if (g_exit_requested) exit(g_exit_code);
+    if (g_has_error) aot_error_exit();
+    if (res == ctx || res == table || res == keyv) val_incref(res);
+    val_decref(table); val_decref(keyv); val_decref(ctx);
+    return res;
+}
+/* (round 164) shadow dispatch: a direct C call when the key is an in-range
+ * integer with a compiled handler in the shadow slot (the slot is written in
+ * lockstep with the Value table at every store site); otherwise the
+ * builtin's path, byte-for-byte. ctx is passed BORROWED, as compiled code
+ * passes every Value* argument to a compiled callee. */
+/* (round 169) the shadow dispatch in a NUMERIC context: the direct call's
+ * double is returned unboxed (no make_num per emulated instruction); the
+ * builtin's path is unboxed with the checked unbox, which is loud where
+ * the VM would carry a null into the next operation (ouroboros#202). */
+static Value *aot_dispatch_v(Value *table, Value *keyv, Value *ctx);
+static inline double aot_dispatch_sh_num(Value *table, Value *keyv, Value *ctx,
+                                         double (**sh)(Value*), int shn, const char *site) {
+    if (shn >= 0 && keyv && keyv->type == VAL_NUM && table && table->type == VAL_LIST) {
+        double d = keyv->data.num; int k = (int)d;
+        if ((double)k == d && k >= 0 && k < shn && k < table->data.list.count && sh[k]) {
+            double r = sh[k](ctx);
+            val_decref(keyv); val_decref(table); val_decref(ctx);
+            return r;
+        }
+    }
+    /* the builtin's path answered; a number unboxes, anything else -- the
+     * null of a missing entry, a handler that is not compiled -- raises a
+     * CATCHABLE type error here. The VM would carry the value into the
+     * consuming operator and raise that operator's own message; the kind
+     * (type_mismatch) agrees, the text names this site instead (#202). */
+    Value *r = aot_dispatch_v(table, keyv, ctx);
+    if (r && r->type == VAL_NUM) { double d = r->data.num; val_decref(r); return d; }
+    rt_error(EK_TYPE, g_trace_current_line, "%s: dispatch answered %s where a number was needed",
+             site, r ? val_type_name(r->type) : "null");
+    if (r) val_decref(r);
+    return 0;
+}
+/* (round 174) BORROWED, UNBOXED shadow dispatch: the table and the context
+ * arrive borrowed and the key as a C double, so the hit path is a bounds
+ * check and an indirect call -- no make_num, no incref/decref triple. DMG's
+ * headless loop paid two incref'd name reads and a heap box per emulated
+ * instruction for this call alone. A miss re-enters the consuming path with
+ * the operands owned as it expects. */
+static inline double aot_dispatch_sh_num_b(Value *table, double d, Value *ctx,
+                                           double (**sh)(Value*), int shn, const char *site) {
+    if (shn >= 0 && table && table->type == VAL_LIST) {
+        int k = (int)d;
+        if ((double)k == d && k >= 0 && k < shn && k < table->data.list.count && sh[k])
+            return sh[k](ctx);
+    }
+    val_incref(table); if (ctx) val_incref(ctx);
+    return aot_dispatch_sh_num(table, make_num(d), ctx, sh, shn, site);
+}
+/* (round 175) `sign_extend of [val, bits]` with both operands provably
+ * numeric: the VM's builtin_sign_extend body verbatim (builtins.c), minus
+ * the list packing, the two boxes and the dispatch. DMG's JR family and
+ * ADD SP,r8 / LD HL,SP+r8 call it once per relative-jump instruction. */
+static inline double aot_sign_extend(double val, double bitsd) {
+    int bits = (int)bitsd;
+    if (bits <= 0 || bits > 32) return num_guard(val);
+    int64_t mask = 1LL << (bits - 1);
+    if ((int64_t)val & mask)
+        return num_guard((double)((int64_t)val - (1LL << bits)));
+    return num_guard(val);
+}
+static inline Value *aot_dispatch_sh(Value *table, Value *keyv, Value *ctx,
+                                     double (**sh)(Value*), int shn) {
+    if (shn >= 0 && keyv && keyv->type == VAL_NUM && table && table->type == VAL_LIST) {
+        double d = keyv->data.num; int k = (int)d;
+        if ((double)k == d && k >= 0 && k < shn && k < table->data.list.count && sh[k]) {
+            double r = sh[k](ctx);
+            val_decref(keyv); val_decref(table); val_decref(ctx);
+            return make_num(r);
+        }
+    }
+    return aot_dispatch_v(table, keyv, ctx);
+}
 static Value *aot_dispatch(Value *table, double key, Value *ctx) {
     Value keyv;
     memset(&keyv, 0, sizeof keyv);
@@ -1765,9 +2595,17 @@ static Value *aot_dispatch(Value *table, double key, Value *ctx) {
 
 static Value *aot_call_name(Env *g, const char *name, Value *arg) {
     Value *fn = env_get(g, name);
-    if (!fn) { fprintf(stderr, "aot: undefined function '%s'\n", name); exit(1); }
+    if (!fn) { rt_error(EK_UNDEFINED_NAME, g_trace_current_line, "undefined variable '%s'", name); aot_error_exit(); return NULL; }
+    /* Round 71: the non-callable guard aot_call_value already had, mirrored
+     * here (the round-70 sibling-asymmetry pattern). call_eigs_fn returns
+     * make_null() for a non-FN/non-BUILTIN with NO error flag, so calling a
+     * string through an alias printed null, rc 0, where the VM raises
+     * "cannot call str" rc 1. */
+    if (fn->type != VAL_BUILTIN && fn->type != VAL_FN)
+        rt_error(EK_TYPE, g_trace_current_line, "cannot call %s",
+                 val_type_name(fn->type));
     Value *res;
-    if (fn->type == VAL_BUILTIN) res = fn->data.builtin(arg);
+    if (fn->type == VAL_BUILTIN) res = aot_call_vm_builtin(fn, arg);
     else                         res = call_eigs_fn(fn, arg);
     /* `exit of N` unwinds via g_has_error TOO (builtin_exit sets both flags);
      * it is a clean requested exit, not an error — honor the code, print
@@ -1794,12 +2632,159 @@ static Value *aot_call_name(Env *g, const char *name, Value *arg) {
     return res;
 }
 
+/* One `match` case comparison (#140 follow-on). The VM compiles match as
+ * compare-and-jump using ordinary equality, so a non-numeric subject is just
+ * values_equal. The PATTERN is owned (emit_val's result) and consumed here;
+ * the SUBJECT is borrowed, because it is compared against every pattern in
+ * turn and released once by the caller. */
+static inline int aot_match_eq(Value *subj, Value *pat) {
+    int e = values_equal(subj, pat);
+    val_decref(pat);
+    return e;
+}
+
+/* Borrowed element k of a value-wrapper's argument list (#140). For arity 1
+ * the builtin convention hands the value itself as __a; for arity > 1 it hands
+ * a LIST, and user functions take boxed parameters BORROWED (see emit_args),
+ * so this must not incref. Out of range answers NULL, which the callee's own
+ * checks then report — the VM likewise sees a missing argument as null. */
+/* (round 142, #175) The argument value of a call THROUGH A VALUE (the
+ * __wrap_ path). A bare list is the argument list (element k); anything
+ * else is the single argument, so k == 0 yields it -- the old form
+ * returned NULL for every k of a non-list, so `fn of "x"` bound a to NULL
+ * (silent null) and a numeric parameter's unbox dereferenced it
+ * (segfault, rc 139). An unsupplied slot is the VM's null: a shared null
+ * Value, never NULL, so the parameter's own check raises. */
+static Value *aot_arg_missing(void) {
+    static Value *nul = NULL;
+    if (!nul) nul = make_null();
+    return nul;
+}
+static inline Value *aot_arg_at(Value *a, int k) {
+    if (a && a->type == VAL_LIST) {
+        if (k >= 0 && k < a->data.list.count) return a->data.list.items[k];
+        return aot_arg_missing();
+    }
+    if (a && k == 0) return a;
+    return aot_arg_missing();
+}
+
+/* Call a callee that is an EXPRESSION rather than a name (#140) — `m.fn of x`,
+ * `table[i] of x`. That is how EigenScript's module pattern works: `import x`
+ * binds a dict of functions and every use is a dot call, so requiring a
+ * statically-known name made every stdlib-using program un-compilable.
+ *
+ * Identical to aot_call_name from the dispatch onward; only the resolution
+ * differs. `fn` arrives OWNED (emit_val's result) and is consumed here. A
+ * non-callable raises the VM's own message rather than being coerced. */
+static Value *aot_call_value(Value *fn, Value *arg) {
+    if (!fn || (fn->type != VAL_BUILTIN && fn->type != VAL_FN)) {
+        rt_error(EK_TYPE, g_trace_current_line, "cannot call %s",
+                 fn ? val_type_name(fn->type) : "null");
+    }
+    Value *res;
+    if (fn->type == VAL_BUILTIN) res = aot_call_vm_builtin(fn, arg);
+    else                         res = call_eigs_fn(fn, arg);
+    if (g_exit_requested) exit(g_exit_code);
+    if (g_has_error) aot_error_exit();
+    if (!res) { val_decref(arg); val_decref(fn); return make_null(); }
+    /* aot_call_name's direct-borrow compensation, verbatim. */
+    if (res == arg) { val_decref(fn); return res; }
+    if (arg && arg->type == VAL_LIST) {
+        for (int i = 0; i < arg->data.list.count; i++) {
+            if (arg->data.list.items[i] == res) { val_incref(res); break; }
+        }
+    }
+    val_decref(arg);
+    val_decref(fn);
+    return res;
+}
+
+/* (round 95) CALLEE-BEFORE-ARGUMENT. The VM resolves the callee first: an
+ * undefined name dies with the argument NEVER evaluated (measured), and a
+ * name rebound by the argument's own call still dispatches to the binding
+ * that was live BEFORE it -- `f is one / r is f of (g of 5)` where g does
+ * `f is two` gives 6 in the VM and gave 105 here, rc 0 both sides. The
+ * resolution used to live INSIDE the call helper, so it happened after the
+ * argument by construction rather than by gcc's mood.
+ *
+ * Split in two: resolve (+ the undefined check, which the VM performs at
+ * the load, before the argument) and dispatch (+ the callability check,
+ * which the VM performs at the call, after it). The incref between them is
+ * load-bearing for the same reason round 93 gave for slice targets -- the
+ * slot read is a borrow while the VM holds an owned callee across the
+ * argument's evaluation. */
+static Value *aot_call_resolve(Env *g, const char *name, AotNameIC *c) {
+    EigsSlot *sp = aot_name_slot(g, name, c);
+    Value *fn = sp ? aot_slot_value(sp) : NULL;
+    if (!fn) { rt_error(EK_UNDEFINED_NAME, g_trace_current_line, "undefined variable '%s'", name); aot_error_exit(); return NULL; }
+    val_incref(fn);
+    return fn;
+}
+/* (round 144, #191) Builtins that RUN THE VM (sandbox_run, vm_run_bytecode)
+ * execute under the linked interpreter, where the VM's own error printing
+ * is safe and is what the oracle prints: a descriptor's uncaught error
+ * prints "Error line N: ..." (CHECK_ERROR's deferred flush) before
+ * sandbox_run turns it into {ok: 0}. aot_boot's process-wide g_try_depth
+ * = 1 (the pretend-caught that keeps rt_error off the NULL VM) silenced
+ * those prints too -- 33 stderr lines missing on corpus test_sandbox_budget.
+ * Inside such a call the depth is 0, as in the VM; an error that ESCAPES
+ * the call was already printed by the VM (immediately, or via the flush),
+ * so the exit here does not print it a second time. */
+Value *builtin_sandbox_run(Value *arg);
+Value *builtin_vm_run_bytecode(Value *arg);
+static Value *aot_call_vm_builtin(Value *fn, Value *arg) {
+    if (fn->data.builtin == builtin_sandbox_run || fn->data.builtin == builtin_vm_run_bytecode) {
+        /* (round 153) inside an AOT `try` the VM must not print either:
+         * the depth mirrors an enclosing handler, as the VM's g_try_depth
+         * counts enclosing try blocks. */
+        g_try_depth = (aot_try_n > 0) ? 1 : 0;
+        /* the VM reports a descriptor's error at the HOST call line
+         * (g_vm.current_line, kept fresh by the host's OP_LINE); the AOT's
+         * stamp is that line, so hand it to the VM before the run */
+        if (eigs_current && eigs_current->vm) g_vm.current_line = g_trace_current_line;
+        Value *res = fn->data.builtin(arg);
+        g_try_depth = 1;
+        if (g_exit_requested) exit(g_exit_code);
+        if (g_has_error) {
+            if (g_error_print_pending) { g_error_print_pending = 0; fprintf(stderr, "%s\n", g_error_msg); }
+            exit(1);
+        }
+        return res;
+    }
+    return fn->data.builtin(arg);
+}
+
+static Value *aot_call_dispatch(Value *fn, Value *arg) {
+    if (fn->type != VAL_BUILTIN && fn->type != VAL_FN)
+        rt_error(EK_TYPE, g_trace_current_line, "cannot call %s", val_type_name(fn->type));
+    Value *res;
+    if (fn->type == VAL_BUILTIN) res = aot_call_vm_builtin(fn, arg);
+    else                         res = call_eigs_fn(fn, arg);
+    if (g_exit_requested) exit(g_exit_code);
+    if (g_has_error) aot_error_exit();
+    if (!res) { val_decref(arg); val_decref(fn); return make_null(); }
+    if (res == arg) { val_decref(fn); return res; }
+    if (arg && arg->type == VAL_LIST) {
+        for (int i = 0; i < arg->data.list.count; i++) {
+            if (arg->data.list.items[i] == res) { val_incref(res); break; }
+        }
+    }
+    val_decref(arg);
+    val_decref(fn);
+    return res;
+}
+
 static Value *aot_call_name_ic(Env *g, const char *name, Value *arg, AotNameIC *c) {
     EigsSlot *sp = aot_name_slot(g, name, c);
     Value *fn = sp ? aot_slot_value(sp) : NULL;
-    if (!fn) { fprintf(stderr, "aot: undefined function '%s'\n", name); exit(1); }
+    if (!fn) { rt_error(EK_UNDEFINED_NAME, g_trace_current_line, "undefined variable '%s'", name); aot_error_exit(); return NULL; }
+    /* Round 71: non-callable guard, see aot_call_name. */
+    if (fn->type != VAL_BUILTIN && fn->type != VAL_FN)
+        rt_error(EK_TYPE, g_trace_current_line, "cannot call %s",
+                 val_type_name(fn->type));
     Value *res;
-    if (fn->type == VAL_BUILTIN) res = fn->data.builtin(arg);
+    if (fn->type == VAL_BUILTIN) res = aot_call_vm_builtin(fn, arg);
     else                         res = call_eigs_fn(fn, arg);
     /* `exit of N` unwinds via g_has_error TOO (builtin_exit sets both flags);
      * it is a clean requested exit, not an error — honor the code, print

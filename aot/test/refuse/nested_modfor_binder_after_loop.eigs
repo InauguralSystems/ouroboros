@@ -1,0 +1,24 @@
+# EXPECT: used after its loop in an observed/traced program
+#
+# Round 66: the round-65 module-binder guard's trigger scan matched only
+# TOP-LEVEL `for` statements while its use-side walker recursed into
+# compounds -- two hand-written walks of "the same" scope (invariant 16b,
+# fifth sighting of the axes lesson, and the same `if 1 == 1:` wrapper
+# shape that bypassed the round-62 kind-flip scan). One wrapper restored
+# the exact phantom the guard was written to kill: VM rc 1 "undefined
+# variable 'i'", AOT printed 8, rc 0, both regimes. The scan is now built
+# on SHARED traversals: a nested-binder collector for the cross-statement
+# half and an intra-statement sibling walker for blocks.
+#
+# Envelope shape: the VM RUNS this (rc 0 -- the post-loop use sits in a
+# dead if arm, so no leaked read ever executes).
+
+x is 5.0
+x is 4.0
+print of (str of stable)
+if 1 == 1:
+    for i in [7, 8]:
+        y is i
+if 1 == 2:
+    print of i
+print of "done"

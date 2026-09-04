@@ -1,6 +1,6 @@
 n is 7
-xs is zeros of n
-ys is zeros of n
+xs is buffer of n
+ys is buffer of n
 i is 0
 loop while i < n:
     xs[i] is i * 2

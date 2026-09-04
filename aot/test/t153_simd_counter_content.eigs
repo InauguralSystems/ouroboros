@@ -1,0 +1,116 @@
+# Round 82: the sibling recognizers admitted counter statements by
+# POSITION and TARGET while the emitters re-synthesized canonical
+# stepping -- outvec's inner increment was never examined at all
+# (d is d + 2 emitted as step-1, every output wrong), the D init's
+# RHS was unchecked (d is 1 emitted as = 0), the outer increment's
+# RHS was unchecked (o is o + 2 emitted as step-1), and rowmap's
+# increment likewise. Four executed silent-wrong shapes, one root:
+# content, not position (the round-81 lesson, sibling recognizers).
+# All four now demote to the scalar path via exact-content checks
+# (is_plain_step1 / is_zero_init) and must stay byte-exact.
+n is 8
+dn is 4
+x is buffer of dn
+w is buffer of 32
+out is buffer of n
+f is 0
+loop while f < dn:
+    x[f] is f * 1.5 + 1.0
+    f is f + 1
+g is 0
+loop while g < 32:
+    w[g] is g * 0.25
+    g is g + 1
+o is 0
+loop while o < n:
+    acc is 0
+    d is 0
+    loop while d < dn:
+        acc is acc + x[d] * w[d * n + o]
+        d is d + 2
+    out[o] is acc
+    o is o + 1
+p is 0
+loop while p < n:
+    print of out[p]
+    p is p + 1
+
+rows is 3
+cols is 4
+src is buffer of 12
+g1 is buffer of cols
+out is buffer of 12
+f is 0
+loop while f < 12:
+    src[f] is f * 0.5 + 1.0
+    f is f + 1
+g is 0
+loop while g < cols:
+    g1[g] is g + 1.0
+    g is g + 1
+i is 0
+loop while i < rows:
+    d2 is 0
+    loop while d2 < cols:
+        out[i * cols + d2] is g1[d2] * src[i * cols + d2]
+        d2 is d2 + 2
+    i is i + 1
+p is 0
+loop while p < 12:
+    print of out[p]
+    p is p + 1
+
+n is 8
+dn is 4
+x is buffer of dn
+w is buffer of 32
+out is buffer of n
+f is 0
+loop while f < dn:
+    x[f] is f * 1.5 + 1.0
+    f is f + 1
+g is 0
+loop while g < 32:
+    w[g] is g * 0.25
+    g is g + 1
+o is 0
+loop while o < n:
+    acc is 0
+    d is 1
+    loop while d < dn:
+        acc is acc + x[d] * w[d * n + o]
+        d is d + 1
+    out[o] is acc
+    o is o + 1
+p is 0
+loop while p < n:
+    print of out[p]
+    p is p + 1
+
+n is 8
+dn is 4
+x is buffer of dn
+w is buffer of 32
+out is buffer of n
+f is 0
+loop while f < dn:
+    x[f] is f * 1.5 + 1.0
+    f is f + 1
+g is 0
+loop while g < 32:
+    w[g] is g * 0.25
+    g is g + 1
+o is 0
+loop while o < n:
+    acc is 0
+    d is 0
+    loop while d < dn:
+        acc is acc + x[d] * w[d * n + o]
+        d is d + 1
+    out[o] is acc
+    o is o + 2
+p is 0
+loop while p < n:
+    print of out[p]
+    p is p + 1
+

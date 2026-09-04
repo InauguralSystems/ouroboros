@@ -1,0 +1,28 @@
+# Round 78: the rowmap variant of t146 -- a constant-index read of
+# the written buffer (out[0]) was invisible to the O-keyed collector
+# and served stale, rc 0. Demotes to scalar, byte-exact.
+# rowmap shape whose VEXPR reads the WRITTEN buffer at a D-INDEPENDENT
+# index (out[0]) -- same collect_ov_bufs blind spot as p1.
+rows is 2
+cols is 6
+src is buffer of 12
+out is buffer of 12
+f is 0
+loop while f < 12:
+    src[f] is 1.0
+    f is f + 1
+h is 0
+loop while h < 12:
+    out[h] is h + 1.0
+    h is h + 1
+i is 0
+loop while i < rows:
+    d2 is 0
+    loop while d2 < cols:
+        out[i * cols + d2] is out[0] + src[i * cols + d2]
+        d2 is d2 + 1
+    i is i + 1
+p is 0
+loop while p < 12:
+    print of out[p]
+    p is p + 1

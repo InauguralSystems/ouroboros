@@ -1,0 +1,36 @@
+# Round 105: a user function named after a recognized builtin was
+# SILENTLY DISCARDED. is_num_expr and emit_num both test the builtin
+# NAME first and reach the g_funcs check only by falling through, so a
+# user's own `define dot(a, b)` compiled to a dead static function while
+# the call site resolved the BUILTIN: exit 0, wrong number, no AOT:
+# line, no gcc error. `dot`'s arm made the user function unreachable
+# outright by returning 0 over the g_funcs check; `exp` and `sqrt`
+# returned 1 unconditionally and emit_num emitted the C intrinsic.
+#
+# Reach: EigenScript/lib/math.eigs:74 defines `dot` as a documented
+# headline function -- `dot of [[1,2,3],[4,5,6]]` printed 0 instead of
+# 32 -- and lib/math.eigs is one of the modules that BUILD, so the
+# round-103 stdlib sweep is structurally blind to it. A build sweep
+# cannot see a wrong answer; only a differential run can.
+#
+# All SIX arms are gated, not the three that were exploitable:
+# len/sum/norm escaped only because their arms happen to fall through
+# on a non-buffer argument, which is luck rather than design -- a
+# user-defined `len` called on a BUFFER would have been intercepted the
+# same way. That case is pinned below.
+#
+# Per invariant 22 the branch is "is this name a user function", so
+# both sides are here: the shadowed forms, and the unshadowed builtins
+# in the same program proving the fast paths still fire.
+define dot(a, b) as:
+    result is 0
+    for i in range of (len of a):
+        result is result + a[i] * b[i]
+    return result
+print of (dot of [[1, 2, 3], [4, 5, 6]])
+define sqrt(x) as:
+    return x + 100
+print of (sqrt of 4)
+define exp(x) as:
+    return x * 3
+print of (exp of 4)

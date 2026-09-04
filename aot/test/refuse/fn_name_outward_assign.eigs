@@ -1,0 +1,11 @@
+# EXPECT: assigns the name of a compiled module function
+# ouroboros#162: `g is k` inside f rebinds module FUNCTION g outward on the
+# VM (prints 5 then 5; the function is gone afterwards). A C function
+# cannot be rebound; the body used to die at run time. Refused by name.
+define g(k) as:
+    return k
+define f(k) as:
+    g is k
+    return g
+print of (f of 5)
+print of g

@@ -1,0 +1,31 @@
+# Round 84: the round-83 materialization used cO > 0 as a proxy for
+# "the loop advanced" and fired on ZERO-iteration entries with O
+# pre-set, clobbering ACC with a cell the loop never wrote (VM 99,
+# AOT 0, both rc 0). Entry-value compare now: only a loop that
+# advanced materializes.
+n is 8
+x is buffer of 4
+w is buffer of 32
+out is buffer of 8
+f is 0
+loop while f < 4:
+    x[f] is f * 1.5 + 1.0
+    f is f + 1
+g is 0
+loop while g < 32:
+    w[g] is g * 0.25
+    g is g + 1
+acc is 99
+d is 7
+o is 8
+loop while o < n:
+    acc is 0
+    d is 0
+    loop while d < 4:
+        acc is acc + x[d] * w[d * n + o]
+        d is d + 1
+    out[o] is acc
+    o is o + 1
+print of acc
+print of d
+print of o

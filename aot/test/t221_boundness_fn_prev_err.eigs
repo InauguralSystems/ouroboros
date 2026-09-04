@@ -1,0 +1,11 @@
+# ouroboros#157, function scope (round 117): a function LOCAL bound only in
+# a not-taken branch, interrogated after it. Per-call bit (`int eig_z_b = 0`
+# declared with the local), set at the store, checked at `prev of`.
+define f(q) as:
+    print of "in f"
+    if q == 5:
+        z is 7
+    print of (prev of z)
+    return 0
+f of 1
+print of "unreachable"

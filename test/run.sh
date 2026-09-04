@@ -38,8 +38,13 @@ echo "--- behavioral parity (self-hosted vs C evaluator) ---"
 for prog in test/programs/*.eigs; do
   n=$((n+1))
   name="$(basename "$prog")"
-  ref="$("$EIGS" "$prog" 2>/dev/null)"; ref_rc=$?
-  got="$("$EIGS" ouroboros.eigs "$prog" 2>/dev/null)"; got_rc=$?
+  ref="$(timeout 120 "$EIGS" "$prog" 2>/dev/null)"; ref_rc=$?
+  got="$(timeout 120 "$EIGS" ouroboros.eigs "$prog" 2>/dev/null)"; got_rc=$?
+  # 124/137 = timeout kill; a HANG on either side fails by name (see
+  # reject_one's incident: rc 124 is nonzero and read as a pass)
+  if [ "$ref_rc" -eq 124 ] || [ "$ref_rc" -eq 137 ] || [ "$got_rc" -eq 124 ] || [ "$got_rc" -eq 137 ]; then
+    echo "FAIL: $name HUNG (ref=$ref_rc got=$got_rc)"; fail=1; continue
+  fi
   case "$name" in
     *_err.eigs)
       if [ "$ref_rc" -eq 0 ]; then
@@ -76,15 +81,58 @@ done
 echo "--- reject (front-end raises where the C parser/lexer raises) ---"
 reject_one() {
   printf '%s\n' "$1" > /tmp/ouro_reject.eigs
-  if "$EIGS" /tmp/ouro_reject.eigs >/dev/null 2>&1; then
+  # timeout on BOTH invocations: a reject case that HANGS a parser must fail
+  # the tier, not the suite. Round 49 found the frontend spinning forever on a
+  # match block holding a non-case statement (the C parser's no-progress guard
+  # was never mirrored) -- and this tier could not have registered that case
+  # without hanging itself.
+  # rc 124/137 is a TIMEOUT KILL, and it is nonzero -- the first version of
+  # this timeout let a HANGING parser fall into the else-branch as "PASS:
+  # rejected", so the hang case's own regression gate was green with the
+  # no-progress guard reverted (proven by plant). A hang must FAIL BY NAME on
+  # either arm; "rejected" means exited nonzero under its own power.
+  timeout 20 "$EIGS" /tmp/ouro_reject.eigs >/dev/null 2>&1; c_rc=$?
+  timeout 20 "$EIGS" ouroboros.eigs /tmp/ouro_reject.eigs >/dev/null 2>&1; f_rc=$?
+  if [ "$c_rc" -eq 124 ] || [ "$c_rc" -eq 137 ]; then
+    echo "FAIL: C oracle HUNG on [$(printf '%s' "$1" | tr '\n' ';')]"; fail=1
+  elif [ "$f_rc" -eq 124 ] || [ "$f_rc" -eq 137 ]; then
+    echo "FAIL: frontend HUNG on [$(printf '%s' "$1" | tr '\n' ';')]"; fail=1
+  elif [ "$c_rc" -eq 0 ]; then
     echo "FAIL: C oracle accepted [$(printf '%s' "$1" | tr '\n' ';')] (reject case is stale)"; fail=1
-  elif "$EIGS" ouroboros.eigs /tmp/ouro_reject.eigs >/dev/null 2>&1; then
+  elif [ "$f_rc" -eq 0 ]; then
     echo "FAIL: accepted [$(printf '%s' "$1" | tr '\n' ';')] (should reject)"; fail=1
   else
     echo "PASS: rejected [$(printf '%s' "$1" | tr '\n' ';')]"
   fi
   rm -f /tmp/ouro_reject.eigs
 }
+# Round 47: the C lexer measures indent as spaces, then tabs, then trailing
+# spaces, and STOPS (lexer.c:252-256) -- a tab after that run is inline
+# whitespace, so TAB-SPACE-TAB indentation followed by a 9-space line is an
+# "unexpected indent" to the oracle. The frontend counted space/tab in any
+# order and silently ACCEPTED this program (rc 0, ran it), the exact
+# over-acceptance rot this tier exists to catch -- and the tier only catches
+# it now because the case is registered.
+# Round 48: parser.c requires an indent after EVERY colon header; the
+# frontend's "single-line block" arm parsed the NEXT LINE as the body instead,
+# so both of these ran (rc 0) where the oracle dies "expected indent". The
+# second is the worst shape: a SAME-INDENT line swallowed as the body of the
+# `if` above it.
+# Round 49: the no-progress guard (parser.c parse()/parse_block) -- a match
+# block holding a non-case statement leaked a dedent nobody consumed, and the
+# frontend spun FOREVER where the oracle exits rc 1. Registered only after
+# reject_one grew its timeout; without one this line would hang the suite.
+reject_one 'match 1:
+	print of 1'
+reject_one 'if 1 == 1:
+print of 3'
+reject_one 'if 1 == 1:
+	if 1 == 1:
+	print of 1'
+reject_one 'if 1 == 1:
+	 	print of 1
+         print of 2
+print of 3'
 reject_one 'print of (3 @ 4)'
 reject_one 'print of (3 ` 4)'
 reject_one 'x is $5'
@@ -122,9 +170,13 @@ l[0] += 1 4'
 echo "--- must_reject (both sides must die at run time) ---"
 must_reject() {
   printf '%s\n' "$1" > /tmp/ouro_must_reject.eigs
-  c_out="$("$EIGS" /tmp/ouro_must_reject.eigs 2>/dev/null)"; c_rc=$?
-  o_out="$("$EIGS" ouroboros.eigs /tmp/ouro_must_reject.eigs 2>/dev/null)"; o_rc=$?
-  if [ "$c_rc" -eq 0 ]; then
+  c_out="$(timeout 20 "$EIGS" /tmp/ouro_must_reject.eigs 2>/dev/null)"; c_rc=$?
+  o_out="$(timeout 20 "$EIGS" ouroboros.eigs /tmp/ouro_must_reject.eigs 2>/dev/null)"; o_rc=$?
+  # 124/137 = timeout kill: a HANG must fail by name (see reject_one -- its
+  # first timeout let rc 124 read as a pass)
+  if [ "$c_rc" -eq 124 ] || [ "$c_rc" -eq 137 ] || [ "$o_rc" -eq 124 ] || [ "$o_rc" -eq 137 ]; then
+    echo "FAIL: must_reject HUNG [$(printf '%s' "$1" | tr '\n' ';')] (c=$c_rc o=$o_rc)"; fail=1
+  elif [ "$c_rc" -eq 0 ]; then
     echo "FAIL: must_reject case is stale — C oracle ACCEPTS [$(printf '%s' "$1" | tr '\n' ';')]"; fail=1
   elif [ "$o_rc" -eq 0 ]; then
     echo "FAIL: must_reject: ouroboros ACCEPTS [$(printf '%s' "$1" | tr '\n' ';')] (C oracle rejects, rc=$c_rc)"; fail=1
@@ -171,9 +223,41 @@ must_reject 'for x of [1, 2]:
 # equal. Now bootstrap.eigs proves the rebinding executed (sentinels) and
 # executes the self-compiled test program between markers; here we diff that
 # block against the C evaluator running the same file directly.
+echo "--- driver-input tier (missing/dir/empty vs the C oracle) ---"
+# Round 53 planted the file_exists guard out and BOTH suites stayed green: the
+# round-45/51/52/53 driver-input adjudications lived only in comments. Probes
+# with exit codes against the oracle's contract -- and each side needs a
+# want-rc-0 CANARY: round 54 planted a compile.eigs that could not run at all
+# and the tier stayed green, because a parse error supplies rc 1 to a
+# want-rc-1 probe for the wrong reason. An earlier version of this comment
+# also said "three probes per driver" when it was 3+2 -- the comment-vs-
+# mechanism class this tier exists to prosecute. (The
+# non-regular-file class -- /dev/null, fifos -- is a stated residual pending
+# upstream is_file, EigenScript#1058; not probed here because the drivers
+# cannot pass it yet.)
+di_fail=0
+: > /tmp/ouro_di_empty.eigs
+timeout 20 "$EIGS" ouroboros.eigs /tmp/ouro_di_missing_$$.eigs >/dev/null 2>&1; [ $? -eq 1 ] || { echo "FAIL: driver-input self-host missing (want rc 1)"; di_fail=1; }
+timeout 20 "$EIGS" ouroboros.eigs /tmp >/dev/null 2>&1; [ $? -eq 1 ] || { echo "FAIL: driver-input self-host dir (want rc 1)"; di_fail=1; }
+timeout 20 "$EIGS" ouroboros.eigs /tmp/ouro_di_empty.eigs >/dev/null 2>&1; [ $? -eq 0 ] || { echo "FAIL: driver-input self-host empty (want rc 0 -- the oracle runs an empty file)"; di_fail=1; }
+timeout 60 "$EIGS" aot/compile.eigs /tmp/ouro_di_missing_$$.eigs . >/dev/null 2>&1; [ $? -eq 1 ] || { echo "FAIL: driver-input aot missing (want rc 1)"; di_fail=1; }
+timeout 60 "$EIGS" aot/compile.eigs /tmp . >/dev/null 2>&1; [ $? -eq 1 ] || { echo "FAIL: driver-input aot dir (want rc 1)"; di_fail=1; }
+# the aot side's want-rc-0 canary: transpiling an EMPTY file must SUCCEED
+# (round-51 adjudication: an empty file is a valid program). This is also the
+# probe that catches a driver too broken to run -- without it, a compile.eigs
+# with a parse error on line 1 passes both rc-1 probes above.
+timeout 60 "$EIGS" aot/compile.eigs /tmp/ouro_di_empty.eigs . >/dev/null 2>&1; [ $? -eq 0 ] || { echo "FAIL: driver-input aot empty (want rc 0 -- an empty file is a valid program)"; di_fail=1; }
+rm -f /tmp/ouro_di_empty.eigs
+if [ "$di_fail" -eq 0 ]; then echo "PASS: driver-input tier (6 probes)"; else fail=1; fi
+
 echo "--- bootstrap (full self-host: front-end + codegen, byte-exact fixed point) ---"
-boot_out="$("$EIGS" test/bootstrap.eigs 2>/dev/null)"; boot_rc=$?
-prog_ref="$("$EIGS" test/bootstrap_prog.eigs 2>/dev/null)"; prog_rc=$?
+# timeout + hang-fails-by-name, the same discipline the parity and reject
+# tiers got one round earlier; this was the last frontend invocation without it
+boot_out="$(timeout 300 "$EIGS" test/bootstrap.eigs 2>/dev/null)"; boot_rc=$?
+prog_ref="$(timeout 120 "$EIGS" test/bootstrap_prog.eigs 2>/dev/null)"; prog_rc=$?
+if [ "$boot_rc" -eq 124 ] || [ "$boot_rc" -eq 137 ] || [ "$prog_rc" -eq 124 ] || [ "$prog_rc" -eq 137 ]; then
+  echo "FAIL: bootstrap HUNG (boot=$boot_rc prog=$prog_rc)"; fail=1
+fi
 prog_got="$(printf '%s\n' "$boot_out" \
   | sed -n '/^== bootstrap-prog-begin ==$/,/^== bootstrap-prog-end ==$/p' | sed '1d;$d')"
 if [ "$boot_rc" -ne 0 ] || ! printf '%s\n' "$boot_out" | grep -q "PASS"; then

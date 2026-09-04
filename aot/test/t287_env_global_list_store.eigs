@@ -1,0 +1,29 @@
+# (round 173) a module-level list stored into by functions (the DMG
+# `_exec_ctx[2] is op` shape): the store is in place, the element reads are
+# borrowed. Control: `_other` is REBOUND by a function, so it must keep the
+# boxed path and still agree with the VM.
+_ctx is [null, null, 0]
+_other is [1, 2, 3]
+define init_ctx(a, b) as:
+    _ctx[0] is a
+    _ctx[1] is b
+define step(op) as:
+    _ctx[2] is op
+    return (_ctx[2] * 2) + (len of _ctx[0])
+define rebind_other() as:
+    _other is [9, 9]
+define read_other(k) as:
+    _other[k] is _other[k] + 1
+    return _other[k]
+init_ctx of [[1, 2, 3], {"x": 1}]
+local acc is 0
+local i is 0
+loop while i < 50000:
+    acc is acc + (step of (i & 255))
+    i is i + 1
+print of acc
+print of _ctx
+print of (read_other of 1)
+rebind_other of []
+print of (read_other of 1)
+print of _other

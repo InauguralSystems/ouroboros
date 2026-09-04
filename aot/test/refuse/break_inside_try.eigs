@@ -1,0 +1,11 @@
+# EXPECT: `break` inside a `try` body
+# Round 153: a `break` that leaves a try body would jump out with the
+# handler still pushed; a later error would longjmp into a dead frame.
+# Refused by name until the emitter pops on the way out.
+for i in range of 5:
+    try:
+        if i == 2:
+            break
+        print of i
+    catch e:
+        print of "never"

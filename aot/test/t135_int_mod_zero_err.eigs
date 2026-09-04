@@ -1,0 +1,9 @@
+# Round 72: int-classified `a % b` emitted raw C `%`, which is UB on a
+# zero divisor -- gcc -O3 compiled it to ud2: rc 132 SIGILL with no
+# diagnostic, where the VM raises "modulo by zero" rc 1. emit_int's `%`
+# arm now goes through aot_imod (raise on zero; negative operands keep C
+# truncated semantics, which match the VM's -- probed both paths).
+# _err class: both die, equal codes.
+a is 7
+b is 0
+print of (a % b)

@@ -1,0 +1,33 @@
+# EXPECT: assigns enclosing name
+#
+# A nested `define` that only WRITES an enclosing name and never reads it.
+#
+# THE POINT OF THIS FIXTURE is that the outward-mutation guard could not fire on
+# its own headline case. Both throws in the lift pass sat behind
+# `uses_ident of [fbody, cand]`, and `uses_ident` matches only ["ident", name] —
+# but an assignment target is a BARE STRING at node[1], never an ident node. A
+# write-only nested define therefore looked like it did not mention the name at
+# all:
+#
+#   VM   7        AOT  100        both build, both rc 0, no diagnostic
+#
+# The write landed in a fresh C local inside the lifted function, because the
+# name never entered the rename map either.
+#
+# The isolating experiment is one line: add any READ of `x` to the same define
+# and it refuses correctly. A guard whose reachability test cannot see the
+# construct it guards against is not a guard; it is a comment with a throw
+# attached.
+#
+# This also swallowed a capture shape: two nested defines where the second
+# writes what the first captured (VM 8, AOT 101, both rc 0).
+
+define f(y) as:
+    local x is 100
+    define b(d) as:
+        x is 7
+        return d
+    local t is b of 1
+    return x
+
+print of (f of 0)

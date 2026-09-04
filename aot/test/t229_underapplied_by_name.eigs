@@ -1,0 +1,14 @@
+# ouroboros#182: under-applying a compiled function BY NAME. The VM binds
+# null to every unsupplied parameter; the AOT used to emit the call with too
+# few arguments and leak gcc's "too few arguments" with no AOT: line. Now a
+# never-read parameter takes a dummy on its C type (the #69 rule per slot),
+# and a READ typed parameter refuses by name (refuse/underapplied_typed_param
+# and refuse/underapplied_null_guarded). The last call has a call inside its
+# argument list, so the padded slot rides the hoisted (hazard) form too.
+define dead(a, b) as:
+    return a * 2
+print of (dead of [21])
+define dead3(a, b, c) as:
+    return a + b
+print of (dead3 of [1, 2])
+print of (dead3 of [(dead of [1]), 2])

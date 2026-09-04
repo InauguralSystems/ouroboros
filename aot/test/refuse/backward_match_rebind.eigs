@@ -1,0 +1,18 @@
+# EXPECT: which the enclosing function rebinds after this definition
+# ouroboros#154, the `match` mirror: rebind in an EARLIER case, define in
+# a LATER one, re-entered by a loop. Same forward-only hole. (`loop while`
+# rather than `for`: the VM loop-scopes a define inside a for body, so the
+# post-loop call would be undefined on both sides and prove nothing.)
+define f(z) as:
+    local x is 100
+    local i is 0
+    loop while i < 2:
+        match i:
+            case 1:
+                x is 7
+            case 0:
+                define inner(d) as:
+                    return x + d
+        i is i + 1
+    return inner of 1
+print of (f of 1)

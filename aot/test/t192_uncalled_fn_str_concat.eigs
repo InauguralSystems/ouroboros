@@ -1,0 +1,47 @@
+# Round 103: an uncalled function's parameters default to NUMERIC, and
+# is_num_expr called `"msg: " + key` numeric because one side was
+# numeric-classified. emit_num then walked into the "str" node and threw
+# an INTERNAL assertion -- "AOT: emit_num on non-numeric node str",
+# naming an emitter function and an AST node kind, with no source line,
+# no identifier, and not the real cause. No C was emitted at all, so the
+# whole build died on a program the VM runs.
+#
+# The classification was a DEFAULT, not evidence -- the same shape as
+# #168 one stratum over. At runtime the param may well hold a string and
+# the VM concatenates happily, so the expression is not numeric-or-raise
+# at all. A string literal in the chain is decisive the other way and
+# now outranks the one-numeric-side rule; the boxed path already handles
+# both outcomes (concatenate, or raise exactly as the VM does).
+#
+# THIS WAS AIMED AT LIBRARIES, whose whole purpose is functions their own
+# file never calls. It refused NINE of the 75 real stdlib modules --
+# args, config, io, log, state, template, test, ui_w_dialog, ui_w_menu --
+# the single most frequent AOT failure in the standard library, and it
+# survived the consumer shape too: any program using a SUBSET of a
+# library's API leaves the rest uncalled. lib/test.eigs plus the
+# ecosystem's universal `assert_eq` + `test_summary` driver now matches.
+#
+# Per invariant 22 the cases below vary what the gate BRANCHES on --
+# which side the literal is on, f-strings, nesting, and a genuinely
+# numeric chain as the control -- not the syntax.
+define unused_prefix(key) as:
+    return "msg: " + key
+define unused_suffix(key) as:
+    return key + "!"
+define unused_print(key) as:
+    print of ("m: " + key)
+define unused_nested(a, b) as:
+    return ("x" + a) + b
+define unused_fstr(k) as:
+    return f"k={k}"
+define unused_numeric(a, b) as:
+    return (a + b) * 2
+define used_numeric(a, b) as:
+    return a + b
+print of "ok"
+print of (used_numeric of [2, 3])
+print of (unused_prefix of "hi")
+print of (unused_suffix of "yo")
+print of (unused_nested of ["a", "b"])
+print of (unused_fstr of 7)
+print of (unused_numeric of [4, 5])

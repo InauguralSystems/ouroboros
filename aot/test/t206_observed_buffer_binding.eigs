@@ -1,0 +1,42 @@
+# (round 110) In an observed program the VM observes `b is buffer of N`
+# exactly like any other assignment -- a populated slot at the FIRST
+# assignment (entropy of the buffer's contents), stable/moving on rebind,
+# and the #711 query view sees element writes through the same pointer.
+# The AOT kept a buffer as a C static with no env slot and answered every
+# observer surface (observe/report/report_value/trajectory and the
+# predicates) with the no-binding constant -- round 87's "band 2" guess,
+# refuted. Now every buffer assignment in an observed scope ALSO stores
+# the same pointer into the env through the observe-store, and buffer
+# names take the env lookup. Varied: one assignment, two, a rebind loop
+# with element writes, a user-function creator, and a function-local
+# buffer inside an observed function.
+define mk(n) as:
+    return buffer of n
+b is buffer of 4
+print of observe of b
+print of report of b
+print of stable of b
+b is buffer of 8
+print of observe of b
+print of report of b
+print of report_value of b
+t is trajectory of b
+print of (classify of t)
+c is buffer of 2
+for i in range of 3:
+    c is buffer of (i + 4)
+    c[0] is i
+print of diverging of c
+print of report of c
+u is mk of 3
+u is mk of 5
+print of report of u
+print of observe of u
+define f() as:
+    local q is buffer of 2
+    q is buffer of 3
+    q[0] is 1
+    print of report of q
+    print of observe of q
+    return 0
+f of null

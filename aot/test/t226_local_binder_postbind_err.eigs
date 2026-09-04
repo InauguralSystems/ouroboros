@@ -1,0 +1,16 @@
+# ouroboros#187 / #157 (round 119): the interrogated local binder whose only
+# OTHER binding comes AFTER the loop. The VM loop-scopes the binder and
+# `prev of r` dies (r unbound in this frame); the emitted C local carries a
+# per-call bit that the post-loop `local r is 3` would set -- but the read
+# comes first, so it dies here too. (Round-116 critic cell pl1: 7 8 7 0 3
+# at rc 0 before the bit.)
+define f(q) as:
+    for r in [7, 8]:
+        print of r
+    print of (prev of r)
+    print of r
+    local r is 3
+    print of r
+    return 0
+f of 1
+print of "unreachable"

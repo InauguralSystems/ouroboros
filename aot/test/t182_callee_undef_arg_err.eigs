@@ -1,0 +1,9 @@
+# Round 96: the round-95 callee-before-argument split was gated on the
+# argument CONTAINING A CALL, but the VM loads the callee first ALWAYS --
+# and an argument with no call can still raise. `nosuch of alsonosuch`
+# reported the ARGUMENT's undefined name where the VM names the callee
+# (same stdout, same rc, wrong message -- and the _err tier compares
+# message text). Resolution is unconditional now.
+print of "start"
+r is nosuch of alsonosuch
+print of r

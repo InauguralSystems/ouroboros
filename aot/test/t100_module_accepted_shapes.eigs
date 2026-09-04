@@ -1,0 +1,18 @@
+# The ACCEPT side of the module-dict conditional-binding guard — ouroboros#141.
+#
+# THE POINT OF THIS FIXTURE is that a guard has two ways to be wrong and the
+# refusal tier only gates one of them. The first version of this guard refused
+# a module for having a `for` body (whose names never reach the dict) and for
+# re-assigning a name it had already bound at the top level (where the dict is
+# the same either way). Both are silent losses of reach, invisible to a suite
+# that only checks that the bad case is refused.
+#
+# So: every shape the guard must ACCEPT, diffed against the VM.
+
+import _t100mod
+print of (keys of _t100mod)
+print of _t100mod.a
+print of _t100mod.b
+print of _t100mod.u1
+print of _t100mod.floop
+print of (_t100mod.g of null)

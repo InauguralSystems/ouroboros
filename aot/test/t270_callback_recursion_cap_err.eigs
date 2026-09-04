@@ -1,0 +1,11 @@
+# Round 154: recursion that never names itself. `step` is only ever called
+# through `dispatch` (a callback-capable builtin), so the call graph has no
+# direct edge step -> step; the walk adds an edge from every function that
+# makes an opaque call to every function whose name is taken as a value,
+# which closes the cycle and brackets step. The VM's cap fires at the same
+# depth: one frame per function invocation, the builtin itself has none.
+define step(n) as:
+    return dispatch of [step, [n + 1]]
+print of "start"
+print of (step of 0)
+print of "unreachable"

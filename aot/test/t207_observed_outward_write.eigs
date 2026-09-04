@@ -1,0 +1,51 @@
+# (round 111, builder-led from round 110's seam-B measurement) An outward
+# write from a NON-observing helper to an observed module numeric is, in
+# the VM, an in-order slot observation identical to a module-level
+# assignment. Round 63 refused the class ("no env routing for the write")
+# because the helper read/wrote a C global that does not exist in an
+# observed program; #189 removed the seed so reads take the env, and the
+# demoted arm's outward-observe mark (g_outward_obs) already routes a
+# write through the observe-store. The refusal is lifted by taking that
+# arm. Varied: numeric RMW, a plain numeric store, a string store, a
+# buffer rebind from a helper (this needs round 110's buffer store), two
+# helpers on one name, and the module's own verdicts after each.
+total is 0
+label is "start"
+buf is buffer of 2
+define check(k) as:
+    total is total + k
+    return total
+define relabel(s) as:
+    label is s
+define grow(n) as:
+    buf is buffer of n
+    buf[0] is n
+define reset() as:
+    total is 0
+check of 1
+check of 2
+print of total
+print of report of total
+print of observe of total
+relabel of "mid"
+relabel of "end"
+print of label
+print of report of label
+grow of 3
+grow of 5
+print of report of buf
+print of observe of buf
+reset of null
+check of 10
+print of total
+print of report of total
+print of stable of total
+define same(tag, got, want) as:
+    if got == want:
+        print of tag
+    return 0
+same of ["arg-report", report of total, "moving"]
+same of ["arg-report_value", report_value of total, "converged"]
+define ident(v) as:
+    return v
+print of (ident of (observe of total))

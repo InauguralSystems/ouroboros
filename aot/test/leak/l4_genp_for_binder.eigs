@@ -1,0 +1,12 @@
+# leak tier fixture (#152): a `for` binder over a generic parameter takes
+# an owned element per iteration; the previous one must be released
+# (73 MB peak at 300k x 3 before the fix).
+define binder(x, n) as:
+    local i is 0
+    local last is 0
+    loop while i < n:
+        for x in (range of 3):
+            last is x
+        i is i + 1
+    return last
+print of (binder of ["seed", 3000])

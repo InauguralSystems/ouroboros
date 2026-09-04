@@ -1,0 +1,36 @@
+# EXPECT: rebinds after this definition
+#
+# The define is in the THEN branch and the rebind is in the ELSE branch, with a
+# loop re-entering both.
+#
+# THE POINT OF THIS FIXTURE is a hole that survived the fix for its own class.
+# The previous round threaded the "statements after this define" suffix down
+# through every enclosing scope — correctly — and the walker consuming that
+# suffix then dropped anything that was not a statement. A sibling block arrives
+# as exactly that: descending into an `if`'s then-branch appends node[3], the
+# whole else-branch, as ONE element.
+#
+#   VM   8        AOT  101        both build, both rc 0, no diagnostic
+#
+# Worse, the guard that dropped it was added in that same round to stop the
+# walker CRASHING on such an element — so a crash was converted into a silent
+# miss at the one call site that motivated the guard. A tolerance that swallows
+# the input it was written to tolerate is not tolerance.
+#
+# The two halves of the guard also disagreed: collect_for_binders recurses into
+# raw blocks, so a `for` binder in the else-branch was caught while an `is`
+# rebind three lines away was not.
+
+define f(z) as:
+    local x is 100
+    local i is 0
+    loop while i < 2:
+        if i == z:
+            define inner(d) as:
+                return x + d
+        else:
+            x is 7
+        i is i + 1
+    return inner of 1
+
+print of (f of 0)

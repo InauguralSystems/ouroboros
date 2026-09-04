@@ -1,0 +1,12 @@
+# EXPECT: nested inside a module-scope block
+# ouroboros#199: a define inside a module-scope loop body is not lifted (the
+# lift runs over function bodies), so it reached the statement emitter raw
+# and the refusal named the AST node ("cannot emit statement node 'func'").
+# Now named. The VM runs it (36) -- and would die on a post-loop call of
+# `inner`, which is loop-scoped there.
+acc is 0
+for x in [1, 2, 3]:
+    define inner(d) as:
+        return x + d
+    acc is acc + (inner of 10)
+print of acc

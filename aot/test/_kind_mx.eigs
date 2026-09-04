@@ -1,0 +1,3 @@
+_kind_my is {"val": 99}
+define mget() as:
+    return _kind_my

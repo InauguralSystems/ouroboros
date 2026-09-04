@@ -1,0 +1,21 @@
+# ouroboros#155: `return prev of s` where the previous value is a string
+# (or null at a first assignment). The return position classified the
+# interrogate numerically, declared double, and the coercion died "non-
+# numeric value in a numeric context at f: return (type str)"; the VM
+# prints aa. An interrogate in return position is boxed whatever the
+# name's class. Controls: a numeric prev return (7) and a first-assignment
+# prev (null).
+define f(k) as:
+    local s is "aa"
+    s is "bb"
+    return prev of s
+print of (f of 1)
+define g(k) as:
+    local n is 7
+    n is 8
+    return prev of n
+print of (g of 1)
+define h(k) as:
+    local once is 3
+    return prev of once
+print of (h of 1)

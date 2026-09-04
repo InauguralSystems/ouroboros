@@ -1,0 +1,24 @@
+# EXPECT: spawn with an observed/temporal function
+#
+# (round 108) The sibling shape: the SPAWNED worker is unobserved, but it
+# calls an observed helper, whose locals take the same global-env-by-name
+# route -- silent wrong counts at rc 0 (6397 / 6223 for 4000 / 4000).
+# The predicate is program-wide (any observed function), so this refuses
+# for the same reason as the direct form.
+define bump(k) as:
+    local v is k
+    r is report of v
+    return v + 1
+
+define reader() as:
+    local seen is 0
+    for i in range of 4000:
+        seen is bump of seen
+    return seen
+
+h1 is spawn of reader
+h2 is spawn of reader
+t1 is thread_join of h1
+t2 is thread_join of h2
+print of t1
+print of t2

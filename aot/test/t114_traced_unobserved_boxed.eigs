@@ -1,0 +1,107 @@
+# Temporal reads of BOXED values in an UNOBSERVED program — the corner round 36
+# claimed closed and did not.
+#
+# THE POINT OF THIS FIXTURE is that an intersection has as many corners as
+# axes. Round 36's fixture filled {temporal} x {boxed} x {OBSERVED} and its
+# commit said "the intersection was empty, t113 fills it" — but the unobserved
+# corner stayed empty, and a four-line program showed it:
+#
+#   s is "alpha" / s is "beta" / print of (prev of s)
+#   VM  alpha        AOT  null        both build, both rc 0
+#
+# The boxed assign path had NEVER traced: only the numeric path carried
+# aot_trace_assign. Three arms needed the call — the terminal boxed store, the
+# lowered-local store, and the numeric-RHS-to-demoted-name store — each staged
+# through a temp so the RHS is emitted once. A claim that an intersection is
+# closed must name every axis it was closed along.
+
+s is "alpha"
+s is "beta"
+print of (prev of s)
+
+# the lowered-local arm, inside a function
+define f(k) as:
+    local t is "aa"
+    t is "bb"
+    print of (prev of t)
+    return 0
+
+print of (f of 1)
+
+# a container: the tape's heap borrow must survive the reassignment that frees
+# the old value (history increfs the borrowed slot)
+d is {"k": 1}
+d is {"k": 2}
+print of ((prev of d)["k"])
+
+# and the demoted-numeric arm: a name that later holds a string is off the
+# numeric class, so its numeric assigns take the env_write_num path
+m is 5
+m is 6
+print of (prev of m)
+m is "end"
+print of (prev of m)
+
+# CROSS-FUNCTION: the VM's tape is process-global and NAME-KEYED, so an
+# assignment inside an interrogate-free function lands in the same history a
+# module-level `prev of` reads. g_traced was derived per function, making the
+# write-set scope-local:
+#
+#   define g(k) as: local s is "one" / s is "two" ... / g of 1 / s is "three"
+#   print of (prev of s):   VM  two        AOT  null      both rc 0
+#
+# Tracing is now program-wide: any interrogate anywhere makes every function
+# trace. (A function local SHADOWING a module name refuses loudly under the
+# pre-existing temporal-shadow guard -- correct, since the name-keyed tape
+# genuinely merges those histories.)
+w is "zero"
+
+define gg(k) as:
+    # an OUTWARD write to the module-bound w -- no local declaration, so the
+    # store crosses the frame and must land on the tape (a local SHADOWING a
+    # module name refuses loudly instead, under the temporal-shadow guard)
+    w is "two"
+    return 0
+
+print of (gg of 1)
+w is "three"
+print of (prev of w)
+
+# PARAMETER stores never reach the tape. The VM's write-set is locals and
+# module bindings; `define f(x) as: x is 7` leaves x's name history untouched
+# even when x shadows a module binding. Program-wide tracing briefly injected
+# the param rebind into module-x's history (VM prev null, AOT prev 5, both
+# rc 0) — the over-recording mirror of the under-recording it fixed.
+px is 5
+
+define pf(px) as:
+    px is 7
+    return 0
+
+print of (pf of 1)
+print of (prev of px)
+
+# ...but a FOR BINDER's store records in EVERY scope, parameters included --
+# the write-set rule is per-SITE, not per-name. Measured: the VM puts binder
+# writes 1,2,3 on x's history (prev = 2) while loop-scoping the binding itself
+# (post-loop x = 0). Round 39's rule as first stated -- "never a parameter" --
+# was one row short, and the row inverts it at this site.
+fx is 0
+for fx in [1, 2, 3]:
+    fy is fx
+print of fx
+print of (prev of fx)
+
+# a binder over a NON-shadowing parameter: persists (VM 8) and its writes are
+# on the tape. In the traced regime the param lives in a C double while the
+# terminal binder arm wrote the ENV -- post-loop read returned the incoming 1.
+# (A binder over a param that SHADOWS a module name refuses loudly instead:
+# measured, the VM loop-scopes the binder exactly when the shadow exists, and
+# one C variable cannot express both halves.)
+define pfor(pz) as:
+    for pz in [7, 8]:
+        local q is pz
+    return pz
+
+print of (pfor of 1)
+print of "done"

@@ -1,0 +1,26 @@
+# leak tier fixture (#136, the aot_lv_getb mutant): a BOXED local whose slot
+# holds a numeric immediate is read in a boxed context. aot_lv_getb must
+# box the number and write the heap Value back so the slot owns it; without
+# the write-back every such read allocates a Value nobody releases. The
+# local is boxed (it holds strings too), the PLAIN assign `x is i` stores the
+# number as an immediate (aot_lv_set_num), and passing x to a GENERIC
+# parameter is a BORROWED read (env_readb -> aot_lv_getb). A `local x is i`
+# declaration would box the number on the way in, and a list literal or an
+# arithmetic read takes the owned accessor -- neither reaches the write-back.
+define ident(v) as:
+    if (type of v) == "str":
+        return v
+    return v
+define churn(n) as:
+    local i is 0
+    local total is 0
+    local x is "start"
+    loop while i < n:
+        x is i
+        local r is ident of x
+        if (type of r) == "num":
+            total is total + 1
+        x is "s"
+        i is i + 1
+    return total
+print of (churn of 2000)

@@ -1,0 +1,37 @@
+# The ACCEPT side of the capture refusal — ouroboros round 26.
+#
+# THE POINT OF THIS FIXTURE is that the refusal added alongside it has two ways
+# to be wrong, and the refusal tier only gates one. A capture that is never
+# rebound must still compile, and mutation THROUGH a capture must stay live —
+# that second half is the part the original design comment got right, and a
+# refusal written from the comment's wrong half would have taken it out.
+#
+# The suite had ZERO nested-define fixtures when this class was found, so
+# neither half had any coverage at all.
+
+define f(y) as:
+    local x is 100
+    local box is [1, 2]
+    define inner(d) as:
+        # a numeric capture, never rebound
+        print of x
+        # and a container capture, read through
+        print of (len of box)
+        return 0
+    print of (inner of 1)
+    return 0
+
+print of (f of 0)
+
+define g(y) as:
+    local box is [1, 2]
+    define peek(d) as:
+        print of (box[0])
+        return 0
+    # MUTATION THROUGH the capture: the Value is aliased, so the nested
+    # function sees it. This must NOT be refused.
+    box[0] is 9
+    print of (peek of 1)
+    return 0
+
+print of (g of 0)

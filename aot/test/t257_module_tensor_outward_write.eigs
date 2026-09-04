@@ -1,0 +1,24 @@
+# ouroboros#164: a function assigning a module-level TENSOR global. The
+# per-function tensor inference declared a LOCAL AotTensor of the same name,
+# so the body read its own empty shadow and never wrote the module value
+# (before round 126 a raw gcc type error; after it a runtime shape error).
+# The module's tensor names are now known before any function is emitted
+# and a plain assign to one is outward. (A `local m` tensor shadow of a
+# module tensor is a named refusal -- tensor-classified shadows live in C
+# variables, not the env -- so the control here is a second module tensor
+# that the function does not touch.)
+a is [1, 2]
+m is add of [a, a]
+define bump() as:
+    m is add of [m, a]
+    return 0
+print of m
+bump of null
+print of m
+bump of null
+print of m
+n is add of [a, [10, 10]]
+print of n
+bump of null
+print of n
+print of m

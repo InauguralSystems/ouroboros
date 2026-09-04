@@ -1,0 +1,11 @@
+# Round 106: c_escape handled only quote, backslash and NEWLINE, so a
+# CR in a string literal passed through RAW into the emitted C -- and
+# gcc treats a lone CR as a line terminator, making the string literal
+# unterminated: a build death with "missing terminating character" and
+# no AOT: line (test_string_math.eigs, and anything carrying CRLF --
+# HTTP, CSV, DOS text). TAB fixed in the same pass.
+x is "a\r\nb"
+print of (len of x)
+y is "col1\tcol2"
+print of (len of y)
+print of (char_at of [x, 1])

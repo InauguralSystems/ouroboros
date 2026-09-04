@@ -1,0 +1,11 @@
+# Round 95: the VM resolves the callee at the LOAD, so an undefined callee
+# dies with the argument NEVER evaluated. The AOT ran the argument first
+# (printing "arg evaluated" the VM never prints) and used its own message.
+# Resolution now precedes the argument, and the undefined-callee text is
+# the VM's own. _err class: both die, equal codes, normalized text equal.
+define p(n) as:
+    print of "arg evaluated"
+    return 1
+print of "start"
+r is nosuch of (p of 0)
+print of r

@@ -1,0 +1,12 @@
+# Round 154: the VM's call-depth cap (VM_FRAMES_MAX 4096, frame 0 = the
+# module) is a semantic the AOT now mirrors with an enter/leave bracket on
+# every compiled function. Measured on the pinned VM: `down of 4094`
+# (4095 nested frames) succeeds and `down of 4095` raises "call stack
+# overflow" -- this fixture pins the last depth that succeeds; t268 pins
+# the first that dies.
+define down(n) as:
+    if n == 0:
+        return 0
+    return 1 + (down of (n - 1))
+print of (down of 4094)
+print of "after"

@@ -1,0 +1,46 @@
+# Round 106: at MODULE scope, a for-var that is also an assignment
+# target anywhere in the file had its unbox DECLINED (g_forunbox skips
+# assignment targets in strict mode) -- but nm stayed 1, so the loop
+# head WROTE the env while every body read took the file-scope C
+# static. The body saw 0 for the whole loop: `t is t + i` summed zeros,
+# rc 0, no diagnostic. And the corruption is NON-LOCAL: an assignment
+# to the same name at the BOTTOM of a file silently changes a loop's
+# answer at the TOP (bisected live in test_break_scope.eigs, where a
+# later `loop while` block corrupted a for loop 20 lines earlier into
+# a FALSE "continue must not escape" assertion).
+#
+# The VM's rule, measured, is that the loop binding is LOOP-SCOPED:
+# `print of i` after the loop dies "undefined variable", and a prebound
+# outer `i is 7` still reads 7 afterwards. That is exactly C block
+# scoping, so the fix declares the loop var as a block-local shadow
+# INSIDE the loop; the outer static -- the prebound module binding --
+# is untouched by construction.
+#
+# Discriminators swept (invariant 22): assignment inside the loop's own
+# body, prebound before, rebound after, read after via a second loop,
+# nested same-name binders, and the clean never-assigned control.
+t is 0
+for i in range of 3:
+    if i == 1:
+        i is i + 10
+    t is t + i
+print of t
+u is 0
+i is 7
+for i in range of 3:
+    i is i + 1
+    u is u + i
+print of u
+print of i
+v is 0
+for j in range of 3:
+    for j in range of 2:
+        v is v + 1
+    v is v + 10
+j is 5
+print of v
+print of j
+w is 0
+for k in [2, 4, 6]:
+    w is w + k
+print of w

@@ -1,0 +1,18 @@
+# ouroboros#104: a tolerance fixture whose stdout carries LABELS. The _tol
+# comparator once extracted the numeric tokens only, so any non-numeric
+# text (a label, a string, an error line without digits) was invisible and
+# could diverge silently; it now compares the text with numbers masked and
+# the numbers within tolerance. The dot below is SIMD-reassociated on the
+# AOT (tolerance, not bytes), which is why this stays a _tol fixture.
+a is zeros of 1000
+b is zeros of 1000
+i is 0
+loop while i < 1000:
+    a[i] is (i + 1) * 0.1
+    b[i] is (1000 - i) * 0.3
+    i is i + 1
+print of "dot:"
+print of (dot of [a, b])
+print of "norm:"
+print of (norm of a)
+print of "done"

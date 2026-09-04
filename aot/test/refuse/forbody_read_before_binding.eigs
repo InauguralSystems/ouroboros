@@ -1,0 +1,16 @@
+# EXPECT: precedes its first module-level binding
+#
+# Round 59: a name merely READ in a top-level for body chains outward like
+# any other read -- the round-58 walker's blanket body skip was keyed on
+# the wrong axis ("inside a for" instead of "bound by the for") and let
+# `for i in range of 1: print of v / v is 3` print 0 where the VM dies
+# rc 1 "undefined variable". The exemption now subtracts only the binder
+# and body-ASSIGNED names (loop-local per the VM's for-scope rule).
+#
+# Envelope shape: range of 0 -- the body never executes, so the VM runs
+# this (rc 0, prints 3), but statement order cannot prove the read safe.
+
+for i in range of 0:
+    print of v
+v is 3
+print of v

@@ -1,0 +1,9 @@
+# Round 87: predicates over a module BUFFER died 'undefined variable'
+# where the VM answers 0 -- buffers are C globals, never env-bound,
+# and element writes are value mutations (not rebinds), so the VM's
+# binding slot is simply unobserved. The env-miss band now covers
+# C-emitted value classes (buffers/dicts/tensors) at all three
+# predicate/report emission arms.
+b is buffer of 4
+b[0] is 1
+print of (stable of b)

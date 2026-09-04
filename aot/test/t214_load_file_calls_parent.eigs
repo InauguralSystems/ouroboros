@@ -1,0 +1,21 @@
+# ouroboros#127 (closure pin): a load_file'd module calling a function
+# defined in its PARENT. This once transpiled and linked, then died at run
+# time ("undefined variable 'helper'") because compiled functions were never
+# env-bound -- the envelope accepted a program it could not run, and it
+# blocked DMG entirely (every opcode handler lives in a loaded module).
+# Direct call, call through the child, and a child function that calls the
+# parent twice in one expression.
+#
+# WHAT THIS PINS: the STATIC-splice path only. The literal-path load is
+# spliced at build time (#129), so the child's call becomes a static C call
+# (`eig_helper(eig_n)` -- no env lookup, no `load_file` in the emitted C).
+# The computed-path half of #127 -- which would run interpreted and cannot
+# see compiled functions -- is refused by name at build time:
+# test/refuse/load_file_computed_path.eigs. A LITERAL load in a nested
+# position stays a runtime call (DMG's debug branch depends on it).
+load_file of "data/t214_child.eigs"
+define helper(n) as:
+    return n * 2.0
+print of f"direct {helper of 5.0}"
+print of f"viachild {child_calls_helper of 7.0}"
+print of f"twice {child_calls_twice of 1.0}"

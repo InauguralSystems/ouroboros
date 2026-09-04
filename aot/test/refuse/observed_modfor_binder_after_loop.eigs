@@ -1,0 +1,22 @@
+# EXPECT: used after its loop in an observed/traced program
+#
+# Round 65: module-scope for binders are loop-scoped by the VM in EVERY
+# regime, but observed/traced module emission routes the binder through
+# the env -- the C block-scope mechanism is regime-gated -- where it
+# SURVIVES the loop: `for i in [7, 8]: print of i / print of i` printed
+# the phantom 8, rc 0, where the VM raises rc 1. Binders are correctly
+# absent from g_module_names, so no membership-keyed guard could catch
+# it; the shape refuses by name when the binder is used after its loop.
+# A later `for` REBINDING the same name is a fresh scope and does NOT
+# count as a use (the reuse idiom stays in the envelope).
+#
+# Envelope shape: the VM RUNS this (rc 0 -- the post-loop use sits in a
+# dead if arm, so no leaked read ever executes).
+
+x is 1
+print of (report of x)
+for i in [7, 8]:
+    print of i
+if 1 == 2:
+    print of i
+print of "done"

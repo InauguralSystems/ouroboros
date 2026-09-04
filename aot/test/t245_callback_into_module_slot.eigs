@@ -1,0 +1,21 @@
+# ouroboros#173: a registration helper stashes its callback parameter into a
+# module slot initialised with a placeholder number. The module classifier
+# saw only `slot is 0` and made it numeric; the outward store of the boxed
+# parameter died "non-numeric value in a numeric context at keep: name f
+# (type builtin)" where the VM prints 8. A function's outward assign of a
+# boxed parameter, a compiled function's name, or a builtin's name now
+# demotes the module name. Second slot: a builtin stashed directly.
+define g(x) as:
+    return x + 1
+slot is 0
+define keep(f) as:
+    slot is f
+    return 0
+z is keep of g
+print of (slot of 7)
+slot2 is 0
+define keep2() as:
+    slot2 is len
+    return 0
+keep2 of null
+print of (slot2 of [1, 2, 3])

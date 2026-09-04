@@ -1,0 +1,70 @@
+# The dict-field and index FAST PATHS, executed hot — ouroboros#133.
+#
+# THE POINT OF THIS FIXTURE is that the inlinable fast paths added in #133 had
+# essentially no coverage, and one had NONE. A blind critic instrumented each
+# hit arm and ran all 92 fixtures:
+#
+#   aot_dot_get_tb_ic        0 executions   0 of 92 fixtures
+#   aot_dot_num_tb_ic        2              1
+#   aot_dot_set_num_tb_ic    2              1
+#   aot_index_get_ib        11              2
+#
+# Replacing aot_dot_get_tb_ic's entire hit arm with `return make_num(-424242)`
+# — a field read that answers -424242 for every cache hit — left the suite
+# 104/104 green. The gate proved nothing about the arm the speedup comes from.
+#
+# TWO THINGS ARE REQUIRED to reach a fast path, and missing either is why the
+# suite never did:
+#
+#   1. The target must be a BORROWABLE C VARIABLE — a dict/buffer/generic local
+#      or parameter. A bare module-level `d.s` compiles to the consuming
+#      aot_dot_get_ic and misses the split entirely, so the read has to happen
+#      inside a function that takes the dict as a parameter.
+#   2. The site must be hit MORE THAN ONCE. The first execution of any site is
+#      a cold cache that goes to the _slow path and arms it; only the second
+#      and later executions take the fast path. A fixture that touches a site
+#      once can never reach one.
+#
+# So: read fields of a parameter, of several types, in a loop.
+
+define show(o) as:
+    # boxed reads of several value types — the aot_dot_get_tb_ic path
+    print of o.s
+    print of o.l
+    print of o.d
+    # a numeric read — aot_dot_num_tb_ic
+    print of (o.n + 1)
+    # a numeric write — aot_dot_set_num_tb_ic, in-place on a sole-owned box
+    o.n is (o.n) + 1
+    return o.n
+
+define idx(xs, k) as:
+    # the aot_index_get_ib path, on a borrowed container. NUMERIC elements:
+    # a list of strings here trips the per-name numeric inference (#135) and
+    # the AOT refuses, which is a real envelope limit, not this fixture's subject.
+    return xs[k]
+
+d is {"s": "hello", "l": [1, 2], "d": {"k": 5}, "n": 3}
+items is [10, 20, 30, 40]
+
+i is 0
+loop while i < 4:
+    print of (show of d)
+    print of (idx of [items, i])
+    i is i + 1
+
+# the field the loop mutated should have advanced once per iteration
+print of d.n
+
+# a polymorphic site: the same read site sees two different dict shapes, so
+# the cache must MISS and re-arm rather than answer from a stale slot
+define first_key_val(o) as:
+    return o.v
+
+p is {"v": 1, "w": 2}
+q is {"other": 9, "v": 22}
+j is 0
+loop while j < 3:
+    print of (first_key_val of p)
+    print of (first_key_val of q)
+    j is j + 1

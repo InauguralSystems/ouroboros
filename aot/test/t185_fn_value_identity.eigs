@@ -1,0 +1,38 @@
+# Round 98: a user function used as a VALUE was a FRESH Value on every read
+# of the name, and this VM compares VAL_FN/VAL_BUILTIN by POINTER IDENTITY
+# -- so the same function compared UNEQUAL TO ITSELF: `a is g / c is g /
+# print of (a == c)` printed 0 where the VM prints 1, rc 0 both sides. That
+# is branch-deciding: `if handler == some_fn:` over a dispatch table takes
+# the other arm in the native binary. Each compiled function now has ONE
+# Value for the process's life, mirroring the VM's env-held copy, increfed
+# per read so a consuming caller cannot free the shared identity.
+#
+# Twelve fixtures already reached this emission path and not one printed,
+# typed, or COMPARED a function value -- a witness for one interleaving and
+# none for the observable one (invariant 19).
+#
+# The remaining axes (type of g -> `fn`, print of g -> `<fn g>`) needed a
+# runtime value kind that carries a native pointer AND a name: EigenScript
+# #1060 (make_native_fn, pinned at round 158). The box is registered with
+# the function's source name, so `type of`, `print of` and `str of` agree
+# with the VM (ouroboros#174 was the silent-wrong row: `type of X ==
+# "builtin"` discriminators took the other arm in the native binary). A
+# real builtin still reports "builtin" -- the control at the end.
+define g(x) as:
+    return x + 1
+define k(x) as:
+    return x + 2
+a is g
+b is k
+c is g
+print of (a == b)
+print of (a == c)
+print of (b == b)
+d is {"f": g}
+e is {"f": g}
+print of ((d["f"]) == (e["f"]))
+print of ((a of 4) + (c of 5))
+print of (type of g)
+print of g
+print of (str of g)
+print of (type of len)

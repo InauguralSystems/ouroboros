@@ -1,0 +1,13 @@
+# EXPECT: over an iterable that is not provably numeric
+# ouroboros#198: a loop-scoped for binder (here: interrogated, in a function)
+# is a C double block-local, so its iterable must provably yield numbers.
+# This string-literal iterable built and died at RUN time with the AOT's own
+# "non-numeric value in a numeric context" where the VM prints a null b a;
+# now refused by name at build time. Numeric controls: t225/t228 (literal
+# numeric lists), DMG (`for i in range of N` over a module-bound name).
+define f(q) as:
+    for r in ["a", "b"]:
+        print of r
+        print of (prev of r)
+    return 0
+f of 1

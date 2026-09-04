@@ -1,0 +1,36 @@
+# Round 165 (DMG lever 2): a dict field CREATED as a buffer is a "buf" field
+# in the compiler's field maps, so `m.data[a]` is a positively numeric read
+# -- in locals, in arithmetic, and as a function's RETURN (re-derived after
+# the widen fixpoint records the parameters' field maps). Before: `rd` and
+# `rd2` returned Value* (the byte-read shape of DMG's fetch8/mem_read), and
+# every caller's numeric parameter fed from them widened to boxed. A list
+# field (`tags`) is not a buffer and stays boxed; a numeric field (`n`)
+# keeps its class. Byte-identical either way.
+define new_mem() as:
+    return {"data": buffer of 16, "rom_len": 3}
+define rd(m, a) as:
+    return m.data[a]
+define rd2(m, a) as:
+    x is m.data[a]
+    return x + 1
+define wr(m, a, v) as:
+    m.data[a] is v & 0xFF
+    return 0
+m is new_mem of null
+i is 0
+loop while i < 16:
+    wr of [m, i, i * 17]
+    i is i + 1
+print of (rd of [m, 3])
+print of (rd2 of [m, 5])
+print of ((rd of [m, 15]) + (rd2 of [m, 1]))
+define new_mem2() as:
+    return {"data": buffer of 4, "tags": ["a", "b"], "n": 7}
+define tag_of(m, i) as:
+    return m.tags[i]
+define n_plus(m) as:
+    return m.n + m.data[0]
+m2 is new_mem2 of null
+m2.data[0] is 5
+print of (tag_of of [m2, 1])
+print of (n_plus of m2)

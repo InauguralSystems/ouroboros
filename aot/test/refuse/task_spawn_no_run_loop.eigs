@@ -1,0 +1,13 @@
+# EXPECT: cooperative tasks are pumped by the VM run loop
+#
+# (round 108) The AOT admitted task_spawn through generic dispatch: the
+# builtin enqueues the task (the AOT's make_builtin wrapper passes its
+# type check) but the cooperative scheduler is pumped only by the VM's
+# dispatch loop (vm.c CASE(CALL), base_frame 0 -> vm_suspend_halt), and
+# native main() has no run loop -- so the task never ran and task_join
+# returned its placeholder null. VM 42 / AOT null, rc 0 both, no
+# suspension point in the worker at all. Refused by name at build time.
+define worker(x) as:
+    return x * 2
+w is task_spawn of [worker, 21]
+print of task_join of w

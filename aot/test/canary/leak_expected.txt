@@ -1,0 +1,8 @@
+# leak tier allowances (ouroboros#136): <fixture> <max LSan allocations>
+# the measured shutdown floor per fixture; lower a row when the tier reports
+# a count below it, never raise one without naming the leak it admits.
+l1_boxed_local_reassign 253
+l2_boxed_slot_numeric_read 252
+l3_genp_rebind 255
+l4_genp_for_binder 255
+l5_owned_arg_temp 253

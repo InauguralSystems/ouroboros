@@ -1,0 +1,39 @@
+# A ghost function interrogating a name that another function uses as a `for`
+# binder — the per-scope interrogated-set fixture.
+#
+# THE POINT OF THIS FIXTURE is that the fix it guards shipped WITHOUT one, and
+# the next review proved the whole 144-fixture suite stays green with the fix
+# reverted while this exact shape silently prints 1 for 8. The interrogated-
+# name set decides which binders the VM loop-scopes; built program-wide, a
+# never-called function's `prev of p` loop-scoped every other function's `p`
+# binder. The VM's rule is per-function: `real`'s binder persists because
+# NOTHING IN `real` interrogates p.
+#
+#   VM   8        program-wide set: AOT 1        both build, both rc 0
+#
+# Three fixes shipped in one commit; two got fixtures, and the third — the one
+# whose absence the suite could least detect — did not. The differential
+# contract is per-fix, not per-commit.
+
+define ghost(z) as:
+    return prev of p
+
+define real(p) as:
+    acc is 0
+    for p in [7, 8]:
+        acc is acc + 1
+    return p
+
+print of (real of 1)
+
+# and the same-function case, which must STILL loop-scope: the interrogate is
+# in scope here, so the binder must not persist
+define self_scoped(p) as:
+    for p in [7, 8]:
+        local q is p
+    print of p
+    print of (prev of p)
+    return 0
+
+z is self_scoped of 1
+print of "done"

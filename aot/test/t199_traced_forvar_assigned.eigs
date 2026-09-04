@@ -1,0 +1,28 @@
+# (round 107) round 106's shadow arm for a for-var that is ALSO an assignment
+# target was gated on g_traced == 0, so any interrogative anywhere in the
+# file (here the `prev of x` at the end) put the head write in the env and
+# the body reads on the C variable again -- the original silent-zero-sum,
+# non-local across the whole program, at BOTH scopes. The VM rule differs by
+# scope and both are pinned: a module binder is loop-scoped (prebound 7
+# survives), a function-local binder is OVERWRITTEN and persists.
+define g() as:
+    i is 7
+    t is 0
+    for i in range of 3:
+        if i == 1:
+            i is i + 10
+        t is t + i
+    print of i
+    return t
+i is 7
+t is 0
+for i in range of 3:
+    if i == 1:
+        i is i + 10
+    t is t + i
+print of t
+print of i
+print of (g of null)
+x is 1
+x is 2
+print of (prev of x)

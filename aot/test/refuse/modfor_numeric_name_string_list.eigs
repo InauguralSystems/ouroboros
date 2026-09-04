@@ -1,0 +1,10 @@
+# EXPECT: for binder over a NUMERIC module name
+# ouroboros#161 (cell 2): a module-scope `for` binder over a numeric module
+# name with a STRING iterable. The loop-scoped binder is a C double, so the
+# program built and died at run time ("non-numeric value in a numeric
+# context at <module>: for-in v (type str)") where the VM prints a b 1.
+# Refused by name at build time, as round 120 does inside functions.
+v is 1
+for v in ["a", "b"]:
+    print of v
+print of v

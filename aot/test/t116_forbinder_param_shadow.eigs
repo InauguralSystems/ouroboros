@@ -1,0 +1,44 @@
+# PARITY fixture, converted FROM a refusal — the best ending a guard can have.
+#
+# This file spent one round in refuse/: the VM loop-scopes a function-body
+# binder over a module-bound name, and the guard refused what one flat C
+# variable could not express. The next review showed the refusal EVICTED DMG
+# from the envelope (`i is 1` at module scope vs `for i in range of 23040` in
+# a render function — the census dropped 87→86 and the flip was the flagship).
+# Loop-scoping was emittable all along: DECLARING the same C name inside the
+# loop body makes C block scoping reproduce the VM's chain walk, the #109
+# numeric-shadow move. The rows below were silently wrong at main, refused for
+# one round, and are now simply ANSWERED.
+#
+#
+# A `for` binder over a parameter that shadows a module name.
+#
+# THE POINT OF THIS FIXTURE is a VM rule where the binder's post-loop
+# persistence depends on a NON-LOCAL fact. Measured, the identical function:
+#
+#   define f(x) as: for x in [7, 8]: local q is x / return x
+#   f of 1  ->  8   with no module x        (binder persists in the param)
+#   f of 1  ->  1   with `x is 5` at module (binder loop-scoped)
+#
+# One C variable cannot express both halves, and the divergence predates the
+# tape work entirely: the untraced form ran silently wrong (VM 1|5, AOT 8|5,
+# both rc 0) for as long as the for-unboxing has existed. It surfaced only when
+# a tape fixture happened to combine the shadow with a binder — two wrongs had
+# coincided in the only shape anyone had tested.
+#
+# Sixth context-dependent scoping row sent to EigenScript#1056. The next
+# review measured the rule to be GENERAL -- a function-body binder over any
+# module-bound name loop-scopes (the plain-module-global row had been silently
+# wrong since for-unboxing existed) -- so the guard now keys on module-bound-
+# ness, not parameter-ness, and its sibling module_global_forbinder.eigs pins
+# the row that was never a parameter at all.
+
+x is 5
+
+define f(x) as:
+    for x in [7, 8]:
+        local q is x
+    return x
+
+print of (f of 1)
+print of x

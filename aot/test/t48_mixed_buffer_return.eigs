@@ -14,7 +14,7 @@ define maybe_buf(n) as:
 define rmaybe_buf(n) as:
     if n > 0:
         return [9, 8]
-    b is zeros of 2
+    b is buffer of 2
     b[0] is 3
     b[1] is 4
     return b

@@ -1,5 +1,5 @@
 define make_range(m) as:
-    out is zeros of m
+    out is buffer of m
     i is 0
     loop while i < m:
         out[i] is i * i

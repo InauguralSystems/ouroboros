@@ -1,0 +1,38 @@
+# A parameter body inference ALREADY calls gen, fed a boxed argument — and the
+# numeric pin demoting it, in a program with no other widening.
+#
+# THIS FIXTURE MUST STAY SMALL, and that is its whole design. The defect was
+# invisible in a larger file: `widen_ptypes` is a fixpoint that stops when a
+# round changes nothing, so any OTHER widening anywhere in the program buys a
+# second round in which the demoted parameter is re-widened and re-recorded,
+# and the bug disappears. Adding this case to t102 — which is full of
+# widenings — would have gated nothing. Correctness must not depend on an
+# unrelated part of the program existing, so the fixture must not supply one.
+#
+# The shape: `find_gen_param_use` classifies `n` gen on its own, because
+# `takes_dict of n` puts it at a dict position. widen_scan's consult was gated
+# on the parameter currently being `num`, so an already-gen parameter recorded
+# no evidence — and the pin, which asks only what the body computes with
+# (`n * 2`), demoted it to a C double. The backstop then refused the build:
+#
+#   VM   10 / 7 / guarded3-null    rc 0
+#   AOT  build FAILS, no binary, "'shout' has no return statement ..."
+#
+# A straight regression: the previous commit compiled this correctly.
+
+define takes_dict(d) as:
+    if d != null:
+        print of d.k
+
+define shout(m) as:
+    print of (m * 1)
+
+define guarded3(n) as:
+    if n == null:
+        takes_dict of n
+        print of "guarded3-null"
+    else:
+        print of (n * 2)
+
+guarded3 of 5
+guarded3 of (shout of 7)

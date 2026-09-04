@@ -1,0 +1,5 @@
+define step(v) as:
+    return v + 10.0
+
+define announce(v) as:
+    print of v

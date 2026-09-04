@@ -1,0 +1,8 @@
+# ouroboros#179 control: a slice of a NUMBER in value position. The numeric
+# target arrives boxed and the runtime mirror raises the VM's own "cannot
+# slice number" after the same prints.
+lst is [1, 2, 3, 4]
+print of lst[1:3]
+x is 5
+print of x[0:1]
+print of "unreached"

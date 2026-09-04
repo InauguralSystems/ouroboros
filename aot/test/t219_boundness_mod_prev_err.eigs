@@ -1,0 +1,11 @@
+# ouroboros#157 (round 117, the boundness bit): `prev of z` where z is bound
+# only in a NOT-TAKEN branch. A module numeric is a C static live from
+# program start; the VM's binding exists only from its first executed
+# assignment. HEAD printed null rc 0 where the VM dies rc 1. The bit
+# (`static int eig_z_b`, set at every store) makes the read die like the VM.
+q is 1
+print of "before"
+if q == 5:
+    z is 7
+print of (prev of z)
+print of "unreachable"

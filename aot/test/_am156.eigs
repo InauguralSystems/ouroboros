@@ -1,0 +1,2 @@
+define tag(v) as:
+    return v + "!"

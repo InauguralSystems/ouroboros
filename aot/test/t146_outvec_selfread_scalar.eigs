@@ -1,0 +1,36 @@
+# Round 78: the alias bail was blind to reads of the written buffer
+# whose index does not contain O -- collect_ov_bufs records only
+# O-indexed reads (its job is the _pv_ declarations), so `out[d]`
+# served stale lanes in a Gauss-Seidel-style in-place kernel: VM
+# 10 19 36 69 134..., AOT 10 10 27 27 74..., both rc 0. The bail now
+# consumes reads_buf_any (index-shape-blind) and also checks the
+# bound/store-index expressions, which the vector path re-evaluates
+# per BLOCK. This shape demotes to the scalar path, byte-exact.
+# outvec shape whose TERM reads the WRITTEN buffer at an O-INDEPENDENT
+# index (out[d]) -- a loop-carried dependence collect_ov_bufs never
+# records, so the ovb[RES] bail cannot see it.
+n is 8
+dn is 4
+w is buffer of 32
+out is buffer of 8
+f is 0
+loop while f < 8:
+    out[f] is f + 1.0
+    f is f + 1
+g is 0
+loop while g < 32:
+    w[g] is 1.0
+    g is g + 1
+o is 0
+loop while o < n:
+    acc is 0
+    d is 0
+    loop while d < dn:
+        acc is acc + out[d] * w[d * n + o]
+        d is d + 1
+    out[o] is acc
+    o is o + 1
+p is 0
+loop while p < n:
+    print of out[p]
+    p is p + 1

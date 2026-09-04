@@ -1,0 +1,37 @@
+# Round 99: round 98 taught emit_val that a compiled function's NAME is not
+# an env binding; three OTHER consumers of that same question were not
+# told. Passing a function by name to a USER function emitted an env read
+# that can only miss -- "undefined variable 'g'" at runtime, after
+# arbitrary stdout, on programs the VM runs. Two independent wrongs, and
+# the loud one was masking the quiet one: arg_class returned "unknown" for
+# a function name so the callee's parameter defaulted NUMERIC, which would
+# have stored a number where the VM stores a function.
+#
+# This is the callback convention the ecosystem actually uses --
+# EigenRegex's ui handlers, liferaft's app_loop, lib/supervise's
+# task_spawn, DMG's disasm_one all pass functions by name.
+define g(x) as:
+    return x + 1
+define k(x) as:
+    return x + 100
+define stash(f) as:
+    return 0
+print of (stash of g)
+define usebox(f) as:
+    local box is [f]
+    return ((box[0]) of 1)
+print of (usebox of g)
+tbl is {}
+define reg(nm, f) as:
+    tbl[nm] is f
+    return 0
+x is reg of ["a", g]
+y is reg of ["b", k]
+print of (tbl["a"] of 3)
+print of (tbl["b"] of 3)
+print of ((tbl["a"]) == g)
+# (The fourth shape -- writing a function param into a numeric-classified
+# module global -- is NOT pinned here: it dies loudly at runtime in the
+# #148/#158 numeric-context family rather than silently, and closing it
+# needs the param-class-flows-outward work. Filed as #173.)
+print of "done"

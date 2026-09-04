@@ -1,0 +1,10 @@
+# Round 72: `n is 3100000000` was counter-classified (any int_lit_ok
+# base, bound 2^53) and `n * n` wrapped the signed long: AOT printed
+# -8.836744073709552e+18 where the VM prints 9.61e+18, both rc 0 -- a
+# silent wrong number. Counter BASES are now bounded to 2^31 (two factors
+# under 2^31 keep every pairwise product under 2^62); this base falls to
+# the double path and the product matches. Longer chains of
+# buffer-bounded index dims are the stated residual at is_counter.
+n is 3100000000
+print of (n * n)
+print of (n + 1)

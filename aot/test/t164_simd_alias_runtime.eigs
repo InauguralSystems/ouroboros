@@ -1,0 +1,47 @@
+# Round 87: buffer assignment ALIASES by reference (measured), so two
+# NAMES can be one heap buffer and every by-name dependence bail was
+# blind -- f of [b, b] into an in-place kernel printed six wrong
+# numbers of eight, rc 0, and a helper writing the module global its
+# param aliases diverged the same way through outvec. The runtime
+# entry guards now require pairwise POINTER distinctness
+# (aot_buf_data(A) != aot_buf_data(B)) for every written x touched
+# distinct-name pair, all recognizers; aliased calls demote to the
+# byte-exact scalar path.
+define f(x, y) as:
+    i is 0
+    loop while i < 8:
+        x[i] is x[i] + y[i - 1]
+        i is i + 1
+    return 0
+b is buffer of 8
+j is 0
+loop while j < 8:
+    b[j] is j * 10
+    j is j + 1
+r is f of [b, b]
+k is 0
+loop while k < 8:
+    print of b[k]
+    k is k + 1
+
+b is buffer of 8
+define g(a) as:
+    o is 0
+    loop while o < 4:
+        acc is 0
+        d is 0
+        loop while d < 4:
+            acc is acc + a[d + o]
+            d is d + 1
+        b[o + 1] is acc
+        o is o + 1
+    return 0
+j is 0
+loop while j < 8:
+    b[j] is j * 10
+    j is j + 1
+r is g of b
+k is 0
+loop while k < 8:
+    print of b[k]
+    k is k + 1

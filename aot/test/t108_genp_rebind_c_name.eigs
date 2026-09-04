@@ -1,0 +1,80 @@
+# Rebinding a TYPE-DISPATCHED (generic) parameter.
+#
+# THE POINT OF THIS FIXTURE is that this arm emitted the RAW source name where
+# the declaration is mangled. The parameter is declared `Value* eig_x` and the
+# assignment wrote `x`:
+#
+#   VM   z / 0                              rc 0
+#   AOT  gcc: "'x' undeclared"              rc 1, NO BINARY
+#
+# It is the exact shape the arm's own comment says it exists to support (#86's
+# `line is trim of line` in EigenMiniSat's DIMACS parser), and it had been
+# broken since `cn` became prefix-everything (#121).
+#
+# WHAT MADE IT SURVIVE is worth more than the fix. #121's commit message said
+# the prefix "turned latent bugs LOUD: SIX more emission sites were still
+# writing the raw name", and declared the name class closed. Six were found by
+# running the corpus — and nothing in the corpus rebinds a type-dispatched
+# parameter, so a seventh sat behind the same green suite for the rest of the
+# session. A class closed by "the tests went green" is closed only over the
+# corpus; closing it needs enumeration, which is now recorded at the fix site:
+# every other bare-name concatenation in the emitter puts the name INSIDE a C
+# string literal (an env key, correct by design), and this was the only one in
+# C identifier position.
+
+define f(x) as:
+    # `x` is generic because the body dispatches on its type; the rebind is a
+    # plain write to the C variable
+    if (type of x) == "str":
+        x is "z"
+    print of x
+    return 0
+
+print of (f of "a")
+print of (f of 7)
+
+define g(v) as:
+    # rebind to a value of a DIFFERENT type than it arrived with, and read it
+    # back through a call, so a wrong C name cannot survive as a stale read
+    if (type of v) == "num":
+        v is "was-a-number"
+    return len of v
+
+print of (g of 1)
+print of (g of "abcd")
+
+# A `for` binder over a generic parameter — the SECOND writer of a genp.
+#
+# The rebind arm's comment enumerates the READERS of a genp ("every read of a
+# genp uses the C name, so the update is seen") and concludes the C variable is
+# authoritative. It never enumerated the WRITERS. This one wrote the ENV, so the
+# body kept reading the incoming argument:
+#
+#   f of 5      VM  1 / 2 / 3       AOT  5 / 5 / 5
+#   both build, both rc 0, no diagnostic
+#
+# The post-loop read is deliberate: a `for` binder over an EXISTING binding
+# overwrites it and the value persists (measured on the VM — 3, not the
+# incoming 5), so a scoped C temporary would be wrong here too.
+
+define loops(x) as:
+    if (type of x) == "str":
+        return 0
+    for x in [1, 2, 3]:
+        print of x
+    print of x
+    return 0
+
+print of (loops of 5)
+
+# the same, where the loop does not execute, so the binder never fires and the
+# incoming value must survive
+define loops0(x) as:
+    if (type of x) == "str":
+        return 0
+    for x in []:
+        print of x
+    print of x
+    return 0
+
+print of (loops0 of 9)

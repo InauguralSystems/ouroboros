@@ -1,0 +1,43 @@
+# A parameter the pin can never touch, feeding a parameter it can.
+#
+# THE POINT OF THIS FIXTURE is that a stability test must ask the PIN, not a
+# proxy for it. `g_boxed_arg` is a SUFFICIENT condition for the pin sparing a
+# parameter — never a necessary one. The necessary and sufficient condition is
+# that the pin does not fire, and the pin's own predicate is
+# find_numeric_use_direct.
+#
+# Here `f` never computes with `x`, so the pin can never demote it — `x` is
+# stable. But the module call site is `f of (rows[0])`, an index node, which
+# arg_class calls "unknown", so `f#0` never gets a `g_boxed_arg` record. A
+# stability test that consults the record therefore declared `x` revocable and
+# suppressed the evidence for `g#0`, which the pin then demoted:
+#
+#   VM      n     rc 0
+#   before  builds clean, no diagnostic, then
+#           "non-numeric value in a numeric context at f: name x (type null)", rc 1
+#
+# The shape matters: the null arrives through a LIST ELEMENT, not through a void
+# call, so this is not the void family at all — it is any boxed value reaching a
+# guarded numeric parameter, which is ordinary code.
+
+define takes_dict(d) as:
+    if d != null:
+        print of d.k
+
+define g(y) as:
+    if y == null:
+        takes_dict of y
+        print of "n"
+    else:
+        print of (y * 2)
+
+define f(x) as:
+    g of x
+
+rows is [null]
+f of (rows[0])
+
+# and the same chain with a real number, so a fix that just boxes everything
+# still has to carry the numeric path correctly
+nums is [21]
+f of (nums[0])

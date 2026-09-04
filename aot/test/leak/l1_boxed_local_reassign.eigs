@@ -1,0 +1,18 @@
+# leak tier fixture (#136): a function that REASSIGNS boxed locals many
+# times. aot_lv_set must release the previous value on every reassignment
+# (its slot_decref); aot_lv_getb must write the boxed form back so the slot
+# owns exactly one reference. Both #136 mutants leak here and nowhere in
+# the numeric-heavy parity fixtures.
+define churn(n) as:
+    local q is [0]
+    local s is "a"
+    local i is 0
+    loop while i < n:
+        q is [i, i + 1]
+        s is s + "b"
+        local t is q
+        if (len of t) == 2:
+            q is t
+        i is i + 1
+    return (len of s)
+print of (churn of 2000)

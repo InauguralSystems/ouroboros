@@ -1,0 +1,26 @@
+# Round 166 (DMG lever 2, second step): a record's field map travels down
+# a call chain. `outer` receives `m` from the module and hands it to
+# `inner`, which returns `m.data[i]`: with the parameter's field map in
+# the widen seed, `inner` is declared double two hops away from the literal
+# (before: its `m` had no map at all, the return stayed boxed). The last
+# line mixes the chain's result into arithmetic; the list-field control
+# stays boxed. Byte-identical either way.
+define new_rec() as:
+    return {"data": buffer of 8, "names": ["x", "y"], "k": 3}
+define inner(m, i) as:
+    return m.data[i]
+define outer(m, i) as:
+    return (inner of [m, i]) * 2
+define outer_name(m, i) as:
+    return inner_name of [m, i]
+define inner_name(m, i) as:
+    return m.names[i]
+r is new_rec of null
+j is 0
+loop while j < 8:
+    r.data[j] is j * 3
+    j is j + 1
+print of (outer of [r, 2])
+print of (outer of [r, 7])
+print of ((outer of [r, 1]) + (inner of [r, 4]) + r.k)
+print of (outer_name of [r, 1])

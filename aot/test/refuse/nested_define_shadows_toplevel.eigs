@@ -1,0 +1,14 @@
+# EXPECT: collides with a top-level function
+# ouroboros#165 control: a nested define that shadows a REAL top-level
+# function stays refused. On the VM a reference BEFORE the nested define
+# resolves to the top-level one and a reference after it to the inner one
+# (prints 6 then 10, rc 0); the per-encloser rename that admits two
+# same-named PRIVATE helpers would redirect the early reference silently.
+define helper(d) as:
+    return d + 1
+define f(x) as:
+    local first is helper of x
+    define helper(d) as:
+        return d * 2
+    return [first, helper of x]
+print of (f of 5)

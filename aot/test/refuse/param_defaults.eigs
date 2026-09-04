@@ -1,0 +1,20 @@
+# EXPECT: parameter defaults not supported yet
+#
+# A deliberate F-OURO-23 envelope refusal, kept here so the tier is never
+# vacuous and so at least one member of that family is actually exercised.
+# The VM runs this program; the AOT refuses it loudly at build time rather
+# than guessing what the defaulted parameter should bind to.
+#
+# The rest of the family — under-arity calls, whole-list args to user fns, the
+# `when` qualifier, module-shadowing `local` on buffer globals, fn-body writes
+# to builtin names, tensor broadcast — are still untested and belong here too.
+
+define greet(name, greeting) as:
+    return greeting + ", " + name
+
+define shout(name, greeting is "HI") as:
+    return greeting + ", " + name
+
+print of (greet of ["world", "hello"])
+print of (shout of ["world", "hey"])
+print of (shout of "world")

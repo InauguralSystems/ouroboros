@@ -1,0 +1,12 @@
+# Round 93: a slice target that is not a C buffer variable. A NUMERIC name
+# is a C double and not in the env, so the boxed read said "undefined
+# variable 'n'" where the VM says "cannot slice number"; and the DEFAULT
+# upper bound went through aot_buf_len, whose own message ("buffer op on a
+# non-buffer value") fired before the faithful slice mirror could raise
+# "cannot slice dict" -- the round-92 mirror was unreachable for exactly
+# the cases it was written for. The default bound now uses the VM's
+# per-type length rule, and a numeric target is boxed so the same rule
+# raises the VM's message. _err class: both die, equal codes.
+d is {"k": 1}
+print of "before"
+print of (sum of d[0 :])

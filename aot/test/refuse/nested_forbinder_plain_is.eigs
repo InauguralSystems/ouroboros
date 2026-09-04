@@ -1,0 +1,27 @@
+# EXPECT: as a for binder
+#
+# The plain-`is` spelling of its sibling — one keyword deleted.
+#
+# THE POINT OF THIS FIXTURE is the axis, not the shape. The first version of
+# this guard keyed on binding kind ("a dominating top-level `local` used as a
+# binder") and this program evaded it by spelling the binding `x is 7` instead
+# of `local x is 7`. The VM's rule keys on DEPTH: inside a nested define a
+# `for` binder is loop-scoped over every binding kind except the define's own
+# parameter, so the guard must refuse any non-parameter binder name.
+#
+#   VM   15        before the fix: AOT 10, both build, both rc 0
+#
+# A guard derived from a measured table inherits the table's axes — and a
+# table measured along the wrong axis produces a guard with a one-keyword
+# bypass. The parameter case stays compilable and is covered by parity (the
+# binder persists on both sides).
+
+define f(y) as:
+    define b(d) as:
+        x is 7
+        for x in [1, 2]:
+            d is d + x
+        return d + x
+    return b of 5
+
+print of (f of 0)

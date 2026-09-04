@@ -1,0 +1,7 @@
+# Companion module for the import-collision refusal tests. Not a test itself
+# (the tier globs *.eigs, so it is named with a leading underscore and carries
+# its own EXPECT-free marker below to be skipped).
+counter is 0
+define bump() as:
+    counter is counter + 1
+    return counter

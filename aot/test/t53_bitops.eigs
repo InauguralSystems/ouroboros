@@ -19,7 +19,7 @@ print of ((0 - 1) & 0xFF)
 # precedence chain: shift binds tighter than &, & tighter than ^, ^ tighter than |
 print of (1 | 2 ^ 6 & 12 << 1)
 # boxed contexts: a for-in loop var (env-boxed) as bit-op operand
-tbl is zeros of 4
+tbl is buffer of 4
 for j in range of 4:
     tbl[j] is (j << 2) ^ (j & 1)
 tot is 0

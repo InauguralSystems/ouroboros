@@ -1,0 +1,13 @@
+# Round 92: `zeros of [r, c]` builds a NESTED LIST, so keeping it in the
+# numeric-buffer class compiled every `m[i]` row read as a numeric element
+# fetch -- the AOT died "non-numeric element in `eig_m`[0] (list)", not a
+# VM message, on a valid program (round 91 made that loud; it used to be a
+# flat 6-buffer, silently). 2-D `zeros` is out of the class now, so rows
+# read as rows and a for-in binder walks them.
+m is zeros of [2, 3]
+print of m[0]
+for row in m:
+    row[0] is 7
+print of m
+print of (len of m)
+print of (sum of m[0 : 2])

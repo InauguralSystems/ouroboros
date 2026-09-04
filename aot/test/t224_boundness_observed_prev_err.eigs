@@ -1,0 +1,12 @@
+# ouroboros#157 in the OBSERVED regime (round 117): t219 plus one `report of`.
+# Observed module numerics live in the env, not in a C static, so the
+# boundness bit does not exist for them; the env holds the binding from its
+# first executed store, so env membership is the check. HEAD answered null
+# rc 0 where the VM dies (round-117 critic, cell f3).
+q is 1
+print of "before"
+if q == 5:
+    z is 7
+print of (report of q)
+print of (prev of z)
+print of "unreachable"

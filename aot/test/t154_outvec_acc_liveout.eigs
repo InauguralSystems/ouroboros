@@ -1,0 +1,67 @@
+# Round 83: the vector interior accumulates in a C-local aot_vec and
+# never wrote cACC, so an ACC read AFTER the o-loop was stale
+# exactly when OBOUND % AOT_VW == 0 -- the scalar tail, the only
+# cACC writer, never ran: VM 76.75, AOT 0, both rc 0, appearing and
+# disappearing with buffer size AND SIMD width (invisible on a
+# scalar build). The last stored column IS ACC's final value, so
+# emit_outvec reads it back after the vector loop; the n=7 tail
+# case and matmul's wrapped inheritance are pinned here too.
+n is 8
+dn is 4
+x is buffer of dn
+w is buffer of 32
+out is buffer of n
+f is 0
+loop while f < dn:
+    x[f] is f * 1.5 + 1.0
+    f is f + 1
+g is 0
+loop while g < 32:
+    w[g] is g * 0.25
+    g is g + 1
+acc is 0
+o is 0
+loop while o < n:
+    acc is 0
+    d is 0
+    loop while d < dn:
+        acc is acc + x[d] * w[d * n + o]
+        d is d + 1
+    out[o] is acc
+    o is o + 1
+print of acc
+print of d
+print of o
+p is 0
+loop while p < n:
+    print of out[p]
+    p is p + 1
+
+rows is 3
+dn is 4
+n is 8
+x is buffer of 12
+w is buffer of 32
+out is buffer of 24
+f is 0
+loop while f < 12:
+    x[f] is f * 0.5 + 1.0
+    f is f + 1
+g is 0
+loop while g < 32:
+    w[g] is g * 0.25 + 0.5
+    g is g + 1
+i is 0
+loop while i < rows:
+    o is 0
+    loop while o < n:
+        acc is 0
+        d is 0
+        loop while d < dn:
+            acc is acc + x[i * dn + d] * w[d * n + o]
+            d is d + 1
+        out[i * n + o] is acc
+        o is o + 1
+    i is i + 1
+print of acc
+print of out[23]

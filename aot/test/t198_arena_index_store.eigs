@@ -1,0 +1,43 @@
+# (round 107) an indexed store into a HEAP list inside an arena window must
+# PROMOTE the value: the VM (#873) heap-forces at OP_INDEX_SET; the AOT's
+# three list-store helpers adopted the arena pointer as-is, so after
+# arena_reset the slot dangled into reclaimed memory and the next arena
+# user's allocation landed in it -- silent wrong value AND type, rc 0.
+# Varied: scalar vs list value, literal vs computed vs boxed index (the
+# three helpers), module vs function scope. Controls: dict store and
+# append, which already promoted.
+define stomp() as:
+    arena_mark of null
+    local j1 is [8, 8, 8, 8, 8, 8, 8, 8]
+    local j2 is [8, 8, 8, 8, 8, 8, 8, 8]
+    local j3 is [8, 8, 8, 8, 8, 8, 8, 8]
+    arena_reset of null
+
+define fill(ys, k) as:
+    arena_mark of null
+    ys[k] is k * 100
+    ys[k + 1] is [k, k]
+    arena_reset of null
+    stomp of null
+    return ys
+
+xs is [1, 2, 3, 4, 5, 6]
+ks is [3, "k"]
+d is {"a": 0}
+arena_mark of null
+xs[0] is 42
+xs[1] is [9, 9]
+xs[ks[0]] is 7
+d["a"] is 11
+append of [xs, 55]
+arena_reset of null
+stomp of null
+print of xs
+print of (type of xs[0])
+print of (type of xs[1])
+print of (type of xs[3])
+print of d
+zs is fill of [[0, 0, 0, 0], 1]
+print of zs
+print of (type of zs[1])
+print of (type of zs[2])

@@ -1,0 +1,43 @@
+# Evidence derived from a class the numeric pin can REVOKE.
+#
+# THE POINT OF THIS FIXTURE is a soundness property, not a shape. `g_boxed_arg`
+# is monotone — set once, never cleared — while the pin's demotion is the one
+# non-monotone step in the ptype fixpoint. Recording a verdict that depends on a
+# pinnable class therefore freezes a fact after its basis has been withdrawn.
+#
+# Here `f`'s x is gen in round 1 (find_gen_param_use saw `g of x` at a gen
+# position, because `takes_dict of y` makes g's parameter gen). arg_class said
+# "gen", g#0 was recorded boxed — and the pin then demoted x back to num and
+# SPARED y, because y had evidence and x did not. Caller passes a C double,
+# callee expects Value*, and emit_args fell through to an env lookup for a name
+# that only exists as a C local:
+#
+#   VM   30 / 6                       rc 0
+#   AOT  builds clean, prints 30, then "undefined variable 'x'", rc 1
+#
+# Worse than t103's failure, which at least refused at build time: this one
+# builds, produces correct output, and dies mid-program.
+#
+# Three consecutive fixes moved WHEN the evidence was recorded — from a separate
+# scan, to the widening site, to unconditionally at the widening site — and none
+# asked whether the thing recorded was STABLE. arg_gen_grounded is that question:
+# literals, void calls and Value*-returning calls cannot be revoked; a local
+# cannot (the pin only touches parameters); a parameter can, unless its own class
+# is one the pin never demotes or it is itself backed by grounded evidence.
+
+define takes_dict(d) as:
+    if d != null:
+        print of d.k
+
+define g(y) as:
+    if y == null:
+        takes_dict of y
+        print of "g-null"
+    else:
+        print of (y * 2)
+
+define f(x) as:
+    print of (x * 10)
+    g of x
+
+f of 3

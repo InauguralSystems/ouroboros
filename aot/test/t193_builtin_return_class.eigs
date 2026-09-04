@@ -1,0 +1,59 @@
+# Round 104: BOXED_RET_BUILTINS was a 24-name hand-maintained allowlist
+# against a runtime registering ~238 builtins, and it decided a
+# function's DECLARED RETURN TYPE. A builtin not on the list was taken
+# as "not boxed", so `return json_path of [j, k]` declared the function
+# double and the string died through aot_num_ck_at at RUNTIME: rc 0 ->
+# rc 1, nothing printed. No AOT: refusal, so the round-103 stdlib BUILD
+# sweep could not see it -- lib/json.eigs is one of the 65 modules that
+# BUILD, and it printed nothing and died on the first call through its
+# own documented API.
+#
+# The polarity was backwards. An allowlist of the BOXED ones makes every
+# builtin nobody thought of -- and every builtin upstream adds later --
+# a silent latent instance. The return class now defaults to BOXED,
+# which is always correct because a number boxes fine, and the NUMERIC
+# ones are the enumerated exception: an omission costs a make_num
+# instead of a miscompile. Every name in NUM_RET_BUILTINS was MEASURED
+# against the pin with `type of`, not assumed.
+#
+# THE SWEEP CAUGHT THIS FIX'S OWN REGRESSION, one round after being
+# committed: inverting the polarity made lib/checksum.eigs and
+# lib/datetime.eigs stop building, because `buf_get` and `num` are
+# genuinely numeric and were missing from the measured list, so their
+# functions declared Value* while the call sites still emitted double.
+# Note the direction -- a missing NUM_RET entry is a LOUD gcc error the
+# gate catches, where a missing BOXED entry was a silent runtime death.
+# That asymmetry is the whole point of the inversion.
+#
+# Why fixtures could not see it either: what rescues the shape is an
+# unrelated boxed return ELSEWHERE in the same function, so any function
+# with a string literal on some other return path masks it. Per
+# invariant 22 the cases below vary the RETURN CLASS of the builtin --
+# str, list, num -- and include the masked shape as the control.
+doc is "{\"a\": \"hi\"}"
+define get_str(j, k) as:
+    return json_path of [j, k]
+print of (get_str of [doc, "a"])
+define get_type(v) as:
+    return type of v
+print of (get_type of 5)
+xs is [1, 2, 3, 4]
+define get_list(a) as:
+    return list_slice of [a, 1, 3]
+print of (get_list of xs)
+b is zeros of 4
+define get_shape(a) as:
+    return shape of a
+print of (get_shape of b)
+define get_num(x) as:
+    return sqrt of x
+print of (get_num of 16)
+define get_len(a) as:
+    return len of a
+print of (get_len of xs)
+define masked(v, flag) as:
+    if flag == 1:
+        return "N"
+    return type of v
+print of (masked of [5, 0])
+print of (masked of [5, 1])

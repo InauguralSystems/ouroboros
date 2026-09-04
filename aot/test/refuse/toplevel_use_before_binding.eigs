@@ -1,0 +1,21 @@
+# EXPECT: precedes its first module-level binding
+#
+# Round 57's root-cause probe: module globals are emitted as C globals
+# live-at-zero from program start, but the VM's binding exists only from
+# its first EXECUTED assignment -- `print of v / v is 1` (no functions
+# involved at all) dies rc 1 on the VM and printed 0 here. The top-level
+# order guard refuses any top-level use that textually precedes the
+# name's first top-level binding statement.
+#
+# This is the envelope shape (the VM RUNS it, rc 0, prints 1): the use
+# sits in a dead if arm, so at runtime the binding always precedes every
+# executed use, but statement order cannot prove it. The use scan is
+# scope-aware (collect_uses_scoped): for-BODY uses are skipped because a
+# name assigned only in a for body is loop-local -- descending would
+# false-refuse `for i...: tmp is i / ... / tmp is 99`.
+
+if 1 == 2:
+    print of v
+
+v is 1
+print of v

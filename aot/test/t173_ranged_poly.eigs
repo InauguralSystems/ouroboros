@@ -1,0 +1,28 @@
+# Round 92: the round-91 RANGED _v wrappers hand-wrote the slice instead of
+# deferring -- breaking the rule that same commit stated for the scalar
+# ones ("a hand-written fallback is not faithful; the oracle answers by
+# construction"). Three measured consequences, all silent-wrong: a nested
+# list element was coerced to 0.0 where the VM FLATTENS (sum of a nested
+# slice gave 0 vs 10); VAL_STR was called length-0 though the bt class
+# carries strings; and dict/num were treated as empty containers, turning
+# the VM's "cannot slice dict" into a silent 0. The slice is now a faithful
+# mirror of OP_SLICE_GET -- per-type length, negative resolution, element
+# VALUES not doubles, and the VM's one error text with the ORIGINAL bounds
+# -- and its result goes to the runtime's own builtin.
+define rs(b) as:
+    return sum of b[0 : 2]
+define rn(b) as:
+    return norm of b[0 : 2]
+xs is [[1, 2], [3, 4]]
+print of (rs of xs)
+print of (rn of xs)
+ys is [1, 2, 3, 4]
+print of (rs of ys)
+print of (rn of ys)
+print of (rs of "abcd")
+zb is buffer of 4
+zb[0] is 1
+zb[1] is 2
+print of (rs of zb)
+print of (sum of ys[-3 : -1])
+print of (sum of ys[2 : 2])

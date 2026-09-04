@@ -1,0 +1,41 @@
+# ouroboros#196 (round 161): a numeric read of a function local that was
+# never assigned. The VM answers null (only the consuming op decides:
+# `return z` yields null, `z + 1` would die "cannot apply '+' to null and
+# num"); a C double read 0. A local that is not DEFINITELY assigned before
+# every read -- straight-line, both arms of an if with an else, never
+# credited from a loop body that may run zero times -- now stays a boxed
+# slot, whose unassigned read is null. `f` (assigned in one arm), `k`
+# (assigned and read under the same condition, which the walker cannot
+# prove) are demoted; `g` (both arms), `h` (assigned before the loop) keep
+# their C doubles. The return classifier applies the same test so the
+# declared type and the emission agree. An INTERROGATED local (`prev of z`)
+# is exempt: it keeps its C double and per-call boundness bit, which is what
+# makes `prev of` on an unassigned local die as on the VM (t221/t222/t226/
+# t227); its plain read still answers 0 -- the residual #196 records.
+define f(q) as:
+    if q == 5:
+        z is 7
+    return z
+print of (f of 1)
+print of (f of 5)
+define g(q) as:
+    if q == 5:
+        w is 7
+    else:
+        w is 8
+    return w * 2
+print of (g of 1)
+define h(q) as:
+    local t is 0
+    for i in range of q:
+        t is t + i
+    return t
+print of (h of 4)
+define k(q) as:
+    if q > 0:
+        v is 1
+    if q > 0:
+        return v + 1
+    return 0
+print of (k of 3)
+print of (k of 0)

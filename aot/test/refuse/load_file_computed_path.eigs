@@ -1,0 +1,13 @@
+# EXPECT: load_file with a computed path cannot be spliced at build time
+# ouroboros#127: the VM runs this (rc 0, prints 10 / 14). The AOT once
+# transpiled and linked it, printed "direct 10", and died "undefined variable
+# 'helper'" -- the loaded file ran interpreted and could not see the compiled
+# parent. A path built at run time cannot be spliced statically, so the
+# envelope refuses it by name instead of accepting a program it cannot run.
+# (script-dir-relative on the VM's chain, so the tier's cwd does not matter)
+p is "_lfc_" + "child.eigs"
+load_file of p
+define helper(n) as:
+    return n * 2.0
+print of f"direct {helper of 5.0}"
+print of f"viachild {child_calls_helper of 7.0}"

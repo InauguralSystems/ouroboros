@@ -54,6 +54,7 @@ OP_JUMP_IF_FALSE is 31
 OP_JUMP_IF_FALSE_PEEK is 33
 OP_JUMP_IF_TRUE_PEEK is 34
 OP_POP is 35
+OP_DUP is 36
 OP_DUP2 is 37
 OP_CLOSURE is 38
 OP_DICT is 43
@@ -780,6 +781,38 @@ define cg_node(c, node) as:
         cg_block_value of [c, node[3]]
         cg_patch_jump of [c, je]
         return null
+    if t == "match":
+        # (#159) mirror compiler.c's AST_MATCH arm exactly: the matched value
+        # stays on the stack across the cases; each case DUPs it, compiles
+        # the pattern, OP_EQ, JUMP_IF_FALSE to the next case, POPs the dup,
+        # runs the body as a block VALUE, and jumps to the end; a wildcard
+        # (pattern null) POPs and runs its body unconditionally, and nothing
+        # after it is emitted; the fall-through path POPs the value and
+        # pushes NULL so every path leaves one value.
+        cg_node of [c, node[1]]
+        local ends is []
+        local cases is node[2]
+        for i in range of (len of cases):
+            local pat is (cases[i])[0]
+            local body is (cases[i])[1]
+            if pat == null:
+                cg_emit of [c, OP_POP]
+                cg_block_value of [c, body]
+                append of [ends, cg_emit_jump of [c, OP_JUMP]]
+                break
+            cg_emit of [c, OP_DUP]
+            cg_node of [c, pat]
+            cg_emit of [c, OP_EQ]
+            local nx is cg_emit_jump of [c, OP_JUMP_IF_FALSE]
+            cg_emit of [c, OP_POP]
+            cg_block_value of [c, body]
+            append of [ends, cg_emit_jump of [c, OP_JUMP]]
+            cg_patch_jump of [c, nx]
+        cg_emit of [c, OP_POP]
+        cg_emit of [c, OP_NULL]
+        for ei in range of (len of ends):
+            cg_patch_jump of [c, ends[ei]]
+        return null
     if t == "loop":
         local header is len of c.code
         append of [c.loops, {"header": header, "breaks": []}]
@@ -1009,6 +1042,10 @@ define cg_scan_module_names(stmts) as:
             cg_scan_module_names of s[3]
         if s[0] == "loop":
             cg_scan_module_names of s[2]
+        if s[0] == "match":
+            local mcs is s[2]
+            for mi in range of (len of mcs):
+                cg_scan_module_names of (mcs[mi])[1]
         if s[0] == "for":
             cg_scan_module_names of s[3]
         if s[0] == "try":

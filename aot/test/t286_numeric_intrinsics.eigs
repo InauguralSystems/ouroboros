@@ -1,0 +1,22 @@
+# (round 172) floor/ceil/round/abs with a provably numeric argument lower to
+# the libm call; a boxed argument (list element, generic param) still takes
+# the builtin. Both must print what the VM prints, including half-way
+# rounding (C round: away from zero), negative zero, and large magnitudes.
+define f(x) as:
+    return floor of x
+define bank(addr) as:
+    return floor of (addr / 0x4000)
+local xs is [2.5, -2.5, 0.5, -0.5, 7.999, -7.001, 1e15 + 0.5, 0]
+local out is ""
+for x in xs:
+    out is out + (str of (floor of x)) + "/" + (str of (ceil of x)) + "/" + (str of (round of x)) + "/" + (str of (abs of x)) + " "
+print of out
+local acc is 0
+local i is 0
+loop while i < 100000:
+    acc is acc + (bank of (i * 3)) + (abs of (i - 50000)) + (round of (i / 7))
+    i is i + 1
+print of acc
+print of (f of 9.75)
+print of (floor of (xs[1]))
+print of (abs of (xs[3]))

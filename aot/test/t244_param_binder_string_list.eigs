@@ -1,0 +1,16 @@
+# ouroboros#158: a numeric-looking parameter re-bound as a for BINDER over a
+# literal list with string elements. The binder arm stored through
+# aot_num_ck_at and died "non-numeric value in a numeric context at f:
+# for-in p" where the VM prints b. The literal is statically known, so the
+# parameter is boxed. Control: a numeric literal list keeps the parameter
+# a C double (g: 2).
+define f(p) as:
+    for p in ["a", "b"]:
+        local q is p
+    return p
+print of (f of 1)
+define g(p) as:
+    for p in [1, 2]:
+        local q is p
+    return p
+print of (g of 9)

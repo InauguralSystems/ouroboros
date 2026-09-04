@@ -1,0 +1,11 @@
+# EXPECT: over an iterable that is not provably numeric
+# ouroboros#198, second shape: the round-119 lift admits a string `local`
+# plus a string binder (VM: a b z a); same build-time refusal, same guard.
+define f(q) as:
+    local r is "z"
+    for r in ["a", "b"]:
+        print of r
+    print of r
+    print of (prev of r)
+    return 0
+f of 1

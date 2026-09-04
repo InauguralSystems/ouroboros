@@ -25,4 +25,4 @@ jobs:
       - name: Build devcontainer and run suites (self-host parity + AOT)
         uses: devcontainers/ci@v0.3
         with:
-          runCmd: EIGS=eigenscript bash test/run.sh && EIGS=eigenscript bash aot/test/run.sh
+          runCmd: bash aot/core_check.sh && EIGS=eigenscript bash test/run.sh && EIGS=eigenscript bash aot/test/run.sh && EIGS=eigenscript bash aot/test/leak.sh

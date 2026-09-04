@@ -1,0 +1,16 @@
+# Round 80: two holes in the round-79 hoist. A bound above LONG_MAX:
+# (long)ceil(1e19) is UB (LLONG_MIN on x86-64) and the round-79
+# negative-clamp LAUNDERED the overflow sentinel into an empty loop
+# -- VM dies out of range, AOT printed 0, rc 0. The bound is now
+# tested AS A DOUBLE (> 0 && <= 9.2e18) before any cast; an
+# unrepresentable bound takes the scalar branch, which dies
+# byte-exactly. _err class: both die, equal codes. (These raise
+# sites also gained the 'Error line N:' frame the VM prints -- the
+# bare fprintf form failed normalization on the prefix alone.)
+b is buffer of 4
+i is 0
+loop while i < 1e19:
+    b[i] is 1
+    i is i + 1
+print of i
+print of b[0]

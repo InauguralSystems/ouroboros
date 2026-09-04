@@ -1,0 +1,7 @@
+concurrent.eigs REFUSE
+eigen.eigs REFUSE
+geometry.eigs REFUSE
+lab.eigs REFUSE
+numerics.eigs REFUSE
+supervise.eigs REFUSE
+test_runner.eigs REFUSE

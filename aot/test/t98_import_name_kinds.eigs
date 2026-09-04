@@ -1,0 +1,13 @@
+# A module binding a name the program also imports — ouroboros#141.
+#
+# THE POINT OF THIS FIXTURE is the arm that broke the guard twice. `import M`
+# plus `import N` where N binds M's name is legal: the guard needed an
+# exemption for "both sides denote the same module dict", and got it wrong
+# twice — once by consulting a set the recursion had already polluted, once by
+# matching on NAME rather than KIND (the real stdlib reaches that one:
+# lib/list.eigs binds `map` with a `define`).
+#
+# With namespacing there is no exemption and no guard. Must MATCH the VM.
+import _kind_my
+import _kind_mx
+print of _kind_my.val

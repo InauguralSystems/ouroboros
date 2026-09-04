@@ -1,0 +1,8 @@
+# A load_file target that ends its own top level early.
+#
+# In the VM this `return` ends ONLY this file and yields 7 to the load_file
+# call; the caller carries on and prints "main-end". The AOT splices the target
+# into the program, where the same `return` would end everything.
+print of "inc-start"
+return 7
+print of "inc-after"

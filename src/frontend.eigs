@@ -105,18 +105,24 @@ define eigen_tokenize(source) as:
         if at_line_start == 1:
             at_line_start is 0
             if bracket_depth == 0:
+                # lexer.c:252-256 measures indent in THREE ordered runs --
+                # spaces, then tabs, then trailing spaces -- and STOPS: a tab
+                # after that demotes to inline whitespace. This loop used to
+                # count space/tab interleaved in any order, which silently
+                # ACCEPTED block structure the C lexer rejects ("unexpected
+                # indent", rc 1, vs the frontend running the program, rc 0 --
+                # the over-acceptance rot class reject_one exists to stop).
                 spaces is 0
-                counting is 1
-                loop while (pos < src_len) and (counting == 1):
-                    ch is char_at of [source, pos]
-                    if ch == " ":
-                        spaces is spaces + 1
-                        pos is pos + 1
-                    elif ch == "\t":
+                loop while (pos < src_len) and ((char_at of [source, pos]) == " "):
+                    spaces is spaces + 1
+                    pos is pos + 1
+                if (pos < src_len) and ((char_at of [source, pos]) == "\t"):
+                    loop while (pos < src_len) and ((char_at of [source, pos]) == "\t"):
                         spaces is spaces + 4
                         pos is pos + 1
-                    else:
-                        counting is 0
+                    loop while (pos < src_len) and ((char_at of [source, pos]) == " "):
+                        spaces is spaces + 1
+                        pos is pos + 1
                 # Skip comment lines
                 if pos < src_len:
                     if (char_at of [source, pos]) == "#":
@@ -127,8 +133,15 @@ define eigen_tokenize(source) as:
                             line is line + 1
                         at_line_start is 1
                         continue
-                # Skip blank lines
+                # Skip blank lines. #880 mirror: a CRLF blank line -- swallow
+                # the CR so the "\n" below sees an empty line. The C lexer
+                # skips CR ONLY when the next byte is LF (lexer.c:265,308); a
+                # lone CR stays an error on both sides, measured before
+                # writing this -- CRLF sources ran on the VM and died here.
                 blank_line is 0
+                if (pos + 1) < src_len:
+                    if ((char_at of [source, pos]) == "\r") and ((char_at of [source, pos + 1]) == "\n"):
+                        pos is pos + 1
                 if pos < src_len:
                     if (char_at of [source, pos]) == "\n":
                         pos is pos + 1
@@ -160,10 +173,16 @@ define eigen_tokenize(source) as:
         if (at_line_start == 0) and (pos < src_len):
             c is char_at of [source, pos]
             handled is 0
-            # Skip inline spaces
+            # Skip inline spaces. CR is space ONLY as the CR of a CRLF pair
+            # (lexer.c:308 mirrors: ' ' | '\t' | '\r'+LF); skipping a lone CR
+            # here would over-accept what the C lexer rejects.
             if (_is_space of c) == 1:
                 pos is pos + 1
                 handled is 1
+            if (handled == 0) and (c == "\r") and ((pos + 1) < src_len):
+                if (char_at of [source, pos + 1]) == "\n":
+                    pos is pos + 1
+                    handled is 1
             # Comments
             if (handled == 0) and (c == "#"):
                 commenting is 1
@@ -214,6 +233,16 @@ define eigen_tokenize(source) as:
                                     buf is buf + "\n"
                                 elif esc == "t":
                                     buf is buf + "\t"
+                                elif esc == "r":
+                                    # lexer.c:361 decodes \r; this table never
+                                    # did, and the first line of OUR OWN SOURCE
+                                    # to use "\r" exposed it: self-compiled,
+                                    # the comparison became c == "r" and the
+                                    # stage-2 lexer ate any lone identifier r
+                                    # before a newline ("return r" lost its
+                                    # operand). The bootstrap fixed point is
+                                    # the gate that caught it.
+                                    buf is buf + "\r"
                                 elif esc == "\\":
                                     buf is buf + "\\"
                                 elif esc == "\"":
@@ -248,7 +277,29 @@ define eigen_tokenize(source) as:
                             expr_buf is ""
                             loop while (pos < src_len) and (depth > 0):
                                 bc is char_at of [source, pos]
-                                if bc == "{":
+                                if bc == "\"":
+                                    # #334's OTHER half, never mirrored: a
+                                    # string literal inside {...} is copied
+                                    # wholesale so its braces are text --
+                                    # f"{"a}b"}" prints a}b on the VM and this
+                                    # collector cut at the } inside the string
+                                    # ("unterminated string", rc 1). Escapes
+                                    # ride through in pairs, exactly as
+                                    # lexer.c:400-410 does.
+                                    expr_buf is expr_buf + bc
+                                    pos is pos + 1
+                                    loop while (pos < src_len) and ((char_at of [source, pos]) != "\""):
+                                        local bsc is char_at of [source, pos]
+                                        if (bsc == "\\") and ((pos + 1) < src_len):
+                                            expr_buf is expr_buf + bsc
+                                            pos is pos + 1
+                                            bsc is char_at of [source, pos]
+                                        expr_buf is expr_buf + bsc
+                                        pos is pos + 1
+                                    if pos < src_len:
+                                        expr_buf is expr_buf + "\""
+                                        pos is pos + 1
+                                elif bc == "{":
                                     depth is depth + 1
                                     expr_buf is expr_buf + bc
                                     pos is pos + 1
@@ -314,6 +365,9 @@ define eigen_tokenize(source) as:
                             buf is buf + "\n"
                         elif esc == "t":
                             buf is buf + "\t"
+                        elif esc == "r":
+                            # see the f-string site: lexer.c:361 parity
+                            buf is buf + "\r"
                         elif esc == "\\":
                             buf is buf + "\\"
                         elif esc == "\"":
@@ -720,12 +774,26 @@ define _p_parse_block(p) as:
             if stmt != null:
                 append of [stmts, stmt]
             _p_skip_newlines of p
+            # NO no-progress guard here, and one was added and reviewed DEAD:
+            # _p_parse_statement returns null-without-advancing only on dedent
+            # and eof, and this loop's own conditions exit on both before any
+            # guard could fire -- so a copy of eigen_parse's guard was
+            # unreachable, and "both loops carry it" was an overstatement.
+            # eigen_parse is the loop with no such exits; the guard lives
+            # there, and this comment exists so the dead copy is not re-added
+            # for symmetry.
         _p_advance of p
     else:
-        # Single-line block
-        stmt is _p_parse_statement of p
-        if stmt != null:
-            append of [stmts, stmt]
+        # NO single-line arm, and one lived here for the frontend's whole
+        # life. parser.c requires an indent after EVERY colon header --
+        # `if 1 == 1: print of x` is "expected indent, got identifier" -- and
+        # this arm parsed the NEXT LINE as the body instead, so a colon header
+        # with an unindented follower ran (rc 0, wrong tree possible) where
+        # the oracle dies rc 1. The worst measured shape parsed a SAME-INDENT
+        # `print` as the body of the `if` above it. Silent over-acceptance in
+        # the parser, one level above the two lexer mirrors of the previous
+        # round; registered in reject_one alongside them.
+        throw of ("ouroboros: expected indent after ':' block header (line " + (str of ((_p_cur of p)[2])) + ")")
     return stmts
 
 define _p_parse_statement(p) as:
@@ -828,7 +896,18 @@ define _p_parse_statement(p) as:
         # return
         if (_p_peek_val of p) == "return":
             _p_advance of p
-            expr is _p_parse_expr of p
+            # Bare `return` yields null -- the ONE legitimate empty-expression
+            # position (parser.c #494). Check the terminator HERE rather than
+            # letting _p_parse_expr bottom out in _p_parse_primary, which
+            # raises on the newline. ouroboros#138: this arm drifted from the
+            # C parser and every program with a bare `return` (liferaft's
+            # cluster.eigs message-drop path) was unparseable by BOTH the AOT
+            # and the self-hosting compiler.
+            local rtt is _p_peek_type of p
+            if (rtt == "newline") or (rtt == "eof") or (rtt == "dedent"):
+                expr is ["null"]
+            else:
+                expr is _p_parse_expr of p
             _p_end_statement of p
             return ["_line", _stmt_line, ["return", expr]]
 
@@ -1547,10 +1626,22 @@ define eigen_parse(tokens) as:
     stmts is []
     _p_skip_newlines of p
     loop while (_p_peek_type of p) != "eof":
+        local _before is p[1]
         stmt is _p_parse_statement of p
         if stmt != null:
             append of [stmts, stmt]
         _p_skip_newlines of p
+        if (p[1] == _before) and ((_p_peek_type of p) != "eof"):
+            # THE NO-PROGRESS GUARD, mirrored from parser.c's parse() --
+            # `if (p.pos == before) { g_parse_errors++; p_advance(&p); }` --
+            # and never carried over. Without it, any token parse_statement
+            # returns null on without consuming (a dedent leaked by a match
+            # block holding a non-case statement) spun this loop FOREVER:
+            # the oracle exits rc 1 with "parse error(s) -- aborting" and the
+            # frontend burned a core on `match 1: / print of 1`, on both
+            # shared-frontend consumers. The frontend's error convention is
+            # throw-on-first, so the mirror throws where the C counts.
+            throw of ("ouroboros: unexpected token '" + (str of (_p_peek_type of p)) + "' at top level (line " + (str of ((_p_cur of p)[2])) + ")")
     return ["block", stmts]
 
 # ============================================================

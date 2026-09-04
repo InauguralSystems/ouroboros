@@ -1,0 +1,11 @@
+# (round 111) Formerly test/refuse/observed_gnm_writer.eigs -- round 63's
+# refusal of a non-observing helper writing an observed module numeric.
+# The class is now EMITTED (see t207): the write takes the outward-observe
+# mark and the observe-store, so this program builds and must match.
+v is 0
+define setv(k) as:
+    v is k
+    return k
+setv of 5
+print of v
+print of (report of v)

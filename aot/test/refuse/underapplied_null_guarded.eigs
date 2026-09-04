@@ -1,0 +1,10 @@
+# EXPECT: binds null to parameter 'c' and the callee reads it
+# ouroboros#182: `third of [1, 2]` binds c = null on the VM and the body
+# guards it (`if c == null`), printing 3 at rc 0. The guard does not make c
+# generic -- `a + b + c` classifies it numeric, a C double with no null --
+# so the call refuses by name rather than leaking gcc's "too few arguments".
+define third(a, b, c) as:
+    if c == null:
+        return a + b
+    return a + b + c
+print of (third of [1, 2])

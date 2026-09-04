@@ -1,0 +1,33 @@
+# ouroboros#178 (round 157): the two consumers of "what class is this
+# call's result?" that still lacked the generic-parameter case, with the
+# issue's own repros. (1) a generic-param call passed straight as an
+# argument to a compiled function (`inner of (fn of x)`): arg_class's call
+# arm -- round 156's boxed default covers it; (2) a local assigned from a
+# generic-param call and then passed on (`local t is fn of items[i]`,
+# `show of t`): local_gen_map_seeded's call arm, boxed by default now.
+# Both died "non-numeric value in a numeric context" rc 1 where the VM
+# prints. A numeric control keeps the callback-returns-a-number path.
+define sv(x) as:
+    return ("s" + (str of x))
+define inner(v) as:
+    print of v
+define outer(fn, x) as:
+    return (inner of (fn of x))
+print of (outer of [sv, 3])
+define show(v) as:
+    print of v
+define each_show(fn, items) as:
+    for i in range of (len of items):
+        local t is fn of items[i]
+        show of t
+    return 0
+x is each_show of [sv, [1, 2]]
+define twice(n) as:
+    return n * 2
+define sum_mapped(fn, items) as:
+    local acc is 0
+    for i in range of (len of items):
+        local t is fn of items[i]
+        acc is acc + t
+    return acc
+print of (sum_mapped of [twice, [1, 2, 3]])

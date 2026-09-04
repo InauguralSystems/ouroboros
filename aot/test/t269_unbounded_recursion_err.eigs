@@ -1,0 +1,8 @@
+# Round 154: an unbounded self-call. gcc tail-call-optimised the old
+# emission into an infinite loop (the corpus tier timed out, rc 124); the
+# cleanup-attribute local defeats the TCO and the cap raises at depth 4096.
+define forever(n) as:
+    return forever of (n + 1)
+print of "start"
+print of (forever of 0)
+print of "unreachable"

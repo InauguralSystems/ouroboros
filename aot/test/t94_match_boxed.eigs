@@ -1,0 +1,66 @@
+# `match` on a non-numeric subject — ouroboros#140 follow-on.
+#
+# THE POINT OF THIS FIXTURE is that #129 shipped match with NUMERIC subjects
+# and patterns only, refusing everything else. That was the right call at the
+# time — it refused loudly rather than emitting a comparison whose semantics
+# were unchecked — but it was the wrong limit to keep. The VM compiles match as
+# compare-and-jump over ORDINARY EQUALITY, so a string, list or mixed subject
+# is ordinary EigenScript, and the refusal blocked ALL TEN of Tidepool's
+# programs, whose config parsing matches on string keys.
+#
+# The boxed arm evaluates the subject once, compares it against each pattern in
+# source order, and RELEASES IT BEFORE ANY BODY RUNS — so a `return` inside a
+# case body cannot leak it. The numeric arm keeps the plain-double compare
+# chain, which has no such hazard.
+
+define classify(v) as:
+    local out is "?"
+    match v:
+        case "red":
+            out is "warm"
+        case "green":
+            out is "cool"
+        case 7:
+            out is "seven"
+        case [1, 2]:
+            out is "pair"
+    return out
+
+# a case body that RETURNS — the subject must already be released
+define early(v) as:
+    match v:
+        case "stop":
+            return "halted"
+        case "go":
+            return "moving"
+    return "unknown"
+
+print of (classify of "red")
+print of (classify of "green")
+print of (classify of 7)
+print of (classify of ([1, 2]))
+print of (classify of "nope")
+print of (early of "stop")
+print of (early of "go")
+print of (early of "other")
+
+# mixed numeric/string patterns under one subject, hammered so a refcount
+# error on the subject shows up rather than passing once
+i is 0
+acc is ""
+loop while i < 200:
+    acc is classify of "red"
+    acc is classify of 7
+    acc is early of "go"
+    i is i + 1
+print of acc
+
+# the all-numeric arm still takes the double compare chain
+k is 0
+loop while k < 3:
+    match k:
+        case 0:
+            print of "zero"
+        case 1:
+            print of "one"
+    k is k + 1

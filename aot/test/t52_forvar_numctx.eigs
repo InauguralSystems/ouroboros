@@ -4,7 +4,7 @@
 # the unmasked half: a C-local buffer indexed by a BOXED numeric in a value
 # context reads elementwise via aot_buf_get, not via the env.
 define f(q) as:
-    local u is zeros of 4
+    local u is buffer of 4
     for j in range of 4:
         u[j] is j * 1.5
     local t is 0.0
@@ -15,7 +15,7 @@ define f(q) as:
 print of (f of 0)
 
 # same shape at module scope
-w is zeros of 3
+w is buffer of 3
 for j in range of 3:
     w[j] is j + 10
 tot is 0

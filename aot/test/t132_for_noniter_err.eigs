@@ -1,0 +1,13 @@
+# Round 71: aot_iter_len conflated "not iterable" with "iterable of
+# length 0" -- a `for` over a runtime non-list/non-buffer silently ran
+# zero iterations and execution continued (AOT printed the untouched
+# accumulator 0, rc 0; VM raises "'for' requires a list or buffer, got
+# num", rc 1). The iterable's kind here is a RUNTIME fact (xs[1]), so no
+# static refusal can stand in: the helper itself now raises the VM's
+# message. _err class: both die, equal codes.
+xs is [[1, 2], 5]
+v is xs[1]
+s is 0
+for x in v:
+    s is s + x
+print of s
