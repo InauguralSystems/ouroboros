@@ -1,0 +1,37 @@
+# (#169) a WRITE-ONLY buffer parameter (index-assigned, never read in the
+# callee) classes "buf" when every call site passes a buffer, so the
+# buffer store path and the SIMD recognizers apply. Control: a callee with
+# the same shape that one caller passes a LIST must stay generic and print
+# exactly what the VM prints.
+define fill(out, n) as:
+    local i is 0
+    loop while i < n:
+        out[i] is i * 3
+        i is i + 1
+define scale_into(src, dst, n) as:
+    local i is 0
+    loop while i < n:
+        dst[i] is src[i] * 0.5
+        i is i + 1
+define fill_any(out, n) as:
+    local i is 0
+    loop while i < n:
+        out[i] is i + 100
+        i is i + 1
+local a is buffer of 8
+local b is buffer of 8
+fill of [a, 8]
+scale_into of [a, b, 8]
+local s is 0
+local i is 0
+loop while i < 8:
+    s is s + a[i] + b[i]
+    i is i + 1
+print of s
+local xs is [0, 0, 0]
+fill_any of [xs, 3]
+local c is buffer of 3
+fill_any of [c, 3]
+print of xs
+print of (c[0] + c[2])
+print of (type of c)
