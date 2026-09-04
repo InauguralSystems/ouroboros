@@ -935,7 +935,11 @@ define is_num_expr(node, nm, bt) as:
                 if na[0] == "ident":
                     if bt[na[1]] == 1:
                         return 1
-            if ((callee[1] == "exp") or (callee[1] == "sqrt")) and (g_funcs[(callee[1])] == null):
+            if ((callee[1] == "exp") or (callee[1] == "sqrt") or (callee[1] == "floor") or (callee[1] == "ceil") or (callee[1] == "round") or (callee[1] == "abs")) and (g_funcs[(callee[1])] == null):
+                # (round 172) floor/ceil/round/abs join this arm: the VM's
+                # builtins are `make_num(floor(x))` etc. for a number and an
+                # ARG_GUARD error otherwise, so a provably numeric argument
+                # makes the call numeric and emit_num's intrinsic fires.
                 # (round 137, #183) sqrt/exp are ELEMENTWISE over a list
                 # on the VM (`sqrt of [xs]` is [1, 2, 3]); the intrinsic
                 # arm is numeric only when the ARGUMENT provably is --
@@ -2141,6 +2145,17 @@ define emit_num(node, nm, bt, raw) as:
                 # elementwise over a list as the VM is.
                 # VM sqrt guards (sqrt of negative -> NaN -> 0).
                 return "num_guard(sqrt(" + (emit_num of [node[2], nm, bt, 0]) + "))"
+            # (round 172) floor/ceil/round/abs on a PROVABLY numeric argument
+            # are the libm call the VM's builtin makes (builtins.c:
+            # `make_num(floor(arg->data.num))` and siblings; make_num guards,
+            # so num_guard here matches). Before this, `floor of (addr / 0x4000)`
+            # on DMG's every memory read was aot_call_resolve + make_num +
+            # aot_call_dispatch + unbox. A boxed argument still takes the
+            # builtin call below (its ARG_GUARD error text is the VM's).
+            if ((callee[1] == "floor") or (callee[1] == "ceil") or (callee[1] == "round")) and (g_funcs[(callee[1])] == null) and ((is_num_expr of [node[2], nm, bt]) == 1):
+                return "num_guard(" + callee[1] + "(" + (emit_num of [node[2], nm, bt, 0]) + "))"
+            if (callee[1] == "abs") and (g_funcs["abs"] == null) and ((is_num_expr of [node[2], nm, bt]) == 1):
+                return "num_guard(fabs(" + (emit_num of [node[2], nm, bt, 0]) + "))"
             if (g_funcs[callee[1]] != null) and (g_cur_params[callee[1]] != 1):
                 if g_func_void[callee[1]] == 1:
                     # Every other arm of emit_num refuses loudly on a
