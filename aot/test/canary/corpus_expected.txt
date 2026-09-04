@@ -51,7 +51,7 @@ test_scope_semantics.eigs REFUSE
 test_simulation.eigs REFUSE
 test_soft_keyword_idents.eigs REFUSE
 test_spawn_gc.eigs DIVERGE
-test_spawn_parallel.eigs DIVERGE
+test_spawn_parallel.eigs NONDET
 test_stable_band.eigs REFUSE
 test_stdlib_fixes.eigs REFUSE
 test_stem_accuracy.eigs REFUSE

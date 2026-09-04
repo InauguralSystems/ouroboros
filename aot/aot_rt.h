@@ -1908,6 +1908,25 @@ static double aot_index_num_ib(Value *target, double d, const char *site) {
  * non-number slot, an out-of-range index, an arena value -- goes through
  * aot_index_set_ib with a fresh box so every error text is the VM's.
  * DMG's `_exec_ctx[2] is op` boxed once per emulated instruction. */
+/* (round 170, #204) a BORROWED element read: the list's own reference,
+ * no incref, for an argument position whose callee takes the parameter
+ * borrowed and whose container (a parameter or module list) outlives the
+ * call. The emitter uses it only for a base proven to be a list (it has
+ * an element map), so the non-list arm is unreachable in practice and
+ * raises the VM's dict-index text if it is ever reached. */
+static Value *aot_index_get_ib_slow(Value *target, double d);
+static inline Value *aot_index_borrow_ib(Value *target, long k) {
+    if (__builtin_expect(target != NULL && target->type == VAL_LIST
+                         && k >= 0 && k < (long)target->data.list.count, 1)) {
+        Value *r = target->data.list.items[k];
+        if (r) return r;
+    }
+    if (target && target->type == VAL_LIST)
+        rt_error(EK_INDEX, g_trace_current_line, "index %ld out of range (list length %d)", k, target->data.list.count);
+    else
+        rt_error(EK_TYPE, g_trace_current_line, "cannot index %s", target ? val_type_name(target->type) : "null");
+    return NULL;
+}
 static void aot_index_set_ib(Value *target, double d, Value *val);
 static inline void aot_index_set_num_ib(Value *target, double d, double v) {
     if (target) {

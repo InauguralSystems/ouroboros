@@ -65,13 +65,31 @@ if [ ! -f "$BASE" ]; then
   echo "corpus: mint one deliberately with:  cp $got $BASE"
   exit 1
 fi
-if diff "$BASE" "$got" >/dev/null; then
-  echo "corpus: $((n - $(wc -l <"$got"))) / $n programs match the VM byte-for-byte; the rest match the ledger"
-  rm -f "$got"; exit 0
+# (round 170) NONDET rows: a program whose AOT outcome is TIMING-DEPENDENT
+# (spawn-based drivers under #188: the same binary matched once in a gate,
+# then mismatched twice and segfaulted once when re-run three times) is
+# excluded from BOTH sides of the comparison. Without this class a lucky
+# run reads as "ledgered and now MATCHES" and the tier goes red on an
+# improvement that does not exist; the next run then flips it back. A
+# NONDET row is still a ledger entry to be worked down -- it names the
+# issue that makes the outcome nondeterministic, and the row leaves when
+# the outcome becomes deterministic (MATCH every run).
+nondet=$(awk '$2=="NONDET"{print $1}' "$BASE")
+basecmp=$(mktemp); gotcmp=$(mktemp)
+awk '$2!="NONDET"' "$BASE" >"$basecmp"
+if [ -n "$nondet" ]; then
+  grep -vFx -f <(for x in $nondet; do echo "$x DIVERGE"; echo "$x REFUSE"; echo "$x BUILDCRASH"; echo "$x TIMEOUT"; done) "$got" >"$gotcmp" || true
+else
+  cp "$got" "$gotcmp"
 fi
+if diff "$basecmp" "$gotcmp" >/dev/null; then
+  echo "corpus: $((n - $(wc -l <"$got"))) / $n programs match the VM byte-for-byte; the rest match the ledger ($(echo $nondet | wc -w) NONDET excluded)"
+  rm -f "$got" "$basecmp" "$gotcmp"; exit 0
+fi
+rm -f "$basecmp" "$gotcmp"
 echo "corpus: LEDGER CHANGED ($n programs examined)"
 echo "  '<' = ledgered and now MATCHES (an improvement -- remove it from the baseline)"
 echo "  '>' = newly diverging or refusing (a REGRESSION)"
-diff "$BASE" "$got"
+diff <(awk '$2!="NONDET"' "$BASE") "$got" | grep -vF -f <(for x in $nondet; do echo "$x "; done) || true
 echo "corpus: observed set kept at $got"
 exit 1

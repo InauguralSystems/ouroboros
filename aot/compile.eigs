@@ -859,6 +859,10 @@ define is_num_expr(node, nm, bt) as:
             # (round 165) `x.f[i]` on a buffer-created field: emitted through
             # aot_index_num_ib (a checked, borrowed buffer read).
             return is_num_expr of [node[2], nm, bt]
+        if (elem_class_of of [node, g_cur_fmap]) == "num":
+            # (round 170) `c[k]`, k literal, on a list whose element map says
+            # the slot holds a number (aot_index_num_ib, no Value).
+            return 1
         return 0
     if t == "call":
         local callee is unwrap of node[1]
@@ -2773,6 +2777,18 @@ CMPNB_L is {"==": "aot_eq_nb_t", "!=": "aot_ne_nb_t", "<": "aot_lt_nlb_t", ">": 
 # handed an owned ref as before (#130).
 define borrowable_cvar(node, nm, bt) as:
     local n is unwrap of node
+    if n[0] == "index":
+        # (round 170) `c[k]` on a proven list whose slot holds a RECORD is a
+        # borrowable base: the list's own reference, valid while the list
+        # (a parameter or module name) is alive. DMG's handlers read
+        # `ctx[0].sp`, `ctx[1].pending_cycles` this way, once boxed+owned.
+        local ec is elem_class_of of [node, g_cur_fmap]
+        if (ec != null) and (ec != "num"):
+            local ib is unwrap of n[2]
+            local bb is borrowable_cvar of [n[1], nm, bt]
+            if bb != "":
+                return "aot_index_borrow_ib(" + bb + ", " + (str of ib[1]) + ")"
+        return ""
     if n[0] != "ident":
         return ""
     if bt[n[1]] == 1:
@@ -7206,7 +7222,15 @@ define emit_args(node, fname, nm, bt) as:
                 else:
                     s is s + (env_readb of te[1])
             else:
-                s is s + (emit_val of [elems[k], nm, bt])
+                # (round 170, #204) pass BORROWED when the argument is a dot read of a
+                # live base or `c[k]` on a proven list: the callee takes the parameter
+                # borrowed, and the owned fallback below was never released (a
+                # refcount that only grew).
+                local abw is emit_borrow_arg of [elems[k], nm, bt, elems]
+                if abw != "":
+                    s is s + abw
+                else:
+                    s is s + (emit_val of [elems[k], nm, bt])
         else:
             try:
                 s is s + (emit_num of [elems[k], nm, bt, 0])
@@ -9423,23 +9447,47 @@ define em_walk(node, fmap, acc) as:
         local tg is unwrap of node[1]
         local ix is unwrap of node[2]
         local rh is unwrap of node[3]
-        if (tg[0] == "ident") and (g_module_names[(tg[1])] == 1) and (ix[0] == "num") and (rh[0] == "ident"):
-            local m is fmap[(rh[1]) + ".#fields"]
-            if (m != null) and ((len of (keys of m)) > 0):
+        if (tg[0] == "ident") and (g_module_names[(tg[1])] == 1) and (ix[0] == "num"):
+            if rh[0] == "ident":
+                local m is fmap[(rh[1]) + ".#fields"]
+                if (m != null) and ((len of (keys of m)) > 0):
+                    if acc[(tg[1])] == null:
+                        acc[(tg[1])] is {}
+                    local am is acc[(tg[1])]
+                    am[(str of ix[1])] is m
+            # (round 170) a NUMERIC element: `X[k] is <number>` marks the
+            # slot "num" so `c[k]` reads in the handlers are raw doubles
+            # (DMG's `_exec_ctx[2] is op`, read as `ctx[2]` by every handler).
+            if (is_num_expr of [node[3], g_em_nm, g_em_bt]) == 1:
                 if acc[(tg[1])] == null:
                     acc[(tg[1])] is {}
-                local am is acc[(tg[1])]
-                am[(str of ix[1])] is m
+                local an is acc[(tg[1])]
+                if an[(str of ix[1])] == null:
+                    an[(str of ix[1])] is "num"
         return 0
     for k in range of (len of node):
         em_walk of [node[k], fmap, acc]
     return 0
 
+g_em_nm is {}
+g_em_bt is {}
 define elem_maps_census(funcs, rest) as:
     local acc is {}
+    g_em_bt is infer_buffers of rest
+    g_em_nm is infer_numeric of [rest, g_em_bt]
     em_walk of [rest, (local_gen_map_for of ["<module>", rest]), acc]
     for k in range of (len of funcs):
-        em_walk of [(funcs[k])[3], (fmap_for_fn of (funcs[k])), acc]
+        local efn is funcs[k]
+        local elb is infer_buffers of efn[3]
+        local eseed is {}
+        local epts is (g_funcs[efn[1]])["ptypes"]
+        for pi in range of (len of (efn[2])):
+            if pi < (len of epts):
+                if (epts[pi]) == "num":
+                    eseed[((efn[2])[pi])] is 1
+        g_em_bt is elb
+        g_em_nm is infer_numeric_seeded of [efn[3], elb, eseed]
+        em_walk of [efn[3], (fmap_for_fn of efn), acc]
     g_elem_maps is acc
     return 0
 
@@ -9513,6 +9561,42 @@ define sh_table_holds(node, T, F) as:
         if (sh_table_holds of [node[k], T, F]) == 1:
             return 1
     return 0
+
+# (round 170) the element class of `["index", ["ident", c], ["num", k]]`:
+# the caller's parameter `#elems` (seeded from a dispatch site) or a module
+# list's maps; "num", a record's field map, or null.
+define elem_class_of(node, fmap) as:
+    local n is unwrap of node
+    if n[0] != "index":
+        return null
+    local b is unwrap of n[1]
+    local i is unwrap of n[2]
+    if (b[0] != "ident") or (i[0] != "num"):
+        return null
+    local em is null
+    local bm is fmap[(b[1]) + ".#fields"]
+    if (bm != null) and (bm["#elems"] != null):
+        em is (bm["#elems"])[(str of i[1])]
+    if (em == null) and (g_elem_maps[(b[1])] != null):
+        em is (g_elem_maps[(b[1])])[(str of i[1])]
+    return em
+
+# a BORROWED emission for an argument, or "" when it must be owned: a C
+# variable, a dot read of a borrowable base, or `c[k]` on a proven list.
+define emit_borrow_arg(node, nm, bt, siblings) as:
+    local bw is emit_val_borrow of [node, nm, bt, siblings]
+    if bw != "":
+        return bw
+    local n is unwrap of node
+    if n[0] == "index":
+        local ec is elem_class_of of [node, g_cur_fmap]
+        if (ec != null) and (ec != "num"):
+            local b is unwrap of n[1]
+            local i is unwrap of n[2]
+            local bb is borrowable_cvar of [n[1], nm, bt]
+            if bb != "":
+                return "aot_index_borrow_ib(" + bb + ", " + (str of i[1]) + ")"
+    return ""
 
 define emit_program(ast) as:
     local stmts is ast
@@ -10149,6 +10233,15 @@ define emit_program(ast) as:
                 _rt_changed is 1
         if _rt_changed == 0:
             _rt_round is 3
+            # (round 170) the element census ran before the returns settled,
+            # so numeric slots fed from once-boxed callees were unmarked;
+            # recount and re-seed with the final classes.
+            G_LGM_CACHE[0] is {}
+            elem_maps_census of [funcs, rest]
+            seed_handler_elems of [funcs, rest]
+            # the seeded maps changed identity: drop the cached local maps
+            # so emission (fmap_for_fn) sees the re-seeded parameters.
+            G_LGM_CACHE[0] is {}
         else:
             G_LGM_CACHE[0] is {}
             for k2 in range of (len of funcs):

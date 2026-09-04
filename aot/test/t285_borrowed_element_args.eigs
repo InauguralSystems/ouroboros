@@ -1,0 +1,35 @@
+# Round 170 (DMG lever 2, sixth step; ouroboros#204): handlers that read
+# records and numbers out of the dispatch context list. `ctx[0]` handed to a
+# compiled callee is passed BORROWED (no incref/decref pair, and no owned
+# temporary left unreleased); `ctx[2]` on a slot the element map marks
+# "num" is a raw double read. Same output as the VM either way; the
+# element written by one handler is read back by the next.
+define new_cpu() as:
+    return {"a": 5, "pc": 0}
+define step_pc(cpu, n) as:
+    cpu.pc is cpu.pc + n
+    return cpu.pc
+define h_a(ctx) as:
+    local n is ctx[2]
+    return step_pc of [ctx[0], n]
+define h_b(ctx) as:
+    ctx[0].a is ctx[0].a + ctx[2]
+    return ctx[0].a
+tbl is []
+append of [tbl, h_a]
+append of [tbl, h_b]
+cpu is new_cpu of null
+ectx is [null, null, 0]
+define bind(c) as:
+    ectx[0] is c
+    return 0
+z is bind of cpu
+total is 0
+i is 0
+loop while i < 6:
+    ectx[2] is i
+    total is total + (dispatch of [tbl, i % 2, ectx])
+    i is i + 1
+print of total
+print of cpu.pc
+print of cpu.a
