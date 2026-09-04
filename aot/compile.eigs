@@ -9541,19 +9541,99 @@ define sh_walk(node, T, info) as:
         sh_walk of [node[k], T, info]
     return 0
 
+# (round 179, #186) ONE walk for every candidate table. The per-name form
+# above walked the whole program once per module name: 400 module
+# statements x 400 names was 9.2 s of a 13.8 s compile (65%), measured with
+# phase timers on the #186 chain program. `skip` reproduces sh_walk's
+# non-recursion exactly: where sh_walk returned without descending for T,
+# this walk descends for every OTHER name with T excluded from the bare-
+# ident rule, so the two agree name by name (t279/t283/t287 and DMG's
+# emission are the oracle).
+define sh_walk_all(node, infos, skip) as:
+    if (type of node) != "list":
+        return 0
+    if (len of node) == 0:
+        return 0
+    local t is node[0]
+    if t == "index_assign":
+        local tg is unwrap of node[1]
+        if (tg[0] == "ident") and (infos[(tg[1])] != null) and (tg[1] != skip):
+            local info is infos[(tg[1])]
+            local rhs is unwrap of node[3]
+            if (len of node) >= 5:
+                info[0] is 0
+            elif (rhs[0] != "ident") or ((sh_fn_ok of rhs[1]) == 0):
+                info[0] is 0
+            elif (has_call_node of node[2]) == 1:
+                info[0] is 0
+            else:
+                info[1] is info[1] + 1
+            sh_walk_all of [node[2], infos, skip]
+            sh_walk_all of [node[3], infos, tg[1]]
+            local kx is 4
+            loop while kx < (len of node):
+                sh_walk_all of [node[kx], infos, tg[1]]
+                kx is kx + 1
+            return 0
+    if t == "assign":
+        if (infos[(node[1])] != null) and (node[1] != skip):
+            local ar is unwrap of node[2]
+            local ainf is infos[(node[1])]
+            if (ar[0] != "list") or ((len of ar) != 2) or ((len of (ar[1])) != 0):
+                ainf[0] is 0
+            sh_walk_all of [node[2], infos, node[1]]
+            return 0
+    if t == "call":
+        local c is unwrap of node[1]
+        local a is unwrap of node[2]
+        if (c[0] == "ident") and (c[1] == "append") and (a[0] == "list") and ((len of a) == 2) and ((len of (a[1])) == 2):
+            local a0 is unwrap of (a[1])[0]
+            local a1 is unwrap of (a[1])[1]
+            if (a0[0] == "ident") and (infos[(a0[1])] != null) and (a0[1] != skip):
+                local ainfo is infos[(a0[1])]
+                if (a1[0] != "ident") or ((sh_fn_ok of a1[1]) == 0):
+                    ainfo[0] is 0
+                else:
+                    ainfo[1] is ainfo[1] + 1
+                sh_walk_all of [(a[1])[1], infos, a0[1]]
+                return 0
+        if (c[0] == "ident") and (c[1] == "dispatch") and (a[0] == "list") and ((len of a) == 2) and ((len of (a[1])) == 3):
+            local d0 is unwrap of (a[1])[0]
+            if (d0[0] == "ident") and (infos[(d0[1])] != null) and (d0[1] != skip):
+                sh_walk_all of [(a[1])[1], infos, skip]
+                sh_walk_all of [(a[1])[2], infos, skip]
+                return 0
+        if (c[0] == "ident") and (c[1] == "len"):
+            local l0 is unwrap of node[2]
+            if (l0[0] == "ident") and (infos[(l0[1])] != null) and (l0[1] != skip):
+                return 0
+    if (t == "ident") and (infos[(node[1])] != null) and (node[1] != skip):
+        local iinf is infos[(node[1])]
+        iinf[0] is 0
+        return 0
+    if (t == "for") and (infos[(node[1])] != null) and (node[1] != skip):
+        local finf is infos[(node[1])]
+        finf[0] is 0
+    for k in range of (len of node):
+        sh_walk_all of [node[k], infos, skip]
+    return 0
+
 define find_shadow_tables(funcs, rest) as:
     g_shadow_tbl is {}
     local names is keys of g_mod_rba
+    local infos is {}
     for i in range of (len of names):
-        local T is names[i]
-        if g_funcs[T] != null:
-            continue
-        local info is [1, 0]
-        sh_walk of [rest, T, info]
-        for k in range of (len of funcs):
-            sh_walk of [(funcs[k])[3], T, info]
-        if (info[0] == 1) and (info[1] > 0):
-            g_shadow_tbl[T] is 1
+        if g_funcs[(names[i])] == null:
+            infos[(names[i])] is [1, 0]
+    sh_walk_all of [rest, infos, ""]
+    for k in range of (len of funcs):
+        sh_walk_all of [(funcs[k])[3], infos, ""]
+    for i2 in range of (len of names):
+        local T is names[i2]
+        local info is infos[T]
+        if info != null:
+            if (info[0] == 1) and (info[1] > 0):
+                g_shadow_tbl[T] is 1
     return 0
 
 # the per-statement shadow maintenance, appended after the statement's own
