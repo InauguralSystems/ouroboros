@@ -1,0 +1,45 @@
+# Round 168 (DMG lever 2, fourth step): records handed to dispatch handlers
+# as ELEMENTS of a module list (DMG's `_exec_ctx[0] is cpu`). A field map
+# does not pass through a list element by itself; the compiler records the
+# record stored at each literal index of a module list and seeds every
+# handler of a shadow table dispatched with that list, so `read_reg(ctx[0],
+# i)` sees the cpu record's field map and returns a double. The output is
+# the VM's either way; the win is in the emitted types.
+define new_cpu() as:
+    return {"a": 1, "b": 2, "pc": 0}
+define new_mem() as:
+    return {"data": buffer of 8, "rom_len": 8}
+define read_reg(cpu, i) as:
+    match i:
+        case 0:
+            return cpu.a
+        case 1:
+            return cpu.b
+    return 0
+define h_add(ctx) as:
+    local v is read_reg of [ctx[0], 0]
+    ctx[0].a is (v + read_reg of [ctx[0], 1]) & 0xFF
+    return 4
+define h_ld(ctx) as:
+    ctx[0].b is ctx[1].data[ctx[2]]
+    return 8
+tbl is []
+append of [tbl, h_add]
+append of [tbl, h_ld]
+ectx is [null, null, 0]
+cpu is new_cpu of null
+mem is new_mem of null
+mem.data[3] is 40
+define bind(c, m) as:
+    ectx[0] is c
+    ectx[1] is m
+    return 0
+z is bind of [cpu, mem]
+ectx[2] is 3
+cycles is 0
+cycles is cycles + (dispatch of [tbl, 1, ectx])
+cycles is cycles + (dispatch of [tbl, 0, ectx])
+cycles is cycles + (dispatch of [tbl, 0, ectx])
+print of cpu.a
+print of cpu.b
+print of cycles

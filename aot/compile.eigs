@@ -6851,6 +6851,20 @@ define pf_scan(node, caller_locals) as:
                         local m is caller_locals[e[1] + ".#fields"]
                         if (m != null) and ((len of (keys of m)) > 0):
                             cpf[k] is m
+                    if e[0] == "index":
+                        # (round 168) `c[k]` with a literal k: the record stored at that
+                        # element, from the caller's parameter `#elems` or a module list's maps.
+                        local eb is unwrap of e[1]
+                        local ei is unwrap of e[2]
+                        if (eb[0] == "ident") and (ei[0] == "num"):
+                            local em is null
+                            local bm is caller_locals[eb[1] + ".#fields"]
+                            if (bm != null) and (bm["#elems"] != null):
+                                em is (bm["#elems"])[(str of ei[1])]
+                            if (em == null) and (g_elem_maps[(eb[1])] != null):
+                                em is (g_elem_maps[(eb[1])])[(str of ei[1])]
+                            if (em != null) and ((len of (keys of em)) > 0):
+                                cpf[k] is em
     for k2 in range of (len of node):
         pf_scan of [node[k2], caller_locals]
     return 0
@@ -6925,6 +6939,11 @@ define widen_ptypes(funcs, rest) as:
     local round is 0
     loop while round < 40:
         local changed is 0
+        # (round 168) the local maps are cached per (function, seed keys);
+        # a callee's return that changed since the last round leaves a
+        # stale "gen" for the local assigned from it, which re-widens the
+        # parameter the fresh classes had just narrowed.
+        G_LGM_CACHE[0] is {}
         # snapshot pinned classes so a widening cannot violate them
         for k in range of (len of funcs):
             local fn2 is funcs[k]
@@ -9342,6 +9361,122 @@ define field_class_census(funcs, rest) as:
             g_field_class[(fk[i])] is "buf"
     return 0
 
+# (round 168, DMG lever 2, fourth step) ELEMENT MAPS. DMG hands its records
+# to the opcode handlers as elements of a module list (`_exec_ctx[0] is
+# cpu`, `_exec_ctx[1] is mem`; a handler reads `ctx[0]`, `ctx[1]`), and a
+# field map does not pass through a list element, so read_r8's `cpu`
+# never saw new_cpu's field map and every ALU parameter fed from it stayed
+# boxed. g_elem_maps[X][k] records, for a module list X and a literal
+# index k, the field map of the record stored there; a dispatch through a
+# shadow table whose ctx is such a list seeds every handler's parameter
+# with `{"#elems": g_elem_maps[X]}`, and pf_scan resolves an argument
+# `c[k]` through the caller's `#elems` (a parameter) or g_elem_maps (a
+# module name). Nothing here changes emission: a wrong map would only
+# make a callee's parameter numeric, which the checked unbox reports.
+g_elem_maps is {}
+
+define em_walk(node, fmap, acc) as:
+    if (type of node) != "list":
+        return 0
+    if (len of node) == 0:
+        return 0
+    if node[0] == "func":
+        return 0
+    if node[0] == "index_assign":
+        local tg is unwrap of node[1]
+        local ix is unwrap of node[2]
+        local rh is unwrap of node[3]
+        if (tg[0] == "ident") and (g_module_names[(tg[1])] == 1) and (ix[0] == "num") and (rh[0] == "ident"):
+            local m is fmap[(rh[1]) + ".#fields"]
+            if (m != null) and ((len of (keys of m)) > 0):
+                if acc[(tg[1])] == null:
+                    acc[(tg[1])] is {}
+                local am is acc[(tg[1])]
+                am[(str of ix[1])] is m
+        return 0
+    for k in range of (len of node):
+        em_walk of [node[k], fmap, acc]
+    return 0
+
+define elem_maps_census(funcs, rest) as:
+    local acc is {}
+    em_walk of [rest, (local_gen_map_for of ["<module>", rest]), acc]
+    for k in range of (len of funcs):
+        em_walk of [(funcs[k])[3], (fmap_for_fn of (funcs[k])), acc]
+    g_elem_maps is acc
+    return 0
+
+# seed the handlers of every shadow table dispatched with a module list
+# that has element maps: parameter 0's map = {"#elems": <the list's maps>}
+define seed_handler_elems(funcs, rest) as:
+    local sites is {}
+    sh_dispatch_sites of [rest, sites]
+    for k in range of (len of funcs):
+        sh_dispatch_sites of [(funcs[k])[3], sites]
+    local tks is keys of sites
+    for i in range of (len of tks):
+        local T is tks[i]
+        local C is sites[T]
+        if g_elem_maps[C] == null:
+            continue
+        local emap is {"#elems": g_elem_maps[C]}
+        for k in range of (len of funcs):
+            local fn is funcs[k]
+            if (sh_table_holds of [rest, T, fn[1]]) == 0:
+                continue
+            local fe is g_funcs[fn[1]]
+            local cpf is fe["pfields"]
+            if cpf == null:
+                cpf is []
+                for z in range of (len of (fe["ptypes"])):
+                    append of [cpf, null]
+                fe["pfields"] is cpf
+            if (len of cpf) > 0:
+                cpf[0] is emap
+    return 0
+
+# `dispatch of [T, k, C]` with T a shadow table and C a module ident: sites[T] = C
+define sh_dispatch_sites(node, sites) as:
+    if (type of node) != "list":
+        return 0
+    if (len of node) == 0:
+        return 0
+    if node[0] == "call":
+        local c is unwrap of node[1]
+        local a is unwrap of node[2]
+        if (c[0] == "ident") and (c[1] == "dispatch") and (a[0] == "list") and ((len of a) == 2) and ((len of (a[1])) == 3):
+            local d0 is unwrap of (a[1])[0]
+            local d2 is unwrap of (a[1])[2]
+            if (d0[0] == "ident") and (g_shadow_tbl[(d0[1])] == 1) and (d2[0] == "ident") and (g_module_names[(d2[1])] == 1):
+                sites[(d0[1])] is d2[1]
+    for k in range of (len of node):
+        sh_dispatch_sites of [node[k], sites]
+    return 0
+
+# is function F stored into table T anywhere (T[k] is F, append of [T, F])?
+define sh_table_holds(node, T, F) as:
+    if (type of node) != "list":
+        return 0
+    if (len of node) == 0:
+        return 0
+    if node[0] == "index_assign":
+        local tg is unwrap of node[1]
+        local rh is unwrap of node[3]
+        if (tg[0] == "ident") and (tg[1] == T) and (rh[0] == "ident") and (rh[1] == F):
+            return 1
+    if node[0] == "call":
+        local c is unwrap of node[1]
+        local a is unwrap of node[2]
+        if (c[0] == "ident") and (c[1] == "append") and (a[0] == "list") and ((len of a) == 2) and ((len of (a[1])) == 2):
+            local a0 is unwrap of (a[1])[0]
+            local a1 is unwrap of (a[1])[1]
+            if (a0[0] == "ident") and (a0[1] == T) and (a1[0] == "ident") and (a1[1] == F):
+                return 1
+    for k in range of (len of node):
+        if (sh_table_holds of [node[k], T, F]) == 1:
+            return 1
+    return 0
+
 define emit_program(ast) as:
     local stmts is ast
     if ast[0] == "block":
@@ -9829,6 +9964,18 @@ define emit_program(ast) as:
         if fp_changed == 0:
             fp_round is 4
         fp_round is fp_round + 1
+    # (round 168) snapshot the evidence-only parameter classes: the return
+    # re-derivation after widening restores them before widening again,
+    # because a fresh func_ptypes still reads callees' WIDENED positions
+    # (find_gen_param_use) and a circular chain (write_r8 -> mem_write ->
+    # stat_write) never narrows on its own.
+    for k in range of (len of funcs):
+        local sfe is g_funcs[((funcs[k])[1])]
+        local snap is []
+        local spt is sfe["ptypes"]
+        for si in range of (len of spt):
+            append of [snap, spt[si]]
+        sfe["ptypes0"] is snap
     # (round 154) frame-depth bracket only when the call graph can recurse.
     g_need_depth is call_graph_cyclic of [funcs, rest]
     # (round 167) field classes from assignment sites, program-wide.
@@ -9924,6 +10071,8 @@ define emit_program(ast) as:
         # learns new retfields, so maps cached in the previous round are
         # out of date.
         G_LGM_CACHE[0] is {}
+        elem_maps_census of [funcs, rest]
+        seed_handler_elems of [funcs, rest]
         for kp in range of (len of funcs):
             local pfn is funcs[kp]
             pf_scan of [pfn[3], fmap_for_fn of pfn]
@@ -9945,16 +10094,35 @@ define emit_program(ast) as:
     # buffer field could not be numeric then. Re-derive every return type
     # with the maps in hand; a change re-runs the widening once, because
     # callers classify a call by the callee's declared return.
-    local _rt_changed is 0
-    for k in range of (len of funcs):
-        local rfn is funcs[k]
-        local rfe is g_funcs[rfn[1]]
-        local nret is func_ret_type of [rfn, rfe["ffbt"], rfe["ffgen"], rfe["ffdict"]]
-        if nret != rfe["ret"]:
-            rfe["ret"] is nret
-            _rt_changed is 1
-    if _rt_changed == 1:
-        widen_ptypes of [funcs, rest]
+    # (round 168) widening is monotonic -- a parameter widened to boxed
+    # because a callee's return was still Value* never narrows back -- so a
+    # changed return re-derives every parameter class from evidence
+    # (func_ptypes) before widening again; up to three rounds, since a
+    # narrowed parameter can make another return numeric (read_r8 -> the
+    # ALU family's `val`).
+    local _rt_round is 0
+    loop while _rt_round < 3:
+        local _rt_changed is 0
+        for k in range of (len of funcs):
+            local rfn is funcs[k]
+            local rfe is g_funcs[rfn[1]]
+            local nret is func_ret_type of [rfn, rfe["ffbt"], rfe["ffgen"], rfe["ffdict"]]
+            if nret != rfe["ret"]:
+                rfe["ret"] is nret
+                _rt_changed is 1
+        if _rt_changed == 0:
+            _rt_round is 3
+        else:
+            G_LGM_CACHE[0] is {}
+            for k2 in range of (len of funcs):
+                local fe2 is g_funcs[((funcs[k2])[1])]
+                local rp is []
+                local sp is fe2["ptypes0"]
+                for ri in range of (len of sp):
+                    append of [rp, sp[ri]]
+                fe2["ptypes"] is rp
+            widen_ptypes of [funcs, rest]
+        _rt_round is _rt_round + 1
     # Return-type inference reads the param classes (a function returning a
     # param returns ITS type), so it must be re-derived after widening —
     # otherwise a widened param returned as `double` yields 0 (t58's
