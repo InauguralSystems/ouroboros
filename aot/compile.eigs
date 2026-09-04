@@ -5773,6 +5773,88 @@ define param_in_compiled_num_arg(node, name) as:
             return 1
     return 0
 
+# (#169) CALLER evidence for buffer parameters. A parameter that is only
+# WRITTEN through (`out[i] is v`, never read, never passed to a buffer
+# callee) has no in-body evidence that it is a buffer -- index_assign is
+# legal on lists too -- so func_ptypes demoted it to "gen" and every SIMD
+# recognizer that needs bt[RES] stopped firing on the matmul family (round
+# 77's finding). The census records, per callee and parameter, whether
+# EVERY call site passes a buffer: a bt ident, a buffer-classed parameter of
+# the caller, a `buffer of N` expression, or a "buf"-classed field. One
+# non-buffer argument (a list) keeps the parameter generic, which is the
+# sound answer for that callee.
+G_BUFARG is [{}]
+define bufarg_mark(fname, k, v) as:
+    local tbl is G_BUFARG[0]
+    if tbl[fname] == null:
+        tbl[fname] is {}
+    local row is tbl[fname]
+    local ks is str of k
+    if v == 0:
+        row[ks] is 0
+    elif row[ks] == null:
+        row[ks] is 1
+    return 0
+define bufarg_all(fname, k) as:
+    local tbl is G_BUFARG[0]
+    if tbl[fname] == null:
+        return 0
+    local v is (tbl[fname])[(str of k)]
+    if v == 1:
+        return 1
+    return 0
+define bufarg_is_buf(e, bt, ppt, pnames, fmap) as:
+    if e[0] == "ident":
+        if bt[e[1]] == 1:
+            return 1
+        for i in range of (len of pnames):
+            if (pnames[i] == e[1]) and (i < (len of ppt)):
+                if (ppt[i]) == "buf":
+                    return 1
+        return 0
+    if (is_buf_create of e) == 1:
+        return 1
+    if e[0] == "dot":
+        local dm is unwrap of e[1]
+        if dm[0] == "ident":
+            if g_field_class[(e[2])] == "buf":
+                return 1
+            local fl is fmap[(dm[1]) + ".#fields"]
+            if (fl != null) and (fl[(e[2])] == "buf"):
+                return 1
+        return 0
+    return 0
+define bufarg_walk(node, bt, ppt, pnames, fmap) as:
+    if (type of node) != "list":
+        return 0
+    if (len of node) == 0:
+        return 0
+    if node[0] == "func":
+        return 0
+    if node[0] == "call":
+        local callee is unwrap of node[1]
+        if (callee[0] == "ident") and (g_funcs[callee[1]] != null):
+            local arg is unwrap of node[2]
+            local elems is call_elems_for of [callee[1], arg]
+            for k in range of (len of elems):
+                local e is unwrap of elems[k]
+                bufarg_mark of [callee[1], k, (bufarg_is_buf of [e, bt, ppt, pnames, fmap])]
+    for k2 in range of (len of node):
+        bufarg_walk of [node[k2], bt, ppt, pnames, fmap]
+    return 0
+define bufarg_census(funcs, rest) as:
+    G_BUFARG[0] is {}
+    for k in range of (len of funcs):
+        local fn is funcs[k]
+        local fe is g_funcs[fn[1]]
+        local ppt is []
+        if fe != null:
+            if fe["ptypes"] != null:
+                ppt is fe["ptypes"]
+        bufarg_walk of [fn[3], (infer_buffers of fn[3]), ppt, fn[2], (fmap_for_fn of fn)]
+    bufarg_walk of [["block", rest], (infer_buffers of rest), [], [], (local_gen_map_for of ["<module>", rest])]
+    return 0
+
 define find_buf_param_use(node, name) as:
     if (type of node) != "list":
         return 0
@@ -6364,7 +6446,9 @@ define func_ptypes(fn) as:
             elif (elem_has_numeric_use of [body, params[p]]) == 0:
                 # indexable, but nothing ever uses an element as a number —
                 # take the boxed read rather than betting on it (#86).
-                cls is "gen"
+                # (#169) write-only: keep "buf" on caller evidence alone.
+                if (bufarg_all of [fn[1], p]) == 0:
+                    cls is "gen"
         elif (find_buf_param_use of [body, params[p]]) == 1:
             cls is "buf"
         elif (find_gen_param_use of [body, params[p]]) == 1:
@@ -10284,6 +10368,7 @@ define emit_program(ast) as:
     # ptype fixpoint -- and consulted where the numeric pin would otherwise
     # discard arg_class's boxed verdict. See the pin site for what that cost.
     g_boxed_arg is {}
+    bufarg_census of [funcs, rest]
     for k in range of (len of funcs):
         local fn is funcs[k]
         local pt is func_ptypes of fn
@@ -10324,6 +10409,7 @@ define emit_program(ast) as:
     local fp_round is 0
     loop while fp_round < 4:
         local fp_changed is 0
+        bufarg_census of [funcs, rest]
         for k in range of (len of funcs):
             local fn2 is funcs[k]
             local pt2 is func_ptypes of fn2
