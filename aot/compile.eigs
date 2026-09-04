@@ -5520,6 +5520,7 @@ define return_node_is_boxed(rnode, fbt, ftt, rba, fgen, fdict) as:
 # number: a literal, arithmetic/comparison/logic, a double-returning
 # compiled function, a NUM_RET builtin, a buffer element, or a local whose
 # every assignment is one of these.
+G_RNN_MEMO is [null]
 define return_node_is_num(rnode, rba, fbt, fgen, fdict, ftt, seen) as:
     local re is unwrap of rnode
     local t is re[0]
@@ -5534,6 +5535,16 @@ define return_node_is_num(rnode, rba, fbt, fgen, fdict, ftt, seen) as:
             # co-inductive: a name is numeric if every assignment is,
             # assuming itself numeric (`c is c + i`), as infer_numeric does.
             return 1
+        # (round 180, #186) memo of FINAL verdicts during the module-name
+        # census only (G_RNN_MEMO is null everywhere else): each of N
+        # module names otherwise re-walked its assignment chain back to the
+        # first statement -- 14.8 s of a 21 s compile at 800 statements.
+        # Sound because a module-level verdict is context-free (same rba,
+        # same buffers, no function maps) and the optimistic cycle rule
+        # gives the same answer from any entry point.
+        if G_RNN_MEMO[0] != null:
+            if (G_RNN_MEMO[0])[re[1]] != null:
+                return (G_RNN_MEMO[0])[re[1]]
         seen[re[1]] is 1
         local rhss is rba[re[1]]
         if (rhss != null) and (g_cur_ret_body != null):
@@ -5551,10 +5562,15 @@ define return_node_is_num(rnode, rba, fbt, fgen, fdict, ftt, seen) as:
             return 0
         if (len of rhss) == 0:
             return 0
+        local _rv is 1
         for j in range of (len of rhss):
             if (return_node_is_num of [rhss[j], rba, fbt, fgen, fdict, ftt, seen]) == 0:
-                return 0
-        return 1
+                _rv is 0
+                break
+        if G_RNN_MEMO[0] != null:
+            local _memo is G_RNN_MEMO[0]
+            _memo[re[1]] is _rv
+        return _rv
     if t == "binop":
         if (NUMONLY_OPS[re[1]] == 1) or (re[1] == "<") or (re[1] == ">") or (re[1] == "<=") or (re[1] == ">=") or (re[1] == "==") or (re[1] == "!=") or (re[1] == "and") or (re[1] == "or"):
             return 1
@@ -10423,10 +10439,12 @@ define emit_program(ast) as:
     g_mod_rba is _mrba
     local _mbt is infer_buffers of rest
     local _mnames is keys of _mrba
+    G_RNN_MEMO[0] is {}
     for mi in range of (len of _mnames):
         g_mod_assigned[(_mnames[mi])] is 1
         if (return_node_is_num of [["ident", (_mnames[mi])], _mrba, _mbt, {}, {}, {}, {}]) == 1:
             g_mod_num_names[(_mnames[mi])] is 1
+    G_RNN_MEMO[0] is null
     for k in range of (len of funcs):
         collect_fn_value_refs of [(funcs[k])[3], g_func_names, g_fnval_params]
     collect_fn_value_refs of [rest, g_func_names, g_fnval_params]
