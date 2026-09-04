@@ -935,6 +935,15 @@ define is_num_expr(node, nm, bt) as:
                 if na[0] == "ident":
                     if bt[na[1]] == 1:
                         return 1
+            if (callee[1] == "sign_extend") and (g_funcs["sign_extend"] == null):
+                # (round 175) numeric when the argument is a 2-element list
+                # literal of numeric expressions (emit_num's intrinsic arm
+                # takes exactly that shape; anything else is the builtin).
+                local sea is unwrap of node[2]
+                if (sea[0] == "list") and ((len of sea) == 2) and ((len of (sea[1])) == 2):
+                    if ((is_num_expr of [(sea[1])[0], nm, bt]) == 1) and ((is_num_expr of [(sea[1])[1], nm, bt]) == 1):
+                        return 1
+                return 0
             if ((callee[1] == "exp") or (callee[1] == "sqrt") or (callee[1] == "floor") or (callee[1] == "ceil") or (callee[1] == "round") or (callee[1] == "abs")) and (g_funcs[(callee[1])] == null):
                 # (round 172) floor/ceil/round/abs join this arm: the VM's
                 # builtins are `make_num(floor(x))` etc. for a number and an
@@ -2156,6 +2165,12 @@ define emit_num(node, nm, bt, raw) as:
                 return "num_guard(" + callee[1] + "(" + (emit_num of [node[2], nm, bt, 0]) + "))"
             if (callee[1] == "abs") and (g_funcs["abs"] == null) and ((is_num_expr of [node[2], nm, bt]) == 1):
                 return "num_guard(fabs(" + (emit_num of [node[2], nm, bt, 0]) + "))"
+            if (callee[1] == "sign_extend") and (g_funcs["sign_extend"] == null):
+                local sea is unwrap of node[2]
+                if (sea[0] == "list") and ((len of sea) == 2) and ((len of (sea[1])) == 2):
+                    if ((is_num_expr of [(sea[1])[0], nm, bt]) == 1) and ((is_num_expr of [(sea[1])[1], nm, bt]) == 1):
+                        # (round 175) operands in source order, no list, no box.
+                        return "({ double _sev = " + (emit_num of [(sea[1])[0], nm, bt, 0]) + "; double _seb = " + (emit_num of [(sea[1])[1], nm, bt, 0]) + "; aot_sign_extend(_sev, _seb); })"
             if (g_funcs[callee[1]] != null) and (g_cur_params[callee[1]] != 1):
                 if g_func_void[callee[1]] == 1:
                     # Every other arm of emit_num refuses loudly on a
@@ -2192,6 +2207,16 @@ define emit_num(node, nm, bt, raw) as:
                 if (edarg[0] == "list") and ((len of edarg) == 2) and ((len of (edarg[1])) == 3):
                     local edt is unwrap of (edarg[1])[0]
                     if (edt[0] == "ident") and (g_shadow_tbl[(edt[1])] == 1):
+                        # (round 174) borrowed table and context, unboxed key:
+                        # no operand has a call, so the borrowed pointers are
+                        # stable across the three reads and the dispatch.
+                        local edk is (edarg[1])[1]
+                        local edc is (edarg[1])[2]
+                        if ((is_num_expr of [edk, nm, bt]) == 1) and ((has_call_node of edk) == 0) and ((has_call_node of edc) == 0):
+                            local edtb is borrowable_cvar of [(edarg[1])[0], nm, bt]
+                            local edcb is borrowable_cvar of [edc, nm, bt]
+                            if (edtb != "") and (edcb != ""):
+                                return "aot_dispatch_sh_num_b_" + (cn of edt[1]) + "(" + edtb + ", " + (emit_num of [edk, nm, bt, 0]) + ", " + edcb + ", \"" + (c_escape of (G_CUR_FN[0])) + ": dispatch\")"
                         # (round 169) unboxed shadow dispatch: the three
                         # operands are evaluated in source order into temps.
                         return "({ Value* _dt = " + (emit_val of [(edarg[1])[0], nm, bt]) + "; Value* _dk = " + (emit_val of [(edarg[1])[1], nm, bt]) + "; Value* _dc = " + (emit_val of [(edarg[1])[2], nm, bt]) + "; aot_dispatch_sh_num_" + (cn of edt[1]) + "(_dt, _dk, _dc, \"" + (c_escape of (G_CUR_FN[0])) + ": dispatch\"); })"
@@ -2821,7 +2846,7 @@ define borrowable_cvar(node, nm, bt) as:
     # reads apply to it as they do to a C-variable list. Before this,
     # `_exec_ctx[2] is op` was an incref'd name read plus a boxed store on
     # every emulated instruction.
-    if (g_mod_assigned[n[1]] == 1) and (nm[n[1]] != 1) and (g_cur_params[n[1]] != 1) and (g_locshadow[n[1]] != 1) and (g_observed == 0) and (g_envloc[n[1]] != 1) and (g_boxshadow[n[1]] != 1) and (g_fn_rebinds[n[1]] != 1) and (g_elem_maps[n[1]] != null):
+    if (g_mod_assigned[n[1]] == 1) and (nm[n[1]] != 1) and (g_cur_params[n[1]] != 1) and (g_locshadow[n[1]] != 1) and (g_observed == 0) and (g_envloc[n[1]] != 1) and (g_boxshadow[n[1]] != 1) and (g_fn_rebinds[n[1]] != 1) and ((g_elem_maps[n[1]] != null) or (g_shadow_tbl[n[1]] == 1)):
         return env_readb of n[1]
     return ""
 
@@ -10589,6 +10614,7 @@ define emit_program(ast) as:
         gdecls is gdecls + "#define SH_TBL_CAP " + (str of SH_TBL_CAP) + "\nstatic double (*__sh_" + (cn of shnames[i]) + "[SH_TBL_CAP])(Value*) = {0}; static int __sh_" + (cn of shnames[i]) + "_n = 0;   /* shadow dispatch table (round 164) */\n"
         gdecls is gdecls + "static inline Value *aot_dispatch_sh_" + (cn of shnames[i]) + "(Value *table, Value *keyv, Value *ctx) { return aot_dispatch_sh(table, keyv, ctx, __sh_" + (cn of shnames[i]) + ", __sh_" + (cn of shnames[i]) + "_n); }\n"
         gdecls is gdecls + "static inline double aot_dispatch_sh_num_" + (cn of shnames[i]) + "(Value *table, Value *keyv, Value *ctx, const char *site) { return aot_dispatch_sh_num(table, keyv, ctx, __sh_" + (cn of shnames[i]) + ", __sh_" + (cn of shnames[i]) + "_n, site); }\n"
+        gdecls is gdecls + "static inline double aot_dispatch_sh_num_b_" + (cn of shnames[i]) + "(Value *table, double d, Value *ctx, const char *site) { return aot_dispatch_sh_num_b(table, d, ctx, __sh_" + (cn of shnames[i]) + ", __sh_" + (cn of shnames[i]) + "_n, site); }\n"
     # emit_function sets G_CUR_FN; the module body has no emit_function, so
     # reset it or every site label in main() inherits the LAST function's
     # name (that stale label sent an earlier debugging session chasing

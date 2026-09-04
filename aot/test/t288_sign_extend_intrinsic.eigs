@@ -1,0 +1,18 @@
+# (round 175) sign_extend of [val, bits] with numeric operands is the VM's
+# builtin body inline; a boxed operand (list element) still takes the
+# builtin. Edge rows: bit widths 0 and 33 (identity), 8/16/32, values on
+# both sides of the sign bit, and a loop the JR family runs.
+define se8(v) as:
+    return sign_extend of [v, 8]
+local rows is [[128, 8], [127, 8], [255, 8], [0, 8], [65535, 16], [32768, 16], [5, 0], [5, 33], [2147483648, 32], [200, 8], [200, 9]]
+local out is ""
+for r in rows:
+    out is out + (str of (sign_extend of [r[0], r[1]])) + " "
+print of out
+local acc is 0
+local i is 0
+loop while i < 100000:
+    acc is acc + (se8 of (i & 255)) + (sign_extend of [i & 4095, 12])
+    i is i + 1
+print of acc
+print of (se8 of 254)

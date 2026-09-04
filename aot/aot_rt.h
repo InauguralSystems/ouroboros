@@ -2525,6 +2525,34 @@ static inline double aot_dispatch_sh_num(Value *table, Value *keyv, Value *ctx,
     if (r) val_decref(r);
     return 0;
 }
+/* (round 174) BORROWED, UNBOXED shadow dispatch: the table and the context
+ * arrive borrowed and the key as a C double, so the hit path is a bounds
+ * check and an indirect call -- no make_num, no incref/decref triple. DMG's
+ * headless loop paid two incref'd name reads and a heap box per emulated
+ * instruction for this call alone. A miss re-enters the consuming path with
+ * the operands owned as it expects. */
+static inline double aot_dispatch_sh_num_b(Value *table, double d, Value *ctx,
+                                           double (**sh)(Value*), int shn, const char *site) {
+    if (shn >= 0 && table && table->type == VAL_LIST) {
+        int k = (int)d;
+        if ((double)k == d && k >= 0 && k < shn && k < table->data.list.count && sh[k])
+            return sh[k](ctx);
+    }
+    val_incref(table); if (ctx) val_incref(ctx);
+    return aot_dispatch_sh_num(table, make_num(d), ctx, sh, shn, site);
+}
+/* (round 175) `sign_extend of [val, bits]` with both operands provably
+ * numeric: the VM's builtin_sign_extend body verbatim (builtins.c), minus
+ * the list packing, the two boxes and the dispatch. DMG's JR family and
+ * ADD SP,r8 / LD HL,SP+r8 call it once per relative-jump instruction. */
+static inline double aot_sign_extend(double val, double bitsd) {
+    int bits = (int)bitsd;
+    if (bits <= 0 || bits > 32) return num_guard(val);
+    int64_t mask = 1LL << (bits - 1);
+    if ((int64_t)val & mask)
+        return num_guard((double)((int64_t)val - (1LL << bits)));
+    return num_guard(val);
+}
 static inline Value *aot_dispatch_sh(Value *table, Value *keyv, Value *ctx,
                                      double (**sh)(Value*), int shn) {
     if (shn >= 0 && keyv && keyv->type == VAL_NUM && table && table->type == VAL_LIST) {
