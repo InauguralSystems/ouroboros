@@ -37,7 +37,16 @@ DEFS="-DEIGENSCRIPT_EXT_HTTP=0 -DEIGENSCRIPT_EXT_MODEL=0 -DEIGENSCRIPT_EXT_DB=0 
 # between them) gets fused into a single-rounding FMA on FMA-capable targets
 # (AVX2 -march=native), diverging from the VM's two-rounding mul-then-add. The
 # guarded path's vguard already blocks fusion; this makes the elided path match.
-CFLAGS="-O3 -ffp-contract=off ${AOT_ARCH:--march=native}"   # widest host SIMD; AOT_ARCH overrides (e.g. -msse2 to force 2-wide)
+# (round 171) Fixed code alignment. The DMG canary swung 3% in CYCLES at an
+# identical instruction count (3.087G) when seven COLD lines changed in a
+# 20k-line emission: the hot dispatch loop's placement moved. Measured on the
+# dev box (Goldmont, no uop cache): default alignment 1586M-1637M cycles
+# across five layouts of the same hot code; with these flags 1597M-1609M.
+# The flags cost ~1% against the luckiest default layout and make the canary
+# a measurement of the emitted code instead of where cold code landed.
+# Rank rounds by host instructions per emulated cycle regardless.
+ALIGN="-falign-functions=64 -falign-jumps=32 -falign-loops=32"
+CFLAGS="-O3 -ffp-contract=off $ALIGN ${AOT_ARCH:--march=native}"   # widest host SIMD; AOT_ARCH overrides (e.g. -msse2 to force 2-wide)
 BDIR="build"
 # (round 146, #136) AOT_SAN=asan: an AddressSanitizer/LeakSanitizer build of
 # the runtime library AND the program, in its own object dir so it never

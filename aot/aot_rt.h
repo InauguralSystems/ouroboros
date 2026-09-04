@@ -1927,6 +1927,31 @@ static inline Value *aot_index_borrow_ib(Value *target, long k) {
         rt_error(EK_TYPE, g_trace_current_line, "cannot index %s", target ? val_type_name(target->type) : "null");
     return NULL;
 }
+/* (round 171, #204 half 2) STATEMENT-SCOPED TEMPORARIES. An owned Value
+ * built for a compiled callee's borrowed parameter -- a call result, a
+ * literal, an element or field the emitter could not prove borrowable --
+ * is pushed here and released when the statement that built it ends (or
+ * when a loop condition has been tested, or before a return's value is
+ * handed back). The callee stores what it keeps with its own incref, so
+ * the release is exact. Before this the temporary was simply never
+ * released: a refcount that only grew, invisible to RSS, LSan and the
+ * leak tier. */
+static __thread Value **aot_tmp_v = NULL; static __thread int aot_tmp_n = 0, aot_tmp_cap = 0;
+static inline Value *aot_tmp(Value *v) {
+    if (aot_tmp_n == aot_tmp_cap) {
+        aot_tmp_cap = aot_tmp_cap ? aot_tmp_cap * 2 : 16;
+        aot_tmp_v = (Value **)xrealloc(aot_tmp_v, (size_t)aot_tmp_cap * sizeof(Value *));
+    }
+    aot_tmp_v[aot_tmp_n++] = v;
+    return v;
+}
+static inline void aot_tmp_drain(void) {
+    while (aot_tmp_n > 0) { Value *v = aot_tmp_v[--aot_tmp_n]; if (v) val_decref(v); }
+}
+static inline int aot_tmp_mark(void) { return aot_tmp_n; }
+static inline void aot_tmp_drain_to(int m) {
+    while (aot_tmp_n > m) { Value *v = aot_tmp_v[--aot_tmp_n]; if (v) val_decref(v); }
+}
 static void aot_index_set_ib(Value *target, double d, Value *val);
 static inline void aot_index_set_num_ib(Value *target, double d, double v) {
     if (target) {

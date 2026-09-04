@@ -1,0 +1,18 @@
+# leak tier fixture (#204): an OWNED temporary passed to a compiled callee's
+# borrowed parameter -- here a fresh string per call (`str of i`), so the
+# unreleased temporary is a real allocation the ASan lane counts (a list
+# element's refcount, the DMG shape, is invisible to every gate). Round 171
+# releases such temporaries at the end of the statement that built them.
+define f(s) as:
+    return len of s
+define g(a, b) as:
+    return (len of a) + (len of b)
+define run(n) as:
+    local total is 0
+    local i is 0
+    loop while i < n:
+        total is total + (f of [str of i])
+        total is total + (g of [str of (i * 2), str of (i + 7)])
+        i is i + 1
+    return total
+print of (run of 3000)

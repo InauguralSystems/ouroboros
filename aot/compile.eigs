@@ -244,6 +244,7 @@ g_mod_has_try is 0
 # epilogue that releases them on every exit path.
 g_cur_genp_rebound is {}
 g_cur_genp_release is ""
+g_stmt_tmp_used is 0
 # (round 154) does the program's call graph admit unbounded nesting? Only
 # then does every compiled function carry the frame-depth bracket (the VM's
 # 4096-frame cap). An acyclic graph bounds nesting by its longest path, far
@@ -2892,12 +2893,23 @@ define emit_val_borrow(node, nm, bt, sibling) as:
     return emit_borrow_dot of [node, nm, bt]
 
 define emit_cond(node, nm, bt) as:
+    local _tu is g_stmt_tmp_used
+    g_stmt_tmp_used is 0
+    local c is ""
     if (is_num_expr of [node, nm, bt]) == 1:
-        return "(" + (emit_num of [node, nm, bt, 0]) + " != 0.0)"
-    local cn1 is emit_cmp_n of [node, nm, bt, 1]
-    if cn1 != "":
-        return cn1
-    return "aot_truthy(" + (emit_val of [node, nm, bt]) + ")"
+        c is "(" + (emit_num of [node, nm, bt, 0]) + " != 0.0)"
+    else:
+        local cn1 is emit_cmp_n of [node, nm, bt, 1]
+        if cn1 != "":
+            c is cn1
+        else:
+            c is "aot_truthy(" + (emit_val of [node, nm, bt]) + ")"
+    if g_stmt_tmp_used == 1:
+        # (round 171) a condition is evaluated per iteration: release its
+        # temporaries as soon as it has been tested.
+        c is "({ int _tm = aot_tmp_mark(); int _tc = " + c + "; aot_tmp_drain_to(_tm); _tc; })"
+    g_stmt_tmp_used is _tu
+    return c
 
 # One return statement, honoring the per-call env (#100 item 2): when the
 # function owns an __eigs_l, every return path frees it AFTER the return value
@@ -2905,9 +2917,11 @@ define emit_cond(node, nm, bt) as:
 # control leaves. `pre` carries any extra pre-return cleanup (the tensor
 # frame-pool release).
 define emit_return(ctype, expr, ind, pre) as:
-    if (g_envactive == 0) and (pre == "") and (g_cur_try_depth == 0) and (g_cur_genp_release == ""):
+    if (g_envactive == 0) and (pre == "") and (g_cur_try_depth == 0) and (g_cur_genp_release == "") and (g_stmt_tmp_used == 0):
         return ind + "return " + expr + ";\n"
     local s is ind + "{ " + ctype + " _rv = " + expr + ";"
+    if g_stmt_tmp_used == 1:
+        s is s + " aot_tmp_drain();"
     if g_cur_genp_release != "":
         # (round 162) the value is evaluated (and incref'd if it IS the
         # parameter) before the frame's owned rebinds are released.
@@ -2934,8 +2948,17 @@ define emit_return(ctype, expr, ind, pre) as:
 define emit_stmts(stmts, ind, nm, bt, minits, gf) as:
     local out is ""
     for i in range of (len of stmts):
-        out is out + (emit_stmt of [stmts[i], ind, nm, bt, minits, gf])
+        local _tu is g_stmt_tmp_used
+        g_stmt_tmp_used is 0
+        local one is emit_stmt of [stmts[i], ind, nm, bt, minits, gf]
+        if g_stmt_tmp_used == 1:
+            # (round 171) release the statement's owned argument temporaries.
+            # A compound statement (if/loop/for) drains after its whole body
+            # too; the bodies' own statements drained their own.
+            one is one + ind + "aot_tmp_drain();\n"
+        out is out + one
         out is out + (sh_after_stmt of [stmts[i], ind, nm, bt])
+        g_stmt_tmp_used is _tu
     return out
 
 # (round 139, #172) a C-variable buffer REBIND releases the previous value:
@@ -7230,7 +7253,10 @@ define emit_args(node, fname, nm, bt) as:
                 if abw != "":
                     s is s + abw
                 else:
-                    s is s + (emit_val of [elems[k], nm, bt])
+                    # (round 171, #204 half 2) an owned temporary for a borrowed
+                    # parameter: released at the end of the statement.
+                    g_stmt_tmp_used is 1
+                    s is s + "aot_tmp(" + (emit_val of [elems[k], nm, bt]) + ")"
         else:
             try:
                 s is s + (emit_num of [elems[k], nm, bt, 0])
