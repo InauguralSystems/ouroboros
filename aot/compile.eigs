@@ -5419,6 +5419,17 @@ define return_node_is_num(rnode, rba, fbt, fgen, fdict, ftt, seen) as:
         # `-x`, `~x`, `not x` all yield numbers (`return -1` was the shape
         # that demoted DMG's cart_ram_offset in the first cut).
         return 1
+    if t == "dot":
+        # (round 167) `return m.f` where the field map says f is "num"
+        # (DMG mem_read's `return mem.ie`): the emitter reads it through the
+        # checked numeric field IC, so the return is numeric.
+        local dm is unwrap of re[1]
+        if dm[0] == "ident":
+            local fl is g_ret_fmap[(dm[1]) + ".#fields"]
+            if fl != null:
+                if fl[(re[2])] == "num":
+                    return 1
+        return 0
     if t == "call":
         local c is unwrap of re[1]
         if c[0] == "ident":
@@ -9209,11 +9220,126 @@ define index_of_buf_field(node, fmap) as:
     local dm is unwrap of tgt[1]
     if dm[0] != "ident":
         return 0
+    # (round 167) the assignment-site census names the field "buf" when
+    # every write anywhere is a buffer (or `[]`): it overrides a literal's
+    # `[]`, and a mixed field never reaches it.
+    if g_field_class[(tgt[2])] == "buf":
+        return 1
     local fl is fmap[(dm[1]) + ".#fields"]
     if fl == null:
         return 0
     if fl[(tgt[2])] == "buf":
         return 1
+    return 0
+
+# (round 167, DMG lever 2, third step) FIELD CLASSES FROM ASSIGNMENT SITES.
+# A record field that a dict literal creates as `[]` and a later
+# `x.f is <buffer>` fills (DMG: `"rom": []`, then load_rom's `mem.rom is
+# bytes` with `bytes is read_bytes_buf of path`) was "gen" from the literal
+# and stayed so. A whole-program census per FIELD NAME: every write to `.f`
+# -- literal fields in both walks' shapes, and every `x.f is rhs` -- is
+# classed; a field is "buf" when every write is buffer-producing (a
+# `buffer of`, a BUF_RET builtin, a compiled function with retbuf, or a
+# local/param that is itself buffer-class in that function) or an empty
+# list literal, and at least one is a real buffer. Two record kinds sharing
+# a field name with different types see mixed writes and stay unclassed.
+BUF_RET_BUILTINS is {"read_bytes_buf": 1, "proc_read_buf": 1}
+g_field_class is {}
+
+define fc_rhs_is_buf(rhs, lb, pbuf, assigns) as:
+    local r is unwrap of rhs
+    if (is_buf_create of r) == 1:
+        return 1
+    if r[0] == "call":
+        local c is unwrap of r[1]
+        if c[0] == "ident":
+            if (g_funcs[c[1]] == null) and (BUF_RET_BUILTINS[c[1]] == 1):
+                return 1
+            if (g_funcs[c[1]] != null) and (((g_funcs[c[1]])["retbuf"]) == 1):
+                return 1
+        return 0
+    if r[0] == "ident":
+        if (lb[r[1]] == 1) or (pbuf[r[1]] == 1):
+            return 1
+        local rh is assigns[r[1]]
+        if rh == null:
+            return 0
+        if (len of rh) == 0:
+            return 0
+        for j in range of (len of rh):
+            local rj is unwrap of rh[j]
+            if rj[0] == "ident":
+                return 0
+            if (fc_rhs_is_buf of [rh[j], lb, pbuf, assigns]) == 0:
+                return 0
+        return 1
+    return 0
+
+define fc_is_empty_list(rhs) as:
+    local r is unwrap of rhs
+    if (r[0] == "list") and ((len of r) == 2) and ((len of (r[1])) == 0):
+        return 1
+    return 0
+
+# acc[f] = [buf_writes, other_writes]
+define fc_walk(node, lb, pbuf, assigns, acc) as:
+    if (type of node) != "list":
+        return 0
+    if (len of node) == 0:
+        return 0
+    if node[0] == "func":
+        return 0
+    if node[0] == "dot_assign":
+        local f is node[2]
+        if acc[f] == null:
+            acc[f] is [0, 0]
+        local cf is acc[f]
+        if (fc_rhs_is_buf of [node[3], lb, pbuf, assigns]) == 1:
+            cf[0] is cf[0] + 1
+        elif (fc_is_empty_list of node[3]) == 0:
+            cf[1] is cf[1] + 1
+        fc_walk of [node[3], lb, pbuf, assigns, acc]
+        return 0
+    if node[0] == "dict":
+        local prs is node[1]
+        for pk in range of (len of prs):
+            local pr is prs[pk]
+            local kn is pr[0]
+            if (type of kn) == "list":
+                kn is kn[1]
+            if acc[kn] == null:
+                acc[kn] is [0, 0]
+            local ck is acc[kn]
+            if (fc_rhs_is_buf of [pr[1], lb, pbuf, assigns]) == 1:
+                ck[0] is ck[0] + 1
+            elif (fc_is_empty_list of (pr[1])) == 0:
+                ck[1] is ck[1] + 1
+            fc_walk of [pr[1], lb, pbuf, assigns, acc]
+        return 0
+    for k in range of (len of node):
+        fc_walk of [node[k], lb, pbuf, assigns, acc]
+    return 0
+
+define field_class_census(funcs, rest) as:
+    local acc is {}
+    local mlb is infer_buffers of rest
+    fc_walk of [rest, mlb, {}, (collect_assigns of [rest, {}]), acc]
+    for k in range of (len of funcs):
+        local fn is funcs[k]
+        local lb is infer_buffers of fn[3]
+        local pbuf is {}
+        local pts is (g_funcs[fn[1]])["ptypes"]
+        for pi in range of (len of (fn[2])):
+            if pi < (len of pts):
+                if (pts[pi]) == "buf":
+                    pbuf[((fn[2])[pi])] is 1
+        fc_walk of [fn[3], lb, pbuf, (collect_assigns of [fn[3], {}]), acc]
+    g_field_class is {}
+    local fk is keys of acc
+    for i in range of (len of fk):
+        local c is acc[fk[i]]
+        if (c[0] > 0) and (c[1] == 0):
+            g_field_class[(fk[i])] is "buf"
     return 0
 
 define emit_program(ast) as:
@@ -9705,6 +9831,8 @@ define emit_program(ast) as:
         fp_round is fp_round + 1
     # (round 154) frame-depth bracket only when the call graph can recurse.
     g_need_depth is call_graph_cyclic of [funcs, rest]
+    # (round 167) field classes from assignment sites, program-wide.
+    field_class_census of [funcs, rest]
     # (round 164) shadow dispatch tables.
     find_shadow_tables of [funcs, rest]
     # (round 163, #124) an OBSERVED function's locals live in the global env
@@ -9787,14 +9915,18 @@ define emit_program(ast) as:
     # record returned-dict field maps first — call-site widening consults
     # them to type `cfg.path` style arguments (#86)
     local rfr is 0
-    loop while rfr < 2:
+    # (round 167) six rounds, not two: a record's field map now travels
+    # down a call CHAIN (each round carries a function's recorded parameter
+    # maps into the scan of its body), and DMG's byte reads sit three hops
+    # below the literal (main -> run_frame -> fetch8 -> mem_read).
+    loop while rfr < 6:
         # same staleness rule as the phase boundary below: each round
         # learns new retfields, so maps cached in the previous round are
         # out of date.
         G_LGM_CACHE[0] is {}
         for kp in range of (len of funcs):
             local pfn is funcs[kp]
-            pf_scan of [pfn[3], local_gen_map_for of [pfn[1], pfn[3]]]
+            pf_scan of [pfn[3], fmap_for_fn of pfn]
         pf_scan of [rest, local_gen_map_for of ["<module>", rest]]
         for k in range of (len of funcs):
             local rff is funcs[k]

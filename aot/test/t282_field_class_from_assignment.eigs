@@ -1,0 +1,29 @@
+# Round 167 (DMG lever 2, third step): a field created as `[]` and filled
+# later with a buffer (`m.rom is <buffer>`, DMG's load_rom shape) is a
+# "buf" field by the program-wide census of its writes, so `m.rom[i]` is a
+# numeric read and a function returning it is declared double. A field
+# written with both a buffer and a list (`mixed`) stays unclassed and its
+# reader stays boxed. Byte-identical either way.
+define new_rec() as:
+    return {"rom": [], "mixed": [], "n": 0}
+define load(m) as:
+    local bytes is buffer of 4
+    bytes[0] is 7
+    bytes[1] is 9
+    m.rom is bytes
+    m.mixed is buffer of 2
+    return 0
+define reload(m) as:
+    m.mixed is [1, 2, 3]
+    return 0
+define rd_rom(m, i) as:
+    return m.rom[i]
+define rd_mixed(m, i) as:
+    return m.mixed[i]
+r is new_rec of null
+x is load of r
+print of (rd_rom of [r, 0])
+print of ((rd_rom of [r, 1]) * 2)
+print of (rd_mixed of [r, 1])
+y is reload of r
+print of (rd_mixed of [r, 2])
