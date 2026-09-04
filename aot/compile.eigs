@@ -5521,6 +5521,7 @@ define return_node_is_boxed(rnode, fbt, ftt, rba, fgen, fdict) as:
 # compiled function, a NUM_RET builtin, a buffer element, or a local whose
 # every assignment is one of these.
 G_RNN_MEMO is [null]
+G_RNN_OPT is [0]
 define return_node_is_num(rnode, rba, fbt, fgen, fdict, ftt, seen) as:
     local re is unwrap of rnode
     local t is re[0]
@@ -5534,6 +5535,10 @@ define return_node_is_num(rnode, rba, fbt, fgen, fdict, ftt, seen) as:
         if seen[re[1]] == 1:
             # co-inductive: a name is numeric if every assignment is,
             # assuming itself numeric (`c is c + i`), as infer_numeric does.
+            # (round 181) the assumption taints every verdict above it in
+            # the current walk: those are not memoised (a cycle whose other
+            # arm reaches a non-numeric leaf would otherwise cache a 1).
+            G_RNN_OPT[0] is 1
             return 1
         # (round 180, #186) memo of FINAL verdicts during the module-name
         # census only (G_RNN_MEMO is null everywhere else): each of N
@@ -5551,7 +5556,7 @@ define return_node_is_num(rnode, rba, fbt, fgen, fdict, ftt, seen) as:
             # (round 161, #196) a local read before it is definitely
             # assigned is a boxed slot (null when unassigned), so the
             # return is boxed too -- the emitter's view, kept in lockstep.
-            if (def_before_reads of [g_cur_ret_body, re[1]]) == 0:
+            if (def_before_reads_c of [g_cur_ret_body, re[1], G_DBR_RET[0]]) == 0:
                 return 0
         if rhss == null:
             # not assigned here: a module-level name with positive numeric
@@ -5562,14 +5567,18 @@ define return_node_is_num(rnode, rba, fbt, fgen, fdict, ftt, seen) as:
             return 0
         if (len of rhss) == 0:
             return 0
+        local _opt0 is G_RNN_OPT[0]
+        G_RNN_OPT[0] is 0
         local _rv is 1
         for j in range of (len of rhss):
             if (return_node_is_num of [rhss[j], rba, fbt, fgen, fdict, ftt, seen]) == 0:
                 _rv is 0
                 break
-        if G_RNN_MEMO[0] != null:
+        if (G_RNN_MEMO[0] != null) and (G_RNN_OPT[0] == 0):
             local _memo is G_RNN_MEMO[0]
             _memo[re[1]] is _rv
+        if _opt0 == 1:
+            G_RNN_OPT[0] is 1
         return _rv
     if t == "binop":
         if (NUMONLY_OPS[re[1]] == 1) or (re[1] == "<") or (re[1] == ">") or (re[1] == "<=") or (re[1] == ">=") or (re[1] == "==") or (re[1] == "!=") or (re[1] == "and") or (re[1] == "or"):
@@ -5630,8 +5639,19 @@ define fn_rebinds_census(funcs) as:
     return 0
 g_cur_ret_body is null
 define func_ret_type(fn, fbt, fgen, fdict) as:
+    # (round 181) one memo of final ident verdicts per classification of a
+    # function (same maps, same body for every return), cleared on exit so
+    # no other caller of return_node_is_num sees it.
+    G_RNN_MEMO[0] is {}
+    G_DBR_RET[0] is {}
+    local _frt is func_ret_type_inner of [fn, fbt, fgen, fdict]
+    G_RNN_MEMO[0] is null
+    return _frt
+
+define func_ret_type_inner(fn, fbt, fgen, fdict) as:
     g_cur_params_rt is {}
     g_cur_ret_body is fn[3]
+    G_DBR_RET[0] is def_before_reads_all of [fn[3], (keys of (collect_assigns of [fn[3], {}]))]
     g_ret_fmap is fmap_for_fn of fn
     for pi in range of (len of fn[2]):
         g_cur_params_rt[((fn[2])[pi])] is 1
@@ -8108,6 +8128,166 @@ define def_before_reads(body, name) as:
     da_walk of [body, name, st]
     return st[0]
 
+# (round 181, #186) per-function caches of def_before_reads. The return
+# classifier calls it once per IDENT VISIT while walking a name's
+# assignment chain (N visits x a whole-body walk = N^2 per function; 8.9 s
+# of a 20 s compile for a 400-statement body), and emit_function once per
+# numeric local (another N^2). Each cache is keyed by name and reset where
+# its body is chosen: G_DBR_RET when func_ret_type binds g_cur_ret_body,
+# G_DBR_EMIT at emit_function entry.
+# (round 181, #186) ONE walk for every name. da_walk's per-name state
+# [ok, assigned] becomes a map name -> [ok, assigned] carried through the
+# same control-flow rules; a read is any identifier of an expression
+# (da_idents, one collection per expression) whose name is unassigned at
+# that point. The per-name def_before_reads stays as the oracle: a scratch
+# checker compared the two on every function of DMG and the fixtures.
+define da_idents(node, acc) as:
+    if (type of node) != "list":
+        return 0
+    if (len of node) == 0:
+        return 0
+    if node[0] == "func":
+        return 0
+    if node[0] == "ident":
+        acc[(node[1])] is 1
+        return 0
+    for k in range of (len of node):
+        da_idents of [node[k], acc]
+    return 0
+define da_all_read(expr, names, st) as:
+    local ids is {}
+    da_idents of [expr, ids]
+    local ik is keys of ids
+    for i in range of (len of ik):
+        local nm is ik[i]
+        if names[nm] == 1:
+            local e is st[nm]
+            if e[1] == 0:
+                e[0] is 0
+    return 0
+define da_all_copy(names_list, st, keep_assigned_from) as:
+    local out is {}
+    for i in range of (len of names_list):
+        local nm is names_list[i]
+        local e is st[nm]
+        local a is e[1]
+        if keep_assigned_from != null:
+            a is (keep_assigned_from[nm])[1]
+        out[nm] is [e[0], a]
+    return out
+define da_walk_all(stmts, names, names_list, st) as:
+    for i in range of (len of stmts):
+        local n is unwrap of stmts[i]
+        if (type of n) != "list":
+            continue
+        if (len of n) == 0:
+            continue
+        local t is n[0]
+        if t == "_line":
+            da_walk_all of [[n[2]], names, names_list, st]
+            continue
+        if t == "func":
+            continue
+        if (t == "assign") or (t == "local"):
+            da_all_read of [n[2], names, st]
+            if names[(n[1])] == 1:
+                local ea is st[(n[1])]
+                ea[1] is 1
+            continue
+        if t == "if":
+            da_all_read of [n[1], names, st]
+            local a is da_all_copy of [names_list, st, null]
+            da_walk_all of [n[2], names, names_list, a]
+            local b is da_all_copy of [names_list, a, st]
+            local has_else is 0
+            if (len of n) > 3:
+                if n[3] != null:
+                    has_else is 1
+                    da_walk_all of [n[3], names, names_list, b]
+            for ni in range of (len of names_list):
+                local nm is names_list[ni]
+                local e is st[nm]
+                e[0] is (b[nm])[0]
+                if ((a[nm])[1] == 1) and ((b[nm])[1] == 1) and (has_else == 1):
+                    e[1] is 1
+            continue
+        if (t == "loop") or (t == "while"):
+            da_all_read of [n[1], names, st]
+            local c is da_all_copy of [names_list, st, null]
+            da_walk_all of [n[2], names, names_list, c]
+            for ni2 in range of (len of names_list):
+                local nm2 is names_list[ni2]
+                local _al1 is st[nm2]
+                _al1[0] is (c[nm2])[0]
+            continue
+        if t == "for":
+            da_all_read of [n[2], names, st]
+            local d is da_all_copy of [names_list, st, null]
+            if names[(n[1])] == 1:
+                local _al2 is d[(n[1])]
+                _al2[1] is 1
+            da_walk_all of [n[3], names, names_list, d]
+            for ni3 in range of (len of names_list):
+                local nm3 is names_list[ni3]
+                local _al3 is st[nm3]
+                _al3[0] is (d[nm3])[0]
+            continue
+        if (t == "unobserved") or (t == "observed"):
+            da_walk_all of [n[1], names, names_list, st]
+            continue
+        if t == "match":
+            da_all_read of [n[1], names, st]
+            local mcs is n[2]
+            local mok is da_all_copy of [names_list, st, null]
+            for mi in range of (len of mcs):
+                local m1 is da_all_copy of [names_list, st, null]
+                da_walk_all of [(mcs[mi])[1], names, names_list, m1]
+                for ni4 in range of (len of names_list):
+                    local nm4 is names_list[ni4]
+                    if (m1[nm4])[0] == 0:
+                        local _al4 is mok[nm4]
+                        _al4[0] is 0
+            for ni5 in range of (len of names_list):
+                local nm5 is names_list[ni5]
+                local _al5 is st[nm5]
+                _al5[0] is (mok[nm5])[0]
+            continue
+        if t == "try":
+            local e1 is da_all_copy of [names_list, st, null]
+            da_walk_all of [n[1], names, names_list, e1]
+            local e2 is da_all_copy of [names_list, e1, st]
+            if names[(n[2])] == 1:
+                local _al6 is e2[(n[2])]
+                _al6[1] is 1
+            da_walk_all of [n[3], names, names_list, e2]
+            for ni6 in range of (len of names_list):
+                local nm6 is names_list[ni6]
+                local _al7 is st[nm6]
+                _al7[0] is (e2[nm6])[0]
+            continue
+        da_all_read of [n, names, st]
+    return 0
+define def_before_reads_all(body, names_list) as:
+    local names is {}
+    local st is {}
+    for i in range of (len of names_list):
+        names[(names_list[i])] is 1
+        st[(names_list[i])] is [1, 0]
+    da_walk_all of [body, names, names_list, st]
+    local out is {}
+    for i2 in range of (len of names_list):
+        out[(names_list[i2])] is (st[(names_list[i2])])[0]
+    return out
+G_DBR_RET is [{}]
+G_DBR_EMIT is [{}]
+define def_before_reads_c(body, name, cache) as:
+    local hit is cache[name]
+    if hit != null:
+        return hit
+    local v is def_before_reads of [body, name]
+    cache[name] is v
+    return v
+
 # (round 162) is `name` written in this body by a plain assignment or as a
 # `for` binder (nested defines excluded -- their own scope)?
 define genp_rebound_in(node, name) as:
@@ -8129,6 +8309,7 @@ define genp_rebound_in(node, name) as:
 define emit_function(fn, finfo, gnm, gbt) as:
     local name is fn[1]
     G_CUR_FN[0] is name
+    G_DBR_EMIT[0] is {}
     g_cur_fmap is fmap_for_fn of fn
     local params is fn[2]
     local body is fn[3]
@@ -8436,6 +8617,7 @@ define emit_function(fn, finfo, gnm, gbt) as:
     # correctly demotes boxed values, `len of <list>`, and value-returning calls.
     local lnm is infer_numeric_seeded of [body, fbt, fnm]
     local lnk is keys of lnm
+    G_DBR_EMIT[0] is def_before_reads_all of [body, lnk]
     for k in range of (len of lnk):
         # (round 161, #196) a numeric local read before it is definitely
         # assigned stays a boxed slot (an unassigned slot reads null, as on
@@ -8447,7 +8629,7 @@ define emit_function(fn, finfo, gnm, gbt) as:
         # t226, t227 went red when the first cut demoted them -- a boxed slot
         # answers prev from the tape, across calls). The plain-read-is-0
         # residual stays for that intersection only; #196 records it.
-        if (lnm[lnk[k]] == 1) and (fnm[lnk[k]] != 1) and (g_cur_interrogated[lnk[k]] != 1) and ((def_before_reads of [body, lnk[k]]) == 0):
+        if (lnm[lnk[k]] == 1) and (fnm[lnk[k]] != 1) and (g_cur_interrogated[lnk[k]] != 1) and ((def_before_reads_c of [body, lnk[k], G_DBR_EMIT[0]]) == 0):
             lnm[lnk[k]] is 0
         if (lnm[lnk[k]] == 1) and (fbt[lnk[k]] != 1) and (g_tensor[lnk[k]] != 1):
             # ...but NEVER re-promote a parameter whose ptype is boxed. The
