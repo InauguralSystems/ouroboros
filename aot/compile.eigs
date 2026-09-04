@@ -796,6 +796,20 @@ define is_num_expr(node, nm, bt) as:
         if nm[node[1]] == 1:
             return 1
         return 0
+    if t == "dot":
+        # (round 177) `x.f` is numeric when the current field map says f
+        # is "num" on x -- the same lookup the return classifier has had
+        # since round 167. Without it a bare field read was never numeric
+        # by itself: DMG's `local pc is cpu.pc` in fetch8 became a boxed
+        # env local (then every use of pc was a checked unbox or a boxed
+        # index read), while `cpu.pc + 0` was numeric through the literal.
+        local dm is unwrap of node[1]
+        if dm[0] == "ident":
+            local fl is g_cur_fmap[(dm[1]) + ".#fields"]
+            if fl != null:
+                if fl[(node[2])] == "num":
+                    return 1
+        return 0
     if t == "binop":
         # num-only ops are numeric-or-raise whatever the operands are (#65
         # inc. 2): claiming them numeric stops the greatest-fixpoint pass
@@ -6968,6 +6982,130 @@ define dict_literal_fields(dictnode, lm) as:
 
 # Record, on each callee, the field map of any dict argument we can type
 # (#86). Memoized caller maps make this affordable now.
+# (round 177) MERGE of two parameter field maps. A parameter's map is the
+# meet over every call site: a field keeps a class only when every mapped
+# call site agrees, and a call site whose argument the emitter cannot map
+# at all poisons the parameter ("#unknown"). Before this, pf_scan let the
+# LAST mapped call site win and skipped unmapped ones: t290's `gen_read of
+# cpu` then `gen_read of {"pc": "x"}` left g.pc classed "num" and the
+# second call died in a checked unbox where the VM prints x.
+define pf_merge(a, b) as:
+    if a == null:
+        return b
+    if b == null:
+        return a
+    # an element-map entry may be a bare class ("num", round 170) rather
+    # than a record map: equal classes keep, anything else is unknown.
+    if ((type of a) == "str") or ((type of b) == "str"):
+        if a == b:
+            return a
+        return {"#unknown": 1}
+    if (a["#unknown"] == 1) or (b["#unknown"] == 1):
+        return {"#unknown": 1}
+    local out is {}
+    local ak is keys of a
+    for i in range of (len of ak):
+        local k is ak[i]
+        if k == "#elems":
+            if b["#elems"] != null:
+                local ea is a["#elems"]
+                local eb is b["#elems"]
+                local eo is {}
+                local ek is keys of ea
+                for j in range of (len of ek):
+                    if eb[(ek[j])] != null:
+                        local mm is pf_merge of [ea[(ek[j])], eb[(ek[j])]]
+                        if (type of mm) == "str":
+                            eo[(ek[j])] is mm
+                        elif mm["#unknown"] != 1:
+                            eo[(ek[j])] is mm
+                out["#elems"] is eo
+        elif b[k] == a[k]:
+            out[k] is a[k]
+    return out
+
+# (round 177) is an UNMAPPED argument something a field read could land
+# on? Numbers cannot be (a numeric literal, arithmetic, a numeric local, a
+# numeric field or element, a double-returning call), and poisoning a
+# numeric parameter is not harmless: a parameter with a field map is
+# treated as a record downstream, so DMG's alu_* `val` parameters went
+# Value* when every unmapped argument poisoned. Everything else (a string,
+# null or list literal, a generic local, an unmapped record read, a
+# Value*-returning or builtin call) can carry a record and poisons.
+define pf_arg_dictlike(e, caller_locals) as:
+    if (e[0] == "num") or (e[0] == "binop") or (e[0] == "unary"):
+        return 0
+    if e[0] == "ident":
+        local ic is caller_locals[e[1]]
+        if ic == "num":
+            return 0
+        if ((G_PF_NM[0])[e[1]] == 1) or ((G_PF_BT[0])[e[1]] == 1):
+            return 0
+        return 1
+    if e[0] == "dot":
+        local dm is unwrap of e[1]
+        if dm[0] == "ident":
+            local fl is caller_locals[(dm[1]) + ".#fields"]
+            if (fl != null) and (fl[(e[2])] == "num"):
+                return 0
+        return 1
+    if e[0] == "index":
+        if (elem_class_of of [e, caller_locals]) == "num":
+            return 0
+        if (index_of_buf_field of [e, caller_locals]) == 1:
+            return 0
+        return 1
+    if e[0] == "call":
+        local cc is unwrap of e[1]
+        if cc[0] == "ident":
+            if g_funcs[cc[1]] != null:
+                if ((g_funcs[cc[1]])["ret"]) == "double":
+                    return 0
+                return 1
+            if NUM_RET_BUILTINS[cc[1]] == 1:
+                return 0
+        return 1
+    return 1
+
+define pf_arg_map(e, caller_locals) as:
+    if e[0] == "ident":
+        local m is caller_locals[e[1] + ".#fields"]
+        if (m != null) and ((len of (keys of m)) > 0):
+            return m
+        # a CAPTURED module-level local (the lifted main program's `mem`)
+        # is not in the function's own map; the module map has it.
+        if (caller_locals[e[1]] == null) and ((G_PF_MODMAP[0])[e[1] + ".#fields"] != null):
+            local mm is (G_PF_MODMAP[0])[e[1] + ".#fields"]
+            if (len of (keys of mm)) > 0:
+                return mm
+        return null
+    if e[0] == "index":
+        local eb is unwrap of e[1]
+        local ei is unwrap of e[2]
+        if (eb[0] == "ident") and (ei[0] == "num"):
+            local em is null
+            local bm is caller_locals[eb[1] + ".#fields"]
+            if (bm != null) and (bm["#elems"] != null):
+                em is (bm["#elems"])[(str of ei[1])]
+            if (em == null) and (g_elem_maps[(eb[1])] != null):
+                em is (g_elem_maps[(eb[1])])[(str of ei[1])]
+            if (em != null) and ((len of (keys of em)) > 0):
+                return em
+        return null
+    if e[0] == "dict":
+        return dict_literal_fields of [e, caller_locals]
+    if e[0] == "call":
+        local cc is unwrap of e[1]
+        if (cc[0] == "ident") and (g_funcs[cc[1]] != null):
+            local rf is (g_funcs[cc[1]])["retfields"]
+            if (rf != null) and ((len of (keys of rf)) > 0):
+                return rf
+    return null
+
+G_PF_FINAL is [0]
+G_PF_MODMAP is [{}]
+G_PF_NM is [{}]
+G_PF_BT is [{}]
 define pf_scan(node, caller_locals) as:
     if (type of node) != "list":
         return 0
@@ -6983,33 +7121,30 @@ define pf_scan(node, caller_locals) as:
             elif arg[0] != "null":
                 elems is [arg]
             local ce is g_funcs[callee[1]]
-            local cpf is ce["pfields"]
+            # (round 177) two generations: this round's scans READ the
+            # previous round's maps (fmap_for_fn -> "pfields") and WRITE
+            # "pfields_next"; the round end promotes next -> pfields. A
+            # single generation made the result depend on scan order (a
+            # function scanned before its callers had no seed this round).
+            local cpf is ce["pfields_next"]
             if cpf == null:
                 cpf is []
                 for z in range of (len of (ce["ptypes"])):
                     append of [cpf, null]
-                ce["pfields"] is cpf
+                ce["pfields_next"] is cpf
             for k in range of (len of elems):
                 if k < (len of cpf):
                     local e is unwrap of elems[k]
-                    if e[0] == "ident":
-                        local m is caller_locals[e[1] + ".#fields"]
-                        if (m != null) and ((len of (keys of m)) > 0):
-                            cpf[k] is m
-                    if e[0] == "index":
-                        # (round 168) `c[k]` with a literal k: the record stored at that
-                        # element, from the caller's parameter `#elems` or a module list's maps.
-                        local eb is unwrap of e[1]
-                        local ei is unwrap of e[2]
-                        if (eb[0] == "ident") and (ei[0] == "num"):
-                            local em is null
-                            local bm is caller_locals[eb[1] + ".#fields"]
-                            if (bm != null) and (bm["#elems"] != null):
-                                em is (bm["#elems"])[(str of ei[1])]
-                            if (em == null) and (g_elem_maps[(eb[1])] != null):
-                                em is (g_elem_maps[(eb[1])])[(str of ei[1])]
-                            if (em != null) and ((len of (keys of em)) > 0):
-                                cpf[k] is em
+                    local am is pf_arg_map of [e, caller_locals]
+                    if am == null:
+                        # unmapped THIS round: maps settle over the fixpoint
+                        # (handler ctx elements are seeded between rounds),
+                        # so only the FINAL round treats "still unmapped" as
+                        # unknown and poisons the parameter.
+                        if (G_PF_FINAL[0] == 1) and ((pf_arg_dictlike of [e, caller_locals]) == 1):
+                            cpf[k] is {"#unknown": 1}
+                    else:
+                        cpf[k] is pf_merge of [cpf[k], am]
     for k2 in range of (len of node):
         pf_scan of [node[k2], caller_locals]
     return 0
@@ -9581,8 +9716,12 @@ define elem_maps_census(funcs, rest) as:
                 if (epts[pi]) == "num":
                     eseed[((efn[2])[pi])] is 1
         g_em_bt is elb
+        local _emf is fmap_for_fn of efn
+        local _emf0 is g_cur_fmap
+        g_cur_fmap is _emf
         g_em_nm is infer_numeric_seeded of [efn[3], elb, eseed]
-        em_walk of [efn[3], (fmap_for_fn of efn), acc]
+        em_walk of [efn[3], _emf, acc]
+        g_cur_fmap is _emf0
     g_elem_maps is acc
     return 0
 
@@ -9605,14 +9744,14 @@ define seed_handler_elems(funcs, rest) as:
             if (sh_table_holds of [rest, T, fn[1]]) == 0:
                 continue
             local fe is g_funcs[fn[1]]
-            local cpf is fe["pfields"]
+            local cpf is fe["pfields_next"]
             if cpf == null:
                 cpf is []
                 for z in range of (len of (fe["ptypes"])):
                     append of [cpf, null]
-                fe["pfields"] is cpf
+                fe["pfields_next"] is cpf
             if (len of cpf) > 0:
-                cpf[0] is emap
+                cpf[0] is pf_merge of [cpf[0], emap]
     return 0
 
 # `dispatch of [T, k, C]` with T a shadow table and C a module ident: sites[T] = C
@@ -10102,6 +10241,21 @@ define emit_program(ast) as:
     g_mod_assigned is {}
     g_cur_params_rt is {}
     local _mrba is collect_assigns of [rest, {}]
+    # (round 178) module names a function writes with a bare `is` join the
+    # census with their RHS expressions; a name is numeric only when EVERY
+    # assignment anywhere is.
+    local _fra is {}
+    for _fk in range of (len of funcs):
+        collect_free_assign_rhs of [funcs[_fk], {}, _fra]
+    local _frn is keys of _fra
+    for _fi in range of (len of _frn):
+        local _fname is _frn[_fi]
+        if _mrba[_fname] == null:
+            _mrba[_fname] is []
+        local _fdst is _mrba[_fname]
+        local _fsrc is _fra[_fname]
+        for _fj in range of (len of _fsrc):
+            append of [_fdst, _fsrc[_fj]]
     g_mod_rba is _mrba
     local _mbt is infer_buffers of rest
     local _mnames is keys of _mrba
@@ -10287,6 +10441,14 @@ define emit_program(ast) as:
         # learns new retfields, so maps cached in the previous round are
         # out of date.
         G_LGM_CACHE[0] is {}
+        # (round 177) parameter field maps are the MEET over call sites of
+        # THIS round only: rounds re-derive every map as return fields
+        # settle, and merging a round into the previous one turned each
+        # transient difference into a permanent loss (DMG handlers' ctx
+        # element maps emptied at round 3 and never came back).
+        for _pr in range of (len of funcs):
+            local _pfe is g_funcs[((funcs[_pr])[1])]
+            _pfe["pfields_next"] is null
         fn_rebinds_census of funcs
         elem_maps_census of [funcs, rest]
         seed_handler_elems of [funcs, rest]
@@ -10294,11 +10456,70 @@ define emit_program(ast) as:
             local pfn is funcs[kp]
             pf_scan of [pfn[3], fmap_for_fn of pfn]
         pf_scan of [rest, local_gen_map_for of ["<module>", rest]]
+        for _pp in range of (len of funcs):
+            local _ppe is g_funcs[((funcs[_pp])[1])]
+            _ppe["pfields"] is _ppe["pfields_next"]
         for k in range of (len of funcs):
             local rff is funcs[k]
             local rffe is g_funcs[rff[1]]
             rffe["retfields"] is func_retfields of rff
         rfr is rfr + 1
+    # (round 177) one more scan with the maps settled: call sites whose
+    # argument still has no map poison the parameter (t290's `gen_read of
+    # {"pc": "x"}` after `gen_read of cpu`; a value from a builtin; a
+    # parameter nothing seeded). Soundness of every "num" field class rests
+    # on this pass.
+    G_LGM_CACHE[0] is {}
+    for _pr2 in range of (len of funcs):
+        local _pfe2 is g_funcs[((funcs[_pr2])[1])]
+        _pfe2["pfields_next"] is null
+    seed_handler_elems of [funcs, rest]
+    # Only functions something MENTIONS scan in the final round: a function
+    # nothing calls (DMG's exec_op, inlined by hand into the run loops) has
+    # unseeded parameters, and its call sites would poison every live
+    # callee they name. The scan also carries the scanning function's
+    # numeric-name map so a numeric local passed onward is not mistaken
+    # for a record (cpu_mem_read's `addr` went Value* that way).
+    local _pfm is {}
+    collect_idents_all of [["block", rest], _pfm]
+    for _pm in range of (len of funcs):
+        local _pmf is funcs[_pm]
+        local _pms is {}
+        collect_idents_all of [_pmf[3], _pms]
+        local _pmk is keys of _pms
+        for _pmi in range of (len of _pmk):
+            if (_pmk[_pmi]) != (_pmf[1]):
+                _pfm[(_pmk[_pmi])] is 1
+    G_PF_MODMAP[0] is local_gen_map_for of ["<module>", rest]
+    G_PF_FINAL[0] is 1
+    for kp in range of (len of funcs):
+        local pfn is funcs[kp]
+        if _pfm[(pfn[1])] != 1:
+            continue
+        local _pbt is infer_buffers of pfn[3]
+        local _pseed is {}
+        local _ppt is (g_funcs[(pfn[1])])["ptypes"]
+        for _pi in range of (len of (pfn[2])):
+            if _pi < (len of _ppt):
+                if (_ppt[_pi]) == "num":
+                    _pseed[((pfn[2])[_pi])] is 1
+        local _pff is fmap_for_fn of pfn
+        local _pff0 is g_cur_fmap
+        g_cur_fmap is _pff
+        G_PF_NM[0] is infer_numeric_seeded of [pfn[3], _pbt, _pseed]
+        G_PF_BT[0] is _pbt
+        pf_scan of [pfn[3], _pff]
+        g_cur_fmap is _pff0
+    G_PF_BT[0] is infer_buffers of rest
+    G_PF_NM[0] is infer_numeric of [rest, G_PF_BT[0]]
+    pf_scan of [rest, local_gen_map_for of ["<module>", rest]]
+    G_PF_FINAL[0] is 0
+    G_PF_NM[0] is {}
+    G_PF_BT[0] is {}
+    for _pp2 in range of (len of funcs):
+        local _ppe2 is g_funcs[((funcs[_pp2])[1])]
+        _ppe2["pfields"] is _ppe2["pfields_next"]
+    G_LGM_CACHE[0] is {}
     # The cache holds maps computed while retfields were still settling —
     # a module map cached before `parse_args` had its return fields has no
     # `cfg.#fields` entry, and widening would then read the stale copy.
@@ -10997,6 +11218,47 @@ define collect_free_assigns(node, bound, out) as:
 # NOT merge outward. Collected for the whole body rather than from their
 # declaration onward, which is the emitter's own approximation of `local`'s
 # order-sensitivity.
+# (round 178) like collect_free_assigns, but keeps the RHS nodes: acc[name]
+# is the list of every expression a FUNCTION assigns to a module name with
+# a bare `is`. Feeds the module-name numeric census so a global that only
+# ever receives numbers (DMG memory.eigs `rom_len is buf_len of bytes`,
+# written inside load_rom) classes "num" like a module-level binding would.
+define collect_free_assign_rhs(node, bound, acc) as:
+    if (type of node) != "list":
+        return 0
+    if (len of node) == 0:
+        return 0
+    local h is node[0]
+    if h == "func":
+        local b2 is {}
+        local bk is keys of bound
+        for bi in range of (len of bk):
+            b2[(bk[bi])] is 1
+        local ps is node[2]
+        for pk in range of (len of ps):
+            b2[(ps[pk])] is 1
+        local fk is 3
+        loop while fk < (len of node):
+            collect_local_decls of [node[fk], b2]
+            fk is fk + 1
+        fk is 3
+        loop while fk < (len of node):
+            collect_free_assign_rhs of [node[fk], b2, acc]
+            fk is fk + 1
+        return 0
+    if h == "assign":
+        if (len of node) < 4:
+            if bound[node[1]] != 1:
+                if acc[node[1]] == null:
+                    acc[node[1]] is []
+                local al is acc[node[1]]
+                append of [al, node[2]]
+        collect_free_assign_rhs of [node[2], bound, acc]
+        return 0
+    for k in range of (len of node):
+        collect_free_assign_rhs of [node[k], bound, acc]
+    return 0
+
 define collect_local_decls(node, bound) as:
     if (type of node) != "list":
         return 0
