@@ -2813,6 +2813,16 @@ define borrowable_cvar(node, nm, bt) as:
         return cn of n[1]
     if g_genp[n[1]] == 1:
         return cn of n[1]
+    # (round 173) a module-level LIST with element maps, read through the
+    # env (an imported module's global such as DMG's `_exec_ctx`), is
+    # borrowable when no function rebinds it and this function does not
+    # shadow it: the slot's value is stable for the statement, so the
+    # in-place numeric element store and the borrowed element/argument
+    # reads apply to it as they do to a C-variable list. Before this,
+    # `_exec_ctx[2] is op` was an incref'd name read plus a boxed store on
+    # every emulated instruction.
+    if (g_mod_assigned[n[1]] == 1) and (nm[n[1]] != 1) and (g_cur_params[n[1]] != 1) and (g_locshadow[n[1]] != 1) and (g_observed == 0) and (g_envloc[n[1]] != 1) and (g_boxshadow[n[1]] != 1) and (g_fn_rebinds[n[1]] != 1) and (g_elem_maps[n[1]] != null):
+        return env_readb of n[1]
     return ""
 
 define emit_borrow_dot(node, nm, bt) as:
@@ -5544,6 +5554,17 @@ g_cur_params_rt is {}
 g_mod_num_names is {}
 g_mod_assigned is {}
 g_mod_rba is {}
+# (round 173) module names some FUNCTION rebinds with a bare `is` (outward
+# mutation). A borrowed pointer to such a global's value could dangle across
+# a call; names absent here are rebound only at module level, so a borrowed
+# read inside a function is stable for the statement.
+g_fn_rebinds is {}
+define fn_rebinds_census(funcs) as:
+    local acc is {}
+    for k in range of (len of funcs):
+        collect_free_assigns of [funcs[k], {}, acc]
+    g_fn_rebinds is acc
+    return 0
 g_cur_ret_body is null
 define func_ret_type(fn, fbt, fgen, fdict) as:
     g_cur_params_rt is {}
@@ -10233,6 +10254,7 @@ define emit_program(ast) as:
         # learns new retfields, so maps cached in the previous round are
         # out of date.
         G_LGM_CACHE[0] is {}
+        fn_rebinds_census of funcs
         elem_maps_census of [funcs, rest]
         seed_handler_elems of [funcs, rest]
         for kp in range of (len of funcs):
