@@ -1,0 +1,46 @@
+# (round 177) a bare field read `x.f` is numeric when the field map says
+# so: `local pc is cpu.pc` becomes a C double (DMG fetch8's shape), and
+# every use of pc (index, compare, arithmetic, return) stays unboxed.
+# Controls: a field the map cannot class (`tag`, assigned a string and a
+# number) must stay boxed and print exactly as the VM prints it; a field
+# read on a dict whose map is unknown (a generic param) stays boxed.
+define new_cpu() as:
+    return {"pc": 256, "sp": 65534, "tag": "boot"}
+define fetch8(cpu, mem) as:
+    mem.pending += 4
+    local pc is cpu.pc
+    cpu.pc is (pc + 1) & 0xFFFF
+    if pc < 0x4000:
+        return mem.data[pc]
+    return mem.data[pc & 0xFF]
+define retag(cpu, n) as:
+    if n == 0:
+        cpu.tag is "boot"
+    else:
+        cpu.tag is n
+define show(cpu) as:
+    local tg is cpu.tag
+    return str of tg
+define gen_read(g) as:
+    local v is g.pc
+    return v
+local cpu is new_cpu of []
+local mem is {"pending": 0, "data": buffer of 65536}
+local i is 0
+loop while i < 65536:
+    mem.data[i] is i & 255
+    i is i + 1
+local t is 0
+i is 0
+loop while i < 200000:
+    t is t + (fetch8 of [cpu, mem])
+    i is i + 1
+print of t
+print of cpu.pc
+print of mem.pending
+retag of [cpu, 0]
+print of (show of cpu)
+retag of [cpu, 7]
+print of (show of cpu)
+print of (gen_read of cpu)
+print of (gen_read of {"pc": "x"})
