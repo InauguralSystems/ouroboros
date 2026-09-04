@@ -3293,6 +3293,14 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
             # pushed before the rhs (VM 100, AOT 7, both rc 0). Temps in
             # VM push order (target, index, value) make the order a
             # sequence point, not a compiler mood.
+            if (is_num_expr of [node[3], nm, bt]) == 1:
+                # (round 176) the SEQUENCED store (a call somewhere in the
+                # operands, so the target is read owned) still stores the
+                # number in place: target, index, value in VM order, then
+                # the borrowed-target numeric store and the target's release.
+                # DMG's OAM DMA copy `mem.data[0xFE00 + i] is mem_read of
+                # [mem, src + i]` boxed 160 numbers per DMA through here.
+                return ind + "{ Value* _sat = " + (emit_val of [node[1], nm, bt]) + "; double _sai = " + (emit_num of [node[2], nm, bt, 0]) + "; double _sav = " + (emit_num of [node[3], nm, bt, 0]) + "; aot_index_set_num_ib(_sat, _sai, _sav); if (_sat) val_decref(_sat); }\n"
             return ind + "{ Value* _sat = " + (emit_val of [node[1], nm, bt]) + "; double _sai = " + (emit_num of [node[2], nm, bt, 0]) + "; aot_index_set_i(_sat, _sai, " + (emit_val of [node[3], nm, bt]) + "); }\n"
         return ind + "{ Value* _sat = " + (emit_val of [node[1], nm, bt]) + "; Value* _sai = " + (emit_val of [node[2], nm, bt]) + "; aot_index_set(_sat, _sai, " + (emit_val of [node[3], nm, bt]) + "); }\n"
     if t == "capbind":
