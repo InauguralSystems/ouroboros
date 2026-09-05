@@ -1,0 +1,22 @@
+# (round 194, #139) an interrogative read in a NUMERIC context -- the dynamics
+# programs' `x is x * 0.9 + (prev of x) * 0.1` shape. The value is boxed
+# (polymorphic: number / string for who / null on a miss) and unboxed CHECKED,
+# so a non-number in arithmetic dies where the VM raises. (Only `prev`
+# is supported without `at`; the other kinds are a separate refusal.)
+x is 1.0
+x is 2.0
+for i in range of 5:
+    x is x * 0.5 + (prev of x) * 0.25
+print of x
+y is 3
+y is 4
+z is (prev of y) * 10 + (prev of y)
+print of z
+w is 7
+w is 8
+print of ((prev of w) + 1 > 8)
+define f() as:
+    local a is 2
+    a is a + 5
+    return (prev of a) * 100 + a
+print of (f of [])

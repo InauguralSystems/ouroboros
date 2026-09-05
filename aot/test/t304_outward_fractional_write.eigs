@@ -1,0 +1,18 @@
+# (round 195, #217) A module numeric that the module census classified INT
+# (`x is 1.0` has an integral value) and that a FUNCTION then assigns a
+# fractional value: the outward write went into a C `long` and truncated to 0
+# (VM 0.25 / AOT 0, rc 0 both -- the simplest silent-wrong shape in the fleet,
+# reduced from dynamics/physics.eigs's frame velocity). The module int census
+# sees only module statements; function-body outward writes must demote.
+x is 1.0
+define w() as:
+    x is 0.25
+    return x
+print of (w of [])
+print of x
+y is 2
+define v() as:
+    y is y / 4
+    return y
+print of (v of [])
+print of y

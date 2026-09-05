@@ -2444,6 +2444,16 @@ define emit_num(node, nm, bt, raw) as:
         if op == "or":
             return "({ double _sc = " + l + "; _sc != 0.0 ? _sc : (" + r + "); })"
         return seqpre + ("((" + l + " " + op + " " + r + ") ? 1.0 : 0.0)") + seqpost
+    if t == "interrogate":
+        # (round 194, #139) an interrogative in a NUMERIC context (dynamics:
+        # `x is x * 0.9 + (prev of x) * 0.1`). Its value is polymorphic (a
+        # number for what/when/where/why/how/prev, a string for who, null on
+        # a miss), so read it boxed through emit_val's arm -- which carries
+        # every guard (undefined-name, `when` qualifier) -- and unbox CHECKED:
+        # a non-number dies "non-numeric value in a numeric context" exactly
+        # where the VM raises on the arithmetic. The three dynamics programs
+        # refused "emit_num on non-numeric node interrogate" for this.
+        return "aot_num_ck_at(" + (emit_val of [node, nm, bt]) + ", \"" + (c_escape of (G_CUR_FN[0])) + ": interrogative\")"
     throw of ("AOT: emit_num on non-numeric node " + t)
 
 define emit_val(node, nm, bt) as:
@@ -11418,6 +11428,25 @@ define emit_program(ast) as:
     g_btmap is bt
     if g_observed == 0:
         g_int is infer_int of [rest, [], nm, bt]
+        # (round 195, #217) The module int census sees MODULE statements only,
+        # so `x is 1.0` (an integral literal) made x a C `long`, and a
+        # function's outward `x is 0.25` stored into that long and truncated
+        # to 0 -- VM 0.25 / AOT 0, rc 0 both, reduced from dynamics/physics's
+        # frame velocity. Same shape as the round-133 boxed-RHS demotion one
+        # map over: every function body's plain assigns to a module int name
+        # must ALSO be counter steps (is_counter over the body's RHS list);
+        # any other RHS demotes the name to the double path, which is what the
+        # VM computes. `local` shadows in a body demote too -- conservative.
+        for _ik in range of (len of funcs):
+            local _if is funcs[_ik]
+            local _ias is collect_assigns of [_if[3], {}]
+            local _ian is keys of _ias
+            for _ii in range of (len of _ian):
+                local _iv is _ian[_ii]
+                if g_int[_iv] == 1:
+                    if (is_counter of [_iv, _ias[_iv]]) == null:
+                        g_int[_iv] is 0
+                        g_int_bound[_iv] is null
     # tensor layer for the module body (functions set their own scope above).
     g_dict is {}
     g_genp is {}
