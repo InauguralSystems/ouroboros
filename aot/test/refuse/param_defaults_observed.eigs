@@ -1,0 +1,8 @@
+# EXPECT: parameter defaults in an OBSERVED function
+# (round 193, #139) The observed prologue seeds numeric parameters into the env
+# before the body runs; a default would have to be evaluated in that env order.
+# Refused by name until the per-name observation round lands (#126).
+define f(a, b is a + 1) as:
+    a is a * 2
+    return report of a
+print of (f of 3)

@@ -160,6 +160,34 @@ define has_report(node) as:
             return 1
     return 0
 
+# (round 193, #139) Parameter defaults. The frontend's func node carries the
+# per-parameter default expressions as its 5th element (null where absent;
+# trailing only, enforced by the parser). The VM runs OP_DEFAULT_PARAM for
+# every slot >= frame->call_argc: a default fires only for an argument the
+# caller did NOT supply (an explicit null is supplied and stays null), it is
+# evaluated in the callee's scope at call time (it may read earlier
+# parameters and module names), and calls through a function VALUE count the
+# arguments the same way. The AOT mirrors that with a trailing `int __argc`
+# C parameter on every function that has a default: direct calls pass their
+# static count (filling unsupplied defaulted slots with a dummy of the C
+# class), value wrappers pass aot_argc(__a, nparams), and the callee's
+# prologue assigns each defaulted parameter when `__argc <= slot`.
+define fn_defaults(fn) as:
+    if (len of fn) >= 5:
+        return fn[4]
+    return null
+define fn_has_defaults(name) as:
+    local fi is g_funcs[name]
+    if fi == null:
+        return 0
+    local d is fi["defaults"]
+    if d == null:
+        return 0
+    for k in range of (len of d):
+        if d[k] != null:
+            return 1
+    return 0
+
 define uses_observer(ast) as:
     if (has_predicate of ast) == 1:
         return 1
@@ -7612,6 +7640,25 @@ define emit_args(node, fname, nm, bt) as:
     local dead is 0
     if ((g_funcs[fname])["nullok"]) == 1:
         dead is 1
+    # (round 193) `f of []` when EVERY parameter has a default: argc 0,
+    # every default fires (the VM's `g of []` -> 4 for `x is 3`).
+    # `f of null` is a SUPPLIED null (argc 1) and keeps the rule below.
+    if (lit_list == 1) and ((len of elems) == 0) and ((fn_has_defaults of fname) == 1):
+        local alld is 1
+        local zdefs is (g_funcs[fname])["defaults"]
+        for zk in range of (len of ptypes):
+            if zdefs[zk] == null:
+                alld is 0
+        if alld == 1:
+            local zl is []
+            for zk in range of (len of ptypes):
+                if (ptypes[zk]) == "num":
+                    zl is (append of [zl, "0"])
+                elif (ptypes[zk]) == "tensor":
+                    zl is (append of [zl, "aot_tensor_null()"])
+                else:
+                    zl is (append of [zl, "NULL"])
+            return ["", (join of [zl, ", "]) + ", 0"]
     if (len of ptypes) == 1:
         if lit_list == 1:
             if (len of elems) != 1:
@@ -7636,6 +7683,42 @@ define emit_args(node, fname, nm, bt) as:
         # otherwise the body would read 0 where the VM reads null.
         if dead == 1:
             return ["", "0"]
+        # (round 193) `f of null` -- ONE supplied null -- to a callee whose
+        # first parameter is a boxed (generic) class: null is a value it
+        # holds on the VM too (the round-121 rule for under-applied generic
+        # slots), and every further parameter is under-applied: a defaulted
+        # one takes a dummy (the prologue assigns), a generic one make_null(),
+        # a dead one a dummy, any other keeps the by-name refusal below.
+        if (lit_list == 0) and ((ptypes[0]) == "gen"):
+            local ndefs is (g_funcs[fname])["defaults"]
+            local ndead is (g_funcs[fname])["deadp"]
+            local nl is ["make_null()"]
+            local nok is 1
+            for nk in range of (len of ptypes):
+                if nk == 0:
+                    continue
+                local ncls is ptypes[nk]
+                if (ndefs != null) and (ndefs[nk] != null):
+                    if ncls == "num":
+                        nl is (append of [nl, "0"])
+                    elif ncls == "tensor":
+                        nl is (append of [nl, "aot_tensor_null()"])
+                    else:
+                        nl is (append of [nl, "NULL"])
+                elif ncls == "gen":
+                    nl is (append of [nl, "make_null()"])
+                elif (ndead != null) and (ndead[nk] == 1):
+                    if ncls == "num":
+                        nl is (append of [nl, "0"])
+                    else:
+                        nl is (append of [nl, "make_null()"])
+                else:
+                    nok is 0
+            if nok == 1:
+                local nsfx is ""
+                if (fn_has_defaults of fname) == 1:
+                    nsfx is ", 1"
+                return ["", (join of [nl, ", "]) + nsfx]
         if lit_list == 1:
             throw of ("AOT: zero-arg call to '" + fname + "' with `[]` -- the VM binds every one of its " + (str of (len of ptypes)) + " parameters null, and the callee reads them (no C equivalent for a null in a typed parameter); only a dead single parameter takes the dummy path (#69).")
         throw of ("AOT: zero-arg call to '" + fname + "' -- the VM binds its parameter null, and the callee reads it (no C equivalent for a null in a typed parameter); only a dead single parameter takes the dummy path (#69).")
@@ -7769,11 +7852,21 @@ define emit_args(node, fname, nm, bt) as:
     if (len of elems) < (len of ptypes):
         local udead is (g_funcs[fname])["deadp"]
         local upn is (g_funcs[fname])["pnames"]
+        local udefs is (g_funcs[fname])["defaults"]
         for uk in range of (len of ptypes):
             if uk < (len of elems):
                 continue
             local ucls is ptypes[uk]
-            if ucls == "gen":
+            if (udefs != null) and (udefs[uk] != null):
+                # (round 193) a defaulted slot: any dummy of the C class, the
+                # callee's prologue assigns the default (__argc <= slot).
+                if ucls == "num":
+                    argl is (append of [argl, "0"])
+                elif ucls == "tensor":
+                    argl is (append of [argl, "aot_tensor_null()"])
+                else:
+                    argl is (append of [argl, "NULL"])
+            elif ucls == "gen":
                 argl is (append of [argl, "make_null()"])
             elif (udead != null) and (udead[uk] == 1):
                 if ucls == "num":
@@ -7789,13 +7882,19 @@ define emit_args(node, fname, nm, bt) as:
         for hk in range of (len of elems):
             if (has_call_node of [elems[hk]]) == 1:
                 hazard is 1
+    # (round 193) a callee with defaults takes the static argument count last.
+    local argc_sfx is ""
+    if (fn_has_defaults of fname) == 1:
+        argc_sfx is ", " + (str of (len of elems))
+        if (len of argl) == 0:
+            argc_sfx is str of (len of elems)
     if hazard == 0:
         local plain is ""
         for pk in range of (len of argl):
             if pk > 0:
                 plain is plain + ", "
             plain is plain + (argl[pk])
-        return ["", plain]
+        return ["", plain + argc_sfx]
     local pre is ""
     local names is ""
     for qk in range of (len of argl):
@@ -7808,7 +7907,7 @@ define emit_args(node, fname, nm, bt) as:
         if qk > 0:
             names is names + ", "
         names is names + "_sqa" + (str of qk)
-    return [pre, names]
+    return [pre, names + argc_sfx]
 
 define emit_call_num(node, nm, bt) as:
     local fcallee is unwrap of node[1]
@@ -9062,6 +9161,8 @@ define emit_function(fn, finfo, gnm, gbt) as:
             sig is sig + "long " + (cn of params[k])
         else:
             sig is sig + "double " + (cn of params[k])
+    if (fn_has_defaults of name) == 1:
+        sig is sig + ", int __argc"
     sig is sig + ")"
     g_fsigs[name] is sig
     # tensor scope -> a per-call frame pool; flatten tensor params at entry.
@@ -9078,6 +9179,27 @@ define emit_function(fn, finfo, gnm, gbt) as:
     # into the env at entry. Correct while observed functions don't nest/recurse
     # (the body-call guard above rejects that case); the per-call-env fix (2b) is
     # what removes the limitation.
+    # (round 193) defaulted parameters: assign the default when the caller
+    # supplied fewer arguments than the slot index. Emitted with this
+    # function's maps, so a default may read an earlier parameter or a module
+    # name exactly as the VM evaluates it in the callee's scope. A Value*
+    # class default is an owned fresh value bound to a borrowed-convention
+    # parameter and is leaked once per defaulted call (the literal-argument
+    # precedent; one-shot process).
+    local pdefs is (finfo["defaults"])
+    if (fn_has_defaults of name) == 1:
+        if g_observed == 1:
+            throw of ("AOT: parameter defaults in an OBSERVED function ('" + name + "') are not supported yet -- the observed prologue seeds parameters into the env before the body runs, and a default would have to be evaluated in that env order (ouroboros#139)")
+        for k in range of (len of params):
+            if pdefs[k] != null:
+                local dexpr is ""
+                if (ptypes[k]) == "num":
+                    dexpr is emit_num of [pdefs[k], fnm, fbt, 0]
+                elif (ptypes[k]) == "tensor":
+                    throw of ("AOT: parameter default on a tensor parameter ('" + name + "' parameter " + (str of k) + ") has no boxed calling convention")
+                else:
+                    dexpr is emit_val of [pdefs[k], fnm, fbt]
+                decls is decls + "    if (__argc <= " + (str of k) + ") " + (cn of params[k]) + " = " + dexpr + ";\n"
     if g_observed == 1:
         for k in range of (len of params):
             if (ptypes[k]) == "num":
@@ -10640,11 +10762,9 @@ define emit_program(ast) as:
             # null when absent). The AOT calling convention has no argc, so
             # defaults can't fire -- fail LOUDLY rather than silently binding
             # a missing arg to garbage (the worst-outcome class).
-            if (len of u) >= 5:
-                local u_defs is u[4]
-                for dk in range of (len of u_defs):
-                    if u_defs[dk] != null:
-                        throw of ("AOT: parameter defaults not supported yet (" + u[1] + ")")
+            # (round 193, #139) defaults are supported: emit_function adds a
+            # trailing `int __argc` and a prologue that fills every unsupplied
+            # defaulted parameter (see fn_defaults); the refusal is gone.
             funcs is (append of [funcs, u])
         else:
             rest is (append of [rest, stmts[k]])
@@ -10870,7 +10990,7 @@ define emit_program(ast) as:
         local deadp is []
         for dp in range of (len of fn[2]):
             deadp is (append of [deadp, (param_unread of [fn[3], (fn[2])[dp]])])
-        g_funcs[fn[1]] is {"ffbt": ffbt, "ffgen": ffgen, "ffdict": ffdict, "ptypes": pt, "ret": (func_ret_type of [fn, ffbt, ffgen, ffdict]), "rettensor": (func_ret_tensor of fn), "retbuf": (func_ret_buf of [fn, ffbt]), "observed": (func_observed of fn), "nullok": nullok, "deadp": deadp, "pnames": fn[2]}
+        g_funcs[fn[1]] is {"ffbt": ffbt, "ffgen": ffgen, "ffdict": ffdict, "ptypes": pt, "ret": (func_ret_type of [fn, ffbt, ffgen, ffdict]), "rettensor": (func_ret_tensor of fn), "retbuf": (func_ret_buf of [fn, ffbt]), "observed": (func_observed of fn), "nullok": nullok, "deadp": deadp, "pnames": fn[2], "defaults": (fn_defaults of fn)}
     # Fixpoint rounds (#86): the pass-through signal (find_gen_param_use)
     # reads CALLEES' ptypes, which are definition-order
     # dependent on the first pass. Re-derive ptypes until stable (chains are
@@ -11459,15 +11579,28 @@ define emit_program(ast) as:
             # multi-argument (`linalg.mat_mul of [a, b]`), so accepting dot
             # callees without this would not have compiled a single one.
             local wmulti is ""
+            local wdefs is wi["defaults"]
+            local whas is fn_has_defaults of wn
+            local wargc is "aot_argc(__a, " + (str of (len of wpt)) + ")"
             for wk in range of (len of wpt):
                 if wk > 0:
                     wmulti is wmulti + ", "
                 if (wpt[wk]) == "tensor":
                     throw of ("AOT: function '" + wn + "' used as a value takes a tensor parameter, which has no boxed calling convention")
+                local wexpr is ""
                 if (wpt[wk]) == "num":
-                    wmulti is wmulti + "aot_num_ck_bat(aot_arg_at(__a, " + (str of wk) + "), \"" + (c_escape of wn) + " parameter " + (str of wk) + "\")"
+                    wexpr is "aot_num_ck_bat(aot_arg_at(__a, " + (str of wk) + "), \"" + (c_escape of wn) + " parameter " + (str of wk) + "\")"
                 else:
-                    wmulti is wmulti + "aot_arg_at(__a, " + (str of wk) + ")"
+                    wexpr is "aot_arg_at(__a, " + (str of wk) + ")"
+                if (whas == 1) and (wdefs[wk] != null):
+                    # (round 193) unsupplied -> a dummy; the prologue assigns the default
+                    local wdum is "NULL"
+                    if (wpt[wk]) == "num":
+                        wdum is "0"
+                    wexpr is "(" + wargc + " > " + (str of wk) + " ? " + wexpr + " : " + wdum + ")"
+                wmulti is wmulti + wexpr
+            if whas == 1:
+                wmulti is wmulti + ", " + wargc
             local wcallm is (cn of wn) + "(" + wmulti + ")"
             wprotos is wprotos + "static Value* __wrap_" + (cn of wn) + "(Value* __a);\n"
             if (wi["ret"]) == "double":
@@ -11485,6 +11618,12 @@ define emit_program(ast) as:
             # a loud death beats a coercing guess. Borrowed, per the builtin
             # argument convention — this must not consume __a.
             warg is "aot_num_ck_bat(__a, \"" + (c_escape of wn) + " parameter\")"
+        if (fn_has_defaults of wn) == 1:
+            # (round 193) `g of []` through a value is argc 0 (the VM's default fires)
+            local wd1 is "NULL"
+            if (wpt[0]) == "num":
+                wd1 is "0"
+            warg is "(aot_argc(__a, 1) > 0 ? " + warg + " : " + wd1 + "), aot_argc(__a, 1)"
         local wcall is (cn of wn) + "(" + warg + ")"
         wprotos is wprotos + "static Value* __wrap_" + (cn of wn) + "(Value* __a);\n"
         if (wi["ret"]) == "double":

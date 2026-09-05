@@ -1,0 +1,25 @@
+# (round 193, #139) defaults through a function VALUE and explicit nulls: the
+# VM counts arguments (frame->call_argc), so a default fires only for an
+# UNSUPPLIED argument -- `g of null` binds null; `g of []` is a zero-argument
+# call; a 1-parameter callee given a 2-element literal list binds the LIST.
+# (`g of null` and `g of [1, 2]` on a NUMERIC parameter are the pre-existing
+# typed-null / list-into-number refusals, unrelated to defaults; the
+# explicit-null and whole-list cases are covered on `k`, a boxed parameter.)
+define g(x is 3) as:
+    return x
+print of (g of [])
+define k(p, q is "d", r is 100) as:
+    return [p, q, r]
+kk is k
+print of (kk of "a")
+print of (kk of ["a", "b"])
+print of (kk of ["a", "b", 5])
+print of (kk of [])
+print of (k of null)
+define twice(f, v is 2) as:
+    return f of [v, v]
+define add(a, b is 10) as:
+    return a + b
+print of (twice of [add])
+print of (twice of [add, 7])
+print of (add of 1)

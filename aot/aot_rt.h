@@ -2729,6 +2729,19 @@ static Value *aot_arg_missing(void) {
     if (!nul) nul = make_null();
     return nul;
 }
+/* (round 193, #139) the VM's argument COUNT for a call through a function
+ * value, as OP_DEFAULT_PARAM sees it (frame->call_argc): arity>1 receives a
+ * list, one element per argument; arity 1 receives the value itself -- a bare
+ * literal list is re-collected WHOLE (`g of [1, 2]` binds the list, argc 1)
+ * except the empty one (`g of []` is a zero-argument call, argc 0); a null
+ * value is a SUPPLIED null (argc 1). */
+static inline int aot_argc(Value *a, int nparams) {
+    if (a && a->type == VAL_LIST) {
+        if (nparams == 1) return a->data.list.count == 0 ? 0 : 1;
+        return a->data.list.count;
+    }
+    return 1;
+}
 static inline Value *aot_arg_at(Value *a, int k) {
     if (a && a->type == VAL_LIST) {
         if (k >= 0 && k < a->data.list.count) return a->data.list.items[k];
