@@ -1179,6 +1179,29 @@ static void aot_observe_val(Env *e, const char *name, Value *val) {
     val_decref(val);
 }
 
+/* (round 196, #217) An OBSERVED function's locals live in the global env by
+ * name (Part 2a), so their observer slots outlived the call: the second call
+ * of a function continued the first call's trajectory and the jump back to
+ * the initial value read as an oscillation (VM [0, ...] / AOT [1, ...]). The
+ * VM's frame env is reset at teardown (observer_slot_reset(frame->env)); the
+ * mirror here resets ONE name's slot -- the per-slot body of
+ * observer_slot_reset -- and is emitted at function entry for each of the
+ * function's own observed locals. Exact while observed functions neither
+ * nest nor recurse (the body-call guard refuses that). */
+static void aot_obs_reset_name(Env *e, const char *name) {
+    int idx = -1, depth = 0;
+    Env *oe = env_resolve_chain(e, name, env_hash_name(name), &idx, &depth);
+    if (!oe || idx < 0 || !oe->obs || idx >= oe->obs_cap) return;
+    ObserverSlot *s = &oe->obs[idx];
+    free(s->dh_window);
+    free(s->v_window);
+    free(s->vr_window);
+    memset(s, 0, sizeof *s);
+    if (g_last_obs_slot_env == oe && g_last_obs_slot_idx == idx) {
+        g_last_obs_slot_env = NULL;
+        g_last_obs_slot_idx = -1;
+    }
+}
 static void aot_observe_num(Env *e, const char *name, double val) {
     env_set_local_owned(e, name, make_num(val));
     if (g_unobserved_depth != 0) return;

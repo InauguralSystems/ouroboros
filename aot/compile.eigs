@@ -9214,6 +9214,20 @@ define emit_function(fn, finfo, gnm, gbt) as:
         for k in range of (len of params):
             if (ptypes[k]) == "num":
                 decls is decls + "    aot_set(__eigs_g, \"" + params[k] + "\", make_num(" + (cn of params[k]) + "));\n"
+    # (round 196, #217) an observed function's OWN locals (not params, not
+    # module globals unless shadowed) get a fresh observer slot per call, as
+    # the VM's frame env does; see aot_obs_reset_name.
+    if g_observed == 1:
+        for k in range of (len of banames):
+            local rv is banames[k]
+            local risp is 0
+            for p in range of (len of params):
+                if params[p] == rv:
+                    risp is 1
+            if ((gnm[rv] == 1) or (gbt[rv] == 1)) and (shadowed[rv] != 1):
+                risp is 1
+            if risp == 0:
+                decls is decls + "    aot_obs_reset_name(__eigs_g, \"" + rv + "\");\n"
     # locals: tensors -> AotTensor, buffers -> Value*, integers -> long, other
     # numerics -> double (params + globals excluded; an assign to a global
     # updates the global).
