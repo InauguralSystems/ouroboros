@@ -1,0 +1,11 @@
+# EXPECT: assigns module name 'z' that it also interrogates
+# (round 197, #218) A function that assigns a MODULE name it also interrogates:
+# on the VM the interrogated name binds function-local (#99 escape pre-scan),
+# so `print of z` after the call is the OLD module value; the AOT wrote the
+# module binding (0.25). Refused by name until the per-call env (Part 2b).
+z is 1.0
+define u() as:
+    z is 0.25
+    return prev of z
+print of (u of [])
+print of z
