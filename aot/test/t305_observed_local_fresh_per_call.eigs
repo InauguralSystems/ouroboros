@@ -1,0 +1,39 @@
+# (round 196, #217) An OBSERVED function's locals start each call with a FRESH
+# observer slot on the VM (the frame env is reset at teardown). The AOT routes
+# an observed function's locals by name into the global env (Part 2a), so the
+# slot survived the return and the second call saw the first call's trajectory:
+# the jump from the end of call 1 back to `start` read as an oscillation
+# (VM [0, ...] / AOT [1, ...] from the second call on -- reduced from
+# dynamics/physics.eigs's regime flags). Slots of the function's observed
+# locals are now reset at function entry.
+define run(start) as:
+    local x is start
+    local hits is 0
+    local f is 0
+    loop while f < 12:
+        x is x * 0.5
+        local xr is report of x
+        if xr == "oscillating":
+            hits is 1
+        f is f + 1
+    return [hits, report of x]
+print of (run of 100.0)
+print of (run of 100.0)
+print of (run of 3.0)
+define two(a) as:
+    local e is a
+    local p is a * 2
+    local seen is 0
+    local k is 0
+    loop while k < 10:
+        e is e * 0.7
+        p is p - 1
+        if (report of e) == "oscillating":
+            seen is seen + 1
+        if (report of p) == "oscillating":
+            seen is seen + 10
+        k is k + 1
+    return [seen, report of e, report of p]
+print of (two of 50.0)
+print of (two of 50.0)
+print of (two of 8.0)

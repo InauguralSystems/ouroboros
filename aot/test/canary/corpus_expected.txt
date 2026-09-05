@@ -43,7 +43,6 @@ test_multiline.eigs REFUSE
 test_numerics.eigs REFUSE
 test_observer_coherence.eigs REFUSE
 test_observer_interactions.eigs REFUSE
-test_observer_park.eigs DIVERGE
 test_observer_saturation.eigs REFUSE
 test_obs_mt_race.eigs REFUSE
 test_optimize.eigs REFUSE
