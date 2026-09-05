@@ -125,7 +125,7 @@ USES_HISTORY is [0]
 # of name_in_enclosing) so a write to an enclosing function's name routes to
 # SET_NAME (outward mutation) instead of allocating a fresh local.
 define cg_new(is_function) as:
-    return {"code": [], "consts": [], "functions": [], "loops": [], "is_function": is_function, "locals": {}, "local_names": [], "next_slot": 0, "name_bound": {}, "param_count": 0, "enclosing": null}
+    return {"code": [], "consts": [], "const_idx": {}, "functions": [], "loops": [], "is_function": is_function, "locals": {}, "local_names": [], "next_slot": 0, "name_bound": {}, "param_count": 0, "enclosing": null}
 
 define cg_loop_top(c) as:
     return c.loops[(len of c.loops) - 1]
@@ -157,12 +157,20 @@ define cg_emit_u32(c, val) as:
     append of [c.code, (floor of (val / 65536)) % 256]
     append of [c.code, (floor of (val / 16777216)) % 256]
 
+# (#85) the constant pool is deduplicated through an index keyed by kind and
+# text instead of a linear scan per constant: the scan made codegen quadratic
+# in program size (the located hotspot in #85). Strings and numbers are the
+# pool's kinds; the key carries the kind so 1 and "1" stay distinct, and
+# `str of` a number is exact for the values a literal produces.
 define cg_const(c, val) as:
-    for i in range of (len of c.consts):
-        if c.consts[i] == val:
-            return i
+    local k is (type of val) + ":" + (str of val)
+    local hit is c.const_idx[k]
+    if hit != null:
+        return hit
     append of [c.consts, val]
-    return (len of c.consts) - 1
+    local idx is (len of c.consts) - 1
+    c.const_idx[k] is idx
+    return idx
 
 # --- jumps (offsets relative to the byte after the operand) ---------------
 define cg_emit_jump(c, op) as:
