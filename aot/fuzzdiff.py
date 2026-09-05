@@ -254,10 +254,98 @@ def gen_null_death(r):
               'print of "UNREACHABLE — the VM stops above"']
     return "\n".join(lines) + "\n"
 
+# ---- #160: the strata the first 13 generators never emitted ----------------
+# Blind-critic rounds 35/49/55 found silent-wrong miscompiles in shapes no
+# generator produced (outward writes from function bodies, a module name that
+# changes type class, `local`-marked vs unmarked body assigns, observer reads).
+# Each arm below converts one manual stratum rotation into a standing
+# instrument. All are VM-clean (rc 0) and deterministic.
+
+def gen_outward_write(r):
+    # (a) a function body RMW-writes a MODULE global (outward-mutable scope),
+    # called several times; optionally the global is then DEMOTED to a string
+    # (the round-55 shape: VM 3 / AOT 2, both rc 0).
+    g = r.choice(["total", "count", "acc"])
+    init = _int(r)
+    step = _pint(r)
+    calls = r.randint(1, 3)
+    lines = [f"{g} is {init}",
+             "define bump(k) as:",
+             f"    {g} is {g} + k",
+             f"    return {g}"]
+    for _ in range(calls):
+        lines.append(f"print of (bump of {step})")
+    lines.append(f"print of {g}")
+    if r.random() < 0.5:
+        lines += [f'{g} is "{_word(r)}"', f"print of {g}"]
+    if r.random() < 0.5:
+        # a second writer: a plain (non-RMW) outward assignment
+        lines += ["define reset() as:", f"    {g} is {_int(r)}", "    return 0",
+                  "print of (reset of [])", f"print of {g}"]
+    return "\n".join(lines) + "\n"
+
+def gen_type_demotion(r):
+    # (b) one module name bound to two or three type classes in sequence, read
+    # between each rebinding, including from inside a function.
+    n = r.choice(["v", "slot", "cur"])
+    shapes = [f"{_int(r)}", f'"{_word(r)}"', f"[{_pint(r)}, {_pint(r)}]",
+              f"{_flit(r)}", "null"]
+    r.shuffle(shapes)
+    lines = ["define show() as:", f"    return {n}"]
+    for sh in shapes[:r.randint(2, 3)]:
+        lines += [f"{n} is {sh}", f"print of {n}", "print of (show of [])"]
+    return "\n".join(lines) + "\n"
+
+def gen_local_marker(r):
+    # (c) a function assigns a name that is ALSO a module name: `local` marks a
+    # fresh binding (module value untouched), the unmarked form writes the
+    # module binding. Both forms, the module value printed after each call.
+    n = r.choice(["x", "level", "n2"])
+    lines = [f"{n} is {_int(r)}",
+             "define shadow() as:",
+             f"    local {n} is {_pint(r)}",
+             f"    return {n} + 1",
+             "define write() as:",
+             f"    {n} is {_pint(r)}",
+             f"    return {n} + 1",
+             "print of (shadow of [])", f"print of {n}",
+             "print of (write of [])", f"print of {n}"]
+    if r.random() < 0.5:
+        lines += ["define both() as:",
+                  f"    local {n} is {_int(r)}",
+                  f"    {n} is {n} + {_pint(r)}",
+                  f"    return {n}",
+                  "print of (both of [])", f"print of {n}"]
+    return "\n".join(lines) + "\n"
+
+def gen_observer_reads(r):
+    # (d) observer forms on a named binding: `report of x`, `<predicate> of x`,
+    # `prev of x` after a deterministic assignment history (flat, ramp, or
+    # decaying), at module scope and from inside a function.
+    n = r.choice(["x", "y", "temp"])
+    kind = r.choice(["flat", "ramp", "decay"])
+    steps = r.randint(3, 7)
+    lines = [f"{n} is {_pint(r)}.0"]
+    for _ in range(steps):
+        if kind == "flat":
+            lines.append(f"{n} is {n}")
+        elif kind == "ramp":
+            lines.append(f"{n} is {n} + {_pint(r)}")
+        else:
+            lines.append(f"{n} is {n} * 0.5")
+    pred = r.choice(["converged", "stable", "improving", "oscillating", "diverging", "equilibrium"])
+    lines += [f"print of (report of {n})", f"print of ({pred} of {n})"]
+    if r.random() < 0.5:
+        lines.append(f"print of (prev of {n})")
+    if r.random() < 0.5:
+        lines += ["define peek() as:", f"    return report of {n}", "print of (peek of [])"]
+    return "\n".join(lines) + "\n"
+
 GENERATORS = [gen_precedence, gen_sci_literals, gen_arith, gen_function_returns,
               gen_loop_accum, gen_fstring, gen_soft_keyword_idents, gen_list_ops,
               gen_str_compare, gen_dict_ops, gen_loop_while, gen_recursion_str,
-              gen_null_death]
+              gen_null_death,
+              gen_outward_write, gen_type_demotion, gen_local_marker, gen_observer_reads]
 
 
 # ---- harness ---------------------------------------------------------------
@@ -304,13 +392,24 @@ def main():
     ap.add_argument("--strict-gaps", action="store_true",
                     help="fail on AOT build gaps too, not just divergences")
     ap.add_argument("--quiet", action="store_true")
+    ap.add_argument("--only", default=None,
+                    help="comma-separated generator names (e.g. gen_outward_write,"
+                         "gen_observer_reads): run one stratum alone instead of the "
+                         "uniform mix, so a new arm gets its own seeds (#160)")
     args = ap.parse_args()
+    gens = GENERATORS
+    if args.only:
+        wanted = set(args.only.split(","))
+        gens = [g for g in GENERATORS if g.__name__ in wanted]
+        missing = wanted - {g.__name__ for g in gens}
+        if missing:
+            sys.exit(f"fuzzdiff: unknown generator(s): {', '.join(sorted(missing))}")
 
     seed = args.seed if args.seed is not None else random.randrange(1 << 30)
     rng = random.Random(seed)
     if not os.path.exists(EIGS):
         sys.exit(f"VM binary not found: {EIGS} (set EIGS=...)")
-    print(f"fuzzdiff: seed={seed} count={args.count} VM={EIGS}")
+    print(f"fuzzdiff: seed={seed} count={args.count} VM={EIGS}" + (f" only={args.only}" if args.only else ""))
     print("  (oracle must match ouroboros's pinned EIGS_REF; a main checkout "
           "ahead of the pin yields non-actionable main-vs-pin 'drift')")
 
@@ -321,7 +420,7 @@ def main():
     out_path = os.path.join(tmp, "p.bin")
 
     for i in range(args.count):
-        gen = rng.choice(GENERATORS)
+        gen = rng.choice(gens)
         prog = gen(rng)
         open(prog_path, "w").write(prog)
         if os.path.exists(out_path):
