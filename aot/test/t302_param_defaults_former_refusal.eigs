@@ -1,0 +1,19 @@
+# (round 193, #139) FORMER refuse fixture: the AOT refused parameter defaults
+# by name ("not supported yet"); they are now lowered (trailing __argc +
+# prologue), so this program is a parity fixture instead.
+#
+# Until round 193 this was test/refuse/param_defaults.eigs, the one exercised
+# member of the F-OURO-23 envelope-refusal family. The family's other members
+# (under-arity calls, whole-list args to user fns, the `when` qualifier,
+# module-shadowing `local` on buffer globals, fn-body writes to builtin names,
+# tensor broadcast) are covered by their own refuse fixtures where they exist.
+
+define greet(name, greeting) as:
+    return greeting + ", " + name
+
+define shout(name, greeting is "HI") as:
+    return greeting + ", " + name
+
+print of (greet of ["world", "hello"])
+print of (shout of ["world", "hey"])
+print of (shout of "world")

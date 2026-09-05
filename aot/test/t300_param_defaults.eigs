@@ -1,0 +1,18 @@
+base is 10
+define f(a, b is a * 2, c is base + 1) as:
+    return [a, b, c]
+print of (f of 1)
+print of (f of [1, 5])
+print of (f of [1, 5, 7])
+print of (f of [1, null])
+define g(x is 3) as:
+    return x + 1
+print of (g of [])
+print of (g of 4)
+h is g
+print of (h of [])
+print of (h of 9)
+define k(p, q is "dflt") as:
+    return p + q
+print of (k of "a")
+print of (k of ["a", "b"])
