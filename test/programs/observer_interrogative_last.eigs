@@ -1,0 +1,13 @@
+# ouroboros#106 / EigenScript#869: a bare interrogative is refused only when
+# its result is DISCARDED (a statement with a POP after it). As the LAST
+# statement of a program, a function body or an if-block it is that block's
+# value and compiles on both sides. The self-hosted check's first cut flagged
+# these too; the gate's must_reject row caught it ("C oracle ACCEPTS").
+x is 1
+x is 2
+define f() as:
+    what is x
+print of (f of [])
+if x > 0:
+    who is x
+print of 3

@@ -191,6 +191,12 @@ must_reject() {
   rm -f /tmp/ouro_must_reject.eigs
 }
 must_reject 'print of undefined_var_xyz'
+# #106: a DISCARDED bare interrogative statement (one that is not the last
+# statement of its block) is a compile error on both sides; a trailing one is
+# the block's value and runs (test/programs/observer_interrogative_last.eigs).
+must_reject 'x is 1
+what is x
+print of x'
 # v0.39.0 pin (upstream #898 / ouroboros #98): reading a field off null raises.
 must_reject 'n is null
 print of n.f'
