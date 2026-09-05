@@ -856,6 +856,16 @@ static double *aot_buf_data_at(Value *b, const char *site) { aot_buf_expect_at(b
 #define aot_buf_get(b, i)        aot_buf_get_at((b), (i), #b)
 #define aot_buf_set(b, i, v)     aot_buf_set_at((b), (i), (v), #b)
 #define aot_buf_get_i(b, i)      aot_buf_get_i_at((b), (i), #b)
+/* (round 184) num_guard is `static inline` in eigenscript.h, but gcc left it
+ * out of line at the emitted code's hundreds of call sites (7.2% of DMG's
+ * profile as a CALL). Same body, forced inline; byte-exact. */
+static inline __attribute__((always_inline)) double aot_num_guard_inl(double x) {
+    if (x != x) { g_math_flags |= EIGS_MATH_INVALID; return 0.0; }
+    if (x > EIGS_NUM_MAX)  { g_math_flags |= EIGS_MATH_OVERFLOW; return EIGS_NUM_MAX; }
+    if (x < -EIGS_NUM_MAX) { g_math_flags |= EIGS_MATH_OVERFLOW; return -EIGS_NUM_MAX; }
+    return x;
+}
+#define num_guard(x) aot_num_guard_inl(x)
 #define aot_buf_set_i(b, i, v)   aot_buf_set_i_at((b), (i), (v), #b)
 #define aot_buf_len(b)           aot_buf_len_at((b), #b)
 #define aot_buf_data(b)          aot_buf_data_at((b), #b)
@@ -1894,7 +1904,26 @@ static __attribute__((noinline)) Value *aot_index_get_ib_slow(Value *target, dou
 
 /* Numeric element read straight to a double: no box for the index, and none
  * for the element when the list already holds a VAL_NUM. */
-static double aot_index_num_ib(Value *target, double d, const char *site) {
+static inline double aot_index_num_ib(Value *target, double d, const char *site) {
+    /* (round 184) the two hot shapes answer without a Value: a BUFFER slot
+     * (DMG's `mem.data[addr]` on every fetch and memory read went through
+     * aot_index_get_ib's slow path -- make_num, unbox, free -- because the
+     * borrowed read fast-paths lists only) and a list slot holding a number
+     * (no incref/decref pair). Buffer stores guard on the way in, so the slot
+     * is what make_num would have returned; anything else takes the old
+     * path and its error texts. */
+    if (__builtin_expect(target != NULL, 1)) {
+        long i = (long)d;
+        if (target->type == VAL_BUFFER) {
+            if (__builtin_expect((double)i == d && i >= 0 && i < (long)target->data.buffer.count, 1))
+                return target->data.buffer.data[i];
+        } else if (target->type == VAL_LIST) {
+            if (__builtin_expect((double)i == d && i >= 0 && i < (long)target->data.list.count, 1)) {
+                Value *r = target->data.list.items[i];
+                if (r && r->type == VAL_NUM) return r->data.num;
+            }
+        }
+    }
     Value *v = aot_index_get_ib(target, d);
     if (v && v->type == VAL_NUM) { double r = v->data.num; val_decref(v); return r; }
     return aot_num_ck_at(v, site);
