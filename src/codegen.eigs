@@ -94,6 +94,18 @@ OP_DESTRUCTURE_UNPACK is 79
 # this after every name `is` assignment; on the slot-default runtime it is
 # load-bearing — without it a name is never observed (nums are now immediates).
 OP_OBSERVE_NAME_POST is 82
+# #106: `report of <ident>` and `<predicate> of <ident>` name the BINDING whose
+# slot trajectory is classified (compile_ast's AST_RELATION arms). Emitted as a
+# plain builtin call, `report of x` answered "equilibrium" unconditionally for
+# module bindings (VM: stable / moving) -- silent wrong, rc 0 both -- and
+# `converged of x` died "cannot call num" (OP_PREDICATE pushed a number, then
+# OP_CALL called it). Slot forms for a function-scope slot local, NAME forms
+# otherwise (mirrors resolve_observer_operand_slot: module names resolve by
+# name here because module bindings are never slot-promoted self-hosted).
+OP_REPORT_SLOT is 81
+OP_REPORT_NAME is 83
+OP_PREDICATE_SLOT is 87
+OP_PREDICATE_NAME is 88
 OP_LINE is 68
 OP_LOOP_STALL_CHECK is 62
 OP_LOOP_CAP_CHECK is 63
@@ -579,10 +591,37 @@ define cg_node(c, node) as:
             cg_emit of [c, OP_NOT]
         return null
     if t == "call":
-        cg_node of [c, node[1]]                       # callee
         local arg is node[2]
         if arg[0] == "_line":
             arg is arg[2]
+        # #106: observer forms on a named binding (see the opcode block above).
+        local callee is node[1]
+        if callee[0] == "_line":
+            callee is callee[2]
+        if (callee[0] == "predicate") and (arg[0] == "ident"):
+            if (c.is_function == 1) and (has_key of [c.locals, arg[1]]):
+                cg_emit of [c, OP_PREDICATE_SLOT]
+                cg_emit_u16 of [c, callee[1]]
+                cg_emit_u16 of [c, c.locals[arg[1]]]
+            else:
+                cg_emit of [c, OP_PREDICATE_NAME]
+                cg_emit_u16 of [c, callee[1]]
+                cg_emit_u16 of [c, cg_const of [c, arg[1]]]
+            return null
+        # No shadow check, deliberately: compile_ast emits OP_REPORT_NAME for
+        # `report of <ident>` even when the program defines its own `report`
+        # (measured: `define report(v)` + `report of x` prints the verdict,
+        # `report of 5` prints the user's value -- EigenScript#1102). Mirror
+        # the VM; the wart is filed upstream, not papered over here.
+        if (callee[0] == "ident") and (callee[1] == "report") and (arg[0] == "ident"):
+            if (c.is_function == 1) and (has_key of [c.locals, arg[1]]):
+                cg_emit of [c, OP_REPORT_SLOT]
+                cg_emit_u16 of [c, c.locals[arg[1]]]
+            else:
+                cg_emit of [c, OP_REPORT_NAME]
+                cg_emit_u16 of [c, cg_const of [c, arg[1]]]
+            return null
+        cg_node of [c, node[1]]                       # callee
         # Calling convention (matches compile_node_inner): #405 (v0.27.0) — a
         # bare literal list after `of` is ALWAYS an argument list, at every
         # count (`f of []` zero args, `f of [x]` one arg — x itself, not a
@@ -1023,12 +1062,38 @@ define cg_stmt_line(c, s) as:
         cg_emit_u32 of [c, s[1]]
 
 # A statement list leaving its LAST value (null if empty).
+# #106: a bare interrogative STATEMENT (`what is x` with kinds 0-5) whose
+# result is DISCARDED is a compile error in compile_ast
+# (check_discarded_interrogative: "question words cannot be assigned with
+# 'is', and this statement's result is discarded"). Discarded means a POP
+# follows: compile_ast checks only statements with `i + 1 < count`, in the
+# program loop and in compile_block alike -- the LAST statement of a program,
+# a function body or an if-block is that block's value and is accepted
+# (measured: rc 0 in all three positions; the first cut of this check flagged
+# the last statement too and the gate's must_reject row caught it as "C oracle
+# ACCEPTS"). `prev of x` (kind 6) is left to lint W019 there and here.
+INTERROGATIVE_WORDS is ["what", "who", "when", "where", "why", "how"]
+define cg_check_discarded_interrogative(s) as:
+    local line is 0
+    local st is s
+    if st[0] == "_line":
+        line is st[1]
+        st is st[2]
+    if st[0] != "interrogate":
+        return null
+    local k is st[1]
+    if (k < 0) or (k > 5):
+        return null
+    throw of ("Compile error line " + (str of line) + ": '" + INTERROGATIVE_WORDS[k] + " is ...' is an interrogative, not an assignment -- question words cannot be assigned with 'is', and this statement's result is discarded")
+
 define cg_block_value(c, stmts) as:
     if (len of stmts) == 0:
         cg_emit of [c, OP_NULL]
         return null
     for i in range of (len of stmts):
         local s is stmts[i]
+        if i < ((len of stmts) - 1):
+            cg_check_discarded_interrogative of s
         cg_stmt_line of [c, s]
         if s[0] == "_line":
             s is s[2]
@@ -1040,6 +1105,8 @@ define cg_block_value(c, stmts) as:
 define cg_block_discard(c, stmts) as:
     for i in range of (len of stmts):
         local s is stmts[i]
+        if i < ((len of stmts) - 1):
+            cg_check_discarded_interrogative of s
         cg_stmt_line of [c, s]
         if s[0] == "_line":
             s is s[2]

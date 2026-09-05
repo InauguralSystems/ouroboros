@@ -1,0 +1,12 @@
+# EigenScript#1102 (found closing ouroboros#106): a user-defined `report` is
+# half-shadowed on the VM -- `report of <ident>` still compiles to the observer
+# op, `report of <expr>` calls the user function. Pinned here so the
+# self-hosted compiler stays byte-exact with the VM; when EigenScript decides
+# the contract, this program changes on both sides at the next pin bump.
+define report(v) as:
+    return "mine"
+x is 1
+x is 2
+print of (report of x)
+print of (report of 5)
+print of (report of (x + 0))
