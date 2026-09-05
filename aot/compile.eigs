@@ -9574,6 +9574,18 @@ define lift_nested_at(node, bound, out_funcs, outer_after) as:
         # recurse into sub-blocks (if/loop/for/try bodies, nested lists)
         if ((type of st) == "list") and ((len of st) > 0):
             if st[0] != "func":
+                # (round 183, #186) the suffix list exists only for a nested
+                # define's rebind scan; a statement with no nested define
+                # anywhere below it needs no suffix and no descent. Without
+                # this every statement AND every sub-node of a 4200-statement
+                # body copied the ~4200-entry suffix: the 8424-line corpus
+                # program spent >1200 s here (call-first shape; the
+                # call-last twin took 124 s because the walk ran on a body
+                # the first-use census had already ordered differently).
+                local _ndc is {}
+                collect_nested_defs of [st, _ndc]
+                if (len of (keys of _ndc)) == 0:
+                    continue
                 local sub_after is []
                 local sk is k + 1
                 loop while sk < (len of node):
