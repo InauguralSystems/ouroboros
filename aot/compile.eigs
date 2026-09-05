@@ -3009,12 +3009,33 @@ define emit_return(ctype, expr, ind, pre) as:
         s is s + " env_decref(__eigs_l);"
     return s + " return _rv; }\n"
 
+# (round 182, EigenScript#1064) names bound so far IN PROGRAM ORDER while a
+# function body is emitted: an assignment, a `local`, or a for binder marks
+# its name once its statement has been emitted. The VM's compiler adds a
+# frame slot at the same point, and a later `for` over a name that already
+# has a slot restores the pre-loop value at loop exit; the emitter mirrors
+# that with a C block-local shadow (lscope) when the name is here.
+G_BOUND_SO_FAR is [{}]
+define mark_bound_so_far(st) as:
+    local n is unwrap of st
+    if (type of n) != "list":
+        return 0
+    if (len of n) == 0:
+        return 0
+    if n[0] == "_line":
+        return mark_bound_so_far of [n[2]]
+    if (n[0] == "assign") or (n[0] == "local") or (n[0] == "for"):
+        local _bs is G_BOUND_SO_FAR[0]
+        _bs[(n[1])] is 1
+    return 0
+
 define emit_stmts(stmts, ind, nm, bt, minits, gf) as:
     local out is ""
     for i in range of (len of stmts):
         local _tu is g_stmt_tmp_used
         g_stmt_tmp_used is 0
         local one is emit_stmt of [stmts[i], ind, nm, bt, minits, gf]
+        mark_bound_so_far of [stmts[i]]
         if g_stmt_tmp_used == 1:
             # (round 171) release the statement's owned argument temporaries.
             # A compound statement (if/loop/for) drains after its whole body
@@ -3532,6 +3553,27 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
             local frn is fvar + "__for" + (str of (G_FORREN[0]))
             rename_binder_uses of [fbody, fvar, frn]
             fvar is frn
+        # (round 182, EigenScript#1064) save/restore kind for a binder over a
+        # name bound before the loop in this function. Numeric C variables
+        # (a numeric parameter, a numeric local, a forunbox binder), boxed
+        # slots (lv) and env-resident names (aot_set) each restore on their own
+        # storage where the exhausted and break paths converge (after the C
+        # loop). A generic (Value*/__own) parameter and observed programs keep
+        # the old persisting path (#198).
+        local fsv_kind is ""
+        local _lsc_early is 0
+        if ((G_CUR_FN[0]) != "<module>") and ((g_module_names[fvar] == 1) or ((g_interrogated_names[fvar] == 1) and (g_cur_params[fvar] != 1))):
+            _lsc_early is 1
+        if (_lsc_early == 0) and ((G_CUR_FN[0]) != "<module>") and (g_observed == 0):
+            if (g_cur_params[fvar] == 1) or ((G_BOUND_SO_FAR[0])[fvar] == 1):
+                if g_genp[fvar] == 1:
+                    fsv_kind is "genp"
+                elif (g_forunbox[fvar] != null) or (g_cur_params[fvar] == 1) or (nm[fvar] == 1):
+                    fsv_kind is "num"
+                elif (g_lowerloc == 1) and (g_envloc[fvar] == 1):
+                    fsv_kind is "lv"
+                else:
+                    fsv_kind is "env"
         local itv is "_it_" + fvar
         local nv is "_n_" + fvar
         local kv is "_k_" + fvar
@@ -3546,6 +3588,17 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
         else:
             itexpr is emit_val of [fiter, nm, bt]
         local fo is ind + "{ Value* " + itv + " = " + itexpr + ";\n"
+        if fsv_kind == "num":
+            fo is fo + ind + "  double _fsv_" + (cn of fvar) + " = " + (cn of fvar) + ";   /* #1064: binder restored after the loop */\n"
+        elif fsv_kind == "genp":
+            # a generic parameter: the saved pointer must survive the first
+            # iteration's decref of the pre-loop value when the function
+            # owned it, so take a reference exactly then.
+            fo is fo + ind + "  Value* _fsv_" + (cn of fvar) + " = " + (cn of fvar) + "; int _fsvo_" + (cn of fvar) + " = " + (cn of fvar) + "__own; if (_fsvo_" + (cn of fvar) + ") val_incref(_fsv_" + (cn of fvar) + ");\n"
+        elif fsv_kind == "lv":
+            fo is fo + ind + "  Value* _fsv_" + (cn of fvar) + " = aot_lv_get(&" + (lv of fvar) + ");\n"
+        elif fsv_kind == "env":
+            fo is fo + ind + "  Value* _fsv_" + (cn of fvar) + " = " + (env_read of fvar) + ";\n"
         if g_forunbox[fvar] == 2:
             # module scope: the VM loop-scopes the binding (post-loop reads
             # raise 'undefined variable'), so the C var lives in this block —
@@ -3588,33 +3641,20 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
         #     post-loop read dies on both sides -> lscope.
         #   module-bound name, not a param -- loop-scoped shadow -> lscope
         #     (refused when the body writes it: EigenScript#1074).
-        if ((G_CUR_FN[0]) != "<module>") and (g_cur_params[fvar] != 1):
-            if g_module_names[fvar] == 1:
-                if g_interrogated_names[fvar] == 1:
-                    local _mwr is collect_assigns of [fbody, {}]
-                    if _mwr[fvar] != null:
-                        throw of ("AOT: '" + fvar + "' is a for binder over a MODULE name inside a function, interrogated, and the loop body WRITES it. On the pinned VM that write is invisible to the next body read yet persists past the loop (EigenScript#1074), so there is no one answer to emit; refused (ouroboros#187).")
-                lscope is 1
-            elif g_interrogated_names[fvar] == 1:
-                # The body WRITING an interrogated non-parameter binder is
-                # where the VM disagrees with itself (EigenScript#1074: the
-                # write is invisible to the next body read yet persists
-                # past the loop; a pre-bound local persists where a read-
-                # only body loop-scopes, #1064). Read-only bodies are
-                # coherent -- loop-scoped -- and emitted as such.
-                local _lwr is collect_assigns of [fbody, {}]
-                if _lwr[fvar] != null:
-                    # (the name may be a `local`, a plain assign elsewhere in
-                    # the function, or bound ONLY inside this loop -- the
-                    # bound-set is whole-body containment and cannot tell
-                    # those apart, so the message claims none of them: #195)
-                    throw of ("AOT: '" + fvar + "' is a for binder over an INTERROGATED name that is not a parameter, and the loop body WRITES it. On the pinned VM that write is invisible to the next body read yet persists past the loop (EigenScript#1074; the #1064 family), so there is no one answer to emit; refused rather than picking one (ouroboros#187).")
-                # (round 119) the round-116 refusal for a read-only body over
-                # a local the function also binds outside the loop is LIFTED:
-                # the per-call boundness bit (round 117) is exactly the
-                # "did the other binding run first" fact it was waiting for.
-                # t225 (pre-bound: 7 8 1 7), t226/t227 (binding after the
-                # loop / in a not-taken branch: `prev of r` dies on both sides).
+        if (G_CUR_FN[0]) != "<module>":
+            # (round 182) EigenScript#1074 made the body's write of a loop-env
+            # binder visible to the body, so the two write-refusals are lifted:
+            # a module-name or interrogated binder is loop-scoped (block-local)
+            # and the VM has one answer. EigenScript#1064 restores a SLOTTED
+            # binder (parameter, `local`, earlier assignment) at loop exit;
+            # that is mirrored below by a save/restore around the loop on the
+            # binder's own storage (fsv_kind), not by widening the block-local.
+            # An interrogated PARAMETER binder takes the parameter path with the
+            # save/restore below instead: its body writes trace as ordinary
+            # assignments, so `prev of p` after the loop answers the last body
+            # write as the VM does (t218); the block-local traced only the
+            # binder values.
+            if (g_module_names[fvar] == 1) or ((g_interrogated_names[fvar] == 1) and (g_cur_params[fvar] != 1)):
                 lscope is 1
         if lscope == 1:
             # A function-body binder the VM LOOP-SCOPES: its name is
@@ -3792,6 +3832,25 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
         if lsc_seeded == 1:
             nm[fvar] is lsc_nm_prev
         fo is fo + ind + "  }\n"
+        # The VM's restore is a SET_LOCAL, recorded in a traced name's history
+        # (`prev of p` after the loop answers the last body write, t218/t119);
+        # trace the restore the same way.
+        if fsv_kind == "num":
+            fo is fo + ind + "  " + (cn of fvar) + " = _fsv_" + (cn of fvar) + ";\n"
+            if g_traced == 1:
+                fo is fo + ind + "  aot_trace_assign(\"" + fvar + "\", " + (cn of fvar) + ");\n"
+        elif fsv_kind == "genp":
+            if g_traced == 1:
+                fo is fo + ind + "  aot_trace_assign_val(\"" + fvar + "\", _fsv_" + (cn of fvar) + ");\n"
+            fo is fo + ind + "  { Value* _o = " + (cn of fvar) + "; " + (cn of fvar) + " = _fsv_" + (cn of fvar) + "; if (" + (cn of fvar) + "__own) val_decref(_o); " + (cn of fvar) + "__own = _fsvo_" + (cn of fvar) + "; }\n"
+        elif fsv_kind == "lv":
+            if g_traced == 1:
+                fo is fo + ind + "  aot_trace_assign_val(\"" + fvar + "\", _fsv_" + (cn of fvar) + ");\n"
+            fo is fo + ind + "  aot_lv_set(&" + (lv of fvar) + ", _fsv_" + (cn of fvar) + ");\n"
+        elif fsv_kind == "env":
+            if g_traced == 1:
+                fo is fo + ind + "  aot_trace_assign_val(\"" + fvar + "\", _fsv_" + (cn of fvar) + ");\n"
+            fo is fo + ind + "  aot_set(" + (envc of fvar) + ", \"" + fvar + "\", _fsv_" + (cn of fvar) + ");\n"
         if fowned == 1:
             fo is fo + ind + "  val_decref(" + itv + ");\n"
         fo is fo + ind + "}\n"
@@ -8310,6 +8369,10 @@ define emit_function(fn, finfo, gnm, gbt) as:
     local name is fn[1]
     G_CUR_FN[0] is name
     G_DBR_EMIT[0] is {}
+    G_BOUND_SO_FAR[0] is {}
+    local _bs0 is G_BOUND_SO_FAR[0]
+    for _bp in range of (len of (fn[2])):
+        _bs0[((fn[2])[_bp])] is 1
     g_cur_fmap is fmap_for_fn of fn
     local params is fn[2]
     local body is fn[3]
@@ -9511,6 +9574,18 @@ define lift_nested_at(node, bound, out_funcs, outer_after) as:
         # recurse into sub-blocks (if/loop/for/try bodies, nested lists)
         if ((type of st) == "list") and ((len of st) > 0):
             if st[0] != "func":
+                # (round 183, #186) the suffix list exists only for a nested
+                # define's rebind scan; a statement with no nested define
+                # anywhere below it needs no suffix and no descent. Without
+                # this every statement AND every sub-node of a 4200-statement
+                # body copied the ~4200-entry suffix: the 8424-line corpus
+                # program spent >1200 s here (call-first shape; the
+                # call-last twin took 124 s because the walk ran on a body
+                # the first-use census had already ordered differently).
+                local _ndc is {}
+                collect_nested_defs of [st, _ndc]
+                if (len of (keys of _ndc)) == 0:
+                    continue
                 local sub_after is []
                 local sk is k + 1
                 loop while sk < (len of node):

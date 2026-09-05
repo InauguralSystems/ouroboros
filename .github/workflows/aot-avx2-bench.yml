@@ -22,7 +22,7 @@ jobs:
       - name: Build EigenScript (pinned ref, source kept for the AOT toolchain)
         run: |
           git clone --filter=blob:none https://github.com/InauguralSystems/EigenScript.git /tmp/eigs
-          git -C /tmp/eigs checkout 3af8099ad1bc01ac76d04e354a84d31708486389
+          git -C /tmp/eigs checkout b8e83f9dbb1fc7e3900a857ec819d3bf347973c7
           make -C /tmp/eigs -j"$(nproc)"
 
       - name: Validate SIMD width on AVX2

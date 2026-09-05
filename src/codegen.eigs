@@ -834,6 +834,20 @@ define cg_node(c, node) as:
         cg_emit of [c, OP_NULL]
         return null
     if t == "for":
+        # (EigenScript#1064) a binder over a name that already has a frame slot
+        # reuses the slot; the VM saves the pre-loop value in a hidden slot and
+        # restores it where the exhausted and break paths converge, so the
+        # binder does not leak past its loop. Mirrored here.
+        local fslot is -1
+        local fsave is -1
+        if (c.is_function == 1) and (has_key of [c.locals, node[1]]):
+            fslot is c.locals[node[1]]
+            fsave is cg_add_local of [c, "__for_save_" + (str of (len of c.code))]
+            cg_emit of [c, OP_GET_LOCAL]
+            cg_emit_u16 of [c, fslot]
+            cg_emit of [c, OP_SET_LOCAL]
+            cg_emit_u16 of [c, fsave]
+            cg_emit of [c, OP_POP]
         cg_node of [c, node[2]]
         cg_emit of [c, OP_ITER_SETUP]
         local header is len of c.code
@@ -844,9 +858,9 @@ define cg_node(c, node) as:
         # earlier assignment in this function), write THAT slot — the body reads
         # it via GET_LOCAL, and a SET_NAME_LOCAL would leave the slot stale, so
         # the body never sees the iteration value (silent wrong result).
-        if (c.is_function == 1) and (has_key of [c.locals, node[1]]):
+        if fslot >= 0:
             cg_emit of [c, OP_SET_LOCAL]
-            cg_emit_u16 of [c, c.locals[node[1]]]
+            cg_emit_u16 of [c, fslot]
         else:
             cg_emit of [c, OP_SET_NAME_LOCAL]
             cg_emit_u16 of [c, cg_const of [c, node[1]]]
@@ -857,6 +871,12 @@ define cg_node(c, node) as:
         cg_patch_jump of [c, jn]
         cg_patch_breaks of c
         cg_emit of [c, OP_POP]
+        if fslot >= 0:
+            cg_emit of [c, OP_GET_LOCAL]
+            cg_emit_u16 of [c, fsave]
+            cg_emit of [c, OP_SET_LOCAL]
+            cg_emit_u16 of [c, fslot]
+            cg_emit of [c, OP_POP]
         cg_emit of [c, OP_NULL]
         return null
     if t == "try":

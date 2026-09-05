@@ -1,0 +1,11 @@
+# (round 182) EigenScript#1074 fixed: the body sees its write (17 18) and the
+# local is restored after the loop (1). Was refuse/interrogated_local_binder.
+define f(q) as:
+    local r is q
+    for r in [7, 8]:
+        r is r + 10
+        print of r
+    print of r
+    print of (prev of r)
+    return 0
+f of 1

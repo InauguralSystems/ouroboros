@@ -1,0 +1,58 @@
+# (round 182) EigenScript#1064/#1074: inside a function a for binder over a
+# name bound before the loop (parameter, local, earlier assignment, module
+# name) is loop-scoped -- the body sees its own writes, the pre-loop value is
+# back after the loop, on the exhausted and the break path. A fresh name
+# keeps its function-scoped value. Emitted as a C block-local shadow.
+define f_param(p) as:
+    local seen is []
+    for p in [7, 8]:
+        p is p + 10
+        append of [seen, p]
+    append of [seen, p]
+    return seen
+define f_local(q) as:
+    local p is q
+    for p in [7, 8]:
+        p is p + 10
+    return p
+define f_plain(q) as:
+    p is q
+    for p in [7, 8]:
+        p is p + 10
+    return p
+define f_break(q) as:
+    local p is q
+    for p in [7, 8, 9]:
+        if p == 8:
+            break
+    return p
+define f_nested(q) as:
+    local i is q
+    local out is []
+    for i in [1, 2]:
+        for i in [10]:
+            append of [out, i]
+        append of [out, i]
+    append of [out, i]
+    return out
+define f_fresh(q) as:
+    for k in [1, 2]:
+        k is k * 3
+    return k
+define f_range(n) as:
+    local i is 99
+    local s is 0
+    for i in range of n:
+        s is s + i
+    return s * 1000 + i
+print of (f_param of 1)
+print of (f_local of 1)
+print of (f_plain of 1)
+print of (f_break of 1)
+print of (f_nested of 0)
+print of (f_fresh of 0)
+print of (f_range of 4)
+pm is 1
+for pm in [7, 8]:
+    pm is pm + 10
+print of pm
