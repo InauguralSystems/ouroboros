@@ -1,0 +1,20 @@
+# (round 185, #202) a module name of UNKNOWN class (assigned from a dict
+# index: no positive numeric or boxed evidence) reaches a numeric parameter;
+# the compiler's checked unbox finds a string. That diagnostic used to be a
+# hard exit with AOT-only text -- the one uncatchable class after round 153.
+# It is now a type_mismatch the VM also raises at this point (its text names
+# the operator, ours the site: wording only), so `try` catches it here and
+# the program continues exactly as on the VM. The numeric call sites keep
+# f's parameter a C double.
+define f(n) as:
+    return n + 1
+d is {"k": "s", "m": 41}
+x is d["k"]
+y is d["m"]
+print of (f of 3)
+print of (f of y)
+try:
+    print of (f of x)
+catch e:
+    print of e.kind
+print of "after"

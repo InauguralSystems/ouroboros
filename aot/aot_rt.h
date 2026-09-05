@@ -768,6 +768,13 @@ static long aot_idx_k(double d, int count, int is_list) {
     return i;
 }
 static inline long aot_idx(double d, int count) { return aot_idx_k(d, count, 0); }
+/* (round 185, #202) the AOT-model-violation diagnostics -- a value the
+ * compiler classified numeric that is not one at runtime -- were hard exits
+ * with AOT-only text, the one class a `try` could not catch after round 153.
+ * They are now rt_error(EK_TYPE, ...): catchable, the VM's kind
+ * (type_mismatch: the VM raises the consuming operator's own type error at
+ * the same point), the AOT's text (a ledgered wording difference; the VM
+ * cannot name the site). Uncaught, the process still exits 1 with the text. */
 /* The "buf" class is really INDEXABLE VALUE: inference assigns it from
  * `x[i]` / `len of x` usage, and in consumer code the runtime value is as
  * often a VAL_LIST of numbers as a VAL_BUFFER (EigenMiniSat's DIMACS
@@ -776,9 +783,8 @@ static inline long aot_idx(double d, int count) { return aot_idx_k(d, count, 0);
 static double aot_list_num_at(Value *b, long i, const char *site) {
     Value *e = b->data.list.items[i];
     if (!e || e->type != VAL_NUM) {
-        fprintf(stderr, "non-numeric element in `%s`[%ld] (%s)\n",
+        rt_error(EK_TYPE, g_trace_current_line, "non-numeric element in `%s`[%ld] (%s)",
                 site, i, e ? val_type_name(e->type) : "null");
-        exit(1);
     }
     return e->data.num;
 }
@@ -1464,9 +1470,8 @@ static double aot_num(Value *v) {
  * garbage). Cold, predictable branch: in-envelope programs never take it. */
 static double aot_num_ck_at(Value *v, const char *site) {
     if (!v || v->type != VAL_NUM) {
-        fprintf(stderr, "non-numeric value in a numeric context at %s (type %s)\n",
+        rt_error(EK_TYPE, g_trace_current_line, "non-numeric value in a numeric context at %s (type %s)",
                 site, v ? val_type_name(v->type) : "null");
-        exit(1);
     }
     double d = v->data.num;
     val_decref(v);
@@ -1477,18 +1482,16 @@ static double aot_num_ck_at(Value *v, const char *site) {
  * borrows __a. Same diagnostic as aot_num_ck_at. */
 static double aot_num_ck_bat(Value *v, const char *site) {
     if (!v || v->type != VAL_NUM) {
-        fprintf(stderr, "non-numeric value in a numeric context at %s (type %s)\n",
+        rt_error(EK_TYPE, g_trace_current_line, "non-numeric value in a numeric context at %s (type %s)",
                 site, v ? val_type_name(v->type) : "null");
-        exit(1);
     }
     return v->data.num;
 }
 
 static double aot_num_ck(Value *v) {
     if (!v || v->type != VAL_NUM) {
-        fprintf(stderr, "non-numeric value in a numeric context (type %d; the VM raises here)\n",
+        rt_error(EK_TYPE, g_trace_current_line, "non-numeric value in a numeric context (type %d; the VM raises here)",
                 v ? (int)v->type : -1);
-        exit(1);
     }
     double d = v->data.num;
     val_decref(v);
@@ -2302,15 +2305,13 @@ static __attribute__((noinline)) double aot_dot_num_tb_slow(Value *target, const
         int i = aot_ic_slot(target, key, ic, ick);
         Value *v = (i >= 0) ? target->data.dict.vals[i] : NULL;
         if (v && v->type == VAL_NUM) return v->data.num;
-        fprintf(stderr, "non-numeric value in a numeric context at %s (type %s)\n",
+        rt_error(EK_TYPE, g_trace_current_line, "non-numeric value in a numeric context at %s (type %s)",
                 site, v ? val_type_name(v->type) : "null");
-        exit(1);
     }
     if (target)
         rt_error(EK_TYPE, g_trace_current_line, "cannot access field '%s' on %s",
                  key, val_type_name(target->type));
-    fprintf(stderr, "non-numeric value in a numeric context at %s (null)\n", site);
-    exit(1);
+    rt_error(EK_TYPE, g_trace_current_line, "non-numeric value in a numeric context at %s (null)", site);
 }
 
 static __attribute__((noinline)) void aot_dot_set_num_tb_slow(Value *target, const char *key, double d,
@@ -2346,16 +2347,14 @@ static double aot_dot_num_ic(Value *target, const char *key,
             val_decref(target);
             return d;
         }
-        fprintf(stderr, "non-numeric value in a numeric context at %s (type %s)\n",
+        rt_error(EK_TYPE, g_trace_current_line, "non-numeric value in a numeric context at %s (type %s)",
                 site, v ? val_type_name(v->type) : "null");
-        exit(1);
     }
     if (target) {
         rt_error(EK_TYPE, g_trace_current_line, "cannot access field '%s' on %s",
                  key, val_type_name(target->type));
     }
-    fprintf(stderr, "non-numeric value in a numeric context at %s (null)\n", site);
-    exit(1);
+    rt_error(EK_TYPE, g_trace_current_line, "non-numeric value in a numeric context at %s (null)", site);
 }
 
 /* IC'd generic field read — same contract as aot_dot_get (consumes the owned
