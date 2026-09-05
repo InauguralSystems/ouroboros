@@ -3375,6 +3375,15 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
         return ind + "{ " + icg[0] + "Value* _sat = " + (emit_val of [node[1], nm, bt]) + "; aot_dot_set_ic(_sat, \"" + (c_escape of node[2]) + "\", " + (emit_val of [node[3], nm, bt]) + ", " + icg[1] + "); }\n"
     if t == "call":
         local callee is unwrap of node[1]
+        # (round 186, #127) a nested literal load_file: mirror the module
+        # values its child reads into the env first (see nlb_scan).
+        local _lfp is _lf_target of node
+        if (_lfp != null) and (G_NESTED_READS[_lfp] != null):
+            local _mir is ""
+            local _rd is G_NESTED_READS[_lfp]
+            for _ri in range of (len of _rd):
+                _mir is _mir + ind + "aot_set(__eigs_g, \"" + (c_escape of (_rd[_ri])) + "\", " + (emit_val of [["ident", (_rd[_ri])], nm, bt]) + ");   /* #127: visible to the loaded file */\n"
+            return _mir + ind + "{ Value* _r = " + (emit_val of [node, nm, bt]) + "; if (_r) val_decref(_r); }\n"
         if callee[0] == "ident":
             if (g_funcs[callee[1]] != null) and (g_cur_params[callee[1]] != 1):
                 if (g_funcs[callee[1]])["ret"] == "void":
@@ -10705,6 +10714,7 @@ define emit_program(ast) as:
     for k in range of (len of funcs):
         collect_fn_value_refs of [(funcs[k])[3], g_func_names, g_fnval_params]
     collect_fn_value_refs of [rest, g_func_names, g_fnval_params]
+    nested_load_binds of [funcs, stmts, argv[0]]
     # Which functions have NO return statement, and so yield null under the
     # VM's fall-off-the-end rule. This is what `ret == "void"` means later, but
     # it is available EARLIER and without circularity: emptiness of
@@ -11377,7 +11387,7 @@ define emit_program(ast) as:
             wraps is wraps + "static Value* __wrap_" + (cn of wn) + "(Value* __a) { return " + wcall + "; }\n"
         else:
             wraps is wraps + "static Value* __wrap_" + (cn of wn) + "(Value* __a) { " + wcall + "; return make_null(); }\n"
-    local hdr is "#include \"aot_rt.h\"\n\nstatic Env* __eigs_g = NULL;\n" + gdecls + "\n" + wprotos + fc + "\n" + wraps + "\n" + (main_sig of g_mod_has_try) + "    __eigs_g = aot_boot(); (void)__eigs_g;\n    aot_args(argc, argv);\n" + (main_tryb of g_mod_has_try) + obshdr
+    local hdr is "#include \"aot_rt.h\"\n\nstatic Env* __eigs_g = NULL;\n" + gdecls + "\n" + wprotos + fc + "\n" + wraps + "\n" + (main_sig of g_mod_has_try) + "    __eigs_g = aot_boot(); (void)__eigs_g;\n    aot_args(argc, argv);\n" + (nested_bind_lines of []) + (main_tryb of g_mod_has_try) + obshdr
     local ftr is "    aot_shutdown(__eigs_g);\n    return 0;\n}\n"
     return hdr + body + ftr
 
@@ -11406,6 +11416,84 @@ define _lf_dirname(p) as:
     return ""
 
 # The literal path if `st` is `load_file of "<str>"`, else null.
+# (round 186, #127) compiled functions a NESTED literal load_file target calls
+# by name. A nested load (inside a function body or a module-level branch) is
+# not spliced; it runs interpreted and resolves names against the env, which
+# never held the compiled functions. The target file is read and parsed at
+# compile time, its identifiers intersected with the compiled function names,
+# and each such function is env-bound at boot through the fn-as-value wrapper
+# -- provided its `define` precedes the earliest top-level statement that can
+# run the load (g_first_bind vs g_first_use / the branch's statement index);
+# otherwise the load could run before the VM has bound the name, and that
+# order cannot be reproduced by a boot binding, so the program is refused by
+# name. DMG's debugger.eigs (a debug-branch load) calls seven such functions.
+G_NESTED_BIND is {}
+G_NESTED_READS is {}
+define nlb_scan(node, base, earliest, where) as:
+    if (type of node) != "list":
+        return 0
+    if (len of node) == 0:
+        return 0
+    local path is _lf_target of node
+    if path != null:
+        local full is (_lf_dirname of base) + path
+        local csrc is read_text of full
+        if (csrc != null) and ((len of csrc) > 0):
+            local cast is eigen_parse of (eigen_tokenize of csrc)
+            local ids is {}
+            collect_idents_all of [cast, ids]
+            # module VALUES the child reads live in C variables the interpreted
+            # code cannot see: they are mirrored into the env right before the
+            # load runs (G_NESTED_READS, emitted at the load statement).
+            # Containers stay live by reference; a scalar is a snapshot, which
+            # is also what `import` gives (EigenScript#1057). A child that
+            # WRITES a module name would change only the env copy while the
+            # compiled state kept the C value, so that is refused by name.
+            local cw is {}
+            collect_free_assigns of [cast, {}, cw]
+            local cwk is keys of cw
+            for wi in range of (len of cwk):
+                if (g_module_names[(cwk[wi])] == 1) and (g_func_names[(cwk[wi])] != 1):
+                    throw of ("AOT: '" + path + "' is loaded from " + where + " and ASSIGNS module name '" + (cwk[wi]) + "'; the loaded code runs interpreted against an env copy of the compiled program's state, so the write would not reach the compiled binding (ouroboros#127). Keep the shared state in a container, or load the file at top level so it is spliced.")
+            local reads is []
+            local ik is keys of ids
+            for i in range of (len of ik):
+                local fname is ik[i]
+                if (g_module_names[fname] == 1) and (g_func_names[fname] != 1):
+                    append of [reads, fname]
+            G_NESTED_READS[path] is reads
+            for i in range of (len of ik):
+                local fname is ik[i]
+                if g_func_names[fname] == 1:
+                    local fb is g_first_bind[fname]
+                    if (earliest == null) or (fb == null) or (fb >= earliest):
+                        throw of ("AOT: '" + path + "' is loaded from " + where + " and calls compiled function '" + fname + "', whose `define` does not provably precede the earliest statement that can run the load; the VM would bind the name at the define and the loaded code would see it or not depending on run order, which a boot-time binding cannot reproduce (ouroboros#127).")
+                    G_NESTED_BIND[fname] is 1
+                    g_fn_as_value[fname] is 1
+        return 0
+    for k in range of (len of node):
+        nlb_scan of [node[k], base, earliest, where]
+    return 0
+define nested_load_binds(funcs, stmts, base) as:
+    for k in range of (len of funcs):
+        local fn is funcs[k]
+        nlb_scan of [fn[3], base, g_first_use[(fn[1])], "function '" + (fn[1]) + "'"]
+    for si in range of (len of stmts):
+        local st is unwrap of stmts[si]
+        if ((type of st) == "list") and ((len of st) > 0):
+            if (st[0] != "func") and ((_lf_target of stmts[si]) == null):
+                for ci in range of (len of st):
+                    nlb_scan of [st[ci], base, si, "a module-level block"]
+    return 0
+define nested_bind_lines() as:
+    local o is ""
+    local nk is keys of G_NESTED_BIND
+    for i in range of (len of nk):
+        local fname is nk[i]
+        local c is cn of fname
+        o is o + "    aot_set(__eigs_g, \"" + (c_escape of fname) + "\", ({ if (!__fnv_" + c + ") __fnv_" + c + " = make_native_fn(__wrap_" + c + ", \"" + (c_escape of fname) + "\"); val_incref(__fnv_" + c + "); __fnv_" + c + "; }));   /* #127: callable from a nested load_file */\n"
+    return o
+
 define _lf_target(st) as:
     local u is unwrap of st
     if u[0] != "call":
