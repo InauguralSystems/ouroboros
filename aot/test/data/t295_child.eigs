@@ -1,0 +1,6 @@
+# child of t295: loaded at RUN time from inside a function, calls the parent's
+# compiled functions by name and reads a parent module value.
+define child_sum(n) as:
+    return (helper of n) + (twice of n)
+print of f"child {child_sum of 5}"
+print of f"child-const {helper of base}"

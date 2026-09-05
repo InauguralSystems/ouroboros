@@ -1,0 +1,18 @@
+# (round 186, #127 residual) a LITERAL load_file in a NESTED position -- inside
+# a function body -- is not spliced (it is conditional code); it runs
+# INTERPRETED inside the native program. Its child calls the parent's
+# compiled functions by name, so those functions are env-bound at the point
+# their `define` runs, as the VM binds them. DMG's debugger.eigs is this shape
+# (7 compiled functions called from a debug-branch load).
+define helper(n) as:
+    return n * 2
+define twice(n) as:
+    return helper of (helper of n)
+base is 21
+define debug_load() as:
+    load_file of "data/t295_child.eigs"
+    return 1
+print of f"direct {helper of 5}"
+if base > 0:
+    debug_load of []
+print of "done"
