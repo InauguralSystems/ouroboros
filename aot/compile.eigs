@@ -8842,6 +8842,28 @@ define emit_function(fn, finfo, gnm, gbt) as:
                     _isf is 1
             if _isf == 0:
                 throw of ("AOT: `" + _pan[k] + " is ...` inside function '" + name + "' assigns the name of a compiled module function. On the VM that rebinds the module binding outward (the function is gone afterwards); a C function cannot be rebound, so it is refused rather than dying at run time (ouroboros#162).")
+    # (round 197, #218) a plain assign to a MODULE name that this function
+    # also INTERROGATES: compile_ast's escape pre-scan (#99 round 2) routes
+    # an interrogated name to OP_SET_FN_NAME_LOCAL -- a fresh function-scope
+    # binding -- so on the VM the write never reaches the module binding
+    # (`z is 0.25` in u, `print of z` after the call prints the OLD module
+    # value); the AOT's Part-2a lowering wrote it outward (silent, rc 0
+    # both). The per-call env that would mirror the VM is the Part-2b
+    # design; until then refuse by name so the shape is loud.
+    # A for-BINDER of this function is loop-scoped by round 182's fsv_kind
+    # save/restore (an interrogated binder already reads its own history),
+    # so binder-body writes are not module writes: excluded (the gate's
+    # corpus tier caught test_for_binder_loopenv_write refusing otherwise).
+    local _fbs is {}
+    collect_for_binders of [body, _fbs]
+    for k in range of (len of _pan):
+        if (_lmk[_pan[k]] != 1) and (_fbs[_pan[k]] != 1) and (g_interrogated_names[_pan[k]] == 1) and ((g_module_names[_pan[k]] == 1) or (gnm[_pan[k]] == 1) or (gbt[_pan[k]] == 1)):
+            local _isq is 0
+            for p in range of (len of params):
+                if params[p] == _pan[k]:
+                    _isq is 1
+            if _isq == 0:
+                throw of ("AOT: function '" + name + "' assigns module name '" + _pan[k] + "' that it also interrogates. On the VM an interrogated name binds function-LOCAL (the #99 escape pre-scan), so the write never reaches the module binding; the AOT would write it outward (silent wrong). Mark it `local` to make the VM's binding explicit, or rename the module binding (ouroboros#218).")
     # tensor (nested-list) layer for this scope: tensor locals (assigned from a
     # tensor RHS) + tensor/dict params.
     g_dict is {}
