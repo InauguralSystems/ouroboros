@@ -273,10 +273,10 @@ fi
 # (rc 0, wrong output) fails here by rc; a death for a different reason fails
 # by text. Runs with cwd = test/, like the fixtures above.
 rtrefuse_n=0
-# $EIG is relative to this directory; the VM runs with cwd = test/ (like the
-# fixtures), so resolve it first -- the first run of this arm reported rc 127
-# ("the VM does not run it") for exactly that reason.
-EIG_ABS="$(cd "$(dirname "$EIG")" && pwd)/$(basename "$EIG")"
+# The VM runs with cwd = test/, so it needs $EIG_ABS (resolved above for the
+# refusal tier, which also handles the on-PATH `EIGS=eigenscript` CI uses): the
+# first two runs of this arm reported rc 127 -- once for a relative path, once
+# for a bare command name run through dirname/pwd.
 for prog in test/rtrefuse/*.eigs; do
   [ -f "$prog" ] || continue
   name=$(basename "$prog" .eigs)
