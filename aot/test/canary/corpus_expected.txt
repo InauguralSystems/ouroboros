@@ -23,7 +23,7 @@ test_entropy_cycles.eigs REFUSE
 test_entropy_query_time.eigs REFUSE
 test_error_extra.eigs REFUSE
 test_eval.eigs REFUSE
-test_for_binder_loopenv_write.eigs REFUSE
+test_for_binder_scoped_in_function.eigs REFUSE
 test_for_in_mutation.eigs REFUSE
 test_gc.eigs REFUSE
 test_gfx_argtypes.eigs REFUSE
@@ -52,11 +52,10 @@ test_scope_semantics.eigs REFUSE
 test_simulation.eigs REFUSE
 test_soft_keyword_idents.eigs REFUSE
 test_spawn_gc.eigs DIVERGE
-test_spawn_parallel.eigs DIVERGE
+test_spawn_parallel.eigs NONDET
 test_stable_band.eigs REFUSE
 test_stdlib_fixes.eigs REFUSE
 test_stem_accuracy.eigs REFUSE
-test_stmt_cap.eigs TIMEOUT
 test_store.eigs DIVERGE
 test_supervise.eigs DIVERGE
 test_sync.eigs REFUSE
