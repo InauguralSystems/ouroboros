@@ -91,5 +91,16 @@ echo "corpus: LEDGER CHANGED ($n programs examined)"
 echo "  '<' = ledgered and now MATCHES (an improvement -- remove it from the baseline)"
 echo "  '>' = newly diverging or refusing (a REGRESSION)"
 diff <(awk '$2!="NONDET"' "$BASE") "$got" | grep -vF -f <(for x in $nondet; do echo "$x "; done) || true
-echo "corpus: observed set kept at $got"
+# (round 184) the kept set is what a `cp` onto the ledger would install, so it
+# must carry the base's NONDET rows in place of the run's outcome for those
+# programs: round 181 copied a raw observed set and silently turned
+# test_spawn_parallel's NONDET back into DIVERGE, which the next gate then
+# flagged as an "improvement".
+if [ -n "$nondet" ]; then
+  keep=$(mktemp)
+  grep -vFx -f <(for x in $nondet; do echo "$x DIVERGE"; echo "$x REFUSE"; echo "$x BUILDCRASH"; echo "$x TIMEOUT"; done) "$got" > "$keep" || true
+  for x in $nondet; do echo "$x NONDET" >> "$keep"; done
+  sort -o "$got" "$keep"; rm -f "$keep"
+fi
+echo "corpus: observed set kept at $got (NONDET rows carried from the ledger; safe to cp)"
 exit 1
