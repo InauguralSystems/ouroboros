@@ -265,4 +265,49 @@ else
   echo "--- refusal tier: $refuse_n guard(s) exercised ---"
 fi
 
+# Runtime refusals (round 189, #188): programs the AOT must BUILD (the
+# construct is out of the compiled unit's sight -- a module loaded at run time)
+# and the VM runs at rc 0, but whose compiled binary must die NAMING the
+# reason. Each test/rtrefuse/*.eigs carries `# EXPECT: <substring>`; the binary
+# must exit nonzero and its stderr must contain it. A silent-wrong residual
+# (rc 0, wrong output) fails here by rc; a death for a different reason fails
+# by text. Runs with cwd = test/, like the fixtures above.
+rtrefuse_n=0
+# The VM runs with cwd = test/, so it needs $EIG_ABS (resolved above for the
+# refusal tier, which also handles the on-PATH `EIGS=eigenscript` CI uses): the
+# first two runs of this arm reported rc 127 -- once for a relative path, once
+# for a bare command name run through dirname/pwd.
+for prog in test/rtrefuse/*.eigs; do
+  [ -f "$prog" ] || continue
+  name=$(basename "$prog" .eigs)
+  rtrefuse_n=$((rtrefuse_n + 1))
+  want=$(grep -m1 '^# EXPECT:' "$prog" | sed 's/^# EXPECT:[[:space:]]*//')
+  if [ -z "$want" ]; then
+    echo "FAIL: rtrefuse $name (no '# EXPECT:' line)"; fail=$((fail + 1)); continue
+  fi
+  ( cd test && timeout 30 "$EIG_ABS" "rtrefuse/$name.eigs" >/dev/null 2>&1 ); vm_rc=$?
+  if [ "$vm_rc" -ne 0 ]; then
+    echo "FAIL: rtrefuse $name (the VM does not run it, rc=$vm_rc — this tests a broken program, not the residual)"; fail=$((fail + 1)); continue
+  fi
+  if ! bash build.sh "$prog" /tmp/aot_rtrefuse_bin >/tmp/aot_rtrefuse_build.log 2>&1; then
+    echo "FAIL: rtrefuse $name (the AOT REFUSED at build time — the construct is in sight; this belongs in test/refuse)"; fail=$((fail + 1)); continue
+  fi
+  ( cd test && timeout 30 /tmp/aot_rtrefuse_bin >/tmp/aot_rtrefuse_out.log 2>/tmp/aot_rtrefuse_err.log ); bin_rc=$?
+  if [ "$bin_rc" -eq 124 ] || [ "$bin_rc" -eq 137 ]; then
+    echo "FAIL: rtrefuse $name (binary timed out / killed, rc=$bin_rc)"; fail=$((fail + 1))
+  elif [ "$bin_rc" -eq 0 ]; then
+    echo "FAIL: rtrefuse $name (the binary exited 0 — the residual is still silent: $(head -c 80 /tmp/aot_rtrefuse_out.log | tr '\n' '|'))"; fail=$((fail + 1))
+  elif ! grep -qF "$want" /tmp/aot_rtrefuse_err.log; then
+    echo "FAIL: rtrefuse $name (died, but not for the stated reason)"
+    echo "  want: $want"; echo "  got : $(grep -m1 -v '^[[:space:]]*$' /tmp/aot_rtrefuse_err.log | cut -c1-120)"; fail=$((fail + 1))
+  else
+    echo "PASS: rtrefuse $name"
+  fi
+done
+if [ "$rtrefuse_n" -eq 0 ]; then
+  echo "FAIL: runtime-refusal tier examined ZERO programs (test/rtrefuse/*.eigs matched nothing — the gate is vacuous)"; fail=$((fail + 1))
+else
+  echo "--- runtime-refusal tier: $rtrefuse_n residual(s) exercised ---"
+fi
+
 [ "$fail" -eq 0 ] && echo "--- all AOT parity tests passed ---" || exit 1
