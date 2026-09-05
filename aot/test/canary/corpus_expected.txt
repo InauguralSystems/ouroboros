@@ -14,6 +14,7 @@ test_convergence_oracle.eigs REFUSE
 test_coverage_gaps.eigs REFUSE
 test_coverage_v2.eigs REFUSE
 test_default_params.eigs REFUSE
+test_desc_unrecorded_read.eigs DIVERGE
 test_destructuring.eigs REFUSE
 test_dispatch_rebind.eigs REFUSE
 test_dispatch_rebind_eval.eigs DIVERGE
@@ -70,3 +71,4 @@ test_ui_containment_gfx.eigs REFUSE
 test_ui.eigs REFUSE
 test_unobserved.eigs REFUSE
 test_walker_matrix.eigs REFUSE
+test_worker_intern_escape.eigs DIVERGE
