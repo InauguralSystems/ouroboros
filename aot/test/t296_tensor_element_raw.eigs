@@ -1,0 +1,28 @@
+# (round 187, #203) `t[i]` on a tensor in a NUMERIC context reads the raw
+# element: a matmul that overflowed to inf compares as inf, as the VM's flat
+# buffer read does (boxing first clamped it to 1e308 -- test_store's
+# divergence). Printing still boxes (both sides show 1e+308). A shaped buffer
+# indexes flat; out of range is caught with the VM's kind.
+nb is buffer of 4
+nb[0] is 1e300
+nb[1] is 1e300
+nb[2] is 1e300
+nb[3] is 1e300
+nm is reshape of [nb, 2, 2]
+np is matmul of [nm, nm]
+print of (np[0] > 1e308)
+print of np[0]
+print of (np[3] > 1e308)
+sb is buffer of 3
+sb[0] is 1
+sb[1] is 2
+sb[2] is 3
+sm is reshape of [sb, 3, 1]
+sr is reshape of [sb, 1, 3]
+sq is matmul of [sr, sm]
+print of (sq[0] + 0.5)
+print of (sq[0] * 2 == 28)
+try:
+    print of (sq[3] + 1)
+catch e:
+    print of e.kind

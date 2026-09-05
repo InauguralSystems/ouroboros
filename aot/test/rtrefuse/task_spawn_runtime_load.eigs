@@ -1,0 +1,14 @@
+# EXPECT: AOT: task_spawn -- no run loop
+# (round 189, #188) The round-108 refusal is by NAME over the compiled unit's
+# AST. Code that reaches the interpreter at RUN time -- here a string handed
+# to eval; a load_file/import the AOT cannot splice is refused at build time
+# since #127/#147 -- never shows its task_spawn to the emitter. Before this
+# round the task was enqueued and nothing pumped it: a join returned its
+# placeholder null (VM 42 / AOT null, rc 0 both, silent wrong; the join itself
+# cannot sit inside eval, the VM refuses to suspend in a nested evaluation).
+# The AOT now rebinds task_spawn at boot to a builtin that dies naming the
+# reason, so the residual is a named runtime death, not a wrong answer. The VM
+# prints "spawned" and exits 0; the compiled binary must exit nonzero with
+# the EXPECT text.
+code is "define worker(x) as:\n    return x * 2\nw is task_spawn of [worker, 21]\nprint of \"spawned\"\n"
+eval of code

@@ -57,7 +57,6 @@ test_spawn_parallel.eigs NONDET
 test_stable_band.eigs REFUSE
 test_stdlib_fixes.eigs REFUSE
 test_stem_accuracy.eigs REFUSE
-test_store.eigs DIVERGE
 test_supervise.eigs DIVERGE
 test_sync.eigs REFUSE
 test_task_osr.eigs REFUSE
@@ -71,5 +70,4 @@ test_trycatch.eigs REFUSE
 test_ui_containment_gfx.eigs REFUSE
 test_ui.eigs REFUSE
 test_unobserved.eigs REFUSE
-test_vm_run_bytecode.eigs DIVERGE
 test_walker_matrix.eigs REFUSE

@@ -1763,6 +1763,29 @@ static Value *aot_make_buffer(int count, int rows, int cols, const double *src) 
 /* AotTensor -> Value, mirroring the input representation byte-for-byte:
  *   buffer-backed -> shaped VAL_BUFFER (is1d => rows=0 1-D, else 2-D)
  *   list-backed   -> nested list       (is1d => 1-D list, else 2-D) */
+/* (round 187, #203) `t[i]` on a tensor-classified name in a NUMERIC context:
+ * the raw element. Boxing it first (aot_tensor_to_value -> make_num) ran the
+ * element through num_guard, so a matmul that overflowed to inf compared as
+ * 1e308 where the VM's buffer read pushes the raw slot (test_store's
+ * `np[0] > 1e308`). A 2-D tensor's `t[i]` is a row, not a number: the VM
+ * raises a type error at the consuming operator, as does this. Out of range
+ * takes the VM's text for the tensor's kind. */
+static inline double aot_tensor_num_at(AotTensor t, double d, const char *site) {
+    long i = (long)d;
+    /* a BUFFER-kind tensor indexes flat whatever its shape (the VM's shaped
+     * buffer is one flat buffer); a LIST-kind 2-D tensor's t[i] is a row. */
+    long n = (t.kind == 1 || t.is1d) ? (t.is1d ? t.cols : t.rows * t.cols) : -1;
+    if (__builtin_expect(n >= 0 && (double)i == d && i >= 0 && i < n, 1))
+        return t.data[i];
+    if (n < 0)
+        rt_error(EK_TYPE, g_trace_current_line, "non-numeric value in a numeric context at %s (type list)", site);
+    if ((double)i != d)
+        rt_error(EK_VALUE, g_trace_current_line, "index must be an integer, got %g", d);
+    if (t.kind == 1)
+        rt_error(EK_INDEX, g_trace_current_line, "buffer index %ld out of range (length %ld)", i, n);
+    rt_error(EK_INDEX, g_trace_current_line, "index %ld out of range (list length %ld)", i, n);
+    return 0;
+}
 static Value *aot_tensor_to_value(AotTensor t) {
     if (t.kind == 1) {
         if (t.is1d) return aot_make_buffer((int)t.cols, 0, 0, t.data);
@@ -2117,6 +2140,24 @@ static Value *aot_index_get(Value *target, Value *idx) {
 /* (#86) native argv -> the VM's args convention: builtin_args reads
  * g_argv[2..] (slot 0 = runtime, 1 = script). The native binary's user
  * args start at argv[1], so shift by one synthetic slot. */
+/* (round 189, #188) The build-time refusal of task_spawn is by NAME over the
+ * compiled unit's AST. A module loaded at RUN time (computed path, so never
+ * spliced) is interpreted by the linked VM, and its task_spawn enqueued a task
+ * that nothing ever pumped: native main() has no VM run loop, so task_join
+ * returned its placeholder null at rc 0 -- silent wrong. Rebinding the name in
+ * the global env at boot turns that into a named death at the call, the same
+ * shape the VM uses for sandbox-blocked builtins. task_spawn is the only
+ * scheduler entry point (the other task_* builtins match the VM's
+ * no-scheduler behaviour without it). */
+static Value *aot_task_spawn_no_loop(Value *arg) {
+    (void)arg;
+    rt_error(EK_LIMIT, g_trace_current_line,
+             "AOT: task_spawn -- no run loop: cooperative tasks are pumped by the VM dispatch loop, which a native program does not have; interpreted code reached it at run time (eval, or a load the emitter could not splice) (ouroboros#188)");
+    return make_null();
+}
+static void aot_no_loop_rebinds(Env *g) {
+    aot_set(g, "task_spawn", make_builtin(aot_task_spawn_no_loop));
+}
 static void aot_args(int argc, char **argv) {
     char **shifted = (char**)malloc(((size_t)argc + 1) * sizeof(char*));
     shifted[0] = argv[0];
@@ -2761,8 +2802,57 @@ static Value *aot_call_resolve(Env *g, const char *name, AotNameIC *c) {
  * so the exit here does not print it a second time. */
 Value *builtin_sandbox_run(Value *arg);
 Value *builtin_vm_run_bytecode(Value *arg);
+Value *builtin_eval(Value *arg);
+/* (round 188, #203) the compiled caller of a VM builtin that runs a chunk has
+ * no VM frame, so a child's uncaught error printed its own frames and
+ * stopped: the VM prints the HOST frame too (`at <module> (line 100)`). A
+ * synthetic frame -- a static chunk named after the compiled caller
+ * (aot_host_fn, set at the call site by the emitter), one code byte and a
+ * one-entry line table holding the call line -- is pushed around the call so
+ * vm_print_stack_trace prints the same last line. It is popped before any
+ * error handling, so a longjmp to an AOT handler never leaves it behind. */
+static const char *aot_host_fn = "<module>";
+static EigsChunk aot_host_chunk;
+static uint8_t aot_host_code[2];
+static int aot_host_lines[1];
 static Value *aot_call_vm_builtin(Value *fn, Value *arg) {
     if (fn->data.builtin == builtin_sandbox_run || fn->data.builtin == builtin_vm_run_bytecode) {
+        int pushed = 0;
+        /* The per-state VM is created by the first vm_execute (vm_init); a
+         * program whose FIRST VM entry is this call has eigs_current->vm ==
+         * NULL here, and g_vm is (*eigs_current->vm): the first cut read
+         * frame_count through it and died (test_host_frame_line,
+         * test_sandbox_allow: rc 139 before any output). Create it with an
+         * empty eval -- the module frame the VM would have had exists from
+         * the program's first statement, so the host frame must exist for
+         * the first call too. (`eval of ""` compiles to nothing and never
+         * enters the VM -- measured: the first trace still said line 0 with
+         * no host frame -- so the probe is a constant expression.) */
+        if (!eigs_current->vm) {
+            /* the probe's own OP_LINE overwrites the shared trace line
+             * (measured: the first trace said line 1); save and restore */
+            int host_line = g_trace_current_line;
+            Value *_es = make_str("0");
+            Value *_er = builtin_eval(_es);
+            if (_er && _er != _es) val_decref(_er);
+            val_decref(_es);
+            g_trace_current_line = host_line;
+        }
+        if (eigs_current->vm && g_vm.frame_count < VM_FRAMES_MAX) {
+            CallFrame *hf = &g_vm.frames[g_vm.frame_count++];
+            memset(hf, 0, sizeof *hf);
+            aot_host_chunk.name = (char *)aot_host_fn;
+            aot_host_chunk.code = aot_host_code;
+            aot_host_chunk.lines = aot_host_lines;
+            aot_host_chunk.lines_len = 1;
+            aot_host_lines[0] = g_trace_current_line;
+            hf->chunk = &aot_host_chunk;
+            hf->ip = aot_host_code + 1;
+            hf->env = g_global_env;
+            hf->fn_env = g_global_env;
+            hf->bp = g_vm.sp;
+            pushed = 1;
+        }
         /* (round 153) inside an AOT `try` the VM must not print either:
          * the depth mirrors an enclosing handler, as the VM's g_try_depth
          * counts enclosing try blocks. */
@@ -2772,9 +2862,16 @@ static Value *aot_call_vm_builtin(Value *fn, Value *arg) {
          * stamp is that line, so hand it to the VM before the run */
         if (eigs_current && eigs_current->vm) g_vm.current_line = g_trace_current_line;
         Value *res = fn->data.builtin(arg);
+        if (pushed && g_vm.frame_count > 0 && g_vm.frames[g_vm.frame_count - 1].chunk == &aot_host_chunk) g_vm.frame_count--;
         g_try_depth = 1;
         if (g_exit_requested) exit(g_exit_code);
         if (g_has_error) {
+            /* (round 188) the child's error is the HOST's error at this
+             * call: under an AOT `try` it reaches the handler (the VM's host
+             * `try` catches it, rc 0); uncaught it prints and exits 1. The
+             * report was already printed by the child's dispatch loop when
+             * no handler was active (g_try_depth mirrored aot_try_n). */
+            if (aot_try_n > 0) { if (res) val_decref(res); aot_error_exit(); }
             if (g_error_print_pending) { g_error_print_pending = 0; fprintf(stderr, "%s\n", g_error_msg); }
             exit(1);
         }

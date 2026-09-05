@@ -520,6 +520,8 @@ g_fsigs is {}
 # access (`policy.w1`). Kernels run on the flat form, byte-exact vs the runtime's
 # tensor builtins (which themselves flatten/compute/rebuild). Set per scope.
 g_tensor is {}
+# (round 187) buffer-KIND tensor names of the current scope, see infer_tensor_buf.
+g_tensor_buf is {}
 # Names of DICT params (Value*), used as dot targets (`policy.w1`).
 g_dict is {}
 # Names of GENERIC params (Value*, #64 inc. 2 / F-OURO-23): a param whose body
@@ -661,6 +663,101 @@ define infer_tensors(stmts) as:
             if allt == 1:
                 tt[v] is 1
     return tt
+
+# (round 187, #203) Buffer-KIND tensors: a `t[i]` read on one is a raw double
+# for ANY shape (the VM's shaped buffer is one flat buffer), so it may be
+# numeric to the classifier; a LIST-kind 2-D tensor's `t[i]` is a ROW, so it
+# may not (test_raise_on_bad_input: `mm_ok is matmul of [[[1,2],[3,4]], ...]`,
+# then `mm_ok[0][0]` -- the first cut classified mm_ok[0] numeric and died in
+# aot_tensor_num_at). Kind is a runtime field (AotTensor.kind) that this census
+# derives statically from positive evidence only: a name is buffer-kind when
+# every assignment is a tensor call (matmul/add/relu) whose every operand is
+# buffer-shaped, or a buffer-kind ident. Buffer-shaped: `reshape of [B, ...]`
+# with B a buffer name (bt), an ident whose every assignment is such a
+# reshape, or a buffer-kind tensor ident. Iterated to a fixpoint (monotone,
+# positive evidence), so a chain nm -> np -> nq qualifies whatever its order.
+define is_buf_shaped(node, bt, rs, tb) as:
+    local n is unwrap of node
+    if n[0] == "ident":
+        if rs[n[1]] == 1:
+            return 1
+        if tb[n[1]] == 1:
+            return 1
+        return 0
+    if n[0] != "call":
+        return 0
+    local callee is unwrap of n[1]
+    if callee[0] != "ident":
+        return 0
+    if callee[1] != "reshape":
+        return 0
+    if g_func_names["reshape"] == 1:
+        return 0
+    local arg is unwrap of n[2]
+    if arg[0] != "list":
+        return 0
+    local elems is arg[1]
+    if (len of elems) < 2:
+        return 0
+    local b is unwrap of elems[0]
+    if b[0] != "ident":
+        return 0
+    if bt[b[1]] == 1:
+        return 1
+    return 0
+
+define is_buf_tensor_rhs(node, bt, rs, tb) as:
+    local n is unwrap of node
+    if n[0] == "ident":
+        if tb[n[1]] == 1:
+            return 1
+        return 0
+    if (is_tensor_call of n) == 0:
+        return 0
+    local arg is unwrap of n[2]
+    local elems is []
+    if arg[0] == "list":
+        elems is arg[1]
+    else:
+        elems is [arg]
+    if (len of elems) == 0:
+        return 0
+    for k in range of (len of elems):
+        if (is_buf_shaped of [elems[k], bt, rs, tb]) == 0:
+            return 0
+    return 1
+
+define infer_tensor_buf(stmts, bt) as:
+    local assigns is collect_assigns of [stmts, {}]
+    local names is keys of assigns
+    local rs is {}
+    local tb is {}
+    local changed is 1
+    local rounds is 0
+    loop while (changed == 1) and (rounds < 8):
+        changed is 0
+        rounds is rounds + 1
+        for i in range of (len of names):
+            local v is names[i]
+            local rhss is assigns[v]
+            if (len of rhss) > 0:
+                if rs[v] != 1:
+                    local allr is 1
+                    for j in range of (len of rhss):
+                        if (is_buf_shaped of [rhss[j], bt, rs, tb]) == 0:
+                            allr is 0
+                    if allr == 1:
+                        rs[v] is 1
+                        changed is 1
+                if tb[v] != 1:
+                    local allt is 1
+                    for j in range of (len of rhss):
+                        if (is_buf_tensor_rhs of [rhss[j], bt, rs, tb]) == 0:
+                            allt is 0
+                    if allt == 1:
+                        tb[v] is 1
+                        changed is 1
+    return tb
 
 # Does `name` appear as a dot target (`name.field`)? -> a dict param.
 # Is the INCOMING value of param `name` dead — never read before the body
@@ -869,6 +966,10 @@ define is_num_expr(node, nm, bt) as:
         local tgt is unwrap of node[1]
         if tgt[0] == "ident":
             if bt[tgt[1]] == 1:
+                return is_num_expr of [node[2], nm, bt]
+            # (round 187, #203) `t[i]` on a tensor-classified name with a
+            # numeric index is the raw element (aot_tensor_num_at).
+            if (g_tensor_buf[tgt[1]] == 1) and (g_cur_params[tgt[1]] != 1):
                 return is_num_expr of [node[2], nm, bt]
         if (index_of_buf_field of [node, g_cur_fmap]) == 1:
             # (round 165) `x.f[i]` on a buffer-created field: emitted through
@@ -2072,6 +2173,9 @@ define emit_num(node, nm, bt, raw) as:
         return "({ " + ic[0] + "aot_dot_num_ic(" + (emit_val of [node[1], nm, bt]) + ", \"" + (c_escape of node[2]) + "\", " + ic[1] + ", " + ic[2] + "); })"
     if t == "index":
         local tgt is unwrap of node[1]
+        if (tgt[0] == "ident") and (g_tensor_buf[tgt[1]] == 1) and (g_cur_params[tgt[1]] != 1) and ((is_num_expr of [node[2], nm, bt]) == 1):
+            # (round 187, #203) raw tensor element, see aot_tensor_num_at.
+            return "aot_tensor_num_at(" + (cn of tgt[1]) + ", " + (emit_num of [node[2], nm, bt, 0]) + ", \"" + (c_escape of (G_CUR_FN[0])) + ": index read of " + (c_escape of tgt[1]) + "\")"
         # a buffer C var -> aot_buf_get; anything else (a boxed list local,
         # or a non-ident target like `store.offsets[ci]`, #86) -> boxed
         # index then extract the number.
@@ -2733,9 +2837,9 @@ define emit_val(node, nm, bt) as:
             # name, and `nosuch of lst[7]` reported an out-of-range index,
             # where the VM names the callee. Same stdout and rc, wrong
             # message -- and the _err tier compares message text.
-            return "({ " + hc1[0] + "Value* _sqcf = aot_call_resolve(__eigs_g, \"" + callee[1] + "\", " + hc1[1] + "); Value* _sqca = " + (emit_val of [(barg[1])[0], nm, bt]) + "; aot_call_dispatch(_sqcf, _sqca); })"
+            return "({ " + hc1[0] + "Value* _sqcf = aot_call_resolve(__eigs_g, \"" + callee[1] + "\", " + hc1[1] + "); Value* _sqca = " + (emit_val of [(barg[1])[0], nm, bt]) + "; " + (host_fn_stamp of callee[1]) + "aot_call_dispatch(_sqcf, _sqca); })"
         local hc2 is ic_cache of 0
-        return "({ " + hc2[0] + "Value* _sqcf = aot_call_resolve(__eigs_g, \"" + callee[1] + "\", " + hc2[1] + "); Value* _sqca = " + (emit_val of [node[2], nm, bt]) + "; aot_call_dispatch(_sqcf, _sqca); })"
+        return "({ " + hc2[0] + "Value* _sqcf = aot_call_resolve(__eigs_g, \"" + callee[1] + "\", " + hc2[1] + "); Value* _sqca = " + (emit_val of [node[2], nm, bt]) + "; " + (host_fn_stamp of callee[1]) + "aot_call_dispatch(_sqcf, _sqca); })"
     if t == "slice":
         # (round 129, #179) a slice in VALUE position. The runtime mirror of
         # OP_SLICE_GET (aot_slice_any: per-type length rule, negative
@@ -8687,6 +8791,7 @@ define emit_function(fn, finfo, gnm, gbt) as:
     # Classify locals numeric via SEEDED inference: globals + numeric params (in
     # fnm) are the seed; a local is numeric iff every assignment is numeric. This
     # correctly demotes boxed values, `len of <list>`, and value-returning calls.
+    g_tensor_buf is infer_tensor_buf of [body, fbt]
     local lnm is infer_numeric_seeded of [body, fbt, fnm]
     local lnk is keys of lnm
     G_DBR_EMIT[0] is def_before_reads_all of [body, lnk]
@@ -11197,6 +11302,7 @@ define emit_program(ast) as:
     g_dict is {}
     g_genp is {}
     g_tensor is infer_tensors of rest
+    g_tensor_buf is infer_tensor_buf of [rest, bt]
     # for-in loop-var unboxing at module scope. Safe to mutate nm here: the
     # functions were emitted above with the pre-mutation map, so they still
     # see the module binding the VM shows them.
@@ -11387,7 +11493,7 @@ define emit_program(ast) as:
             wraps is wraps + "static Value* __wrap_" + (cn of wn) + "(Value* __a) { return " + wcall + "; }\n"
         else:
             wraps is wraps + "static Value* __wrap_" + (cn of wn) + "(Value* __a) { " + wcall + "; return make_null(); }\n"
-    local hdr is "#include \"aot_rt.h\"\n\nstatic Env* __eigs_g = NULL;\n" + gdecls + "\n" + wprotos + fc + "\n" + wraps + "\n" + (main_sig of g_mod_has_try) + "    __eigs_g = aot_boot(); (void)__eigs_g;\n    aot_args(argc, argv);\n" + (nested_bind_lines of []) + (main_tryb of g_mod_has_try) + obshdr
+    local hdr is "#include \"aot_rt.h\"\n\nstatic Env* __eigs_g = NULL;\n" + gdecls + "\n" + wprotos + fc + "\n" + wraps + "\n" + (main_sig of g_mod_has_try) + "    __eigs_g = aot_boot(); (void)__eigs_g;\n    aot_args(argc, argv);\n    aot_no_loop_rebinds(__eigs_g);\n" + (nested_bind_lines of []) + (main_tryb of g_mod_has_try) + obshdr
     local ftr is "    aot_shutdown(__eigs_g);\n    return 0;\n}\n"
     return hdr + body + ftr
 
@@ -11493,6 +11599,14 @@ define nested_bind_lines() as:
         local c is cn of fname
         o is o + "    aot_set(__eigs_g, \"" + (c_escape of fname) + "\", ({ if (!__fnv_" + c + ") __fnv_" + c + " = make_native_fn(__wrap_" + c + ", \"" + (c_escape of fname) + "\"); val_incref(__fnv_" + c + "); __fnv_" + c + "; }));   /* #127: callable from a nested load_file */\n"
     return o
+
+# (round 188, #203) a call site of a VM builtin that runs a chunk stamps the
+# compiled caller's name for the synthetic host frame (aot_rt.h); every
+# other builtin call emits nothing.
+define host_fn_stamp(callee) as:
+    if (callee == "vm_run_bytecode") or (callee == "sandbox_run"):
+        return "aot_host_fn = \"" + (c_escape of (G_CUR_FN[0])) + "\"; "
+    return ""
 
 define _lf_target(st) as:
     local u is unwrap of st
