@@ -1723,3 +1723,346 @@ class (10), all Tidepool-shaped (`new_game` assigning `game`); #218 lifts
 one form of it.
 
 Gates at c1684bc: aot/test/run.sh and test/run.sh — see the commit body.
+
+## F-OURO-39 — the all-or-nothing `g_observed` gate is the larger half of the AOT's observer overhead; per-name gating is sound and measured, not landed — GAP/CONSTRAINT (#126; recorded, not scheduled)
+
+Ledger of record for ouroboros#126 (a measurement, not a defect: no
+silent-wrong is involved — every observed program is byte-exact today,
+it is only slower than it needs to be). Verified against HEAD 61f8319 on
+2026-09-06; re-RAN vs re-READ is marked per item.
+
+**The finding.** One observer read anywhere in a unit sets `g_observed`
+for the WHOLE unit, and under it every module-scope scalar is demoted
+from a C variable to a name-keyed env slot: a loop counter nobody ever
+asks about becomes `aot_observe_num(__eigs_g, "i", …)` on write and
+`aot_get_num_named_ic(__eigs_g, "i", …)` on every read — a hash lookup
+plus a type check per access. `unobserved:` is the WRONG lever for this
+cost: it makes `aot_observe_num` return early from the entropy walk, but
+the name-keyed store and lookup are already emitted (upstream it is the
+right lever — 8.51x on EigenMiniSat, EigenScript#915 — because there the
+cost IS the walk).
+
+**Executed evidence — the bench triple** (`aot/bench/obs_gate_a_unobserved`
+/ `_b_gate_only` / `_c_full.eigs`, committed by #125: identical
+arithmetic, ranged-dot kernel D=256 M=512 x30; A no observer, B one
+`report` at the end with the hot loops inside `unobserved:`, C the same
+without the wrap; `aot/test/run.sh`'s bench tier build-checks them,
+run.sh:161-184). The invariant that makes the arms comparable is that
+all three print the same checksum — re-RAN: the three AOT binaries
+print `checksum 0.018599999999997712`, the three VM runs
+`0.018600000000004294`; the arms agree with each other (the invariant),
+and the AOT-vs-VM tail difference is the `dot` lane-reassociation
+tolerance class (`_tol`, by the dot spec; build.sh is `-march=native`
+and this host is AVX-512), not a divergence.
+
+| arm | at filing 2026-08-28 (dev box, median) | round-191 tree 2026-09-05 (dev box, n=5 sorted) | per-name DRAFT (dev box) | HEAD 61f8319, 2026-09-06, THIS host, two n=5 runs (sorted) |
+|---|---|---|---|---|
+| A unobserved | 28 | 27 27 **28** 32 42 | 27 29 **31** 32 34 | 13 13 **14** 14 14 / 13 13 **13** 13 14 |
+| B gate only | 85 | 49 49 **51** 54 55 | 34 34 **38** 39 40 | 22 23 **23** 24 36 / 22 23 **23** 23 23 |
+| C full | 102 | 67 69 **70** 70 105 | 34 35 **36** 36 41 | 29 30 **30** 31 32 / 30 31 **31** 31 33 |
+
+The dev-box columns are re-READ from the issue (the per-name draft is
+not in the tree). The last column is re-RAN here: Xeon @ 2.80 GHz
+(AVX-512), 4 vCPUs shared with ~5 other agents (load ~4.6), pinned
+c1684bc oracle as `EIGS`/`EIGS_DIR`; absolute ms are this host's and
+NOT comparable to the dev box, the ratios are. Gate share
+(B−A)/(C−A): 57/74 = **77%** at filing; 23/42 = 55% on the round-191
+tree; 9–10/16–17 = **56–59%** at HEAD here. B = 1.8x A (round 191),
+1.7x A (HEAD here). Rounds 126→191 cut the gate from 57 ms to 23 ms on
+the dev box; it is still the larger half of the overhead. VM on the same
+kernel here, n=5 sorted: A 51 51 52 52 52, B 46 48 48 48 48, C 55 55 56
+56 57 — so the AOT is 3.8x the VM unobserved and only ~2x observed; the
+gate is where the AOT's own multiplier goes.
+
+**Mechanism, re-RAN in the generated C** (compile.eigs on the two arms;
+`gen_a.c` / `gen_b.c`): arm A carries 0 `aot_observe_num` and 0
+name-keyed reads; arm B carries 12 `aot_observe_num` stores and 23
+`aot_get_num_named_ic` reads, the module loop `i` among them
+(`aot_observe_num(__eigs_g, "i", 0)` then every read of `i` in the
+loop condition and the two buffer writes a named lookup). `aot_dot_range`
+(the SIMD dot) is present once in BOTH — the gate is not about
+vectorised builtins.
+
+**Why per-name gating is SOUND: verdicts are suffix-determined.** The
+issue's second comment measured four trajectory shapes over 60
+assignments (converging / oscillating / diverging / drift) against
+suffixes 11, 12, 15 of the same sequence, all six predicates plus
+`report`: byte-identical on every verdict — **11 assignments suffice**
+(the `OBSERVER_WINDOW_N` window plus one seed). That table is re-READ.
+The source-level reason is re-RAN against the v0.43.0 runtime
+(`/home/user/wt/eigs-pin/src`): `OBSERVER_WINDOW_N` is 10
+(eigenscript.h:361); the six classifiers
+`observer_slot_{converged,equilibrium,improving,diverging,oscillating,stable}`
+(eigenscript.c:965–1031) contain **zero** references to `obs_age`, the
+slot's only cumulative field; `obs_age` is read only as the
+first-observation test (eigenscript.c:592) and is SYNTHESISED from the
+window counts by `observer_slot_from_trajectory` (eigenscript.c:1208,
+the comment at 1262: "a full slot re-fed through the classifiers needs
+obs_age > 0 so the partial-window fallbacks behave like a live slot's")
+— the runtime already contains, as working code, the proof that a
+classifiable slot is reconstructible from bounded state. Consequences
+for an untraced program: (1) unqueried slots need NO maintenance — that
+is the gate cost, and those are the loop counters; (2) queried slots
+need only their last 11 assignments, and the naive split (keep today's
+machinery for queried names, plain C locals for the rest) captures
+essentially the whole win because the queried slot in the kernel takes
+2 assignments while the counters take millions. This costs no
+exactness: values stay byte-exact, verdicts are what programs print, so
+a verdict-exact AOT is byte-identical at the output and the existing
+differential validates it unchanged. `g_traced` stays a SEPARATE gate
+(per-assignment entropy is genuinely observable on the tape). The
+enabler is #125's NAMED predicate form: a bare predicate reads
+`g_last_obs_slot_*`, a runtime alias that can reach any slot, so only
+`diverging of a` / `report of x` give a statically knowable query set.
+
+**The per-name draft (2026-09-05, not landed) and what blocked it.** A
+program-wide census of every name an observer read can name
+(predicate / report / report_value / trajectory / observe operands,
+every interrogative) with an ALL fallback for a bare predicate, a
+non-ident operand, or any builtin that runs interpreted code (#1027),
+applied as `obs_name(n)` at the module declaration, the numeric read
+and the four observe-on-write sites: module-level observer fixtures
+matched (t27_observer, t108_genp_rebind_c_name,
+t119_interrogated_set_per_scope, t218_interrogated_binder_kinds,
+t244_param_binder_string_list — all present at HEAD, re-RAN `ls`) and
+three new fixtures covered the fallbacks (draft numbers t297 per-name,
+t298 bare-predicate ALL, t299 eval ALL — NOT in the tree; t297–t299
+are still free but t300–t305 have since been taken, so the draft's
+fixtures must be renumbered on landing). It BROKE the FUNCTION-scope
+storage model: a function's numeric map is seeded from the module map
+only when the program is unobserved (`emit_function`, compile.eigs:8590;
+the `g_mod_observed == 1 and g_observed == 0` seed at 8657), so a
+function reading a module numeric fell to the env-read arm
+(`total is total + 1` inside `check`: `undefined variable 'total'` in
+test_entropy_reference_stop / test_entropy_types / test_observer_slots),
+and a boxed call argument in an observed function read its local from
+the env (t107 `g of m`; t202 `limit`). The whole-program flag is
+consulted on 61 lines of compile.eigs at HEAD (`grep -c g_observed`;
+the draft counted ~40 sites — same job, the tree has grown). The
+per-name rule has to be threaded, each site classified name-specific vs
+genuinely global, through: the function seeding (emit_function /
+`g_mod_observed`), the boxed read arms, boundness (`G_BOUND_SO_FAR`,
+3160), the loop-binder kinds (the loop-scoped shadow arm, ~3938) and
+the outward-write regime (`g_outward_obs`, 3291/3365 — the
+aot-differential skill's invariant 14: an effect lands in the regime of
+the NAME it targets), with
+fixtures across module / function / outward-write scopes. That is its
+own round.
+
+**Pinned today by:** the bench tier (all three arms must build), and
+the observed-program fixtures above plus t305 (per-call fresh slot,
+#217) for the contract any per-name rule must keep byte-exact.
+
+**Status: recorded, not scheduled.** Reopen as an issue when the
+threading round is picked up; the draft, its fixtures and the numbers
+above are the starting point.
+
+## F-OURO-40 — struct lowering of statically-shaped dicts: re-scoped from "~2.8x, the gap to real-time" to ~10% of DMG's runtime; do the numeric-dispatch calling convention first — BY-DESIGN / not-now (#133; recorded, not scheduled)
+
+Ledger of record for ouroboros#133 (split from #130). Nothing here is a
+divergence: field access through the inline caches is byte-exact and
+gated (t88_dispatch, t92_field_fastpath_hot). It is a sizing record so
+the next session does not start from the premise in the old title.
+
+**The estimate history — the finding worth keeping.** #130's title
+claimed struct lowering was worth ~2.8x and was "the remaining gap to
+Game Boy real-time". Both halves were wrong: the gap was closed WITHOUT
+it (ouroboros#129 stopped interpreting loaded modules, #130 added inline
+caches on dict fields and env names, unboxed comparison against a
+numeric operand, borrowed field/index access and a stack argument vector
+for `dispatch` — DMG at 135.8% of hardware, AOT 5.6977 MHz vs VM 1.3010
+MHz, `cpu_instrs.gb --cycles 1500000` n=7, dev box, re-READ from
+DMG/CLAUDE.md); and the ~2.8x came from SUMMING the profile's dict-access
+rows, which assumes the cost is the OPERATION when it was the LOOKUP —
+far cheaper to remove. #133's body then sized the residue at ~13% (the
+three field helpers, fully cached: `aot_dot_get_tb_ic` 5.8%,
+`aot_dot_set_num_tb_ic` 4.7%, `aot_dot_num_tb_ic` 3.5%). PR #137 took the
+cheap half and re-measured: the three helpers plus `aot_index_get_ib`
+were 20.8% across 968 call sites, every one a plain out-of-line `static`
+— a real call for what is, on a hit, a bounds check, a pointer compare
+and an array index. Splitting each into an inlinable fast path plus a
+`noinline` slow path (semantics unchanged by construction: every non-hit
+case falls through to the untouched original) bought **1.062x** and cut
+the helpers 16.7% → **9.8%**; boxing + refcount (`make_num` /
+`free_value` / `val_*`) went 20.9% → 27.4% of the remainder;
+machinery:work 4.36:1 → 3.87:1. So struct lowering now targets ~10% of
+runtime directly plus whatever share of the boxing is attributable to
+dict-held numbers: best case ~1.1–1.15x. (Profile percentages re-READ
+from the #133 thread; they need the DMG ROM run under `perf` on the dev
+box to re-run.)
+
+**Verified at HEAD (re-RAN):** the #137 split is in the tree —
+`aot/aot_rt.h:424–481` holds the four `static inline` fast paths
+(`aot_dot_get_tb_ic`, `aot_dot_num_tb_ic`, `aot_dot_set_num_tb_ic`,
+`aot_index_get_ib`), their slow paths are `__attribute__((noinline))` at
+1923 / 2352 / 2366 / 2381 (merge 70f78bf). DMG transpiled at HEAD with
+the pinned c1684bc compiler (`compile.eigs /home/user/DMG/dmg.eigs`, rc 0,
+27 s, 8,163 lines of C): `aot_dot_num_tb_ic` 352 sites,
+`aot_dot_set_num_tb_ic` 248, `aot_dot_get_tb_ic` 24, `aot_index_get_ib`
+49 — 673 in total, against #137's 968 on its own tree (rounds 138–191
+rewrote element and field access — round 170's borrowed field/element
+arguments and numeric element class among them — so this is the tree's
+count, not a measured reduction of the same sites). The generated C also
+shows the shape the lowering would target: 805 function-static
+`AotNameIC` caches and 898 dict-field IC pairs (`static int __icN = -1;
+static const char *__ickN`).
+
+**Why the boxing is not dict-shaped** (attributed with a frame-pointer
+build after three guesses were wrong — re-READ): `run_headless_loop`
+directly 2.47%, opcode-handler wrappers via `aot_dispatch` 2.46%,
+`fetch8` 1.20%, `handle_interrupts` 0.95%; no dominant source, and the
+largest single one is `__wrap__op_*` boxing a `double` return the caller
+immediately unboxes — which a **numeric-dispatch calling convention**
+fixes, not struct lowering. Hypotheses killed by counting before any
+code: interning literal constants (268 of 523 `make_num(` sites are
+literals, only 18 in hot functions); `mem.data[addr]` boxing dominating
+(45 static sites index a buffer through a dict field; most
+`aot_index_get_ib` calls index a LIST to reach a dict, `ctx[0].pc`, and
+allocate nothing); box-then-collapse on assignment
+(`aot_lv_set(&slot, make_num(...))` appears 0 times — #132's
+numeric-write inference already catches those).
+
+**Recommendation, unchanged:** size any struct-lowering work against the
+~10%, not the old estimate, and do the numeric-dispatch calling
+convention first — smaller, safer, and it targets the larger measured
+cost. This is the second time on this axis that an estimate built by
+summing profile rows came out wrong; the next one needs a
+frame-pointer attribution before a design.
+
+**What a SOUND bail-out would need** (the hard part is the bail-out, not
+the lowering — a dict is a first-class value and the failure mode is a
+silent wrong number, the class this repo exists to eliminate): a
+whole-program escape analysis that refuses lowering for any dict that
+is printed or formatted, passed to a builtin, returned or stored into a
+generic context (a list element, another dict's field, a function
+value's capture), indexed by a computed string, aliased through a
+container (`ctx[0].pc` is the common DMG shape), compared or hashed by
+identity, or can gain, lose or retype a key at runtime — and it must be
+conservative in the direction of NOT lowering, with a differential
+fixture per escape class (the F-OURO-32 rule: a refused shape must be
+loud, never coerced). Without that analysis in hand the lowering is not
+buildable safely; with it, the ceiling is the ~10% above.
+
+**Status: recorded, not scheduled.** Reopen as an issue when the
+numeric-dispatch convention has landed and the residue is re-measured;
+if the helpers are still ~10% then, this entry is the sizing.
+
+## F-OURO-41 — concurrency under the AOT: `task_spawn` has no run loop, `spawn` races the name-keyed observer env, compiled threads share emitter globals — CONSTRAINT (#188; every arm loud, design halves recorded, not scheduled)
+
+Ledger of record for ouroboros#188 (blind-critic round 108). One root —
+concurrency builtins were admitted through generic dispatch with no
+execution basis — three arms. Every silent-wrong the issue describes is
+now LOUD (build-time refusal, named runtime death, or a NONDET ledger row
+excluded from both sides of the corpus comparison); what remains is
+design work. Verified at HEAD 61f8319, 2026-09-06, against the pinned
+c1684bc oracle; each item marked re-RAN or re-READ.
+
+**Arm A — `task_spawn`: the task never runs.** `task_spawn` accepts the
+AOT's `make_builtin` wrapper and enqueues the task, but the cooperative
+scheduler is pumped only by the VM dispatch loop (vm.c `CASE(CALL)`:
+`g_task_suspend_request` honoured at `base_frame == 0` →
+`vm_suspend_halt`); `task_join` sets the request and returns its
+placeholder `make_null()`, and native `main()` is plain C with no run
+loop. Same root for the `task_sleep` racers (VM `["a", "b"]`, AOT `[]`)
+and `task_recv` (VM `hello`, AOT `null`). Shipped: (1) round 108's
+BUILD-TIME refusal by name — `mentions_ident of [ast, "task_spawn"]`
+(compile.eigs:11134; the program-wide rationale at 427–432: a function
+value can flow to `task_spawn` through any binding, so scoping the
+predicate to the call's bare argument would breed an invariant-20 hole);
+(2) round 189's BOOT REBIND for the seam the AST walk cannot see —
+`aot_no_loop_rebinds` (aot_rt.h:2181, called from `main` at
+compile.eigs:11700) binds `task_spawn` in the global env to
+`aot_task_spawn_no_loop`, which raises `AOT: task_spawn -- no run loop …
+(ouroboros#188)` at the call line, the same shape the VM uses for
+sandbox-blocked builtins. A computed-path `load_file` is refused at build
+time since #127 (`aot/test/refuse/load_file_computed_path.eigs`), so the
+residual shapes are an `eval` string and a literal `load_file` the
+static pass cannot resolve (test_supervise: `load_file of
+"lib/supervise.eigs"` from `tests/`, still a DIVERGE row, but its binary
+now dies naming this instead of `cannot suspend … nested evaluation`).
+Re-RAN the issue's repro (`define worker(x) … w is task_spawn of
+[worker, 21] / print of task_join of w`): VM `42` rc 0; AOT build
+refused with the round-108 text. Re-RAN the rtrefuse fixture
+(`aot/test/rtrefuse/task_spawn_runtime_load.eigs`, the eval shape): VM
+prints `spawned` rc 0; the binary BUILDS and dies `Error line 3: AOT:
+task_spawn -- no run loop: …` rc 1 (the run.sh arm at 271–300 requires
+exactly that: VM rc 0, AOT builds, binary nonzero with the `# EXPECT:`
+text; rc 0 fails as "still silent"; planted at round 189 by removing the
+rebind line — the binary printed `spawned` at rc 0).
+*To lift:* a native task substrate. A compiled worker is a C function,
+so it cannot be suspended at `task_sleep` / `task_recv` without a
+coroutine mechanism (ucontext, per-task C stacks, or threads with a
+baton). That is a runtime design decision, not a patch — and the VM's
+scheduler contract ("a task suspends only at base_frame 0, never inside
+a nested evaluation") is itself a VM-shaped rule worth questioning
+before mirroring (CLAUDE.md: match the VM by default, but a refusal
+forced by a rule that is not a property of the source is a LANGUAGE
+finding).
+
+**Arm B — `spawn` with an observed/temporal function: SIGSEGV rc 139 or
+silent wrong counts.** Part 2a routes every local of an observed
+function through the PROCESS-GLOBAL env by name
+(`aot_observe_num(__eigs_g, "seen", …)`, `aot_set(__eigs_g, "i", …)`);
+two OS threads race one slot while first-observation grows the obs
+array: `undefined variable 'seen'` then rc 139 where the VM prints
+`4000 / 4000`, and LOWER contention is worse — an unobserved worker
+calling an observed helper printed `6397 / 6223` at rc 0. The axis is
+exactly `func_observed` (compile.eigs:5933): unobserved workers, traced
+programs, and module-scope observation while workers run are byte-exact.
+Shipped: round 108's program-wide refusal — `spawn` mentioned anywhere
+AND any function in the unit observed (compile.eigs:11145–11150, keyed on
+any observed function, not on `spawn`'s argument, because the function
+value can flow dynamically). Pinned by
+`aot/test/refuse/spawn_with_observed_fn.eigs` (the direct shape) and
+`spawn_observed_helper.eigs` (the unobserved-worker-calls-observed-helper
+shape). Re-RAN the issue's repro: VM `4000 / 4000` rc 0; AOT refused
+naming `'reader'`. Re-RAN the control (same program, no `report`): VM
+and AOT both `4000 / 4000` rc 0, byte-exact — the refusal is on the
+axis and not wider.
+*To lift:* per-call envs for observed functions — the observer slot must
+be FRAME-owned, not name-keyed on the global env. This is the same Part
+2a design gap #123/#124 (locals leaking into module scope), #126 /
+F-OURO-39 (the 3x gate) and #217 (round 196, t305: a function's observed
+locals now get `aot_obs_reset_name(__eigs_g, …)` at entry so the slot is
+fresh per call — a reset ON the global slot, which is exactly what two
+threads cannot share) all name from different sides. F-OURO-32/35's
+per-call env `__eigs_l` already exists for boxed locals; the observer
+store has to move with it. Inherited design, pre-v1 — question it rather
+than design around it.
+
+**Arm C — compiled threads share mutable emitter globals**
+(test_spawn_parallel). Corpus round 170 (1eabb16): the program built
+under the AOT and re-run three times against the VM gave mismatch (w9
+1719 for 1675, w10 1775 for 1725; 7/12 passed), SIGSEGV, mismatch — it
+had matched once inside the gate by luck. Its ledger row is **NONDET**
+(`aot/test/canary/corpus_expected.txt:56`, re-RAN `grep`; test_spawn_gc
+at :55 carries the same class), a class `aot/corpus_diff.sh` (68–105)
+excludes from BOTH sides of the comparison so a lucky run cannot read as
+an improvement and the kept observed set carries the row forward
+(8dc140f). Root: spawned compiled code shares the emitter's per-program
+statics — the inline caches (`static AotNameIC __nNN` and the dict-field
+`ic`/`ick` pairs are function-static in the generated C: 805 and 898 of
+them in DMG's unit at HEAD), the dispatch tables, and
+`g_trace_current_line`. Rule already in force: any NEW per-program
+runtime state is thread-local from day one — round 171's temporary stack
+is `__thread` (aot_rt.h:2017, re-RAN). *To lift:* make the existing
+emitter globals thread-local or per-thread-arena (the ICs are the bulk:
+a `__thread` IC costs a TLS indirection on every cached access, so this
+wants measuring on the DMG canary before it is the default), then the
+row leaves the ledger when the outcome is MATCH on every run.
+
+**Corpus rows at HEAD (re-RAN):** test_task_osr REFUSE,
+test_task_sleep_order REFUSE, test_obs_mt_race REFUSE, test_supervise
+DIVERGE (named death, above), test_spawn_parallel NONDET, test_spawn_gc
+NONDET. Reach beyond tests (re-READ): `lib/supervise.eigs`,
+`lib/sync.eigs`, `lib/concurrent.eigs`, liferaft's `cluster.eigs`, eddy's
+`dst_core` / `txn_dst` / `rw_dst`, EigenGauntlet's `concurrent_lab` /
+`cross_lab`, EigenOS demos, three `examples/task_*.eigs` — every
+task-using consumer previously compiled to a binary whose tasks silently
+never executed; they now refuse loudly.
+
+**Status: recorded, not scheduled.** Three separate design decisions
+(task substrate; frame-owned observer slots; thread-local emitter state),
+each reopenable as its own issue when picked up. The refusals and the
+rtrefuse arm are the contract until then — a lift must delete the
+refusal it replaces, not widen it.
