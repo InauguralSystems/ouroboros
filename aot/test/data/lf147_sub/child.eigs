@@ -1,0 +1,5 @@
+print of ("child:" + (str of (compiled_here of 1)))
+load_file of "helper.eigs"
+load_file of "aot/test/data/lf147_root_helper.eigs"
+define from_child(n) as:
+    return (compiled_here of n) + (sibling_helper of n)

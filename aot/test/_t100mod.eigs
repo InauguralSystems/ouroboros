@@ -1,11 +1,16 @@
 # Every shape the conditional-binding guard must ACCEPT.
 a is 1
 
-# a `for` body has its own env, so nothing here reaches the module dict.
-# Measured: `keys of M` is ["a", ...] with no `qv`/`floop`, and `M.floop` is
-# null. The first guard refused this module outright.
+# v0.43.0 pin (#1106): a `for` body's FRESH `is` now reaches the module dict
+# exactly like an `if` body's -- conditionally -- so that shape moved to the
+# refuse tier (test/refuse/for_body_fresh_binding.eigs). What stays accepted:
+# a `for` body that RE-ASSIGNS an already-bound top-level name (the dict is
+# the same either way) and one that writes its own BINDER (loop-scoped on
+# every road: `keys of M` has no `qv`, and `M.qv` is null).
+floop is 4
 for qv in range of 2:
-    floop is 5
+    floop is floop + 1
+    qv is qv + 100
 
 # re-assigning an ALREADY top-level name inside an `if` is not a new binding:
 # the dict is identical whichever way the branch goes.

@@ -1465,3 +1465,164 @@ rung is met at 3x5 scale.
 Gates: aot/test/run.sh (t80–t82 added) + test/run.sh (57 programs +
 bootstrap) green at the v0.39.0 pin; fuzzdiff 40 programs seed 42 → 0
 divergences / 0 run-pasts / 0 gaps.
+
+## F-OURO-37 — static `load_file` splicing is sound at the v0.43.0 pin: the VM's chain is file-relative and the splicer mirrors it — FIXED-by-pin + mirror (#147, EigenScript#1056/#1106)
+
+**BUG (upstream, fixed by the pin; AOT mirror landed with the bump).**
+`splice_static_loads` (#129) resolves a literal `load_file` target at build
+time as `dirname(source) + path`, while the c1684bc VM resolved **cwd
+first**. The issue's layout, reproduced exactly (2026-09-06, both rc 0 —
+the silent-wrong class):
+
+```
+A/inc.eigs  print of "SCRIPTDIR-COPY"    B/inc.eigs  print of "CWD-COPY"
+A/prog.eigs load_file of "inc.eigs"
+cd B && eigenscript(c1684bc) ../A/prog.eigs   -> CWD-COPY
+cd B && ./prog_compiled_from_A (AOT @61f8319) -> SCRIPTDIR-COPY
+```
+
+**The rule now (v0.43.0 = a6c50fb, #1106; docs/SPEC.md "Modules",
+docs/LANGUAGE_CONTRACT.md "One file, three roads").** `load_file` and
+`import` share ONE chain, anchored on the directory of the **file
+containing the call** (nested loads use the loaded file's directory; a
+function's `eval` uses its defining file's): (1) an absolute path as-is;
+(2) `<containing dir>/<path>`, symlinks and `..` canonicalized; (3) the
+`eigs_modules` walk — bare `<name>.eigs` only, `<dir>/eigs_modules/<name>/
+<name>.eigs` at each level up to the project root; (4) `<project root>/
+<path>`, the project root being the nearest ancestor of the containing
+directory (itself included) holding `eigs.json` — skipped when none; (5)
+the stdlib roots `<exe>/../<path>`, `<exe>/../lib/eigenscript/<path>` (and
+lib/-stripped), then `$HOME/.local/lib/eigenscript/` likewise. **There is
+no process-cwd step** and no containing-dir-parent fallback (that is why
+this repo's own `eigs.json` landed in 61f8319: `aot/compile.eigs` reaches
+`src/frontend.eigs` through step 4 now). `import name` requests
+`name.eigs` then `lib/name.eigs` through the same chain. Measured on the
+pin: `cd B && eigenscript ../A/prog.eigs` prints SCRIPTDIR-COPY from both
+cwds.
+
+**Does the splicer match it, case by case?** Before this bump it answered
+step 2 only and left everything else to a runtime call into the linked VM,
+which resolves from the binary's BAKED `g_script_dir` (F-OURO-34) — the
+main program's directory. That is the VM's base for the main file but not
+for a spliced child, so:
+
+| case | VM (v0.43.0) | splicer before | now |
+|---|---|---|---|
+| sibling `inc.eigs` | step 2 | spliced | spliced (`_lf_resolve` step 2) |
+| subdir `sub/x.eigs` | step 2 | spliced | spliced |
+| child's own sibling (nested load) | child's dir | spliced (base = child path) | spliced |
+| project-root-relative from a subdir file | step 4 | **runtime call, interpreted** — dies "undefined variable" if it calls a compiled fn (the #127 class) | spliced (step 4, eigs.json walk) |
+| `eigs_modules/<n>/<n>.eigs` | step 3 | runtime call, interpreted | spliced (step 3) |
+| absolute literal | step 1 | `dir//abs` unreadable → runtime call | spliced (step 1) |
+| stdlib `lib/int_vector.eigs`, main file | step 5 | runtime call (t76) | runtime call, literal as written (the baked base is the VM's; F-OURO-34's tier) |
+| stdlib reached from a SPLICED child (`sub/child.eigs` → `lib/bcd.eigs`, main dir holds its own `lib/bcd.eigs`) | step 5 from the child's dir — the main dir's copy is never consulted | runtime call — the linked VM re-runs the chain from the baked MAIN dir, whose **step 2 answers first**: `MAIN-DIR-BCD-SHADOW` then `undefined variable 'from_bcd'` rc 1 (both rc 0 when the child calls nothing — silent wrong) | **literal rewritten to the absolute stdlib path** the child's chain answered (step 1 on both sides; `t307`, arm assertion 4). Round 2: the first cut of this table called the tier "base-independent" — measured false by the blind critic (`min147`: `lib/test.eigs` + `sub/child.eigs` + `prog.eigs`, no eigs.json; VM `child-done` / AOT `PROJECT-LIB-TEST`) |
+| stdlib-tier hit the transpiler cannot check (no `$EIGS_DIR`), spliced child | step 5 | runtime call | **refused by name** (`build.sh` always passes `EIGS_DIR`; a hand invocation without it would otherwise guess) |
+| nested-POSITION literal in a spliced child (branch/try/function) | resolved from the CHILD's dir at run time | runtime call from the MAIN dir — wrong base | literal rewritten to the absolute path the child's chain answers (step 1 on both sides) |
+| unresolvable, main file | io error from the main dir | runtime call → same error | unchanged |
+| unresolvable, spliced child | io error from the child's dir | runtime call from the main dir — can resolve where the VM raises | **refused by name** (`aot/test/refuse/lf147_nested_unresolved.eigs`; the VM runs it rc 0 via try/catch) |
+
+`_lf_resolve` (aot/compile.eigs) answers steps 1–4 statically (absolute
+base from `getcwd`, `.`/`..` folded; no realpath builtin, so a symlinked
+directory's physical parent is the one un-mirrored edge) and step 5
+against `G_STDLIB` = `$EIGS_DIR` (== `<exe>/..` for the baked exe dir;
+absolutized, since the path it returns is what a spliced child's literal
+is rewritten to). The one rule that fell out of round 2: **a runtime
+`load_file` call inside the native program is only sound when its base is
+the VM's** — at depth 0 (baked `g_script_dir` == the main file's dir) or
+when the literal is absolute (step 1). Every other literal in a spliced
+child is spliced, rewritten to an absolute path, or refused;
+`splice_module` uses the same resolver for `<name>.eigs` then
+`lib/<name>.eigs`; `nlb_scan` reads nested targets through it.
+
+**Fixtures.** `aot/test/t306_load_file_project_root.eigs` (+ `test/data/
+lf147_*`): sibling, nested-sibling and project-root loads, each proven
+SPLICED by the loaded file calling a function defined in the main file
+(an interpreted load cannot see it). `aot/test/t307_load_file_stdlib_from_
+child.eigs` (round 2): `data/lf147_sub/stdlib_child.eigs` loads
+`lib/bcd.eigs` — from its directory the chain ends at the stdlib — while
+`aot/test/lib/bcd.eigs` is a decoy at the MAIN file's step 2 that prints
+and defines nothing; the child calls `from_bcd`. `aot/test/load_file_
+shadow.sh`, an arm of `aot/test/run.sh`: the issue's A/B layout under a
+temp dir with the subdir and project-root steps shadowed too, four
+assertions — the shadow is live on the VM (a B/control.eigs prints
+CWD-COPY), the VM from B prints the A copies, the binary from B is
+byte-identical, and (4, round 2) the critic's exact no-eigs.json layout
+(`C/lib/test.eigs` decoy, `C/sub/child.eigs` → `lib/test.eigs` +
+`assert_eq`, run from C itself) is byte-identical VM vs AOT with the decoy
+proven live by `C/control.eigs`. Planted: the splicer made cwd-first
+(`getcwd + path` tried before step 2) → the arm goes red on assertion 3
+(AOT prints `CWD-COPY|CWD-SUB|undefined variable 'helper'` — it spliced
+B's copies, which define nothing); the shadow deleted → red on assertion
+1; the depth>0 stdlib rewrite removed (round 2's fix) → `t307` FAILs
+(`MAIN-DIR-BCD-SHADOW` / `undefined variable 'from_bcd'` rc 1 vs the VM's
+`26` rc 0) and the arm goes red on assertion 4 by name; the C decoy not
+written → red on assertion 4's control. Four more plants, each red by name: the frontend's `report`
+lexer arm reverted → `report is 5` accepted by the self-host driver (the
+reject tier's case goes red); the codegen `report_value` arm removed →
+`report_reserved_forms.eigs` dies "undefined variable 'report_value'";
+the `for` exemption restored → `for_body_fresh_binding.eigs` ACCEPTED; the
+depth>0 refusal removed → `lf147_nested_unresolved.eigs` ACCEPTED.
+
+**Bump fallout mirrored in the same commit (the deferred-mirror rule):**
+
+- **#1110 / EigenScript#1102 — `report` and `report_value` are reserved
+  observer forms (E005).** `src/frontend.eigs` lexes them as their own
+  token kind and mirrors every `p_report_error` arm of parser.c: any
+  binding position (assign, compound, `local`, `define` name and params,
+  lambda params, `for`/listcomp binder, `catch` name, destructuring,
+  `import`), any value use, and a non-identifier operand (`report of
+  (x + 0)`, `report of d.a`, `report of 5`, `report of converged`); still
+  admitted: `report of (x)` (parens return the ident node, as in C), the
+  soft-keyword identifier fallbacks as operands, and `d.report` as a dot
+  key. Probed on the oracle: 20 programs, rc agrees on all 20 for both the
+  self-host driver and the AOT transpiler. The frontend's own
+  `_env_set_local of [env, "report", report]` was the first casualty —
+  every self-host program and every AOT build died on it. The evaluator's
+  call arm now refuses the two forms by name (it keeps no history).
+  Pinned by 16 `reject_one` cases in test/run.sh; the
+  `observer_report_shadowed.eigs` matched-bug canary (`define report(v)`
+  half-shadow, EigenScript#1102) flipped as designed and became one of
+  them. New parity program `test/programs/report_reserved_forms.eigs`.
+- **Self-host codegen had no `report_value of <ident>` arm** (fell to a
+  plain call → "undefined variable 'report_value'": the form is an opcode
+  pair with no builtin behind it). Latent while no parity program used it;
+  the pin made it the only way to write the word. Mirrored from
+  compile_node_inner (OP_REPORT_VALUE_SLOT/NAME = 89/90), and
+  `trajectory of <ident>` alongside (91/92), same shape.
+- **#1106's for-body scoping on the import road.** Self-host codegen: no
+  mirror needed — it compiles the main road only (`import` is the VM's
+  OP), and for the main road compiler.c's new `lev_has` arm still emits
+  OP_SET_NAME. AOT: t100 went red — the VM's `keys of M` now carries
+  `floop` from a module-level `for qv in range of 2: floop is 5`, the AOT's
+  static dict did not (`M.floop` null, a wrong VALUE). Measured on the pin
+  (`a is 1 / <body> / b is 2` imported, `keys of M`): a fresh `is` in a
+  `for` body, in a nested `for`, and in an `if` inside a `for` all reach
+  the module dict; only the loop BINDER stays loop-scoped (`i is 9` in the
+  body updates the loop-local, `M.i` absent); and the key is ABSENT when
+  the body did not run (`for i in []:`, a `break` before the assignment).
+  So a `for` body is an `if` body for the snapshot: `collect_cond_binds`'
+  measured-table exemption ("a `for` body has its own env") — the c1684bc
+  row the pin flipped, invariant 16's axis case — is dropped; a fresh
+  for-body binding is refused like a fresh `if` binding (#141's message),
+  with the binder excluded via a copy of `bound`. t100's `floop` shape
+  became `test/refuse/for_body_fresh_binding.eigs` (the VM runs it rc 0,
+  `["a", "floop", "b"]`); `_t100mod` keeps the accepted forms (re-assign
+  of a top-level name, write to the binder) and t100 prints `M.qv` (null on
+  both sides). t95–t99 unchanged.
+- `build.sh` gained `AOT_TRANSPILE_CWD` (paths absolutized, transpiler run
+  from that directory) so the shadow arm can drive the transpiler from B;
+  the default path is unchanged.
+- **#1113** (embed observer gate default): no mirror.
+- Pin recorded in two places (`.devcontainer/Dockerfile` `EIGS_REF`,
+  `.github/workflows/aot-avx2-bench.yml`'s checkout SHA — invariant 30).
+
+Gates at a6c50fb (`EIGS=<v0.43.0 checkout>/src/eigenscript
+EIGS_DIR=<v0.43.0 checkout>`): `bash test/run.sh` → `ALL PASSED (63
+programs + bootstrap)` (`PASS: bootstrap fixed point (and the
+self-compiled program runs)` — the fixed point holds with the frontend
+change); `bash aot/test/run.sh` → 369 PASS lines, `PASS: load_file_shadow
+(A/B layout from the shadowing cwd, 3 assertions)`, `--- bench tier: 12
+program(s) build-checked ---`, `--- refusal tier: 56 guard(s) exercised
+---`, `--- runtime-refusal tier: 1 residual(s) exercised ---`, `--- all
+AOT parity tests passed ---`; `aot/core_check.sh` → `build.sh CORE matches
+upstream SOURCES minus CLI_ONLY (20 TUs)`.

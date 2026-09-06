@@ -1,0 +1,10 @@
+# ouroboros#147 / t307: a DECOY, not a library. It shadows the stdlib's
+# lib/bcd.eigs at step 2 of the VM's chain for a load issued from THIS
+# directory (aot/test, the harness's main-file directory) and defines
+# nothing. data/lf147_sub/stdlib_child.eigs loads "lib/bcd.eigs" from ITS
+# directory, where the chain ends at the stdlib root; a splicer that left
+# that literal as a runtime call inside the native program would re-run
+# the chain from the baked MAIN directory and load this file instead --
+# printing the line below, then dying on `from_bcd`. Do not load this file
+# from a depth-0 fixture (both sides would agree on the decoy, vacuously).
+print of "MAIN-DIR-BCD-SHADOW"

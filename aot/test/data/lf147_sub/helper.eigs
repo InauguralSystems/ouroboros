@@ -1,0 +1,3 @@
+print of ("helper:" + (str of (compiled_here of 2)))
+define sibling_helper(n) as:
+    return n + 1

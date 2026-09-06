@@ -11725,6 +11725,147 @@ define _lf_dirname(p) as:
         i is i - 1
     return ""
 
+# ---- ouroboros#147 / EigenScript#1056: the VM's resolution chain, mirrored
+# statically. Since v0.43.0 a file's dependencies are a property of the FILE:
+# `load_file`/`import` resolve (1) an absolute path as-is, (2) relative to the
+# directory of the file containing the call, (3) the eigs_modules walk (bare
+# `<name>.eigs` only: <dir>/eigs_modules/<name>/<name>.eigs at each level up
+# to the eigs.json project root), (4) relative to the nearest ancestor with
+# an eigs.json, then (5) the stdlib roots (<exe>/../<path>,
+# <exe>/../lib/eigenscript/<path> with and without a leading lib/, and the
+# same two under $HOME/.local/lib/eigenscript). There is NO cwd step. The
+# old chain (cwd first, then script dir and its parent) is what made
+# build-time splicing unsound (#147: A/inc.eigs vs B/inc.eigs from cwd B
+# printed different things on the two sides, both rc 0).
+#
+# Steps 1-4 are answered here and the target is SPLICED (compiled). A step
+# 5 hit stays a runtime call into the linked VM (same file, interpreted --
+# F-OURO-34's documented tier, t76) -- but it is NOT base-independent: the
+# runtime call re-runs the whole chain from the binary's baked g_script_dir
+# (the MAIN program's directory), and that base's step 2 answers BEFORE the
+# stdlib step. At depth 0 that base is the VM's own, so the literal stands;
+# in a spliced child the literal is rewritten to the ABSOLUTE stdlib path
+# the child's chain answered (step 1 on both sides, t307: main-dir
+# lib/bcd.eigs shadowed the stdlib's and the child printed the shadow --
+# both rc 0, the #147 class again). A path no step answers is left as a
+# runtime call ONLY at depth 0, where the baked g_script_dir is the same
+# base the VM would raise from; in a spliced child the runtime call would
+# resolve from the MAIN program's directory, a base the VM never uses, so it
+# is refused by name (t306's refuse twin). Symlinks are not canonicalised (the runtime realpath()s;
+# no such builtin) -- only a symlinked directory whose physical parent
+# holds a different eigs.json could differ, and the runtime fallback would
+# too.
+define _lf_is_file(p) as:
+    if (file_exists of p) == 0:
+        return 0
+    if (is_dir of p) == 1:
+        return 0
+    return 1
+
+# Absolute directory of source `base`, "." / ".." segments folded, no
+# trailing slash ("/" for the root).
+define _lf_abs_dir(base) as:
+    local d is _lf_dirname of base
+    if (substr of [d, 0, 1]) != "/":
+        d is (getcwd of []) + "/" + d
+    local parts is split of [d, "/"]
+    local out is []
+    for i in range of (len of parts):
+        local seg is parts[i]
+        if (seg == "") or (seg == "."):
+            continue
+        if seg == "..":
+            if (len of out) > 0:
+                out is out[0:(len of out) - 1]
+            continue
+        append of [out, seg]
+    if (len of out) == 0:
+        return "/"
+    return "/" + (join of [out, "/"])
+
+# Parent of an absolute dir, null at the root (parent_directory's contract).
+define _lf_parent(d) as:
+    if d == "/":
+        return null
+    local i is (len of d) - 1
+    loop while i > 0:
+        if (char_at of [d, i]) == "/":
+            return substr of [d, 0, i]
+        i is i - 1
+    return "/"
+
+# Nearest ancestor (the directory itself included) holding eigs.json, or null.
+define _lf_project_root(absdir) as:
+    local cur is absdir
+    loop while cur != null:
+        if (file_exists of (cur + "/eigs.json")) == 1:
+            return cur
+        cur is _lf_parent of cur
+    return null
+
+define _lf_ends_with(s, suf) as:
+    local n is len of s
+    local m is len of suf
+    if n < m:
+        return 0
+    return (substr of [s, n - m, m]) == suf
+
+# [full_path, "static"] to splice, [full_path, "stdlib"] to keep as a
+# runtime call, null when no step answers.
+define _lf_resolve(base, path) as:
+    if (substr of [path, 0, 1]) == "/":
+        if (_lf_is_file of path) == 1:
+            return [path, "static"]
+        return null
+    local absdir is _lf_abs_dir of base
+    local cand is absdir + "/" + path
+    if (_lf_is_file of cand) == 1:
+        return [cand, "static"]
+    # (3) eigs_modules walk: bare <name>.eigs only, stops at the project root
+    if ((index_of of [path, "/"]) < 0) and ((_lf_ends_with of [path, ".eigs"]) == 1) and ((len of path) > 5):
+        local mname is substr of [path, 0, (len of path) - 5]
+        local cur is absdir
+        local steps is 0
+        loop while (cur != null) and (steps < 64):
+            cand is cur + "/eigs_modules/" + mname + "/" + mname + ".eigs"
+            if (_lf_is_file of cand) == 1:
+                return [cand, "static"]
+            if (file_exists of (cur + "/eigs.json")) == 1:
+                cur is null
+            else:
+                cur is _lf_parent of cur
+            steps is steps + 1
+    # (4) project root
+    local root is _lf_project_root of absdir
+    if root != null:
+        cand is root + "/" + path
+        if (_lf_is_file of cand) == 1:
+            return [cand, "static"]
+    # (5) stdlib roots. G_STDLIB[0] is $EIGS_DIR, i.e. <exe>/.. for the
+    # baked exe dir $EIGS_DIR/src. Without it (a hand invocation) the step
+    # cannot be checked, so the pre-#147 best-effort runtime call stands.
+    if (G_STDLIB[0]) == "":
+        return [path, "stdlib"]
+    # build.sh may hand a relative $EIGS_DIR (../../EigenScript); the path
+    # returned is the one a spliced child's literal is rewritten to, so it
+    # must be absolute (the VM's step 1) for the rewrite to be sound.
+    local sd is _lf_abs_dir of ((G_STDLIB[0]) + "/x")
+    if (_lf_is_file of (sd + "/" + path)) == 1:
+        return [sd + "/" + path, "stdlib"]
+    if (_lf_is_file of (sd + "/lib/eigenscript/" + path)) == 1:
+        return [sd + "/lib/eigenscript/" + path, "stdlib"]
+    if (substr of [path, 0, 4]) == "lib/":
+        if (_lf_is_file of (sd + "/lib/eigenscript/" + (substr of [path, 4, (len of path) - 4]))) == 1:
+            return [sd + "/lib/eigenscript/" + (substr of [path, 4, (len of path) - 4]), "stdlib"]
+    local home is env_get of "HOME"
+    if (home != null) and (home != ""):
+        if (_lf_is_file of (home + "/.local/lib/eigenscript/" + path)) == 1:
+            return [home + "/.local/lib/eigenscript/" + path, "stdlib"]
+        if (substr of [path, 0, 4]) == "lib/":
+            if (_lf_is_file of (home + "/.local/lib/eigenscript/" + (substr of [path, 4, (len of path) - 4]))) == 1:
+                return [home + "/.local/lib/eigenscript/" + (substr of [path, 4, (len of path) - 4]), "stdlib"]
+    return null
+
 # The literal path if `st` is `load_file of "<str>"`, else null.
 # (round 186, #127) compiled functions a NESTED literal load_file target calls
 # by name. A nested load (inside a function body or a module-level branch) is
@@ -11746,8 +11887,11 @@ define nlb_scan(node, base, earliest, where) as:
         return 0
     local path is _lf_target of node
     if path != null:
-        local full is (_lf_dirname of base) + path
-        local csrc is read_text of full
+        local csrc is null
+        local lr is _lf_resolve of [base, path]
+        if lr != null:
+            if lr[1] == "static":
+                csrc is read_text of (lr[0])
         if (csrc != null) and ((len of csrc) > 0):
             local cast is eigen_parse of (eigen_tokenize of csrc)
             local ids is {}
@@ -11898,22 +12042,32 @@ define module_bindings_walk(stmts, names, seen) as:
 # only the immediate statement list DROPPED a binding made in a taken `if`
 # (`M.b` read null); descending into every body INVENTED one from a not-taken
 # `else` (`M.z` read 0 — a default-initialised global, so a plausible NUMBER
-# rather than a null). Descending also picked up `for`-body names, which the VM
-# does not have at all because a `for` body gets its own env.
+# rather than a null). Descending also picked up `for`-body names, which the
+# c1684bc VM did not have at all because a `for` body got its own env ON THE
+# IMPORT ROAD -- a road-dependence EigenScript#1056 removed.
 #
 # Only the immediate top level and `unobserved:` are unconditionally executed.
 # Everything else is refused rather than guessed.
 #
 # WHICH bodies leak was MEASURED against the VM, not reasoned from "`if`
 # creates no scope". A module `a is 1 / <body> / b is 2` imported and probed
-# with `keys of M` gives:
+# with `keys of M` gives, at the v0.43.0 pin (a6c50fb, #1106):
 #
 #   if / loop while / try / match case    leak — `inner` is in the dict
-#   for                                   does NOT — ["a", "b"], `M.inner` null
+#   for                                   leaks TOO — ["a", "inner", "b"];
+#                                         nested `for`, and `if` inside the
+#                                         body, leak as well; only the loop
+#                                         BINDER stays loop-scoped (an `i is 9`
+#                                         in the body updates the loop-local
+#                                         and never reaches the dict)
 #
-# so a `for` body can never create a top-level binding, and the first version
-# of this guard, which refused on `for`, was refusing programs that were
-# always fine. Same measurement settled two more: a `local` inside a top-level
+# and the leak is conditional the same way an `if` is: `for i in []: x is 5`
+# and a `break` before the assignment leave the key ABSENT. So a fresh
+# binding in a `for` body is refused exactly like one in an `if` (this is
+# the #147 pin bump's flip of t100's `floop` shape: the c1684bc table said
+# "for does NOT leak", and the exemption below that encoded it -- the
+# invariant-16 "guard inherits its table's axes" case -- was dropped with
+# the bump). Same measurement settled two more: a `local` inside a top-level
 # `if` DOES leak (so `local` is not exempt), and a `define` inside one does
 # too (so a nested `func` is a binding to report, not a subtree to skip).
 #
@@ -11949,7 +12103,7 @@ define module_cond_binds(stmts, bound, out) as:
         local h is u[0]
         if h == "unobserved":
             module_cond_binds of [u[1], bound, out]
-        elif (h == "if") or (h == "loop") or (h == "try") or (h == "match"):
+        elif (h == "if") or (h == "loop") or (h == "try") or (h == "match") or (h == "for"):
             collect_cond_binds of [u, bound, out]
         # A `func`/`assign`/`import` here is an immediate top-level binding, so
         # it joins `bound` and is NOT scanned. It must not `return` — a module
@@ -11968,7 +12122,19 @@ define collect_cond_binds(node, bound, out) as:
         return 0
     local h is node[0]
     if h == "for":
-        # a `for` body has its own env: nothing inside it reaches the module
+        # v0.43.0 (#1106): a `for` body's fresh `is` reaches the module dict
+        # like an `if` body's -- conditionally. Only the BINDER is
+        # loop-scoped, so a write to it inside the body is not a module
+        # binding: scan the body with the binder added to a COPY of `bound`
+        # (a later `if c: i is 5` after the loop is still a fresh conditional
+        # binding of the module and must not be hidden by the loop's `i`).
+        collect_cond_binds of [node[2], bound, out]
+        local lb is {}
+        local bk is keys of bound
+        for bi in range of (len of bk):
+            lb[(bk[bi])] is 1
+        lb[(node[1])] is 1
+        collect_cond_binds of [node[3], lb, out]
         return 0
     if h == "func":
         if bound[(node[1])] != 1:
@@ -12276,14 +12442,21 @@ define splice_module(mname, base, depth, out) as:
         # refuses nearly everything; a precise one has holes. Prefixed
         # names cannot collide, so there is nothing left to compare.
         if G_IMPORTED[mname] != 1:
-            local mpath is (_lf_dirname of base) + mname + ".eigs"
-            local msrc is read_text of mpath
+            # The VM's import requests `<name>.eigs`, then `lib/<name>.eigs`,
+            # each through the one resolution chain (#1056) -- containing
+            # directory, eigs_modules walk, eigs.json project root, stdlib
+            # roots. Both kinds are spliced: a module is compiled wherever it
+            # came from.
+            local mpath is null
+            local msrc is null
+            local mr is _lf_resolve of [base, mname + ".eigs"]
+            if mr == null:
+                mr is _lf_resolve of [base, "lib/" + mname + ".eigs"]
+            if mr != null:
+                mpath is mr[0]
+                msrc is read_text of mpath
             if (msrc == null) or ((len of msrc) == 0):
-                if (G_STDLIB[0]) != "":
-                    mpath is (G_STDLIB[0]) + "/lib/" + mname + ".eigs"
-                    msrc is read_text of mpath
-            if (msrc == null) or ((len of msrc) == 0):
-                throw of ("AOT: import '" + mname + "' not found (looked beside the program, then in the stdlib lib/)")
+                throw of ("AOT: import '" + mname + "' not found (the VM's chain from '" + base + "': containing directory, eigs_modules walk, eigs.json project root, stdlib roots -- for <name>.eigs then lib/<name>.eigs)")
             local mast is eigen_parse of (eigen_tokenize of msrc)
             # The rename set: every name the module can create in the merged
             # scope — top-level bindings plus free assignment targets at any
@@ -12377,6 +12550,43 @@ define has_computed_load_file(node) as:
             return 1
     return 0
 
+# A literal load_file in a NESTED position (a function body, a branch, a
+# try) of a SPLICED child stays a runtime call (#127's documented residual),
+# and so does a top-level one in a spliced child whose chain ends at a
+# STDLIB root (the splice loop hands that statement here). At run time the
+# linked VM resolves the call from the native program's baked g_script_dir
+# -- the MAIN program's directory -- where the VM uses the CHILD's
+# directory. Rewrite the literal to the absolute path the VM's chain answers
+# from the child's base: an absolute path is step 1 of that chain, used
+# as-is on both sides, so the runtime call is base-independent. A target no
+# step answers is refused by name (the VM raises from a base the native
+# program cannot reproduce), and so is a stdlib-tier hit the transpiler
+# could not check (no $EIGS_DIR: the resolved path is not absolute, and
+# leaving the literal would let the main directory's step 2 shadow the
+# stdlib -- t307's silent-wrong class). Depth 0 is untouched: there the
+# baked base IS the VM's base.
+define _lf_rewrite_nested(node, base) as:
+    if (type of node) != "list":
+        return 0
+    if (len of node) == 0:
+        return 0
+    if node[0] == "call":
+        local c is unwrap of node[1]
+        if ((type of c) == "list") and ((len of c) > 1):
+            if (c[0] == "ident") and (c[1] == "load_file"):
+                local a is unwrap of node[2]
+                if ((type of a) == "list") and ((len of a) > 1) and (a[0] == "str"):
+                    local lr is _lf_resolve of [base, a[1]]
+                    if lr == null:
+                        throw of ("AOT: load_file target '" + (a[1]) + "' (from '" + base + "') resolves nowhere on the VM's chain from that file's directory -- containing directory, eigs_modules walk, eigs.json project root, stdlib roots (EigenScript#1056). Left as a runtime call inside the native program it would resolve from the MAIN program's directory instead, a base the VM never uses; refused rather than guessed (ouroboros#147). Add an eigs.json at the project root or fix the path.")
+                    if (substr of [(lr[0]), 0, 1]) != "/":
+                        throw of ("AOT: load_file target '" + (a[1]) + "' (from '" + base + "') is not answered by the file's directory, the eigs_modules walk or an eigs.json project root, and the stdlib step could not be checked (no EIGS_DIR handed to the transpiler). Left as a runtime call inside the native program it would resolve from the MAIN program's directory, whose own lib/ shadows the stdlib on the VM's chain; refused rather than guessed (ouroboros#147). Build through aot/build.sh (it passes EIGS_DIR).")
+                    a[1] is lr[0]
+                return 0
+    for k in range of (len of node):
+        _lf_rewrite_nested of [node[k], base]
+    return 0
+
 define splice_static_loads(blk, base, depth) as:
     if depth > 16:
         throw of "AOT: load_file nesting deeper than 16 — cyclic load?"
@@ -12391,21 +12601,34 @@ define splice_static_loads(blk, base, depth) as:
         else:
             local path is _lf_target of st
             if path == null:
+                if depth > 0:
+                    _lf_rewrite_nested of [st, base]
                 append of [out, st]
             else:
-                # BEST-EFFORT, and that is the design rather than a shortcut.
-                # The VM resolves load_file through a CHAIN: script-dir first,
-                # then the exe-dir stdlib step (g_exe_dir/../<path>, which is how
-                # `load_file of "lib/int_vector.eigs"` finds the stdlib). This
-                # pass can only resolve the script-dir step — it has no idea what
-                # the built binary's exe dir will be — so anything it cannot read
-                # STAYS a runtime call and behaves exactly as it does today.
-                #
-                # Caught by t76_load_file_paths, which exercises both prongs: the
-                # first version threw on an unresolvable path and turned a passing
-                # stdlib load into a build failure.
-                local full is (_lf_dirname of base) + path
-                local csrc is read_text of full
+                # The VM's chain, mirrored statically (_lf_resolve, #147 /
+                # EigenScript#1056): containing directory, eigs_modules walk,
+                # eigs.json project root -> SPLICED; stdlib roots -> the
+                # runtime call (t76's stdlib prong, F-OURO-34) -- at depth 0
+                # with the literal as written (the baked base is the VM's),
+                # in a spliced child with the literal rewritten to the
+                # ABSOLUTE stdlib path (the runtime call would otherwise
+                # re-run the chain from the MAIN directory, whose step 2
+                # shadows the stdlib: t307). Unresolvable: a runtime call at
+                # depth 0 (the VM raises from the same base), refused in a
+                # spliced child (the runtime call would use the main
+                # program's dir).
+                local lr is _lf_resolve of [base, path]
+                local full is null
+                local csrc is null
+                if lr == null:
+                    if depth > 0:
+                        throw of ("AOT: load_file target '" + path + "' (from '" + base + "') resolves nowhere on the VM's chain from that file's directory -- containing directory, eigs_modules walk, eigs.json project root, stdlib roots (EigenScript#1056). Left as a runtime call inside the native program it would resolve from the MAIN program's directory instead, a base the VM never uses; refused rather than guessed (ouroboros#147). Add an eigs.json at the project root or fix the path.")
+                elif lr[1] == "stdlib":
+                    if depth > 0:
+                        _lf_rewrite_nested of [st, base]
+                elif lr[1] == "static":
+                    full is lr[0]
+                    csrc is read_text of full
                 if csrc == null:
                     append of [out, st]
                 elif (len of csrc) == 0:

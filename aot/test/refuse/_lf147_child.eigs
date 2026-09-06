@@ -1,0 +1,4 @@
+try:
+    load_file of "no_such_file_lf147.eigs"
+catch e:
+    print of "caught"

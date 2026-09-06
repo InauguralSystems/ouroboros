@@ -1,0 +1,10 @@
+# Spliced child of t307. From THIS directory the VM's chain for
+# "lib/bcd.eigs" passes step 2 (no lib/ here), the eigs_modules walk (path
+# has a slash), the project root (<repo>/lib/bcd.eigs does not exist) and
+# ends at the STDLIB root -- not at the main file's aot/test/lib/bcd.eigs
+# decoy. The splicer must rewrite the literal to that absolute stdlib path
+# so the runtime call inside the native program cannot be shadowed by the
+# main directory's copy.
+load_file of "lib/bcd.eigs"
+print of (from_bcd of 0x26)
+print of "stdlib-child-done"

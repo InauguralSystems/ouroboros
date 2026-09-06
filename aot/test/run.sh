@@ -186,6 +186,12 @@ if [ "$bench_n" -eq 0 ]; then
 else
   echo "--- bench tier: $bench_n program(s) build-checked ---"
 fi
+# ---- load_file shadow arm (ouroboros#147) ---------------------------------
+# The parity loop above runs every fixture from aot/ with the fixture beside
+# its dependencies, so it can never observe a cwd-vs-file-directory
+# disagreement. This arm builds the #147 A/B layout in a temp dir and runs
+# both sides from the SHADOWING cwd (test/load_file_shadow.sh).
+if EIGS="$EIG" bash test/load_file_shadow.sh; then :; else fail=1; fi
 # ---- REFUSAL TIER (ouroboros#112) ----------------------------------------
 # The parity tiers above can only assert that a program COMPILES AND MATCHES.
 # A program the AOT is supposed to REJECT reads to them as BUILD FAIL, so every

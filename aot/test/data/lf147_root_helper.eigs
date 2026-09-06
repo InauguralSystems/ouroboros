@@ -1,0 +1,3 @@
+print of ("root-helper:" + (str of (compiled_here of 3)))
+define from_root_helper(n) as:
+    return (compiled_here of n) - 1
