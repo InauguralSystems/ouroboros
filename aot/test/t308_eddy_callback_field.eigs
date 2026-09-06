@@ -1,0 +1,67 @@
+# (#139 census closure) eddy/explorer.eigs -- the consumer whose first census
+# refusal was "fn used as a value must take exactly one parameter". Its shape:
+# a TWO-parameter callback stored into a widget dict field that the library
+# constructor initialised to null (`"on_scrub": null` in lib/ui_w_viz's
+# timeline), fired by the library through the field behind a `!= null` guard
+# (`if tl.on_scrub != null: tl.on_scrub of [tl, t]`), and the callback
+# receives the widget itself plus the gesture time and mutates MODULE dict
+# state (`E.scrub_fires is E.scrub_fires + 1`). The widget itself lives in a
+# module dict field that starts null (`E.tl`) and is assigned later.
+#
+# Reduced from eddy/explorer.eigs (explorer_on_scrub / explorer_build_ui)
+# and the firing site in lib/ui_w_viz.eigs. No gfx: the "library" half is
+# the three lines of it that matter.
+
+# ---- the library half: a widget whose callback slot starts null ----
+define timeline(name) as:
+    return {"name": name, "cursor": null, "on_scrub": null, "fires": 0}
+
+define fire_scrub(tl, t) as:
+    tl.cursor is t
+    tl.fires is tl.fires + 1
+    if tl.on_scrub != null:
+        tl.on_scrub of [tl, t]
+    return null
+
+# ---- the consumer half: eddy's E dict and its callback ----
+E is {
+    "tl": null,
+    "status": "",
+    "scrub_fires": 0,
+    "last_t": -1
+}
+
+define explorer_scrub_update(ft) as:
+    E.last_t is ft
+    E.status is f"t = {ft}   fires = {E.scrub_fires}"
+    return null
+
+# lint: allow W002 -- callback signature
+define explorer_on_scrub(w, t) as:
+    E.scrub_fires is E.scrub_fires + 1
+    explorer_scrub_update of t
+    print of f"{w.name}: scrub at {t}"
+    return null
+
+define explorer_build_ui() as:
+    E.tl is timeline of "lanes"
+    E.tl.on_scrub is explorer_on_scrub
+    return null
+
+# before the UI is built the slot is null: the guard must skip it
+orphan is timeline of "orphan"
+fire_scrub of [orphan, 5]
+print of (orphan.fires)
+print of (orphan.cursor)
+print of (E.scrub_fires)
+
+explorer_build_ui of null
+fire_scrub of [E.tl, 3]
+fire_scrub of [E.tl, 7]
+print of E.status
+print of (E.scrub_fires)
+print of (E.tl.fires)
+print of (E.tl.cursor)
+print of (E.last_t)
+print of (E.tl.on_scrub == explorer_on_scrub)
+print of (type of E.tl.on_scrub)

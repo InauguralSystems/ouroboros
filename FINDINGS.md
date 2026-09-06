@@ -1626,3 +1626,100 @@ program(s) build-checked ---`, `--- refusal tier: 56 guard(s) exercised
 ---`, `--- runtime-refusal tier: 1 residual(s) exercised ---`, `--- all
 AOT parity tests passed ---`; `aot/core_check.sh` → `build.sh CORE matches
 upstream SOURCES minus CLI_ONLY (20 TUs)`.
+
+## F-OURO-38 — #139 census closure: 5 of the original 9 compile at HEAD, the temp-pool drain freed a caller's argument under a nested call — FIXED; the v0.43.0 oracle cannot run the compiler at all (pin, #147)
+
+**The instrument, run three ways (HEAD 61f8319, 2026-09-06).**
+
+1. **Against the v0.43.0 release oracle, as the brief asked:
+   `transpiles: 0 / refused: 116`** — every row the same first refusal,
+   `Parse error line 2300:39: 'report' is a reserved observer form ...
+   [E005]` in `src/frontend.eigs` (`_env_set_local of [env, "report",
+   report]`). That is the COMPILER failing to parse, not the consumers:
+   EigenScript#1102 (v0.43.0) reserved `report`/`report_value`, and the
+   frontend binds the word. Nothing about the envelope can be measured on
+   that oracle until the pin moves (#147, in flight); the number is
+   recorded so nobody reads a 0/116 as an envelope collapse.
+2. **Against the PINNED oracle c1684bc (the `EIGS_REF` in
+   `.devcontainer/Dockerfile`, 60 s transpile budget):
+   `transpiles: 85 / refused: 29 / timeout: 2 (total 116)`.** The total
+   is 116, not the 120 of the 2026-09-05 rows, because this box has no
+   `legibility-experiment` checkout; the discovery roots are the same.
+3. **The two timeouts re-run with a 600 s budget:** `EigenMiniSat/
+   minisat.eigs` transpiles (41 s alone, >60 s under a loaded box);
+   `Tidepool/tidepool.eigs` is a REFUSAL after 122 s (`function
+   'predators_for_tier' assigns module name 'n' whose first module-level
+   binding does not provably precede` — the order guard). So the honest
+   split is **86 transpile / 30 refused / 0 timeout**.
+
+First-refusal histogram over the 30 (messages normalized):
+
+| n | first refusal |
+|---|---|
+| 10 | function assigns module name whose first module-level binding is later (order guard; Tidepool x7 incl. tidepool.eigs, dynamics/life, train) |
+| 9 | task_spawn — cooperative tasks are pumped by the VM run loop (#188, design; liferaft x4, eddy x4, cross_lab) |
+| 4 | `local X` shadowing a module binding is not supported here (tidelog, dynamics/orbit, predicate_calibration, predicate_fit) |
+| 2 | nested define assigns enclosing name (outward; token_train, phugoid/swarm) |
+| 2 | cannot emit statement node (`import` in module_scope_lab, `binop` in transformer_eval_sequence_v2) |
+| 1 | zero-arg call binds the parameter null and the callee reads it (polymethod) |
+| 1 | a local of an OBSERVED function (gauntlet) |
+| 1 | temporal interrogative without `at` only supports `prev` (observer_lab) |
+
+**The original nine, BUILT (transpile + gcc link) and RUN against the
+c1684bc VM** — "compiles" here means the binary links; the run column is
+the program's own headless mode:
+
+| program | build | run vs VM |
+|---|---|---|
+| DMG/dmg.eigs | COMPILES (41 s) | `roms/cpu_instrs.gb --cycles 500000`: byte-exact modulo the two wall-clock lines (`Time:`/`Speed:`), rc 0 |
+| EigenMiniSat/minisat.eigs | COMPILES (71 s) | `--cdcl simple_sat.cnf`, `simple_sat.cnf` (DPLL), `--cdcl pigeonhole_3_2.cnf`: byte-exact modulo `ms=`, rc 0 — every counter identical |
+| EigenRegex/regex.eigs | COMPILES (4 s) | a package: standalone prints nothing both sides (rc 0). Driven through `import regex` by its own stage suites (copied beside the package so the AOT's beside-the-program import resolution finds it): **s1 (20 checks) and s8 (48 checks) DIED rc 1 on the first check** before this entry, byte-exact after — see the bug below |
+| liferaft/liferaft.eigs | REFUSED | `task_spawn` (#188, design) |
+| tidelog/tidelog.eigs | REFUSED | `` `local buf` shadowing a module binding `` (buffer-classified shadow) |
+| dynamics/dynamics.eigs | COMPILES (1 s) | a package: prints nothing both sides (rc 0); `dynamics/solve.eigs` byte-exact (14 lines), `logistic.eigs` byte-exact |
+| eddy/explorer.eigs | COMPILES (1 s) | a module fragment (loaded by explorer_main, which is refused on `task_spawn`): standalone defines only, prints nothing both sides (rc 0); no headless driver reaches it under the AOT |
+| polymethod/polymethod.eigs | REFUSED | zero-arg call to `main` — the callee reads its parameter (`main()` then `local n is 12` inside a branch, so the implicit `n` is not provably dead) |
+| Tidepool/eval_policy.eigs | REFUSED | `_unflatten_weights` assigns module name `policy` (order guard) |
+
+**5 of 9 compile** (DMG, EigenMiniSat, EigenRegex, dynamics, eddy);
+newly admitted since the issue's first table: EigenMiniSat, EigenRegex,
+dynamics, eddy. Consumer-derived fixtures per admitted program:
+EigenMiniSat t77/t80/t81/t82/t108/t210; EigenRegex t187 (its callback
+convention) and now **t309**; dynamics t303/t304/t305; eddy had NONE —
+**t308** added (its `on_scrub` shape: a two-parameter callback stored into
+a widget field the library initialised null, fired through the field
+behind a `!= null` guard, mutating module dict state). Exit condition
+(≥5 of 9 compile AND a fixture per admitted program): **MET**.
+
+**The bug the census paid for (BUG, FIXED here, t309).** Round 171 made
+every statement that owns argument temporaries end with
+`aot_tmp_drain()` — the WHOLE pool. A user call nested in an argument
+list (`check of ["a matches a", regex.re_match of [prog, "a"], 1]`)
+evaluates its sequenced arguments into the pool (`_sqa0` = the label)
+and then runs the callee, whose statements drain the pool under the
+caller: the label is freed, its memory reused, and `label + " OK"` dies
+`cannot apply '+' to ? and str` (rc 1) where the VM prints — or, with a
+luckier allocator, prints garbage. 14-line repro
+(`check of ["x", g of 1, 1]` where g's body makes any call with a
+list-literal argument). Fix: drains are RELATIVE — `emit_stmts` declares
+`int _tmsN = aot_tmp_mark();` before a temp-owning statement and drains
+to it after; `emit_return` drains to the same mark. The per-iteration
+release in loops is unchanged (each body statement has its own mark),
+and a callee's leftovers are released by the caller's own drain-to.
+Planted: reverting the two drain sites in place turns t309 red (rc 1,
+the original message); emitting `make_null()` for a function-as-value
+turns t308 red (the callback never fires).
+
+**Residuals.** (a) `import` resolves beside the program then the stdlib
+only — EigenRegex's real suites (`tests/test_s1_literals.eigs` importing
+the package at the repo root) refuse at build time, `import 'regex' not
+found`; the VM at c1684bc resolves via cwd and at v0.43.0 via the
+`eigs.json` project root (EigenScript#1056) — the pin bump is where that
+road should be matched. (b) The census counts acceptance, not runs: this
+entry is the second time a "compiles" row died on its first real driver
+(F-OURO-36 was the first) — `CENSUS_BUILD=1` plus a per-repo headless
+command is the next instrument. (c) The order guard is now the largest
+class (10), all Tidepool-shaped (`new_game` assigning `game`); #218 lifts
+one form of it.
+
+Gates at c1684bc: aot/test/run.sh and test/run.sh — see the commit body.

@@ -273,6 +273,15 @@ g_mod_has_try is 0
 g_cur_genp_rebound is {}
 g_cur_genp_release is ""
 g_stmt_tmp_used is 0
+# (#139 census) the statement's temp-pool MARK. Statement drains are
+# RELATIVE (`aot_tmp_drain_to(mark)`), never the whole pool: a user call
+# nested in an argument list runs the callee's statements while the
+# caller's `_sqa` temporaries are still live in the pool, and the callee's
+# full `aot_tmp_drain()` freed them under the caller (use-after-free;
+# `check of ["label", g of 1, 1]` died "cannot apply '+' to ? and str" --
+# reduced from EigenRegex's stage suites, which import regex.eigs).
+g_stmt_tmp_mark is ""
+g_stmt_tmp_seq is 0
 # (round 154) does the program's call graph admit unbounded nesting? Only
 # then does every compiled function carry the frame-depth bracket (the VM's
 # 4096-frame cap). An acyclic graph bounds nesting by its longest path, far
@@ -3127,7 +3136,9 @@ define emit_return(ctype, expr, ind, pre) as:
         return ind + "return " + expr + ";\n"
     local s is ind + "{ " + ctype + " _rv = " + expr + ";"
     if g_stmt_tmp_used == 1:
-        s is s + " aot_tmp_drain();"
+        # Relative to this statement's mark (declared by emit_stmts just
+        # before the statement): the caller's pending temporaries stay.
+        s is s + " aot_tmp_drain_to(" + g_stmt_tmp_mark + ");"
     if g_cur_genp_release != "":
         # (round 162) the value is evaluated (and incref'd if it IS the
         # parameter) before the frame's owned rebinds are released.
@@ -3175,17 +3186,28 @@ define emit_stmts(stmts, ind, nm, bt, minits, gf) as:
     local out is ""
     for i in range of (len of stmts):
         local _tu is g_stmt_tmp_used
+        local _tm is g_stmt_tmp_mark
         g_stmt_tmp_used is 0
+        g_stmt_tmp_seq is g_stmt_tmp_seq + 1
+        g_stmt_tmp_mark is "_tms" + (str of g_stmt_tmp_seq)
         local one is emit_stmt of [stmts[i], ind, nm, bt, minits, gf]
         mark_bound_so_far of [stmts[i]]
         if g_stmt_tmp_used == 1:
             # (round 171) release the statement's owned argument temporaries.
             # A compound statement (if/loop/for) drains after its whole body
             # too; the bodies' own statements drained their own.
-            one is one + ind + "aot_tmp_drain();\n"
+            # (#139 census) release DOWN TO THE STATEMENT'S MARK, not the
+            # whole pool: below the mark sit the temporaries of the CALLER
+            # whose argument list this function is being evaluated inside
+            # (`f of ["s", g of 1]` -- g's statements run while "s" is
+            # live). A whole-pool drain there freed the caller's argument
+            # under it. Marked per statement so a loop body still releases
+            # per iteration.
+            one is ind + "int " + g_stmt_tmp_mark + " = aot_tmp_mark();\n" + one + ind + "aot_tmp_drain_to(" + g_stmt_tmp_mark + ");\n"
         out is out + one
         out is out + (sh_after_stmt of [stmts[i], ind, nm, bt])
         g_stmt_tmp_used is _tu
+        g_stmt_tmp_mark is _tm
     return out
 
 # (round 139, #172) a C-variable buffer REBIND releases the previous value:

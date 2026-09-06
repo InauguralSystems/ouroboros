@@ -1,0 +1,46 @@
+# (#139 census) a user call NESTED IN AN ARGUMENT LIST whose callee runs a
+# statement that owns argument temporaries. The caller's sequenced
+# arguments (`_sqa0`, the label string) sit in the temp pool while the
+# callee runs; the callee's statement drain was `aot_tmp_drain()` -- the
+# WHOLE pool -- so it freed the caller's label under it and `label + " OK"`
+# died "cannot apply '+' to ? and str" (rc 1) where the VM prints.
+# Reduced from EigenRegex's stage suites (`check of ["a matches a",
+# regex.re_match of [prog, "a"], 1]` -- every check died on the first line
+# once the import resolved). Drains are now relative to a per-statement
+# mark; the nested `inner of [x, [1, 2]]` (a list-literal argument -> an
+# owned temporary) is what makes the callee drain at all.
+
+define inner(p, q) as:
+    return p + (len of q)
+
+define g(x) as:
+    inner of [x, [1, 2]]
+    return 1
+
+define h(x) as:
+    # a return whose expression owns temporaries (drain on the return path)
+    return inner of [x, [1, 2, 3]]
+
+define check(label, got, want) as:
+    if got == want:
+        print of (label + " OK")
+    else:
+        print of (label + " FAIL")
+    return 0
+
+check of ["nested call in arg list", g of 1, 1]
+check of ["nested call on the return path", h of 1, 4]
+# two levels: the callee's callee drains while both callers hold temps
+define gg(x) as:
+    return g of x
+
+check of ["two levels", gg of 1, 1]
+# a loop in the callee: per-iteration release must still happen
+define loopy(n) as:
+    local acc is 0
+    for i in range of n:
+        acc is acc + (inner of [i, [1]])
+    return acc
+
+check of ["loop in callee", loopy of 4, 10]
+print of "done"
