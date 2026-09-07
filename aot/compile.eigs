@@ -9117,7 +9117,7 @@ define emit_function(fn, finfo, gnm, gbt) as:
                     _ilwhy is "this function assigns it a value that is not PROVABLY numeric here -- either a genuinely non-numeric value, or one this pass cannot type (an env-boxed read such as a for-binder, which the VM would happily bind to the frame-local) -- and the interrogated call-local pair is a C double; a Value* pair (or an unconditional unbox, which would die where the VM does not) is not emitted yet"
                 elif (sh_deferred_ref of [body, _pan[k]]) == 1:
                     _ilwhy is "a nested define/lambda reads the name (the VM's chain walk sees this function's frame binding; a lifted C function would read the module binding)"
-                throw of ("AOT: function '" + name + "' assigns module name '" + _pan[k] + "' that it also interrogates. On the VM an interrogated name binds function-LOCAL (the #99 escape pre-scan), so the write never reaches the module binding; " + _ilwhy + ". Mark it `local` to make the VM's binding explicit, or rename the module binding (ouroboros#218).")
+                throw of ("AOT: function '" + name + "' assigns module name '" + _pan[k] + "' that it also interrogates. On the VM an interrogated name binds function-LOCAL (the #99 escape pre-scan), so the write never reaches the module binding; " + _ilwhy + ". The exit is to RENAME the module binding so the function's name is its own -- measured on all five refused members of this class, each transpiles once the module name differs. `local` is not an exit here (a function that interrogates a name is traced, and both `local`-shadow guards refuse an observed/temporal function first), which is what the earlier wording advertised (ouroboros#218).")
     # integer names for this scope (params forced + int-by-assignment locals);
     # sets g_int, which is_int_expr/emit_num/emit_stmt read while emitting. In an
     # OBSERVED function, numerics are env-boxed (routed through aot_get/observe),
@@ -12452,6 +12452,207 @@ define collect_local_decls(node, bound) as:
         collect_local_decls of [node[k], bound]
     return 0
 
+# ---- a module's free READ that can run before its first free WRITE --------
+# (residual of ouroboros#141, found by that issue's blind critic)
+#
+# The rename set below is `module_bindings ∪ collect_free_assigns`. For a name
+# the module BINDS at its top level that set is exactly right. For a name the
+# module only free-ASSIGNS inside a body it is right for the WRITE and WRONG
+# for a READ that can run first. Measured on the v0.43.0 pin (a6c50fb):
+#
+#   _pmix.eigs                     p_readwrite.eigs
+#     define f() as:                 gx is 42
+#         print of gx                import _pmix
+#         gx is 5                    print of (_pmix.f of null)
+#         return gx                  print of gx
+#
+#   VM   42 / 5 / 42   rc 0
+#   AOT  null / 5 / 42 rc 0, build rc 0, empty build log   <-- SILENT WRONG
+#
+# The VM's two rules, both measured, are not each other's mirror image:
+#   READ  of a name the module never bound resolves OUTWARD into the importer
+#         (`_xread.readg` -> the program's 42, t322), and DIES "undefined
+#         variable 'gx'" at the read if the importer has none;
+#   WRITE of that name is CALL-LOCAL -- it does not reach the module scope
+#         either: two calls of `f` above print 42/5 twice, and a sibling
+#         `setit`/`getit` pair gives 0 / 42 / 42, never 5.
+# So the answer to a read depends on whether THIS CALL has already written the
+# name -- per-call dynamic state, with an outward lookup that must be able to
+# die AT THE READ. There is no cheap correct compile of that, and a rename
+# that guesses is the silent-wrong class this repo exists to kill. Refused by
+# name instead, exactly as the PROGRAM-scope member of the same order class
+# already is (the "does not provably precede" guard;
+# test/refuse/outward_write_before_binding.eigs).
+#
+# The refusal is scoped to names the module never binds at its top level: a
+# top-level binding is spliced in program order, so its reads are answered by
+# the renamed name and stay correct (t319's arm B, `bump`, still compiles --
+# it WRITES `ctr` before reading it).
+#
+# Definite-assignment, statement by statement, deliberately conservative:
+# an `if` counts only when BOTH arms assign, a loop body never counts (it may
+# run zero times), a `try` body never counts (it may die part-way). `st` is
+# the two-cell state [assigned, found], mutated in place.
+define fr_reads(node, nm) as:
+    if (type of node) != "list":
+        return 0
+    if (len of node) == 0:
+        return 0
+    if node[0] == "ident":
+        if node[1] == nm:
+            return 1
+        return 0
+    for k in range of (len of node):
+        if (fr_reads of [node[k], nm]) == 1:
+            return 1
+    return 0
+
+# A nested `define`: its body runs when the function is CALLED, which is
+# necessarily AFTER the `define` statement itself, so whatever is definitely
+# assigned at that point (`st[0]`) still holds inside -- but nothing later in
+# the enclosing list does. Inheriting that state rather than restarting from
+# zero is what keeps `lib/ui_w_dialog`'s `file_dialog` in the envelope: it
+# binds `fd` and only then defines the `_fd_on_select` callback that reads it.
+# Parameters and `local` declarations shadow the module name (collect_local_
+# decls is the same whole-body approximation collect_free_assigns itself
+# uses), so those bodies are skipped.
+define fr_func(fnode, nm, st) as:
+    local ps is fnode[2]
+    for pk in range of (len of ps):
+        if ps[pk] == nm:
+            return 0
+    local decls is {}
+    local fk is 3
+    loop while fk < (len of fnode):
+        collect_local_decls of [fnode[fk], decls]
+        fk is fk + 1
+    if decls[nm] == 1:
+        return 0
+    # ["func", name, params, BODY, param_defaults] -- the body is ONE slot (a
+    # statement list), and slot 4 holds the default expressions, which the VM
+    # evaluates in the callee's scope before the body runs.
+    local sg is [st[0], 0]
+    if (len of fnode) > 4:
+        if ((fr_reads of [fnode[4], nm]) == 1) and (st[0] != 1):
+            sg[1] is 1
+    fr_scan of [fnode[3], nm, sg]
+    if sg[1] == 1:
+        st[1] is 1
+    return 0
+
+define fr_branch(body, nm, st) as:
+    local sb is [st[0], 0]
+    fr_scan of [body, nm, sb]
+    if sb[1] == 1:
+        st[1] is 1
+    return sb[0]
+
+define fr_scan(stmts, nm, st) as:
+    if (type of stmts) != "list":
+        return 0
+    for i in range of (len of stmts):
+        local u is unwrap of stmts[i]
+        if (type of u) != "list":
+            continue
+        if (len of u) == 0:
+            continue
+        local h is u[0]
+        if h == "func":
+            # a `define nm(...)` BINDS nm, and it binds it BEFORE its own body
+            # can run (the body runs only on a call, which is after this
+            # statement) -- so the mark goes ahead of the body scan, and a
+            # self-recursive define does not read itself "before the write".
+            # (lib/ui_w_dialog `_make_prop_cb`: `define cb(w) as: ...` then
+            # `return cb`, with `cb` in the rename set from a free assign in
+            # another function.)
+            if u[1] == nm:
+                st[0] is 1
+            fr_func of [u, nm, st]
+            continue
+        if h == "assign":
+            # the RHS is evaluated BEFORE the name is bound, so `x is x + 1`
+            # with no earlier binding is a read-before-write.
+            if ((fr_reads of [u[2], nm]) == 1) and (st[0] != 1):
+                st[1] is 1
+            if u[1] == nm:
+                st[0] is 1
+            continue
+        if h == "if":
+            if ((fr_reads of [u[1], nm]) == 1) and (st[0] != 1):
+                st[1] is 1
+            local a1 is fr_branch of [u[2], nm, st]
+            local a2 is fr_branch of [u[3], nm, st]
+            # An `if` with no `else` has a null/empty arm, so a2 can only be 1
+            # when the name was already assigned before the statement.
+            if (a1 == 1) and (a2 == 1):
+                st[0] is 1
+            continue
+        if h == "for":
+            if ((fr_reads of [u[2], nm]) == 1) and (st[0] != 1):
+                st[1] is 1
+            if u[1] != nm:
+                fr_branch of [u[3], nm, st]
+            continue
+        if h == "loop":
+            if ((fr_reads of [u[1], nm]) == 1) and (st[0] != 1):
+                st[1] is 1
+            fr_branch of [u[2], nm, st]
+            continue
+        if h == "try":
+            fr_branch of [u[1], nm, st]
+            if u[2] != nm:
+                fr_branch of [u[3], nm, st]
+            continue
+        if h == "match":
+            if ((fr_reads of [u[1], nm]) == 1) and (st[0] != 1):
+                st[1] is 1
+            local cs is u[2]
+            for ci in range of (len of cs):
+                local cse is cs[ci]
+                if ((fr_reads of [cse[0], nm]) == 1) and (st[0] != 1):
+                    st[1] is 1
+                fr_branch of [cse[1], nm, st]
+            continue
+        if h == "destructure":
+            # ["destructure", names, rhs] -- the RHS runs first, then every
+            # name binds.
+            if ((fr_reads of [u[2], nm]) == 1) and (st[0] != 1):
+                st[1] is 1
+            local dns is u[1]
+            for di in range of (len of dns):
+                if dns[di] == nm:
+                    st[0] is 1
+            continue
+        if h == "import":
+            if u[1] == nm:
+                st[0] is 1
+            continue
+        if h == "unobserved":
+            # `unobserved:` always executes, so its assignments ARE definite.
+            fr_scan of [u[1], nm, st]
+            continue
+        if ((fr_reads of [u, nm]) == 1) and (st[0] != 1):
+            st[1] is 1
+    return 0
+
+# The first rename-set name the module reads before it can have written it, or
+# null. `rtop` (the module's top-level bindings) is excluded -- those are
+# spliced in program order and their reads are answered correctly.
+define module_freeread_name(stmts, rset, rtop) as:
+    local topb is {}
+    for ri in range of (len of rtop):
+        topb[(rtop[ri])] is 1
+    local rk is keys of rset
+    for ri in range of (len of rk):
+        local nm is rk[ri]
+        if topb[nm] == 1:
+            continue
+        local st is [0, 0]
+        fr_scan of [stmts, nm, st]
+        if st[1] == 1:
+            return nm
+    return null
+
 # ---- MODULE NAMESPACING (ouroboros#141) -----------------------------------
 # Rename every name a module can create in the merged scope to `<M>__<name>`,
 # so splicing cannot collide with the program and no guard is needed.
@@ -12614,6 +12815,16 @@ define splice_module(mname, base, depth, out) as:
             for ri in range of (len of rtop):
                 rset[(rtop[ri])] is 1
             collect_free_assigns of [["block", (mast[1])], {}, rset]
+            # A rename-set name the module never BINDS at its top level, READ
+            # on a path that can run before its first write in the module: the
+            # rename answers that read from the module-private name (null, or a
+            # loud `undefined variable '<M>__<n>'` from another function) where
+            # the VM resolves it outward into the importer. Refused by name --
+            # see fr_scan's header for the measurement and why no cheap correct
+            # compile exists.
+            local frn is module_freeread_name of [(mast[1]), rset, rtop]
+            if frn != null:
+                throw of ("AOT: module '" + mname + "' READS '" + frn + "' on a path that can run before the module's own first write to it, and never binds it at its top level. On the VM that read resolves OUTWARD into the importing program (and dies `undefined variable '" + frn + "'` if the importer has none) while the write is call-local; the AOT splices the module under a private prefix, so the same read would answer from '" + mname + "__" + frn + "' -- null, silently. Refused rather than guessed (ouroboros#141 residual). THE EXIT is to give '" + frn + "' a definite first write ahead of that read -- an unconditional assignment at the top of the body that reads it, or a module top-level binding (measured: one such line restores lib/ui_w_special to the envelope). Marking the write `local` also works wherever the module-shadow guard admits it (it is refused in an observed/temporal function, and where the shadow's C block would not cover every later use).")
             # A module top-level binding made inside conditional control flow
             # cannot be represented: the dict is a snapshot of what RAN.
             if (module_has_toplevel_return of ["block", (mast[1])]) == 1:

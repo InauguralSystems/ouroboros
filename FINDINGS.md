@@ -2146,6 +2146,33 @@ message and a `test/refuse/` fixture (the VM runs every one rc 0):**
   program-wide refusal ("temporal interrogative without `at` only supports
   `prev`"), not this shape's; t314 pins the `at` forms.
 
+**The refusal advertised a DEAD EXIT, and the message is corrected**
+(residual review 2026-09-07; found by the #218 critic on the boxed member,
+measured here across all five). The message said "Mark it `local` to make the
+VM's binding explicit, or rename the module binding". `local` is not an exit
+for ANY member of this class, and it cannot be, by construction: a function
+that interrogates a name is traced, and BOTH `local`-shadow guards
+(`g_locshadow`'s numeric one and `g_boxshadow`'s boxed one) test
+`(g_observed == 1) or (g_traced == 1)` first. Measured — each refuse fixture
+rewritten with `local` on the write, then transpiled against the v0.43.0 pin:
+
+| fixture | with `local` | with the module binding renamed |
+|---|---|---|
+| `interrogated_module_write_boxed` | refused: ``` `local z` shadowing a module binding is not supported here (observed/temporal function …) ``` | transpiles |
+| `interrogated_module_write_boxed_rhs` | same refusal | transpiles |
+| `interrogated_module_write_nested_ref` | same refusal | transpiles |
+| `interrogated_module_write_nonnum` | same refusal | transpiles |
+| `interrogated_module_write_observed` | same refusal | transpiles |
+
+5 of 5 dead, 5 of 5 reachable. The message now names the RENAME exit and says
+plainly that `local` is not one here and why. `interrogated_module_write_
+boxed.eigs`'s `# EXPECT:` line was moved off "assigns module name 'z' that it
+also interrogates" onto the exit sentence itself, so the wording cannot rot
+back: restoring the old message leaves the transpile refusing (rc 1) but
+makes the refuse tier fail "refused, but not for the stated reason" —
+verified by planting the old string. A refusal may only name exits reachable
+for the shape it refuses; that is now pinned rather than reviewed.
+
 **Not this class, found while checking the flagship program (residual,
 needs its own issue).** `dynamics/physics.eigs`'s `frame-velocity` line
 still diverges (VM `-0.38236…`, AOT `0`) — but `x` there is NOT a module
@@ -2221,12 +2248,21 @@ correction is what is implemented — arm B is the planted fault below.
 
 **Two boundaries the renamer must NOT cross, both now fixtured.**
 
-- A free **READ** of a name the module never binds is left alone. The VM
-  resolves reads and calls dynamically across the module boundary; only
-  WRITES stop at its edge (`docs/LANGUAGE_CONTRACT.md`, Modules;
-  EigenScript#373/#1056). Renaming it would kill a working program —
-  measured on the pin, `_xread.readg` → 42 and `_xread.callg` → 6, VM = AOT
-  (t322).
+- A free **READ** of a name **that is not in the rename set** is left alone.
+  The criterion is membership of `module_bindings ∪ collect_free_assigns`,
+  NOT "the module binds it" — an earlier version of this sentence said the
+  latter and was false, which is the whole of F-OURO-44 below: `_pmix` never
+  binds `gx` at its top level, yet a free `gx is 5` inside a function body
+  puts `gx` in the set, and the READ on the line above it was renamed with
+  the write and answered `null` where the VM resolves outward. What is true,
+  and what t322 pins, is the case where nothing in the module writes the name
+  at all: the VM resolves reads and calls dynamically across the module
+  boundary; only WRITES stop at its edge (`docs/LANGUAGE_CONTRACT.md`,
+  Modules; EigenScript#373/#1056). Measured on the pin, `_xread.readg` → 42
+  and `_xread.callg` → 6, VM = AOT (t322). The overlap — in the set AND read
+  before its first write — is refused by name since F-OURO-44; the residual
+  review is what turned this bullet from a claim into a boundary with
+  fixtures on both sides of it (t323 / `refuse/module_free_read_*`).
 - A module `local` is not renamed either; it is handled by the emitter's
   `g_locshadow`/`g_boxshadow` layer. That covers the one case the issue's
   first comment flagged as maybe needing a refusal by name — `lib/tensor.
@@ -2240,11 +2276,30 @@ correction is what is implemented — arm B is the planted fault below.
 **What re-checking the closure fixed in the renamer itself.** `G_MODPFX` —
 the binder prefix — was never restored after the recursive splice of a
 module's own `import`, so every binder of THAT module after its `import`
-line carried the INNERMOST module's prefix. Measured on t320's three-link
-chain: the emitted C carried `eig_ch_leaf__bnd__ctr` 18x and
-`eig_ch_leaf__bnd__n` 18x — ch_top's and ch_mid's binders under ch_leaf's
-name — where the fixed compiler emits `ch_leaf__bnd__n` 4, `ch_mid__bnd__n`
-6, `ch_top__bnd__ctr` 18, `ch_top__bnd__n` 8.
+line carried the INNERMOST module's prefix.
+
+**The two `ctr` counts in the first version of this paragraph were wrong and
+are corrected here** (found by the #141 critic, re-measured 2026-09-07 with
+`grep -oE '\b<sym>\b' | wc -l` on the transpile of
+`t320_import_chain_three.eigs` against the v0.43.0 pin — the metric is
+occurrences of the exact C identifier; `grep -c`, which counts LINES and
+also matches the `_b` boundness twin, reads 6 for the same symbol, which is
+the number the critic reported):
+
+| symbol | base (restore removed) | head (restore in place) |
+|---|---|---|
+| `eig_ch_leaf__bnd__ctr` | **4** (was written "18x") | 0 |
+| `eig_ch_leaf__bnd__n`   | 18 ✓ | 4 ✓ |
+| `eig_ch_mid__bnd__n`    | 0 | 6 ✓ |
+| `eig_ch_top__bnd__ctr`  | 0 | **4** (was written "18x") |
+| `eig_ch_top__bnd__n`    | 0 | 8 ✓ |
+
+The 18 belongs to `__bnd__n`, and had been copied onto `__bnd__ctr` on both
+sides. Every other count reproduced exactly, and the CLAIM is unharmed and
+sharper for the correction: on base, `ch_mid`'s and `ch_top`'s binders do not
+appear under their own names AT ALL (0 occurrences each) because all three
+modules' binders carry `ch_leaf`'s prefix; on head each module's binders
+carry its own.
 
 **No output divergence was found for it, and that is stated rather than
 dressed up.** A binder is a C BLOCK-local in the emitted code (the file-scope
@@ -2290,16 +2345,19 @@ code.
 **Fixtures** (all byte-exact vs `/home/user/wt/eigs-pin/src/eigenscript`,
 v0.43.0): `t96` (body repro 1, importer binds the module's name at depth),
 `t97` (repro 2, two modules one name), `t98`/`t99` (the guard's exemption
-hole / binder shadowing), and new here: `t308_module_private_read_err`
+hole / binder shadowing), and new here: `t317_module_private_read_err`
 (repro 3 — both die `undefined variable 'counter'` at line 16, rc 1 both,
-`_err` class); `t309_import_transitive` (arm A — `8 / 50 / 1`, and `keys of
+`_err` class); `t318_import_transitive` (arm A — `8 / 50 / 1`, and `keys of
 _arm_outer` omits `_arm_inner` per the #142 privacy rule);
-`t310_module_nested_free_assign` (arm B — `99 / 1`);
-`t311_import_chain_three` (`ch_top` → `ch_mid` → `ch_leaf` under
+`t319_module_nested_free_assign` (arm B — `99 / 1`);
+`t320_import_chain_three` (`ch_top` → `ch_mid` → `ch_leaf` under
 `test/eigs_modules/<n>/<n>.eigs`, the one import fixture that resolves
 through the `eigs_modules` step of the VM's chain; `112 / 127 / 127 / 15 / 3
 / 1000` with snapshots `100 / 10 / 1`);
-`t312_module_local_shadows_own_fn`; `t313_module_free_read_crosses`.
+`t321_module_local_shadows_own_fn`; `t322_module_free_read_crosses`.
+(This paragraph named them `t308`–`t313` when it was written — the files have
+always been `t317`–`t322`, as the planted-fault paragraph below and the
+G_MODPFX one above both say. Corrected in the residual review.)
 
 **Planted fault:** delete the `collect_free_assigns` line from
 `splice_module` — i.e. build exactly the issue body's spec, top-level rename
@@ -2351,6 +2409,11 @@ affects only how long they took):
   takes a tensor parameter), `test_runner` (the conditional-binding guard
   above). The renamed names in those messages are themselves evidence the
   renamer ran.
+  (Residual review, 2026-09-07: this becomes **70 transpile, 7 refuse** with
+  F-OURO-44's guard in — `ui_w_special` is the one module it costs, and one
+  `bnote is 0` line upstream restores it. `eigen` also changes WHICH refusal
+  it hits first, `lambda` → the new guard; it refuses either way.)
+
 - **Envelope census** (`aot/tools/envelope_census.sh` over a symlink farm of
   the 16 consumer repos, `EIGS`/`EIGS_DIR` = the v0.43.0 checkout,
   `CENSUS_TIMEOUT=240`, the patched script on BOTH sides so the only variable
@@ -2389,3 +2452,134 @@ guard(s) exercised ---`, `--- runtime-refusal tier: 1 residual(s) exercised
 ---`, `--- all AOT parity tests passed ---`, rc 0; `bash test/run.sh` → `ALL
 PASSED (63 programs + bootstrap)` incl. `PASS: bootstrap fixed point (and the
 self-compiled program runs)`, rc 0.
+
+## F-OURO-44 — a module's free READ that can run before its first free WRITE was renamed with the write and answered `null`; refused by name — BUG (fixed as a CONSTRAINT; #141 residual)
+
+**BUG, silent-wrong, pre-existing.** The splice renamer's set is
+`module_bindings ∪ collect_free_assigns` (F-OURO-43): every top-level binding
+of a module PLUS every free assignment target at any depth. For a top-level
+binding that is exactly right. For a name the module only free-ASSIGNS inside
+a body it is right for the write and wrong for a read that can run first.
+
+```
+_pmix.eigs                     p_readwrite.eigs
+  define f() as:                 gx is 42
+      print of gx                import _pmix
+      gx is 5                    print of (_pmix.f of null)
+      return gx                  print of gx
+
+VM  (v0.43.0 pin, a6c50fb):  42 / 5 / 42   rc 0
+AOT (93b6e42, and identical emitted C at its parent 8f4127b — this is NOT a
+     #141 regression):       null / 5 / 42 rc 0, build rc 0, EMPTY build log
+```
+
+Found by #141's blind critic; F-OURO-43's own text described the boundary as
+"a free READ of a name the module never binds is left alone", which this is a
+counter-example to (the criterion is set MEMBERSHIP, not "the module binds
+it"). That sentence is corrected in place.
+
+**The VM's two rules are not mirror images, and both were measured before
+anything was designed** (all on the pin):
+
+- a **READ** of a name the module never bound at its top level resolves
+  OUTWARD into the IMPORTER (`_xread.readg` → the program's 42, t322), and
+  raises `undefined variable 'gx'` **at the read** when the importer has none;
+- the **WRITE** is CALL-LOCAL. It does not reach the module scope either:
+  calling `f` twice prints `42 / 5` BOTH times, and a `setit`/`getit` pair
+  across two functions gives `0 / 42 / 42` — never 5. (Contrast PROGRAM scope,
+  where the same three lines print `42 / 5 / 5`: the write IS outward there.)
+  When the module DOES bind the name at its top level, the write goes to that
+  binding and the importer's stays untouched (`7 → 5`, importer 42).
+
+**Why not a correct compile.** The read's answer is per-call dynamic state
+(has THIS call written the name yet?), the fallback is an outward lookup that
+must be able to raise AT THE READ (not at entry — a body that only writes the
+name must not die when the importer lacks it), and the emitted storage is a C
+local with no boundness notion on the boxed path (`EigsSlot … = slot_null()`,
+which is where the `null` comes from; the numeric path has `_b` but raises
+instead of falling back). That is a storage-regime change across every read
+arm, not a cheap proof. Refused by name instead — the same answer the
+PROGRAM-scope member of this order class already gets ("…does not provably
+precede…", `refuse/outward_write_before_binding.eigs`).
+
+**The guard** (`module_freeread_name` / `fr_scan` / `fr_func` / `fr_reads`,
+called from `splice_module` right after `rset` is built). For each name in
+`rset` that is NOT in `module_bindings`, a definite-assignment walk of the
+module's statements: an `assign` counts only after its RHS is scanned (`x is
+x + 1` with no earlier binding is a read-before-write); an `if` counts only
+when BOTH arms assign; a loop body is never assigned on entry and never
+assigns after; a `try` body never assigns; `unobserved:` does; a `func`
+statement BINDS its name and its body is scanned INHERITING the enclosing
+state (a closure can only run after its `define` statement — this is what
+keeps `lib/ui_w_dialog`'s `file_dialog`/`_fd_on_select` in the envelope);
+parameters, `local` declarations and `for`/`try` binders shadow the name and
+skip the body, using `collect_local_decls`, the same whole-body approximation
+`collect_free_assigns` itself uses.
+
+**Sibling shapes, all measured VM vs the parent commit's AOT** (the
+`p_readwrite` importer, `f` called once):
+
+| module shape | VM | AOT at 93b6e42 | now |
+|---|---|---|---|
+| read at body depth 0, then write (`_pmix`) | `42 / 5 / 42` | `null / 5 / 42` **silent** | refused |
+| read behind an `if`, write after | `42 / 5 / 42` | `null / 5 / 42` **silent** | refused |
+| read in a doubly-nested block, write after | `42 / 5 / 42` | `null / 5 / 42` **silent** | refused |
+| read then write inside a `for` body | `42 / 42 / 1 / 42` | `null / 0 / 1 / 42` **silent, 2 lines** | refused |
+| write in one function, read in another | `0 / 42 / 42` | rc 1, `undefined variable '_frbw_split__gx'` (loud, at run time) | refused at build |
+| write behind an `if` INSIDE a loop, read after it in the body | `null / 7 / 0 / 42` | same — MATCHES | refused (the conservative cost, below) |
+| write at body depth 0, then read | `5 / 5 / 42` | match | accepted |
+| BOTH `if` arms write, then read | `1 / 42` | match | accepted |
+| nested `define nm` then `return nm` | — | match | accepted |
+| write only, never read | `0 / 42` | match | accepted |
+| read only, no write anywhere in the module (t322) | `42 / 42` | match | accepted |
+
+The population was split between a SILENT member and a LOUD one; it is now
+one build-time refusal for the whole order class.
+
+**COST, measured, not estimated.** Stdlib sweep (`import M` for each of the
+pin's 77 `lib/*.eigs`): **71 transpile / 6 refuse → 70 / 7**. The one module
+is `ui_w_special` (`bnote`, written in five `elif` arms and read under a
+correlated `has_black == 1` guard — sound analysis cannot accept it), and
+**one `bnote is 0` line before the chain restores it** (verified: rc 1 → rc
+0). `ui_w_dialog` was a second until the nested-`define` inheritance rule
+above; `eigen` changes which refusal it hits first (`lambda` → this one) and
+refuses either way. Envelope census over the 16-repo symlink farm at
+`CENSUS_TIMEOUT=240`: base `transpiles: 81 refused: 35 timeout: 0 (total
+116)`, this branch the same — and the tables are BYTE-IDENTICAL row for row,
+verdict column and refusal reason alike, so the guard fires on none of the
+116 consumer entry points.
+
+**Fixtures.** `refuse/module_free_read_before_write.eigs` (the silent member,
+with `_frbw_mix`), `refuse/module_free_read_no_write_in_fn.eigs` (the member
+that was loud at run time, `_frbw_split`),
+`refuse/module_free_read_in_loop_body.eigs` (the loop arm — two silent lines
+on the parent, `_frbw_loop`), `refuse/module_free_read_loop_write_first.eigs`
+(the control that rules out the cheap "first mention is a write" test AND the
+honest record of the over-refusal, `_frbw_lexfirst`), and the parity fixture
+`t323_module_free_write_before_read.eigs` (`_frok`) with one instance per arm
+the scan branches on plus the never-written control.
+
+**Planted faults.** (1) The pre-fix compiler (93b6e42's `compile.eigs`, run
+from `aot/`) ACCEPTS all four refuse fixtures, rc 0 — the proof they detect
+this change and not something else. (2) Deleting `fr_scan`'s two binding arms
+(`func` binds its name, `assign` binds after its RHS) turns t323 into a build
+refusal on `_frok`'s `a`. (3) Making `fr_func` restart at `[0, 0]` instead of
+inheriting turns t323 red on `_frok`'s `d` AND evicts `lib/ui_w_dialog`
+again — the arm has its own plant.
+
+**Gates** at a6c50fb (`EIGS=/home/user/wt/eigs-pin/src/eigenscript
+EIGS_DIR=/home/user/wt/eigs-pin`): `bash aot/test/run.sh` → 394 PASS lines, 0
+FAIL, `--- bench tier: 12 program(s) build-checked ---`, `--- refusal tier: 64
+guard(s) exercised ---` (60 → 64), `--- runtime-refusal tier: 1 residual(s)
+exercised ---`, `--- all AOT parity tests passed ---`, rc 0; `bash
+test/run.sh` → `ALL PASSED (63 programs + bootstrap)` including `PASS:
+bootstrap fixed point (and the self-compiled program runs)`, rc 0. (Measured
+under load — `uptime` 7–13 on a 4-core box shared with ~8 agents; these are
+counts, not timings.)
+
+**Residual (upstream, not fixed here).** `lib/ui_w_special.eigs`'s
+`draw_piano` writes `bnote` in five `elif` arms and reads it under a
+correlated guard; the module leaves the AOT envelope until one unconditional
+`bnote is 0` lands upstream in EigenScript. The AOT is the only consumer that
+has to know what the construct means before running it, which is why it is
+the one that noticed.

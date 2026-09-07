@@ -1,0 +1,7 @@
+# Companion module for module_free_read_before_write.eigs. Not a test.
+# `gx` is NOT a top-level binding here: its only assignment is a bare `is`
+# inside a function body, and the READ on the line above it runs first.
+define f() as:
+    print of gx
+    gx is 5
+    return gx

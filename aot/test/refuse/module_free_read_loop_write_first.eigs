@@ -1,0 +1,37 @@
+# EXPECT: READS 'gx' on a path that can run before the module's own first write
+#
+# (#141 residual — THE CONTROL FOR THE ANALYSIS'S SHAPE, and an honest record
+# of what the conservative choice costs.)
+#
+# `gx is 7` is the lexically FIRST mention of `gx` in the body, so the cheap
+# test — "refuse only when the first mention is a read" — would accept this
+# module. Iteration 0 still reads before any write, which is why the guard is
+# a definite-assignment scan in which a loop body is never assigned on entry
+# and an `if` counts only when BOTH arms assign.
+#
+# THE COST IS REAL AND MEASURED: on the parent commit this program MATCHES
+# (VM `null / 7 / 0 / 42`, AOT the same — the VM's cleared loop env and the
+# AOT's uninitialised C local agree on this instance, by two different
+# mechanisms). It is refused anyway, exactly as the PROGRAM-scope member of
+# this order class is (`outward_write_before_binding.eigs`, whose header also
+# records that the VM runs it fine): an order the compiler cannot prove is
+# refused rather than answered, and its sibling one file over
+# (module_free_read_in_loop_body.eigs) diverges silently on the same arm.
+#
+# ONE stdlib module pays this: `ui_w_special` (`bnote`, written in five `elif`
+# arms and read under a correlated `has_black == 1` guard) — the stdlib sweep
+# goes 71 transpile / 6 refuse to 70 / 7. `ui_w_dialog` was the second until
+# the nested-`define` arm learned to inherit the enclosing definite-assignment
+# state (`file_dialog` binds `fd`, THEN defines the `_fd_on_select` callback
+# that reads it — a body a closure can only enter after the `define` ran).
+#
+# The exit is MEASURED, not assumed: one `bnote is 0` before the `if wk == 0:`
+# chain makes `import ui_w_special` transpile again (rc 1 -> rc 0). `local` is
+# NOT the exit for this shape — `local gx is 7` inside the `if` here is refused
+# by the module-shadow guard ("the shadow's C block scope would not cover every
+# later use"), which is why the refusal names the definite-first-write exit
+# first and qualifies the `local` one.
+gx is 42
+import _frbw_lexfirst
+print of (_frbw_lexfirst.f of null)
+print of gx

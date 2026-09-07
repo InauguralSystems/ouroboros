@@ -1,0 +1,26 @@
+# EXPECT: READS 'gx' on a path that can run before the module's own first write
+#
+# (#141 residual — THE SILENT MEMBER of the module free-name order class.)
+#
+# The renamer's set is `module_bindings ∪ collect_free_assigns`, so a name a
+# module only free-ASSIGNS inside a body is renamed to `<M>__<name>` — writes
+# AND reads. Measured on the v0.43.0 pin, the VM's two rules are not mirror
+# images of each other:
+#   a READ of a name the module never bound resolves OUTWARD into the importer
+#   (and dies `undefined variable 'gx'` if the importer has none);
+#   the WRITE is CALL-LOCAL — it does not even reach the module scope (calling
+#   `f` twice prints 42/5 both times, and this program's last line is 42).
+# So before this guard:
+#   VM   42 / 5 / 42   rc 0
+#   AOT  null / 5 / 42 rc 0, build rc 0, EMPTY BUILD LOG
+# rc 0 on both sides with different output — the silent-wrong class.
+#
+# There is no cheap correct compile: the read's answer is per-call dynamic
+# state (has THIS call written the name yet?) and the outward lookup must be
+# able to raise at the read. Refused by name, like the PROGRAM-scope member of
+# the same order class (outward_write_before_binding.eigs, "does not provably
+# precede").
+gx is 42
+import _frbw_mix
+print of (_frbw_mix.f of null)
+print of gx

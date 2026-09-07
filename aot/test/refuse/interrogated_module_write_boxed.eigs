@@ -1,8 +1,22 @@
-# EXPECT: assigns module name 'z' that it also interrogates
+# EXPECT: `local` is not an exit here (a function that interrogates a name is traced, and both `local`-shadow guards refuse an observed/temporal function first)
 # (#218) The BOXED member of the class: a module string that a function
 # both assigns and interrogates. On the VM the write binds function-local
 # (prev of z = "a", module z = "a"); the interrogated call-local pair is a C
 # double, so this stays a loud by-name refusal until a Value* pair exists.
+#
+# THE EXPECT LINE PINS THE MESSAGE'S EXIT SENTENCE, not just the refusal
+# (#141/#218 residuals review). The message used to say "Mark it `local` to
+# make the VM's binding explicit" and that exit was DEAD for every member of
+# the class: interrogating a name makes the function traced, and both
+# `local`-shadow guards test `(g_observed == 1) or (g_traced == 1)` first, so
+# this very program with `local z is "b"` dies
+#   AOT: `local z` shadowing a module binding is not supported here
+#        (observed/temporal function -- history and env state are keyed by
+#        NAME, invisible to a per-call env)
+# on the parent commit and on this one. Measured on all five refuse fixtures
+# of the class: `local` refused 5/5, renaming the module binding transpiled
+# 5/5. A refusal may only name exits that are reachable for the shape it
+# refuses; pinning the sentence here is what stops the wording rotting back.
 z is "a"
 define u() as:
     z is "b"

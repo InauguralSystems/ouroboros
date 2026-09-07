@@ -1,0 +1,8 @@
+# Companion module for module_free_read_in_loop_body.eigs. Not a test.
+# The read comes first inside the loop body and the write follows it, so the
+# read runs before any write on EVERY iteration.
+define f() as:
+    for i in range of 2:
+        print of gx
+        gx is i
+    return gx

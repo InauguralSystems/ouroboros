@@ -1,0 +1,7 @@
+# Companion module for module_free_read_no_write_in_fn.eigs. Not a test.
+# One function WRITES the free name, another only READS it.
+define setit() as:
+    gx is 5
+    return 0
+define getit() as:
+    return gx

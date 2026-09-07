@@ -1,0 +1,17 @@
+# EXPECT: READS 'gx' on a path that can run before the module's own first write
+#
+# (#141 residual — the member that was already LOUD, folded into the same
+# by-name refusal.) The write and the read live in DIFFERENT functions, so the
+# reading function has no write at all: before this guard the AOT built and the
+# binary died `undefined variable '_frbw_split__gx'` (rc 1) where the VM prints
+# 0 / 42 / 42, rc 0. Loud, but at run time and for a name the source never
+# mentions. The same order question, so the same build-time refusal — the class
+# is no longer split between a silent member and a loud one.
+#
+# It also pins the CALL-LOCAL half of the VM's rule: `setit` really did write
+# `gx`, and `getit` still reads the importer's 42, never 5.
+gx is 42
+import _frbw_split
+print of (_frbw_split.setit of null)
+print of (_frbw_split.getit of null)
+print of gx
