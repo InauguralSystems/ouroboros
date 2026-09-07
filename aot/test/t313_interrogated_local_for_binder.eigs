@@ -1,0 +1,38 @@
+# (#218) A for-binder over the interrogated name keeps round 182's loop
+# scope (the block-local shadows the pair inside the body, EigenScript#1074
+# body writes land there), and the pair is what post-loop reads dispatch
+# on: the call-local if a plain write ran before the loop (5), the module
+# value otherwise (1). The binder's stores and the body's writes all trace
+# under the name, so `prev of z` after the loop is the last binder value.
+z is 1.0
+define u() as:
+    for z in [7, 8]:
+        print of z
+    return prev of z
+print of (u of [])
+print of z
+define m1() as:
+    z is 5
+    for z in [7, 8]:
+        print of z
+        z is z + 10
+    print of z
+    return prev of z
+print of (m1 of [])
+print of z
+define m2() as:
+    for z in [7, 8]:
+        print of z
+    print of z
+    z is 5
+    print of z
+    return prev of z
+print of (m2 of [])
+print of z
+define m3() as:
+    for z in [7, 8]:
+        z is z + 10
+        print of z
+    return prev of z
+print of (m3 of [])
+print of z

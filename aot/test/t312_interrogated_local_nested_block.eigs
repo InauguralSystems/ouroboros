@@ -1,0 +1,48 @@
+# (#218) The call-local's write may sit in a nested block: an if/else arm,
+# a `loop while` body, a compound assign, an int-classified module name
+# (`m is 1` at module scope, `m is m + 1` in the body: the pair is a
+# double, the module static stays a long), and a read-modify-write of the
+# module value into the call-local (`z is z + 1` reads the module 1 on
+# every call, so the call-local is 2 each time while the tape grows).
+z is 1.0
+define u(f) as:
+    if f > 0:
+        z is 0.25
+    else:
+        z is 0.5
+    return prev of z
+print of (u of 1)
+print of z
+print of (u of 0)
+print of z
+define v() as:
+    k is 0
+    loop while k < 3:
+        z is k
+        k is k + 1
+    return prev of z
+print of (v of [])
+print of z
+define c() as:
+    z += 2
+    z += 3
+    return prev of z
+print of (c of [])
+print of z
+m is 1
+define mi() as:
+    m is m + 1
+    m is m + 1
+    return prev of m
+print of (mi of [])
+print of m
+m is m + 1
+print of (mi of [])
+print of m
+define rmw() as:
+    z is z + 1
+    return prev of z
+print of (rmw of [])
+print of z
+print of (rmw of [])
+print of z

@@ -1,0 +1,21 @@
+# (#218) The interrogated call-local is bound by its FIRST write in the call:
+# a read (or a `prev of`) before it walks the chain to the module binding
+# (VM: 1, then the module tape's prev), a read after it sees the call-local
+# (0.25), and the second call starts unbound again (the frame env is fresh)
+# while the tape carries both calls' writes (prev 0.25 on call two). A
+# sibling function reading the name during the call sees the MODULE value.
+z is 1.0
+z is 2.0
+define w() as:
+    return z
+define u() as:
+    print of z
+    print of (prev of z)
+    z is 0.25
+    print of z
+    print of (w of [])
+    return prev of z
+print of (u of [])
+print of z
+print of (u of [])
+print of z

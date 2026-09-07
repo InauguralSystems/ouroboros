@@ -1,0 +1,16 @@
+# EXPECT: is not PROVABLY numeric here
+# (#218) The RHS this pass cannot TYPE: the interrogating function writes the
+# module numeric from an env-boxed for-binder read (`z is k`, k a plain binder
+# in a traced program -- boxed, because g_forunbox only fires untraced). The
+# VM binds `z` function-local exactly as in t308 (prev 1, module 1), and the
+# value IS a number at run time; the AOT cannot prove that statically, and the
+# call-local pair is a C double, so an unconditional unbox would die where the
+# VM does not. Refused by name with that reason, rather than guessed.
+z is 1.0
+define u() as:
+    for k in range of 3:
+        if k == 1:
+            z is k
+    return prev of z
+print of (u of [])
+print of z

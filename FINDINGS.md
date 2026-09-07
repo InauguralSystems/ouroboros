@@ -2066,3 +2066,124 @@ never executed; they now refuse loudly.
 each reopenable as its own issue when picked up. The refusals and the
 rtrefuse arm are the contract until then — a lift must delete the
 refusal it replaces, not widen it.
+
+---
+
+## F-OURO-42 — a module NUMERIC name a function both assigns and interrogates is an interrogated call-local (OP_SET_FN_NAME_LOCAL's frame binding), no longer a refusal — FIXED for the numeric class; CONSTRAINT for the boxed / observed / nested-reference members (#218)
+
+**The VM's rule (v0.43.0, `compiler.c` `emit_assign_for_tos` +
+`scan_for_interrogated`).** Inside a function, a plain assign to a name
+the SAME function interrogates (`prev of`, `what/when is .. at`, the
+observer interrogatives) is never slot-eligible and never outward: it
+compiles to `OP_SET_FN_NAME_LOCAL`, a fresh binding in the frame env. So
+the write never reaches a same-named module binding, a read BEFORE the
+first write in the call still walks the chain to the module binding, the
+frame binding dies with the call, and `prev of` / `what is .. at` read the
+process-global name-keyed tape, module writes included. Round 197 refused
+the whole class by name (silent-wrong before that: the AOT wrote the
+module static). Measured on the pin, every row rc 0 unless said:
+
+| shape | VM | AOT before | AOT now |
+|---|---|---|---|
+| the issue's program: `z is 1.0`; `u`: `z is 0.25 / return prev of z`; `u2` same without the interrogative | `1 1 0.25 0.25` | build refusal (round 197); silent `1 0.25 0.25 0.25` before it | `1 1 0.25 0.25` (t310) |
+| read / `prev of` before the write, then after; a sibling fn reading `z` during the call; second call (module `z` written twice: 1.0 then 2.0) | `2 1 0.25 2 2 2` on call one (the pre-write read and the sibling both see the module 2, the tape's `prev` is 1 then 2), module still 2, then `2 2 0.25 2 0.25 2` | refusal | match (t311) |
+| write in an if/else arm, in a `loop while` body, compound `+=`, an int-class module name (`m is 1`), `z is z + 1` (reads the module 1 each call) | call-local each time, module untouched | refusal | match (t312) |
+| for-binder over the name (round 182 loop scope) with a plain write before / after / only inside the loop | binder loop-scoped; post-loop read = the call-local if written, else the module; `prev of z` = last binder value | refusal (only the binder-only form was excluded) | match (t313) |
+| `what is z at L` / `when is z at L` from the function and from module scope | tape reads see the call-local's writes | refusal | match (t314) |
+| module-OBSERVED program (`report of z` / `stable of z` at module scope), non-observing function | the module slot's answers are those of the control without the writes; module value unchanged | refusal | match (t315) |
+| module `z` conditionally UNBOUND (a boundness bit); `u` writes and reads `prev of z` twice; module read after | `null`, `0.25`, then `undefined variable 'z'` rc 1 | refusal | match incl. the death (t316, `_err`) |
+| recursion (`z is n` then `print of (u of (n - 1))` inside `u`, `u of 2`) | each frame its own `z`; the tape carries 1.0/2/1/0 so every `prev of z` answers 1 and the module stays 1 (`1 1 1 1`) | Part 2a's own refusal ("observed/temporal function calls another observed/temporal function") | unchanged — that refusal predates this round and is not this class; the pair itself would be exact, C stack storage gives a frame its own copy |
+
+**Mechanism.** `g_cur_interloc` (per function; `aot/compile.eigs`): a
+plain (unmarked) assign anywhere in the body, the name in THIS function's
+interrogated set (`g_cur_interrogated`), not a parameter, a module NUMERIC
+binding (`gnm`; the round-133 demotion already takes any name a function
+writes a boxed value into off that map) whose every writer in this body is
+numeric under the post-merge maps, the function not observed, and no
+nested define/lambda reading the name. Members get round 151's shadow pair
+(`double eig_z__loc; int eig_z__isloc`): every write stores into the pair
+and traces under the name (`aot_trace_assign`, observing nothing); every
+read — `emit_num`'s and `emit_val`'s ident arms — dispatches
+`(eig_z__isloc ? eig_z__loc : <this regime's module read>)`, the fallback
+computed by re-entering the arm with the mark cleared, so the bit-guarded
+static, the int-cast static and the env read (module-observed regime) all
+stay exactly what they were. `prev of z` under a module boundness bit
+accepts the pair's flag as bound-in-scope. C stack storage makes recursion
+exact for free; the pair is suppressed while a loop-scoped for-body over
+the same name is emitted (the block-local IS the binding there, EigenScript
+#1074), and `g_int` drops the name so no `long` read bypasses the pair. The
+round-151 shadow (`g_cur_shadowbit`, writes routed on the module bit) is
+pruned of members: their writes are unconditionally call-local.
+
+**CONSTRAINT — still refused by name, each with its own reason in the
+message and a `test/refuse/` fixture (the VM runs every one rc 0):**
+
+- **boxed module binding** (`z is "a"`; `interrogated_module_write_boxed`)
+  and a **numeric binding written a non-numeric value**
+  (`interrogated_module_write_nonnum`): the pair is a C double; a `Value*`
+  pair under the owned-read convention (env reads hand out a new ref, the
+  pair would have to as well, and release at every exit as the generic-
+  parameter rebind does) is not emitted. VM: `a a` / `1 1`.
+- **an RHS this pass cannot TYPE**
+  (`interrogated_module_write_boxed_rhs`): `z is k` with `k` a plain `for`
+  binder in a traced program is an env-boxed read (`g_forunbox` only fires
+  untraced), so `is_num_expr` says no even though the value IS a number at
+  run time. The VM binds `z` function-local regardless (prev 1, module 1);
+  the pair is a C double and an unconditional unbox would die where the VM
+  does not, so the name leaves the class and the refusal says exactly that
+  ("not PROVABLY numeric here"). The same reason arm covers the genuinely
+  non-numeric writer above — one message, both causes named.
+- **observed function** (`converged of z` in the body;
+  `interrogated_module_write_observed`): Part 2a keys its locals into
+  `__eigs_g` by NAME, where the module binding already lives; the VM gives
+  the frame binding its own observer slot (`0`, prev 0.25, module 1). The
+  per-call env (Part 2b, #123/#124 lineage) lifts it.
+- **nested define/lambda reading the name**
+  (`interrogated_module_write_nested_ref`): the VM's chain walk from the
+  nested frame meets the encloser's call-local (`g of 1` = 1.25); a lifted
+  C function reads the module static (2).
+- **the bare `what is z` / `when is z`** (no `at`) are a PRE-EXISTING
+  program-wide refusal ("temporal interrogative without `at` only supports
+  `prev`"), not this shape's; t314 pins the `at` forms.
+
+**Not this class, found while checking the flagship program (residual,
+needs its own issue).** `dynamics/physics.eigs`'s `frame-velocity` line
+still diverges (VM `-0.38236…`, AOT `0`) — but `x` there is NOT a module
+name (every `x is state[0]` sits in a function body), so the round-195
+attribution to #218 was wrong. Reduced to one cause
+(`scratchpad r2_phys_shape.eigs`): a NON-parameter, non-interrogating
+function's plain local is a frame SLOT on the pin, and EigenScript#1063
+records a slot's writes only in a chunk that interrogates the name
+(`local_traced`); the AOT's `traced_name` applies that rule to parameters
+only and tapes every other local's writes. `define stp(st) as: x is st[0] /
+x is x + 1 / return [x]` then `fv`: `x is st[0] / st is stp of [st] / x is
+st[0] / return x - (prev of x)` prints 1 on the VM (fv's two writes on the
+tape) and 0 under the AOT (stp's writes taped too, so `prev` is the value
+just re-written). Name-routed locals still tape on both sides (`local w`
+over a module name, a plain write to a module name before its binding
+exists: VM 6 = AOT's rule) — the mirror is `local_eligible`'s predicate
+(slot iff not captured / interrogated / env-bound / outer / module-named),
+not "every non-parameter".
+
+Also pre-existing, met by t312's first draft: a module variable named `n`
+makes every zero-argument call refuse "passes a 0-element literal list to
+its single parameter" (`n is 1 / define bumpn() as: return n / print of
+(bumpn of [])`; the base compiler refuses it too) — a name clash inside
+the compiler's own arity bookkeeping; t312 uses `m`.
+
+Gates (oracle `/home/user/wt/eigs-pin`, the v0.43.0 pin): `aot/test/run.sh`
+→ `381 PASS / 0 FAIL`, `--- bench tier: 12 program(s) build-checked ---`,
+`PASS: load_file_shadow (A/B layout from the shadowing cwd + stdlib-from-child
+layout, 4 assertions)`, `--- refusal tier: 60 guard(s) exercised ---`,
+`--- runtime-refusal tier: 1 residual(s) exercised ---`, `--- all AOT parity
+tests passed ---`; `test/run.sh` → `ALL PASSED (63 programs + bootstrap)`.
+Planted faults: re-emitting the outward write flips t310 (`print of z`
+1 → 0.25) and t311; forcing the read dispatch to the module fallback flips
+t311 and t312. `aot/tools/envelope_census.sh` (transpile tier,
+CENSUS_TIMEOUT=120, over a symlink root of the 26 ecosystem repos — the
+default root under `/home/user` also sweeps the throwaway `wt/` worktrees,
+whose population changes mid-run and makes two runs incomparable): base
+8fb02d6 and this branch both `transpiles: 81   refused: 35   timeout: 0
+(total 116)`, and the per-program verdicts are byte-identical. The class is
+absent from the ecosystem corpus, so the count neither rises nor falls —
+the envelope gain is measured by the fixtures, not by this instrument.

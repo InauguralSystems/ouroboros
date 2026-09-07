@@ -1,0 +1,21 @@
+# (#218) A module NUMERIC name that a function both ASSIGNS and INTERROGATES
+# binds function-LOCAL on the VM: compile_ast's escape pre-scan (#99 round 2)
+# routes the write to OP_SET_FN_NAME_LOCAL, so `print of z` after the call is
+# the OLD module value (1) while `prev of z` reads the name-keyed tape (1:
+# the module's write precedes the call-local's). Round 197 refused this by
+# name (test/refuse/interrogated_module_write.eigs, now this fixture); the
+# AOT compiles it as an interrogated call-local (`eig_z__loc`/`__isloc`).
+# `u2` is the control: the same function WITHOUT the interrogative is the
+# VM's outward write (0.25 / 0.25) on both sides, before and after.
+z is 1.0
+define u() as:
+    z is 0.25
+    return prev of z
+print of (u of [])     # VM 1
+print of z             # VM 1
+q is 1.0
+define u2() as:
+    q is 0.25
+    return q
+print of (u2 of [])    # 0.25
+print of q             # 0.25

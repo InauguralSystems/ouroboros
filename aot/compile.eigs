@@ -257,6 +257,26 @@ g_cur_localmarked is {}
 # such name gets a call-local shadow (`<cn>__loc` / `<cn>__isloc`); stores
 # route on the module bit, reads on the shadow flag.
 g_cur_shadowbit is {}
+# (#218) INTERROGATED CALL-LOCALS of the CURRENT function: a module NUMERIC
+# name the function plainly assigns AND interrogates (`prev of`, `what/when
+# is .. at`). compile_ast's escape pre-scan (#99 round 2) routes such a
+# name to OP_SET_FN_NAME_LOCAL -- a fresh frame binding -- so on the VM the
+# write never reaches the module binding, a read BEFORE the first write in
+# the call still walks the chain to the module binding, and `prev of` reads
+# the process-global name-keyed tape (module writes included). Measured on
+# the v0.43.0 pin: the issue's program (1 1 / 0.25 0.25), a read before
+# the write (module 1, then 0.25), a nested-block write, a `loop while`
+# body write, recursion (each frame its own `z`), another function reading
+# the module value during the call, and a for-binder over the name (round
+# 182's loop scope, post-loop read = the call-local if written, else the
+# module). Mirrored with round 151's shadow pair (`<cn>__loc` /
+# `<cn>__isloc`): every write lands in __loc and sets the flag, every read
+# dispatches on the flag and falls back to whatever this regime's MODULE
+# read is (C static, bit-guarded static, env read). C stack storage makes
+# recursion exact for free; the pair is suppressed inside a loop-scoped
+# for-body over the same name. Boxed / observed / nested-reference members
+# stay refused by name (emit_function).
+g_cur_interloc is {}
 # (round 153) try/catch: does the CURRENT function (or the module body)
 # contain a `try`? Its C locals must survive a longjmp, so the function is
 # compiled at -O0 and declares `_tryb` (the handler depth at entry) so a
@@ -2117,6 +2137,14 @@ define emit_num(node, nm, bt, raw) as:
     if t == "predicate":
         return "((double)aot_predicate(" + (str of node[1]) + "))"
     if t == "ident":
+        # (#218) an interrogated call-local: the call-local wins once bound
+        # in this call; otherwise the read is whatever this regime's module
+        # read is -- computed by re-entering with the mark cleared.
+        if g_cur_interloc[node[1]] == 1:
+            g_cur_interloc[node[1]] is 0
+            local _ilfb is emit_num of [node, nm, bt, raw]
+            g_cur_interloc[node[1]] is 1
+            return "(" + (cn of node[1]) + "__isloc ? " + (cn of node[1]) + "__loc : " + _ilfb + ")"
         # in an observed program numeric vars live in the env (boxed).
         # CHECKED (#100 item 4): the one branch F-OURO-29 missed — a
         # non-number read here is a VM raise ("cannot apply ... to str"),
@@ -2541,6 +2569,13 @@ define emit_val(node, nm, bt) as:
                     # after (raise, both sides agree).
                     return "aot_undefined_name(\"" + ie[1] + "\")"
                 if (bound_bit_of of [ie[1], nm]) == 1:
+                    if g_cur_interloc[(ie[1])] == 1:
+                        # (#218) the call-local binding satisfies the VM's
+                        # bound-in-scope rule as well as the module bit does
+                        # (measured: a conditionally-unbound module `z`,
+                        # `z is 0.25` then `prev of z` answers null, then
+                        # 0.25 on the second call; the module read still dies)
+                        return "((" + (cn of ie[1]) + "__isloc || " + (cn of ie[1]) + "_b) ? aot_prev_val(\"" + ie[1] + "\") : aot_undefined_name(\"" + ie[1] + "\"))"
                     return "(" + (cn of ie[1]) + "_b ? aot_prev_val(\"" + ie[1] + "\") : aot_undefined_name(\"" + ie[1] + "\"))"
                 if (g_observed == 1) and (g_bound_bit[ie[1]] == 1) and (g_cur_localmarked[ie[1]] != 1):
                     # (round 117) observed regime: no C static, no bit -- the
@@ -2560,6 +2595,14 @@ define emit_val(node, nm, bt) as:
         # unlike `prev of z`, which dies.
         return "aot_query_at_val(" + (str of ik) + ", \"" + ie[1] + "\", (int)(" + (emit_num of [iat, nm, bt, 0]) + "))"
     if t == "ident":
+        # (#218) an interrogated call-local read in VALUE position (reached
+        # when the regime keeps the module name off the numeric map, e.g. a
+        # module-observed program): the pair wins once bound in this call.
+        if g_cur_interloc[node[1]] == 1:
+            g_cur_interloc[node[1]] is 0
+            local _ilvb is emit_val of [node, nm, bt]
+            g_cur_interloc[node[1]] is 1
+            return "(" + (cn of node[1]) + "__isloc ? make_num(" + (cn of node[1]) + "__loc) : " + _ilvb + ")"
         # Value-typed C names are NOT in the env: a buffer/dict local or param
         # is a C Value* — hand out a new ref (emit_val's result is owned); a
         # tensor is an AotTensor, serialized like the return path. The env
@@ -3328,6 +3371,20 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
             if (rcallee[0] == "ident") and (g_funcs[rcallee[1]] != null):
                 return ind + (bt_rebind of [name, (emit_call_num of [node[2], nm, bt])]) + bobs
             return ind + (bt_rebind of [name, (emit_val of [node[2], nm, bt])]) + bobs
+        if (g_cur_interloc[name] == 1) and (g_observed == 0):
+            # (#218) the interrogated call-local: the store lands in the
+            # call-local pair, never the module binding (the VM's
+            # OP_SET_FN_NAME_LOCAL); the write is traced under the name
+            # (the tape is name-keyed on both sides) and observes nothing --
+            # measured on the pin: a module-observed `z`'s report/predicate
+            # answers are unchanged by the function's writes.
+            local _ilraw is 0
+            if gf[name] == 1:
+                _ilraw is 1
+            local _ilst is ind + "{ " + (cn of name) + "__loc = " + (emit_num of [node[2], nm, bt, _ilraw]) + "; " + (cn of name) + "__isloc = 1;"
+            if (traced_name of name) == 1:
+                _ilst is _ilst + " aot_trace_assign(\"" + name + "\", " + (cn of name) + "__loc);"
+            return _ilst + " }\n"
         if nm[name] == 1:
             # observed program: numeric assign goes through the runtime observer
             # (store in env + update the slot's entropy/dH + set last-observer).
@@ -3794,6 +3851,7 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
         local lscope is 0
         local lsc_seeded is 0
         local lsc_nm_prev is null
+        local lsc_il_prev is null
         # (round 116, #187) The lscope table keyed on ONE axis (module-bound
         # or interrogated); the VM's rule keys on the binding KIND. Measured
         # on the a5bc350 pin (EigenScript#1063 made an interrogated
@@ -3880,6 +3938,12 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
             lsc_nm_prev is nm[fvar]
             nm[fvar] is 1
             lsc_seeded is 1
+            # (#218) inside the loop-scoped body the binder's block-local IS
+            # the binding (EigenScript#1074: body writes land in the loop
+            # env), so the interrogated call-local pair is suppressed for
+            # the body; post-loop reads dispatch on the pair again.
+            lsc_il_prev is g_cur_interloc[fvar]
+            g_cur_interloc[fvar] is 0
         if (lscope == 0) and (g_forunbox[fvar] != null):
             # unboxed: bind the C double directly — no env write, no boxed
             # read-back in the body. A buffer iterable reads elementwise
@@ -4004,6 +4068,8 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
         fo is fo + (emit_stmts of [fbody, ind + "    ", nm, bt, minits, gf])
         if lsc_seeded == 1:
             nm[fvar] is lsc_nm_prev
+            if lsc_il_prev == 1:
+                g_cur_interloc[fvar] is 1
         fo is fo + ind + "  }\n"
         # The VM's restore is a SET_LOCAL, recorded in a traced name's history
         # (`prev of p` after the loop answers the last body write, t218/t119);
@@ -8080,6 +8146,23 @@ define has_try(node) as:
             return 1
     return 0
 
+# (#218) Does every PLAIN assign to `name` in the subtree carry a numeric
+# RHS under these maps? The interrogated call-local pair is a C double, so
+# one boxed writer excludes the name from the class (the by-name refusal
+# then says so). Nested defines are lifted before this runs.
+define plain_assigns_all_num(node, name, nm, bt) as:
+    if (type of node) != "list":
+        return 1
+    if (len of node) == 0:
+        return 1
+    if (node[0] == "assign") and ((len of node) == 3) and (node[1] == name):
+        if (is_num_expr of [node[2], nm, bt]) != 1:
+            return 0
+    for k in range of (len of node):
+        if (plain_assigns_all_num of [node[k], name, nm, bt]) == 0:
+            return 0
+    return 1
+
 define collect_plain_assigns(node, acc) as:
     if (type of node) != "list":
         return 0
@@ -8864,28 +8947,6 @@ define emit_function(fn, finfo, gnm, gbt) as:
                     _isf is 1
             if _isf == 0:
                 throw of ("AOT: `" + _pan[k] + " is ...` inside function '" + name + "' assigns the name of a compiled module function. On the VM that rebinds the module binding outward (the function is gone afterwards); a C function cannot be rebound, so it is refused rather than dying at run time (ouroboros#162).")
-    # (round 197, #218) a plain assign to a MODULE name that this function
-    # also INTERROGATES: compile_ast's escape pre-scan (#99 round 2) routes
-    # an interrogated name to OP_SET_FN_NAME_LOCAL -- a fresh function-scope
-    # binding -- so on the VM the write never reaches the module binding
-    # (`z is 0.25` in u, `print of z` after the call prints the OLD module
-    # value); the AOT's Part-2a lowering wrote it outward (silent, rc 0
-    # both). The per-call env that would mirror the VM is the Part-2b
-    # design; until then refuse by name so the shape is loud.
-    # A for-BINDER of this function is loop-scoped by round 182's fsv_kind
-    # save/restore (an interrogated binder already reads its own history),
-    # so binder-body writes are not module writes: excluded (the gate's
-    # corpus tier caught test_for_binder_loopenv_write refusing otherwise).
-    local _fbs is {}
-    collect_for_binders of [body, _fbs]
-    for k in range of (len of _pan):
-        if (_lmk[_pan[k]] != 1) and (_fbs[_pan[k]] != 1) and (g_interrogated_names[_pan[k]] == 1) and ((g_module_names[_pan[k]] == 1) or (gnm[_pan[k]] == 1) or (gbt[_pan[k]] == 1)):
-            local _isq is 0
-            for p in range of (len of params):
-                if params[p] == _pan[k]:
-                    _isq is 1
-            if _isq == 0:
-                throw of ("AOT: function '" + name + "' assigns module name '" + _pan[k] + "' that it also interrogates. On the VM an interrogated name binds function-LOCAL (the #99 escape pre-scan), so the write never reaches the module binding; the AOT would write it outward (silent wrong). Mark it `local` to make the VM's binding explicit, or rename the module binding (ouroboros#218).")
     # tensor (nested-list) layer for this scope: tensor locals (assigned from a
     # tensor RHS) + tensor/dict params.
     g_dict is {}
@@ -8985,6 +9046,67 @@ define emit_function(fn, finfo, gnm, gbt) as:
                         lparam_boxed is 1
             if lparam_boxed == 0:
                 fnm[lnk[k]] is 1
+    # (#218) interrogated call-locals of this function (see g_cur_interloc).
+    # Computed HERE, after the numeric merge, so the all-numeric-writers
+    # test sees the body's numeric locals (`z is k` with a body-local k
+    # excluded the name when it ran on the seed map alone -- t310's `v`).
+    # a plain (unmarked) assign anywhere in the body, the name in THIS
+    # function's interrogated set, not a parameter, a module NUMERIC binding
+    # (gnm -- the round-133 demotion already took any name a function
+    # writes a boxed value into off that map), the function not observed
+    # (Part 2a), and no nested define/lambda reading the name. Every member
+    # of the refused complement is named in the refusal below.
+    g_cur_interloc is {}
+    if g_observed == 0:
+        local _ilpa is {}
+        collect_plain_assigns of [body, _ilpa]
+        local _ilk is keys of _ilpa
+        for _ili in range of (len of _ilk):
+            local _ilv is _ilk[_ili]
+            local _ilisp is 0
+            for _ilp in range of (len of params):
+                if (params[_ilp]) == _ilv:
+                    _ilisp is 1
+            if (_ilisp == 0) and (_lmk[_ilv] != 1) and (g_cur_interrogated[_ilv] == 1) and (gnm[_ilv] == 1) and (gbt[_ilv] != 1) and ((sh_deferred_ref of [body, _ilv]) != 1) and ((plain_assigns_all_num of [body, _ilv, fnm, fbt]) == 1):
+                g_cur_interloc[_ilv] is 1
+    # ...and a member is never ALSO a round-151 shadow (its writes route on
+    # the module bit there; here they are unconditionally call-local).
+    local _ilsb is {}
+    local _ilsk is keys of g_cur_shadowbit
+    for _ilsi in range of (len of _ilsk):
+        if g_cur_interloc[(_ilsk[_ilsi])] != 1:
+            _ilsb[(_ilsk[_ilsi])] is 1
+    g_cur_shadowbit is _ilsb
+    # (#218) a plain assign to a MODULE name that this function also
+    # INTERROGATES binds function-LOCAL on the VM (OP_SET_FN_NAME_LOCAL via
+    # compile_ast's escape pre-scan, #99 round 2); round 197 refused the
+    # whole class by name. The NUMERIC class now compiles as an interrogated
+    # call-local (g_cur_interloc above). What stays refused, each by its
+    # reason: an OBSERVED function (Part 2a keys its locals into __eigs_g by
+    # name, where the module binding already lives -- the per-call env,
+    # Part 2b, lifts it); a boxed / buffer / demoted module binding (the
+    # pair is a C double; a Value* pair under the owned-read convention is
+    # not emitted yet); a nested define/lambda reading the name (a lifted C
+    # function reads the module static where the VM's chain walk sees this
+    # function's frame binding -- measured 1.25 on the pin, 2 otherwise).
+    # A for-BINDER is not a plain assign; a body write inside its own loop
+    # is a loop-env write (round 182 / EigenScript#1074) and only counts
+    # here when the name is also outside the numeric class.
+    for k in range of (len of _pan):
+        if (_lmk[_pan[k]] != 1) and (g_cur_interloc[_pan[k]] != 1) and (g_interrogated_names[_pan[k]] == 1) and ((g_module_names[_pan[k]] == 1) or (gnm[_pan[k]] == 1) or (gbt[_pan[k]] == 1)):
+            local _isq is 0
+            for p in range of (len of params):
+                if params[p] == _pan[k]:
+                    _isq is 1
+            if _isq == 0:
+                local _ilwhy is "the module binding is boxed, a buffer, or demoted off the numeric class (only a NUMERIC module binding compiles as an interrogated call-local)"
+                if g_observed == 1:
+                    _ilwhy is "this function is observed (Part 2a keys its locals into the global env by name, where the module binding already lives; the per-call env, Part 2b, lifts it)"
+                elif (gnm[_pan[k]] == 1) and ((plain_assigns_all_num of [body, _pan[k], fnm, fbt]) != 1):
+                    _ilwhy is "this function assigns it a value that is not PROVABLY numeric here -- either a genuinely non-numeric value, or one this pass cannot type (an env-boxed read such as a for-binder, which the VM would happily bind to the frame-local) -- and the interrogated call-local pair is a C double; a Value* pair (or an unconditional unbox, which would die where the VM does not) is not emitted yet"
+                elif (sh_deferred_ref of [body, _pan[k]]) == 1:
+                    _ilwhy is "a nested define/lambda reads the name (the VM's chain walk sees this function's frame binding; a lifted C function would read the module binding)"
+                throw of ("AOT: function '" + name + "' assigns module name '" + _pan[k] + "' that it also interrogates. On the VM an interrogated name binds function-LOCAL (the #99 escape pre-scan), so the write never reaches the module binding; " + _ilwhy + ". Mark it `local` to make the VM's binding explicit, or rename the module binding (ouroboros#218).")
     # integer names for this scope (params forced + int-by-assignment locals);
     # sets g_int, which is_int_expr/emit_num/emit_stmt read while emitting. In an
     # OBSERVED function, numerics are env-boxed (routed through aot_get/observe),
@@ -8994,6 +9116,11 @@ define emit_function(fn, finfo, gnm, gbt) as:
     g_btmap is fbt
     if g_observed == 0:
         g_int is infer_int of [body, params, fnm, fbt]
+    # (#218) the interrogated call-local pair is a double; an int-typed read
+    # (emit_int's raw C name) would bypass the pair's dispatch.
+    local _ilgk is keys of g_cur_interloc
+    for _ilgi in range of (len of _ilgk):
+        g_int[(_ilgk[_ilgi])] is 0
     # Numeric module-shadow `local` validation (#109). Runs after inference
     # so it can consult lnm (every assignment to the shadow must stay
     # numeric — the seeded fnm keeps the name on the numeric emission path
@@ -9326,7 +9453,7 @@ define emit_function(fn, finfo, gnm, gbt) as:
                 # aot_observe_num / aot_observe_val -- the name's regime,
                 # not the writer's. A buffer takes round 110's observe-store
                 # on the same mark (bt assign arm). t207/t208 pin it.
-                if (g_mod_observed == 1) and (g_observed != 1):
+                if (g_mod_observed == 1) and (g_observed != 1) and (g_cur_interloc[v] != 1):
                     g_outward_obs[v] is 1
                     # and DEMOTE it in this function's maps: the body's own
                     # numeric pass re-promoted `total is total + k` to a C
@@ -9413,6 +9540,9 @@ define emit_function(fn, finfo, gnm, gbt) as:
     local _sbdk is keys of g_cur_shadowbit
     for _sbdi in range of (len of _sbdk):
         decls is decls + "    double " + (cn of (_sbdk[_sbdi])) + "__loc = 0; int " + (cn of (_sbdk[_sbdi])) + "__isloc = 0;   /* call-local shadow of a conditionally-bound module name (round 151, #197) */\n"
+    local _ildk is keys of g_cur_interloc
+    for _ildi in range of (len of _ildk):
+        decls is decls + "    double " + (cn of (_ildk[_ildi])) + "__loc = 0; int " + (cn of (_ildk[_ildi])) + "__isloc = 0;   /* interrogated call-local (#218): OP_SET_FN_NAME_LOCAL's frame binding */\n"
     # unboxed for-in vars that are neither params, assigned locals, nor
     # globals still need a function-scope C decl (the VM's slot semantics:
     # post-loop reads see the last iterate).
@@ -9467,6 +9597,7 @@ define emit_function(fn, finfo, gnm, gbt) as:
     g_envactive is 0
     g_lowerloc is 0
     g_boxshadow is {}
+    g_cur_interloc is {}
     return _result
 
 # ---- nested `define` lifting (#86) ----
@@ -11628,6 +11759,7 @@ define emit_program(ast) as:
     g_cur_localmarked is {}
     g_cur_bound_bit is {}
     g_cur_shadowbit is {}
+    g_cur_interloc is {}
     g_mod_has_try is has_try of rest
     g_cur_fmap is local_gen_map_for of ["<module>", rest]
     g_cur_has_try is g_mod_has_try

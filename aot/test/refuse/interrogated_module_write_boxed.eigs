@@ -1,0 +1,11 @@
+# EXPECT: assigns module name 'z' that it also interrogates
+# (#218) The BOXED member of the class: a module string that a function
+# both assigns and interrogates. On the VM the write binds function-local
+# (prev of z = "a", module z = "a"); the interrogated call-local pair is a C
+# double, so this stays a loud by-name refusal until a Value* pair exists.
+z is "a"
+define u() as:
+    z is "b"
+    return prev of z
+print of (u of [])
+print of z
