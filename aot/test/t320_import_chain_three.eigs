@@ -1,0 +1,34 @@
+# A chain of three modules, every link binding the same names — ouroboros#141.
+#
+# THE POINT OF THIS FIXTURE is depth. Arm A (t309) is two modules deep; this is
+# three, and every link binds `ctr`, `bump` and `get`, so any prefix that is
+# not per-module — or any link whose statements after its own `import` are
+# renamed under the wrong prefix — merges two of them. Each link's `bump`
+# folds the next link's into its own running total, so one wrong resolution
+# changes every number below it.
+#
+# The dict chain is also read through two levels of module-qualified access
+# (`ch_top.ch_mid.ch_leaf.ctr`): a module's import is a binding in ITS
+# dict, and the snapshot numbers are the import-time values (100 / 10 / 1),
+# not the bumped ones — the VM's snapshot semantics, kept.
+#
+# The three links live under test/eigs_modules/<name>/<name>.eigs rather than
+# as `_`-prefixed siblings: a module binding that starts with `_` is OMITTED
+# from the module dict (#142), so a `_`-named link could not be read through
+# the chain at all — the first cut of this fixture died "undefined variable"
+# on BOTH sides at the chain read, which matched and proved nothing. This is
+# also the one import fixture that resolves through the eigs_modules step of
+# the VM's chain (EigenScript#1056 step 3; `_lf_resolve` mirrors it).
+ctr is 1000
+import ch_top
+print of (ch_top.bump of null)
+print of (ch_top.bump of null)
+print of (ch_top.get of null)
+print of (ch_top.midget of null)
+print of (ch_top.leafget of null)
+print of ctr
+print of (keys of ch_top)
+print of (keys of ch_top.ch_mid)
+print of ch_top.ctr
+print of ch_top.ch_mid.ctr
+print of ch_top.ch_mid.ch_leaf.ctr

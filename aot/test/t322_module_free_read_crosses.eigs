@@ -1,0 +1,21 @@
+# The renamer's OTHER edge — ouroboros#141.
+#
+# THE POINT OF THIS FIXTURE is what must NOT be renamed. The rename set is
+# every name the module can CREATE in the merged scope: its top-level
+# bindings plus its free assignment targets at any depth. A free READ of a
+# name the module never binds is not in that set, and renaming it would be
+# wrong — the VM resolves it dynamically across the module boundary into the
+# importing program (docs/LANGUAGE_CONTRACT.md, Modules: "Reads and calls
+# resolve dynamically across the boundary"; only WRITES stop at the module's
+# edge, EigenScript#373/#1056).
+#
+# So a "rename every free name" renamer would turn `gval` into
+# `_xread__gval`, which nothing binds, and this program would die
+# "undefined variable" where the VM prints 42. Both a bare read and a call
+# of a program-defined function are covered.
+gval is 42
+define gfun(n) as:
+    return n + 3
+import _xread
+print of (_xread.readg of null)
+print of (_xread.callg of null)

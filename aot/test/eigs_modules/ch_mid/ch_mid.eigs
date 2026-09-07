@@ -1,0 +1,11 @@
+# Companion module for t311 (ouroboros#141, three-module chain). The middle
+# link: imports the leaf and binds the same names it does.
+import ch_leaf
+ctr is 10
+define bump() as:
+    ctr is ctr + (ch_leaf.bump of null)
+    return ctr
+define get() as:
+    return ctr
+define leafget() as:
+    return ch_leaf.get of null

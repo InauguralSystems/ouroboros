@@ -1,0 +1,29 @@
+# A module `local` that shadows one of the module's OWN top-level bindings —
+# ouroboros#141, the case the issue's first comment said might need refusing
+# by name (`lib/tensor.eigs`'s `scale`: a top-level function of that name plus
+# `local scale is ...` inside two others; measured as 1 of 77 stdlib modules).
+#
+# THE POINT OF THIS FIXTURE is that it needs NO refusal. The renamer moves the
+# module's top-level bindings to `<M>__<name>` and its parameters / `for` /
+# `try` / listcomp binders to `<M>__bnd__<name>`; module `local`s are
+# deliberately NOT renamed, and are handled instead by the emitter's
+# g_locshadow / g_boxshadow machinery, which block-scopes a numeric shadow to
+# a C local (F-OURO-33) and gives a boxed one a per-call env binding
+# (F-OURO-35). The two layers meet here: inside `use_local_fn` the name
+# `depth` must reach the C block-local, NOT the renamed module function
+# `_shadow_fn__depth` — and the program keeps its own `depth` and `factor`
+# across the whole thing.
+#
+# Both shadow kinds are exercised: over a top-level FUNCTION (`depth`) and
+# over a top-level NUMBER (`factor`). `use_global` then proves the module's
+# own unshadowed reads still reach the renamed bindings.
+depth is 1
+factor is 2
+import _shadow_fn
+print of (_shadow_fn.use_local_fn of 4)
+print of (_shadow_fn.use_local_num of 4)
+print of (_shadow_fn.use_global of 5)
+print of (_shadow_fn.depth of 6)
+print of _shadow_fn.factor
+print of depth
+print of factor

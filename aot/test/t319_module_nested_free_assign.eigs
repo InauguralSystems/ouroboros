@@ -1,0 +1,20 @@
+# A module function's bare `ctr is 99` where `ctr` is not a top-level binding
+# of the module — ouroboros#141 arm B (the issue's first comment).
+#
+# THE POINT OF THIS FIXTURE is that renaming a module's TOP-LEVEL bindings —
+# the fix the issue body specified — is not sufficient. `is` is outward-
+# mutable, so after splicing, a bare `ctr is 99` inside a module function
+# writes the MERGED scope, i.e. the program's `ctr`:
+#
+#   VM   99 / 1          AOT (top-level rename only)   99 / 99, rc 0, empty log
+#
+# On the VM the module's search stops at its boundary (EigenScript#1056 /
+# #373): a name the module never bound at its top level is a FRESH binding in
+# the module's own namespace, never the importer's. So the rename set must
+# cover every free assignment target at any depth (`collect_free_assigns`),
+# not just `module_bindings`. Deleting that line is the planted fault this
+# fixture is gated on — it goes red as 99/99.
+ctr is 1
+import _arm_mz
+print of (_arm_mz.bump of null)
+print of ctr

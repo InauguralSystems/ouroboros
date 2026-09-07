@@ -1,0 +1,19 @@
+# Companion module for t312 (ouroboros#141). Not a test itself.
+#
+# The shape the issue's first comment measured as the ONE stdlib module the
+# renamer might have to refuse by name: `lib/tensor.eigs` defines a top-level
+# `scale` AND has `local scale is sqrt of (...)` inside two of its other
+# functions, so a module `local` shadows one of the module's own top-level
+# bindings. `factor` here is that collision; `depth` is the same collision
+# against a top-level NUMBER rather than a function.
+factor is 100
+define depth(x) as:
+    return x * 2
+define use_local_fn(r) as:
+    local depth is 3
+    return depth + r
+define use_local_num(r) as:
+    local factor is 7
+    return factor + r
+define use_global(r) as:
+    return (depth of r) + factor

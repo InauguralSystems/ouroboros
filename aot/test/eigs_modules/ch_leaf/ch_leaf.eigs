@@ -1,0 +1,7 @@
+# Companion module for t311 (ouroboros#141, three-module chain). The leaf.
+ctr is 1
+define bump() as:
+    ctr is ctr + 1
+    return ctr
+define get() as:
+    return ctr

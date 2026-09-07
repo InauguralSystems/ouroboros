@@ -1,0 +1,16 @@
+# A program reading a module-private name it never bound — ouroboros#141,
+# body repro 3.
+#
+# THE POINT OF THIS FIXTURE is that the splice used to make module state
+# PROGRAM-VISIBLE: `counter` is _mod_priv's private global, and a program that
+# reads it bare must die "undefined variable" as it does on the VM. Before
+# the renamer the AOT printed 0 — a default-initialised C global, a plausible
+# NUMBER rather than an error — rc 0, empty build log. With the module spliced
+# under `_mod_priv__`, the bare name resolves nowhere, and both sides die at
+# the same line with the same message (the `_err` class contract).
+#
+# The first print proves the module itself is live and its function still
+# reaches its own state through the renamed binding.
+import _mod_priv
+print of (_mod_priv.bump of null)
+print of counter

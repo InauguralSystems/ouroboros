@@ -8394,6 +8394,17 @@ AOT_BUILTIN_NAMES is {}
 define aot_is_builtin_name(name) as:
     if has_key of [AOT_BUILTIN_NAMES, name]:
         return AOT_BUILTIN_NAMES[name]
+    # `report` / `report_value` are reserved observer FORMS since v0.43.0
+    # (EigenScript#1102), never values: `eval of "report"` cannot answer
+    # "builtin", and on the pin it PRINTS the E005 parse error to stderr
+    # before throwing into the catch below. That line then became the FIRST
+    # stderr line of every transpile of a program that mentions `report`,
+    # which is what aot/tools/envelope_census.sh and the #141 stdlib sweep
+    # read as the refusal reason -- `import observer` / `import eigen` were
+    # both misattributed to it (their real refusals are a generic-parameter
+    # rebind in an observed program and a `lambda`). Answered here instead.
+    if (name == "report") or (name == "report_value"):
+        return 0
     local r is 0
     try:
         if (type of (eval of name)) == "builtin":
@@ -12441,25 +12452,6 @@ define collect_local_decls(node, bound) as:
         collect_local_decls of [node[k], bound]
     return 0
 
-define module_shadow_names(stmts, out) as:
-    if (type of stmts) != "list":
-        return 0
-    if (len of stmts) == 0:
-        return 0
-    if stmts[0] == "func":
-        local ps is stmts[2]
-        for pk in range of (len of ps):
-            out[(ps[pk])] is 1
-    if stmts[0] == "assign":
-        if (len of stmts) >= 4:
-            out[stmts[1]] is 1
-    if (stmts[0] == "for") or (stmts[0] == "catch"):
-        if (type of stmts[1]) == "str":
-            out[stmts[1]] is 1
-    for k in range of (len of stmts):
-        module_shadow_names of [stmts[k], out]
-    return 0
-
 # ---- MODULE NAMESPACING (ouroboros#141) -----------------------------------
 # Rename every name a module can create in the merged scope to `<M>__<name>`,
 # so splicing cannot collide with the program and no guard is needed.
@@ -12637,7 +12629,30 @@ define splice_module(mname, base, depth, out) as:
                 ren[(rk[ri])] is mname + "__" + (rk[ri])
             # Mark BEFORE recursing so an import cycle terminates.
             G_IMPORTED[mname] is 1
-            # Prefix for this module's binders, read by rename_ast's binder arms.
+            # Prefix for this module's binders, read by rename_ast's binder
+            # arms. SAVED HERE AND RESTORED AT THE END, because the recursive
+            # splice of a module's own `import` (below) sets it to the inner
+            # module's prefix. Without the restore every binder of THIS module
+            # after its `import` line carried the INNERMOST module's prefix:
+            # t311's three-link chain emitted `eig_ch_leaf__bnd__ctr` 18x and
+            # `eig_ch_leaf__bnd__n` 18x -- ch_top's and ch_mid's binders under
+            # ch_leaf's name -- where the fixed compiler emits ch_leaf__bnd__n
+            # 4, ch_mid__bnd__n 6, ch_top__bnd__ctr 18, ch_top__bnd__n 8.
+            #
+            # HONESTY ABOUT THE COST: no output divergence was found for it.
+            # A binder is a C BLOCK-local in the emitted code (the file-scope
+            # `static long eig_<M>__bnd__<v>` beside it is never written by
+            # the loop), so two modules sharing one binder name still read
+            # their own values -- t309/t311 and a probe crossing a numeric
+            # module-level `for` binder with a string one all stay green with
+            # the restore removed. It is fixed as a construction bug: the
+            # whole point of a per-module prefix is that two modules cannot
+            # share a name, and the evidence is the symbol census above, not
+            # a red fixture. Restoring at the end of the branch is enough --
+            # the inner call's own restore puts back what it found, so a
+            # second restore after each recursion is dead (measured: the
+            # emitted C is byte-identical with and without it).
+            local saved_pfx is G_MODPFX[0]
             G_MODPFX[0] is mname + "__"
             local mstmts is (mast[1])
             for mk in range of (len of mstmts):
@@ -12668,6 +12683,7 @@ define splice_module(mname, base, depth, out) as:
                     continue
                 append of [pairs, [rtn, ["ident", (ren[rtn])]]]
             append of [out, ["assign", "__moddict_" + mname, ["dict", pairs]]]
+            G_MODPFX[0] is saved_pfx
 
 # (round 114, ouroboros#127) A `load_file` whose path is COMPUTED cannot be
 # spliced, so it would be emitted as a runtime call into the linked VM: the

@@ -1,0 +1,8 @@
+# Companion module for t309 (ouroboros#141 arm A). Imports _arm_inner and
+# binds its own `ctr`, the same name the inner module and the program use.
+import _arm_inner
+ctr is 50
+define via() as:
+    return _arm_inner.bump of null
+define mine() as:
+    return ctr

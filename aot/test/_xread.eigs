@@ -1,0 +1,7 @@
+# Companion module for t313 (ouroboros#141). Not a test itself.
+# Binds NEITHER `gval` nor `gfun`: both are free READS that resolve into the
+# importing program's scope at call time.
+define readg() as:
+    return gval
+define callg() as:
+    return gfun of 3
