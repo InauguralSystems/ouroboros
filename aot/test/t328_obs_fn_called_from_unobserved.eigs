@@ -1,0 +1,22 @@
+# (#126) AN OBSERVED FUNCTION CALLED FROM AN UNOBSERVED ONE, with a module
+# numeric read from both. `scale` is named by no observer read, so the
+# module decl loop emits it as a C static AND both functions read it as one
+# -- the observed function too, which is the half emit_function's seed used
+# to get wrong (the seed keyed on the whole-program flag, so an observing
+# function reading an un-named module numeric fell to the env-read arm for a
+# name that had no env slot). `t` is the one named channel.
+scale is 2.0
+define plain(z) as:
+    return z * scale
+define watched(u) as:
+    local t is u
+    local n is 0
+    loop while n < 6:
+        t is t * 0.5
+        n is n + 1
+    return [report of t, plain of t, scale]
+define driver(a) as:
+    return watched of (a * scale)
+print of (watched of 64.0)
+print of (driver of 8.0)
+print of f"scale {scale}"

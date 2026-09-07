@@ -1,0 +1,16 @@
+# (#126) The named channel is written ONLY inside a function and read at
+# MODULE scope -- the census is program-wide by NAME for exactly this
+# reason. `sig`'s writes are outward writes from a non-observing helper, so
+# they must take the observe-store (obs_mod_name: the effect lands in the
+# regime of the NAME, not of the writer); `i` and `n` are named by nothing
+# and stay C doubles inside that same helper.
+sig is 1.0
+define drive(n) as:
+    local i is 0
+    loop while i < n:
+        sig is sig * 0.5
+        i is i + 1
+    return i
+print of (drive of 6)
+print of f"sig {sig} report {report of sig}"
+print of f"diverging {diverging of sig}"

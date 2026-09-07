@@ -1,0 +1,28 @@
+# (#126) THE ALL FALLBACK, arm 2: a builtin that runs interpreted code.
+#
+# `eval` compiles a NEW unit at run time from a string that need not exist
+# until the moment it runs, so the census cannot see which names that unit
+# reads. The opaque set is MIRRORED from the VM's own observer gate
+# (chunk.c const_pool_names_observer names `eval` for exactly this reason,
+# with record_history / classify / state_at / get_observer_thresholds
+# beside it) rather than re-derived here.
+#
+# `x` is the read that makes the unit observed. `c` and `n` are named by
+# NOTHING the static walk can see -- only by the eval'd strings -- so under
+# a census WITHOUT this fallback they would compile to plain C statics and
+# the eval'd `report of c` would read an empty slot (measured against a
+# census with `eval` removed from OBS_OPAQUE_BUILTINS: `equilibrium` where
+# the VM says `improving`). With the fallback the whole unit keeps today's
+# bookkeeping, which is exactly the pre-#126 behaviour.
+x is 100.0
+c is 0.0
+n is 0
+loop while n < 6:
+    x is x * 0.5
+    c is c + 2.0
+    n is n + 1
+print of f"x {x} c {c} n {n}"
+print of f"x-report {report of x}"
+print of (eval of "report of c")
+print of (eval of "report of n")
+print of (eval of "report of x")

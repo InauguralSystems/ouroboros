@@ -1724,12 +1724,14 @@ one form of it.
 
 Gates at c1684bc: aot/test/run.sh and test/run.sh — see the commit body.
 
-## F-OURO-39 — the all-or-nothing `g_observed` gate is the larger half of the AOT's observer overhead; per-name gating is sound and measured, not landed — GAP/CONSTRAINT (#126; recorded, not scheduled)
+## F-OURO-39 — the all-or-nothing `g_observed` gate was the larger half of the AOT's observer overhead; the PER-NAME gate is landed — FIXED (#126)
 
 Ledger of record for ouroboros#126 (a measurement, not a defect: no
-silent-wrong is involved — every observed program is byte-exact today,
-it is only slower than it needs to be). Verified against HEAD 61f8319 on
-2026-09-06; re-RAN vs re-READ is marked per item.
+silent-wrong was involved — every observed program was byte-exact
+already, it was only slower than it needed to be). Recorded against HEAD
+61f8319 on 2026-09-06; re-RAN vs re-READ is marked per item. **FIXED
+2026-09-07** — the threading round below is landed; the closing
+measurement and what it cost are at the end of the entry.
 
 **The finding.** One observer read anywhere in a unit sets `g_observed`
 for the WHOLE unit, and under it every module-scope scalar is demoted
@@ -1849,13 +1851,209 @@ the NAME it targets), with
 fixtures across module / function / outward-write scopes. That is its
 own round.
 
-**Pinned today by:** the bench tier (all three arms must build), and
-the observed-program fixtures above plus t305 (per-call fresh slot,
-#217) for the contract any per-name rule must keep byte-exact.
+## The threading round, landed 2026-09-07
 
-**Status: recorded, not scheduled.** Reopen as an issue when the
-threading round is picked up; the draft, its fixtures and the numbers
-above are the starting point.
+**The mechanism.** A program-wide CENSUS (`g_obs_names` / `g_obs_all`,
+`collect_obs_names`) of every name an observer read can NAME:
+predicate / `report` / `report_value` / `trajectory` / `observe`
+operands and every interrogative subject. It is program-wide, not
+per-scope, because Part 2a routes an observed function's locals through
+the GLOBAL env by name — a `report of total` anywhere names `total`
+everywhere. `g_obs_all` is the fallback for a bare predicate (it reads
+the runtime's last-observed-slot alias, which can reach any name), a
+non-identifier operand, and any builtin that can read observer state
+under a name the walk cannot see — `eval`, `sandbox_run`,
+`vm_run_bytecode`, a nested `load_file`, a residual `import`,
+`classify`, `state_at`, `get_observer_thresholds`, `record_history`,
+MIRRORED from the VM's own gate (chunk.c `const_pool_names_observer` +
+`SANDBOX_ALLOW`'s observer-READ group) rather than re-derived.
+
+Two predicates consume it: `obs_name(n)` (the current scope's regime,
+the drop-in for `g_observed == 1` wherever a NAME's storage is decided)
+and `obs_mod_name(n)` (the module's regime — invariant 14b, an effect
+lands in the regime of the NAME it targets). Both are strictly narrower
+than the flag: `obs_name(n) == 1` implies `g_observed == 1`, so no site
+can start observing where the flag did not, and the un-named half
+compiles exactly as an unobserved program does.
+
+**Sites converted (name in hand, storage-deciding), 23 in all:** the
+module decl loop; `emit_function`'s module-numeric seed (the
+`g_mod_observed`/`g_observed` pair that broke the draft — an OBSERVING
+function reading an UN-NAMED module numeric now gets the C-static seed,
+so `total is total + 1` inside `check` reads the static the decl loop
+emitted, and `undefined variable 'total'` is gone); `emit_num`'s ident
+read; the four observe-on-write arms (numeric, demoted-numeric, boxed,
+buffer); the interrogated call-local arm; the boxed-call-argument arm
+(t107's lesson one gate finer); boundness (`bound_bit_of`,
+`bound_bit_common`, the `prev of` env-membership arm); `borrowable_cvar`;
+the for-binder kinds (save/restore kind, the loop-scoped refusal, the
+numeric-parameter binder, the module-numeric binder); Part 2a's
+parameter env seed and the #123 shadow refusal gated on that seed's own
+condition; the per-call observer-slot reset (#217); and both
+outward-observe marks.
+
+**Sites deliberately KEPT on the whole-program flag, each for a stated
+reason** (the conservative direction — they cost some perf and change
+no verdict): the nested-observed-function refusal, the genp-rebind
+refusal, the interrogated-call-local eligibility scan, the
+`local`-shadow and boxed-shadow refusals, int-typing (`infer_int`),
+for-in unboxing, the per-call local env, parameter defaults, the
+kind-flip refusal, and — the one that is NOT merely conservative —
+**the MODULE for-binder rename**. That rename is what keeps a module
+binder out of the surviving module slot, and module-scope for-unboxing
+is still gated on the whole-program flag, so an un-named binder in an
+observed module is STILL env-resident and would leak the same phantom
+binding. Making it per-name needs the module for-unbox gate per-name
+first; the comment at the site says so.
+
+**The loop safepoint went with it.** A non-predicate loop's
+`eigs_loop_cap_step` is itself a NAMED env write: vm.c's helper stores
+`__loop_iterations__` and, on a cap exit, `__loop_exit__`; tests
+`g_sandbox_loop_max`, which only `sandbox_run` sets and which cannot
+wrap a compiled main; and runs the SIGUSR1 observe-safepoint. The first
+is gated by `g_loopexit_gate` — the program-wide test for a use of
+either name — and the other two are exactly what every UNOBSERVED
+binary already elides at the plain-`while` arm. So an observed program
+whose loop condition holds no predicate and whose `g_loopexit_gate` is
+closed now drops the per-iteration call on the same warrant, one regime
+over. A PREDICATE condition keeps its stall step (auto-halt is observer
+SEMANTICS, not bookkeeping) and so does `g_obs_all` (an eval'd string
+can name `__loop_iterations__` where `uses_ident` cannot see it).
+
+**Closing measurement** (this host, 4 vCPUs shared with ~8 agents, load
+average 8.2 — **under load, PROVISIONAL** per the fleet's timing rule;
+interleaved base-vs-new, n=25 per arm per binary, same `-march=native`
+build both sides, pinned v0.43.0 oracle):
+
+| arm | base median | per-name median | base min | per-name min |
+|---|---|---|---|---|
+| A unobserved | 27 | 24 | 14 | 12 |
+| B gate only | 39 | **30** | 19 | **13** |
+| C full | 52 | **31** | 24 | **15** |
+
+Medians: B falls from 1.44x A to **1.25x A**, C from 1.93x A to
+**1.29x A**. Mins: B 1.36x → 1.08x, C 1.71x → 1.25x. All six binaries
+print the same checksum (`0.018599999999997712`), which is the
+invariant that makes the arms comparable at all.
+
+**Mechanism, re-RAN in the generated C.** Arm B carried 12
+`aot_observe_num` stores and 23 `aot_get_num_named_ic` reads before;
+it now carries **2** stores (both on `ch`, the one named channel) and
+**0** named reads, and `grep` for any env operation on `i` / `r` / `j` /
+`acc` returns nothing — they are `static double`s. `eigs_loop_cap_step`
+count goes 3 → 0 in B and C.
+
+**Inert where nothing is observed, proven byte-exactly:** DMG's
+`dmg.eigs` transpiles to a gen.c that is BYTE-IDENTICAL between the
+base tree and this one (8,168 lines, `cmp` clean).
+
+**A refusal became an implementation.** `test_convergence_oracle.eigs`
+was ledgered REFUSE in `aot/test/canary/corpus_expected.txt` on the
+loop-scoped-binder-in-an-OBSERVED-program guard (`'i' is a loop-scoped
+for binder ... observed reads resolve through the env`); `i` is named by
+no observer read, so the guard no longer applies and the program now
+compiles and MATCHES the VM. That is the only ledger row that moved —
+230 programs examined, one improvement, zero regressions — and the
+baseline is updated: `aot/corpus_diff.sh` then reports
+`157 / 230 programs match the VM byte-for-byte; the rest match the
+ledger (2 NONDET excluded)`, exit 0. The envelope census is unchanged at 81 transpiles
+of 130 (zero row changes outside the fleet's own scratch worktrees).
+
+**SIX PRE-EXISTING divergences the new fixtures surfaced**, all measured
+on the base compiler first so none is a per-name regression. Five are
+closed here; the sixth is recorded and left open.
+
+*Closed by the per-name arms themselves* — each a silent wrong number in
+an OBSERVED function, each invisible to the whole suite because every
+observer fixture in it put its binder on the terminal env arm
+(invariant 22: a fixtured path with no DISCRIMINATING fixture):
+
+1. A numeric PARAMETER used as a for BINDER read the last ITERABLE
+   element after the loop: `f of 4.0` VM `["moving", 4, 25]`, base AOT
+   `["moving", 9, 25]`, both rc 0 (`t333_obs_param_for_binder`).
+2. A numeric LOCAL used as a for BINDER, the same one storage class
+   over: VM `["moving", 1, 14]`, base AOT `["moving", 9, 14]`
+   (`t334_obs_local_for_binder`).
+3. A binder over a name BOUND BEFORE the loop kept the binder's last
+   value instead of restoring the pre-loop binding: VM
+   `["moving", 100, 3.5]`, base AOT `["moving", 2, 3.5]`
+   (`t335_obs_prebound_for_binder`). All three were the observed
+   regime's "old persisting path" (#198), right for a NAMED binder and
+   wrong for every other one.
+4. **The Part-2a PARAMETER LEAK (#124's known residual) closes for
+   un-named parameters.** The seed keys a numeric parameter into the
+   GLOBAL env by name and there is no env-removal API, so the binding
+   survived the return: `define f(v) as: … / f of 8.0 / print of v`
+   printed `8` rc 0 where the VM dies `undefined variable 'v'` rc 1.
+   Per-name the seed is emitted only for parameters a read NAMES, so an
+   un-named one is never keyed into the module env and there is nothing
+   to leak (`t336_obs_param_leaks_after_call_err`). #124 stays open for
+   the NAMED half, which still needs the per-call env.
+
+*Closed by an extra fix in the same commit:*
+
+5. An observed function's numeric PARAMETER kept its observer slot
+   across calls — #217's rule for locals, never applied to parameters,
+   because Part 2a's `aot_set` does not touch the slot.
+   `probe of 10.0 / probe of 4.0 / probe of 1.0` answered VM
+   improving/improving/improving, AOT improving/moving/oscillating,
+   both rc 0. Fixed with an `aot_obs_reset_name` before the seed;
+   `t327_obs_report_of_param` is the regression.
+
+*Recorded, NOT fixed:*
+
+6. *`eval` does not open the AOT's whole-program observer gate.* The
+   VM's gate lists `eval` (const_pool_names_observer); the AOT's
+   `uses_observer` counts only predicates and the four special forms, so
+   an UNOBSERVED program whose only observer read is inside an eval'd
+   string compiles its names to C statics and the eval'd read dies:
+   `x is 100.0 ... eval of "report of c"` → `Error line 1: undefined
+   variable 'c'` where the VM answers `diverging`. **NOT fixed here** —
+   the honest fix is to widen `uses_observer` to the VM's reader-name
+   set, and that set includes `classify`, which four existing fixtures
+   (t43, t94, t203, t206) and `test/programs/match.eigs` use as an
+   ordinary `match` helper; widening would turn every one of them into
+   an observed (boxed, unvectorised) program. Out of scope for the
+   per-name round, recorded here as the next question. `t325_obs_eval_all`
+   pins the ALL fallback in a program that IS observed, which is the
+   half this round owns.
+
+**Pinned by:** sixteen new fixtures — `t297_obs_per_name_module` (a
+named channel beside un-named counters at module scope),
+`t298_obs_per_name_function` (a function reading a module numeric, a
+boxed call argument, an outward write from an observed function),
+`t299_obs_per_name_outward` (invariant 14b: one non-observing helper
+writing one named and one un-named module name),
+`t324_obs_bare_predicate_all`, `t325_obs_eval_all`,
+`t326_obs_per_name_interrogatives` (`prev of` / `where is _ at` /
+`why is _ at` / `what is _ at` beside an un-named counter),
+`t327_obs_report_of_param`, `t328_obs_fn_called_from_unobserved`,
+`t329_obs_per_name_fn_for_binder`, `t330_obs_module_for_binder` (the
+arm deliberately left on the flag), `t331_obs_named_written_in_fn`,
+`t332_obs_observe_and_trajectory` (the census's naming set is the VM's
+reader set, not just `report`), `t333`/`t334`/`t335` (the three binder
+discriminators) and `t336_obs_param_leaks_after_call_err` — plus the
+pre-existing observed set (t27, t107, t108, t119, t202, t203, t206,
+t218, t244, t305) and the bench tier.
+
+**Planted faults, each red for its own reason** (revert-in-place on the
+tree being committed, rebuild, `git checkout -- .`): dropping the
+`report`/`observe` operand from the census reddens six fixtures
+including t202 and t305; treating ONE named channel as un-named reddens
+t297 (`undefined variable 'ch'`) and, on the other channel's name, t331;
+deleting the bare-predicate ALL fallback reddens t324 AND t27; removing
+`eval` from the opaque set reddens t325; reverting the module-numeric
+seed reddens t202/t299/t328; reverting the boxed-call-argument arm
+reddens t107/t298; reverting the outward-observe marks reddens t299;
+reverting the three binder arms reddens t333/t334/t335; reverting the
+ident read + module decl loop reddens fifteen. The parameter env seed
+was the ONE conversion no existing fixture discriminated — reverting it
+left the whole tier green — which is what sent the search for
+`t336`; with t336 present the revert is red.
+
+**Status: FIXED.** `bash aot/test/run.sh` 402 PASS / 0 FAIL (64 refusal
+guards still exercised), `bash test/run.sh` 63 programs + bootstrap
+fixed point, both against the pinned v0.43.0 oracle.
 
 ## F-OURO-40 — struct lowering of statically-shaped dicts: re-scoped from "~2.8x, the gap to real-time" to ~10% of DMG's runtime; do the numeric-dispatch calling convention first — BY-DESIGN / not-now (#133; recorded, not scheduled)
 
@@ -2022,10 +2220,13 @@ axis and not wider.
 *To lift:* per-call envs for observed functions — the observer slot must
 be FRAME-owned, not name-keyed on the global env. This is the same Part
 2a design gap #123/#124 (locals leaking into module scope), #126 /
-F-OURO-39 (the 3x gate) and #217 (round 196, t305: a function's observed
-locals now get `aot_obs_reset_name(__eigs_g, …)` at entry so the slot is
-fresh per call — a reset ON the global slot, which is exactly what two
-threads cannot share) all name from different sides. F-OURO-32/35's
+F-OURO-39 (the gate — now PER-NAME, which removes the cost for names no
+read can name but leaves the name-keying itself in place for the ones it
+does) and #217 (round 196, t305: a function's observed locals — and,
+since #126, its observed numeric PARAMETERS — get
+`aot_obs_reset_name(__eigs_g, …)` at entry so the slot is fresh per call
+— a reset ON the global slot, which is exactly what two threads cannot
+share) all name from different sides. F-OURO-32/35's
 per-call env `__eigs_l` already exists for boxed locals; the observer
 store has to move with it. Inherited design, pre-v1 — question it rather
 than design around it.

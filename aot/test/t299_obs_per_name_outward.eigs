@@ -1,0 +1,29 @@
+# (#126) THE PER-NAME GATE AT AN OUTWARD WRITE -- aot-differential invariant
+# 14b: an effect lands in the regime of the NAME it targets, not of the
+# function emitting it.
+#
+# `step` observes nothing, so its own regime is unobserved. It writes two
+# module names: `a`, which a module-level `report of a` NAMES (so the write
+# must go through the observe-store or the verdict reads from a short
+# window -- round 63's VM `moving` / AOT `equilibrium`), and `b`, which no
+# read names (so the write is a plain C store and the observer machinery
+# never sees it). One helper, two regimes, decided per name.
+a is 5.0
+b is 5.0
+c is 5.0
+define step(d) as:
+    a is a - d
+    b is b - d
+    return 0
+define grow(d) as:
+    c is c * d
+    return 0
+k is 0
+loop while k < 6:
+    step of 0.5
+    grow of 1.5
+    k is k + 1
+print of f"a {a} b {b} c {c} k {k}"
+print of f"a-report {report of a}"
+print of f"a-diverging {diverging of a}"
+print of f"c-report {report of c}"

@@ -1,0 +1,24 @@
+# (#126) A for-in BINDER inside an OBSERVED function, over names the census
+# does not name. The binder kinds are decided by four separate arms (the
+# save/restore kind, the loop-scoped refusal, the numeric-parameter binder
+# and the module-numeric binder) and all four keyed on the whole-program
+# flag; under the per-name rule they key on the BINDER's own name, so an
+# un-named binder in an observed function compiles exactly as it would in an
+# unobserved one -- which is the whole theorem, applied to the one mechanism
+# where getting it half-right is a storage disagreement (invariant 14: the
+# write lands in the env while the read takes the C variable, or the reverse,
+# and the loop silently sums zeros).
+#
+# `w` is the one named channel; `i`, `s`, `k`, `tot` are named by nothing.
+tot is 0.0
+define f(k) as:
+    local w is k
+    local s is 0.0
+    for i in range of 5:
+        s is s + i
+        w is w * 0.5
+    tot is tot + s
+    return [report of w, s, i]
+print of (f of 8.0)
+print of (f of 4.0)
+print of f"tot {tot}"

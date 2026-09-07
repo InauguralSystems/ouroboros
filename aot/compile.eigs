@@ -193,6 +193,130 @@ define uses_observer(ast) as:
         return 1
     return has_report of ast
 
+# ---- (#126) THE PER-NAME OBSERVER GATE ------------------------------------
+# `g_observed` is all-or-nothing: one observer read anywhere in a unit demotes
+# EVERY scalar in it to a name-keyed env slot (aot_observe_num on write,
+# aot_get_num_named_ic on read -- a hash lookup plus a type check per access).
+# Measured (F-OURO-39, ouroboros#126): that gate is the LARGER HALF of the
+# AOT's observer overhead, and the names paying it are loop counters no
+# observer read can ever name.
+#
+# THE CENSUS is the set of names an observer READ can name. It is
+# PROGRAM-WIDE, not per-scope: Part 2a routes an observed function's locals
+# through the GLOBAL env by name, so a `report of total` anywhere names
+# `total` everywhere. Over-approximating is the safe direction -- a name in
+# the census keeps today's byte-exact bookkeeping unchanged.
+#
+# WHY IT IS SOUND (issue #126 comment 2, re-derived against the v0.43.0
+# runtime): a verdict is determined by a BOUNDED SUFFIX of a name's
+# assignments. ObserverSlot carries scalars plus three OBSERVER_WINDOW_N
+# rings; the six classifiers read none of its one cumulative field
+# (obs_age), which observer_slot_from_trajectory already SYNTHESISES when it
+# rebuilds a classifiable slot from bounded state. So a name no read can name
+# has no observable measurement at all, and declining to maintain its slot
+# changes nothing a program can print. Values stay byte-exact either way;
+# `g_traced` stays a SEPARATE gate, because per-assignment entropy IS
+# observable on the tape.
+#
+# g_obs_all is the fallback: when the reachable set cannot be enumerated the
+# census answers "every name", which is exactly today's behaviour.
+g_obs_names is {}
+g_obs_all is 0
+# Builtins that can read observer state under a name this walk cannot see.
+# MIRRORED from the VM's own gate rather than re-derived (chunk.c
+# const_pool_names_observer + SANDBOX_ALLOW's observer-READ group): `eval` /
+# `sandbox_run` / `vm_run_bytecode` compile a unit that need not exist until
+# it runs; a nested `load_file` / a residual `import` brings in a unit this
+# compilation did not splice; `classify` / `state_at` /
+# `get_observer_thresholds` / `record_history` are observer readers with NO
+# opcode form, so a name is their only fingerprint. Any of them -> ALL.
+OBS_OPAQUE_BUILTINS is {"eval": 1, "sandbox_run": 1, "vm_run_bytecode": 1, "load_file": 1, "import": 1, "classify": 1, "state_at": 1, "get_observer_thresholds": 1, "record_history": 1}
+
+# One operand of one observer read. An identifier names a binding; anything
+# else (an index, a dot, a call, a parenthesised expression) names none
+# statically, so the census gives up on the whole program rather than guess.
+define obs_census_operand(arg) as:
+    local a is unwrap of arg
+    if a[0] == "ident":
+        g_obs_names[(a[1])] is 1
+        return 0
+    g_obs_all is 1
+    return 0
+
+define collect_obs_names(node) as:
+    if (type of node) != "list":
+        return 0
+    if (len of node) == 0:
+        return 0
+    if node[0] == "predicate":
+        # A BARE predicate (not applied to a name) reads the runtime's
+        # last-observed-slot alias, which can be ANY name -- OP_PREDICATE_SLOT.
+        # This is why #125's NAMED form is the enabler for the whole analysis:
+        # without it the query set is undecidable by construction.
+        g_obs_all is 1
+        return 0
+    if node[0] == "import":
+        # a residual (unspliced) import: its unit is not in this AST
+        g_obs_all is 1
+        return 0
+    if node[0] == "interrogate":
+        # every interrogative -- what/who/when/where/why/how/prev. The
+        # tape-reading kinds do not need the env slot, but boundness and the
+        # observed-storage arms both key on the same name, so the census keeps
+        # the whole family together rather than splitting on kind.
+        obs_census_operand of node[2]
+        for ik in range of (len of node):
+            if ik > 2:
+                collect_obs_names of node[ik]
+        return 0
+    if node[0] == "call":
+        local c is unwrap of node[1]
+        if c[0] == "predicate":
+            obs_census_operand of node[2]
+            collect_obs_names of node[2]
+            return 0
+        if c[0] == "ident":
+            if (c[1] == "report") or (c[1] == "report_value") or (c[1] == "trajectory") or (c[1] == "observe"):
+                obs_census_operand of node[2]
+                collect_obs_names of node[2]
+                return 0
+            if OBS_OPAQUE_BUILTINS[(c[1])] == 1:
+                g_obs_all is 1
+        collect_obs_names of node[1]
+        collect_obs_names of node[2]
+        return 0
+    for k in range of (len of node):
+        collect_obs_names of node[k]
+    return 0
+
+# Is NAME subject to observer bookkeeping in the CURRENT scope's regime?
+# THE drop-in for `g_observed == 1` at every site that decides a NAME's
+# storage. Strictly narrower than the flag -- obs_name(n) == 1 implies
+# g_observed == 1 -- so no site can start observing where the flag did not,
+# and the un-named half compiles exactly like an unobserved program.
+define obs_name(n) as:
+    if g_observed != 1:
+        return 0
+    if g_obs_all == 1:
+        return 1
+    if g_obs_names[n] == 1:
+        return 1
+    return 0
+
+# The MODULE regime's twin. aot-differential invariant 14b: an effect lands in
+# the regime of the NAME it targets, not of the function emitting it -- a
+# non-observing helper writing an observed module name must still observe, and
+# an OBSERVING helper reading an un-named module name must still read the C
+# static the module decl loop emitted for it.
+define obs_mod_name(n) as:
+    if g_mod_observed != 1:
+        return 0
+    if g_obs_all == 1:
+        return 1
+    if g_obs_names[n] == 1:
+        return 1
+    return 0
+
 # Does this AST contain a temporal interrogative (`prev of x`, `what is x at L`)?
 # When set, every numeric assignment is recorded on the trace tape (independent
 # of the env, so temporal vars stay unboxed) and each source line is stamped.
@@ -318,7 +442,7 @@ define bound_bit_of(name, nmap) as:
         # dies, and with the exclusion applied the prev answered 7).
         if nmap[name] != 1:
             return 0
-        if g_observed == 1:
+        if (obs_name of name) == 1:
             return 0
         return 1
     if g_bound_bit[name] != 1:
@@ -338,7 +462,7 @@ define bound_bit_read_of(name, nmap) as:
 define bound_bit_common(name, nmap) as:
     if nmap[name] != 1:
         return 0
-    if g_observed == 1:
+    if (obs_name of name) == 1:
         return 0
     if g_cur_localmarked[name] == 1:
         return 0
@@ -2149,7 +2273,7 @@ define emit_num(node, nm, bt, raw) as:
         # CHECKED (#100 item 4): the one branch F-OURO-29 missed — a
         # non-number read here is a VM raise ("cannot apply ... to str"),
         # and aot_num's silent 0.0 was the worst-outcome class.
-        if g_observed == 1:
+        if (obs_name of node[1]) == 1:
             return env_read_num of [node[1], "\"" + (c_escape of (G_CUR_FN[0])) + ": name " + (c_escape of node[1]) + "\""]
         if nm[node[1]] == 1:
             # (round 74) an int-classified name in the DOUBLE path must be
@@ -2577,7 +2701,7 @@ define emit_val(node, nm, bt) as:
                         # 0.25 on the second call; the module read still dies)
                         return "((" + (cn of ie[1]) + "__isloc || " + (cn of ie[1]) + "_b) ? aot_prev_val(\"" + ie[1] + "\") : aot_undefined_name(\"" + ie[1] + "\"))"
                     return "(" + (cn of ie[1]) + "_b ? aot_prev_val(\"" + ie[1] + "\") : aot_undefined_name(\"" + ie[1] + "\"))"
-                if (g_observed == 1) and (g_bound_bit[ie[1]] == 1) and (g_cur_localmarked[ie[1]] != 1):
+                if ((obs_name of ie[1]) == 1) and (g_bound_bit[ie[1]] == 1) and (g_cur_localmarked[ie[1]] != 1):
                     # (round 117) observed regime: no C static, no bit -- the
                     # env holds the binding from its first executed store, so
                     # env membership answers boundness (critic f3: t219 plus a
@@ -3054,7 +3178,7 @@ define borrowable_cvar(node, nm, bt) as:
     # reads apply to it as they do to a C-variable list. Before this,
     # `_exec_ctx[2] is op` was an incref'd name read plus a boxed store on
     # every emulated instruction.
-    if (g_mod_assigned[n[1]] == 1) and (nm[n[1]] != 1) and (g_cur_params[n[1]] != 1) and (g_locshadow[n[1]] != 1) and (g_observed == 0) and (g_envloc[n[1]] != 1) and (g_boxshadow[n[1]] != 1) and (g_fn_rebinds[n[1]] != 1) and ((g_elem_maps[n[1]] != null) or (g_shadow_tbl[n[1]] == 1)):
+    if (g_mod_assigned[n[1]] == 1) and (nm[n[1]] != 1) and (g_cur_params[n[1]] != 1) and (g_locshadow[n[1]] != 1) and ((obs_name of n[1]) == 0) and (g_envloc[n[1]] != 1) and (g_boxshadow[n[1]] != 1) and (g_fn_rebinds[n[1]] != 1) and ((g_elem_maps[n[1]] != null) or (g_shadow_tbl[n[1]] == 1)):
         return env_readb of n[1]
     return ""
 
@@ -3353,7 +3477,7 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
             # C static are visible at query time), and buffer names take the
             # env lookup in the observer arms instead of band 2.
             local bobs is ""
-            if (g_observed == 1) or (g_outward_obs[name] == 1):
+            if ((obs_name of name) == 1) or (g_outward_obs[name] == 1):
                 bobs is ind + "val_incref(" + (cn of name) + "); aot_observe_val(" + (envc of name) + ", \"" + name + "\", " + (cn of name) + ");\n"
             if (is_buf_create of node[2]) == 1:
                 # `buffer of [r, c]` -> a shaped 2-D buffer; pass the list Value.
@@ -3371,7 +3495,7 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
             if (rcallee[0] == "ident") and (g_funcs[rcallee[1]] != null):
                 return ind + (bt_rebind of [name, (emit_call_num of [node[2], nm, bt])]) + bobs
             return ind + (bt_rebind of [name, (emit_val of [node[2], nm, bt])]) + bobs
-        if (g_cur_interloc[name] == 1) and (g_observed == 0):
+        if (g_cur_interloc[name] == 1) and ((obs_name of name) == 0):
             # (#218) the interrogated call-local: the store lands in the
             # call-local pair, never the module binding (the VM's
             # OP_SET_FN_NAME_LOCAL); the write is traced under the name
@@ -3388,7 +3512,7 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
         if nm[name] == 1:
             # observed program: numeric assign goes through the runtime observer
             # (store in env + update the slot's entropy/dH + set last-observer).
-            if g_observed == 1:
+            if (obs_name of name) == 1:
                 local orhs is emit_num of [node[2], nm, bt, 0]
                 local oa is ""
                 # trace entry FIRST (creates the history slot), then observe --
@@ -3441,7 +3565,7 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
                 asn is asn + ind + "aot_trace_assign(\"" + name + "\", " + (cn of name) + ");\n"
             return asn
         if (is_num_expr of [node[2], nm, bt]) == 1:
-            if (g_observed == 1) or (g_outward_obs[name] == 1):
+            if ((obs_name of name) == 1) or (g_outward_obs[name] == 1):
                 # a numeric RHS to a DEMOTED name (nm[name] != 1, e.g. after a
                 # module-dict call elsewhere demoted it) still must observe --
                 # this arm was the third unobserved store in the same family,
@@ -3466,7 +3590,7 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
             # execute. A traced program's locals stay env-resident, and traced
             # boxed stores go through the terminal arm below.
             return ind + "aot_lv_set(&" + (lv of name) + ", " + (emit_val of [node[2], nm, bt]) + ");\n"
-        if (g_observed == 1) or (g_outward_obs[name] == 1):
+        if ((obs_name of name) == 1) or (g_outward_obs[name] == 1):
             # A BOXED assign in an observed program must still observe. This
             # path is reached when a name is demoted off the numeric class --
             # (round 63: also when a NON-observing function's accepted
@@ -3641,6 +3765,24 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
             local chk is "eigs_loop_cap_step(__eigs_g)"
             if (has_predicate of node[1]) == 1:
                 chk is "eigs_loop_stall_step(__eigs_g)"
+            elif (g_loopexit_gate == 0) and (g_obs_all == 0):
+                # (#126) The per-name gate reaches the loop safepoint too,
+                # because the safepoint is ITSELF a named env write. A
+                # NON-predicate loop's cap step does exactly three things
+                # (vm.c eigs_loop_cap_step): it stores `__loop_iterations__`
+                # into the env and, on a cap exit, `__loop_exit__`; it tests
+                # g_sandbox_loop_max, which only sandbox_run sets and which
+                # cannot wrap a compiled main; and it runs the SIGUSR1
+                # observe-safepoint. The first is gated by g_loopexit_gate --
+                # THE program-wide test for a use of either name -- so with
+                # that gate closed neither name is readable, and the other two
+                # are exactly what every UNOBSERVED binary already elides at
+                # the plain-`while` arm below. So the step is dropped here on
+                # the same warrant, one regime over. A PREDICATE condition
+                # keeps its stall step: auto-halt is observer SEMANTICS, not
+                # bookkeeping. g_obs_all keeps it too -- an eval'd string can
+                # name `__loop_iterations__` where uses_ident cannot see it.
+                chk is ""
             local olg is loop_gf of [node, minits]
             if (g_loopexit_gate == 1) and ((G_CUR_FN[0]) == "<module>"):
                 # (round 134, #190) the observed arm ran the step (which
@@ -3655,7 +3797,8 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
                 return ogs + ind + "}\n"
             local os is ind + "while (" + (emit_cond of [node[1], nm, bt]) + ") {\n"
             os is os + (emit_stmts of [node[2], ind + "    ", nm, bt, minits, olg])
-            os is os + ind + "    if (" + chk + ") break;\n"
+            if chk != "":
+                os is os + ind + "    if (" + chk + ") break;\n"
             return os + ind + "}\n"
         local vinfo is vec_loop of [node, nm, bt]
         if vinfo != null:
@@ -3774,6 +3917,14 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
         # differently per loop-env TIER in the VM (EigenScript#1062), and
         # under trace the tape is process-global and name-keyed, so an
         # interrogated binder would read a different history renamed.
+        # (#126) NOT per-name, deliberately. The rename is what keeps a
+        # MODULE binder out of the surviving module slot, and it is needed for
+        # an un-named binder too: module-scope for-unboxing is still gated on
+        # the whole-program flag, so an un-named binder in an observed module
+        # is STILL env-resident and would leak the same phantom binding. The
+        # rename is conservative in the safe direction -- the fresh name is in
+        # no census, so every arm below treats it as the env-resident binder it
+        # is. Making this per-name needs the module for-unbox gate per-name too.
         if (g_observed == 1) and ((G_CUR_FN[0]) == "<module>"):
             if (observes_name of [fbody, fvar]) == 1:
                 throw of ("AOT: observer read of the loop binder inside its own loop ('" + fvar + "'): the history a report/observe/predicate sees there depends on the loop-env tier the VM's compiler picks (persist-overwrite skips the per-iteration CLEAR when the name was bound before the loop) -- refused rather than mirror a tier (EigenScript#1062).")
@@ -3794,7 +3945,7 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
         local _lsc_early is 0
         if ((G_CUR_FN[0]) != "<module>") and ((g_module_names[fvar] == 1) or ((g_interrogated_names[fvar] == 1) and (g_cur_params[fvar] != 1))):
             _lsc_early is 1
-        if (_lsc_early == 0) and ((G_CUR_FN[0]) != "<module>") and (g_observed == 0):
+        if (_lsc_early == 0) and ((G_CUR_FN[0]) != "<module>") and ((obs_name of fvar) == 0):
             if (g_cur_params[fvar] == 1) or ((G_BOUND_SO_FAR[0])[fvar] == 1):
                 if g_genp[fvar] == 1:
                     fsv_kind is "genp"
@@ -3909,7 +4060,7 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
             # threaded past `break`, and an OBSERVED program's body reads
             # resolve through the env, which a C block-local cannot shadow --
             # both refuse rather than answer wrongly.
-            if g_observed == 1:
+            if (obs_name of fvar) == 1:
                 throw of ("AOT: '" + fvar + "' is a loop-scoped for binder (module-bound or interrogated name) in an OBSERVED program; observed reads resolve through the env, which a block-scoped C variable cannot shadow (see EigenScript#1056).")
             if bt[fvar] == 1:
                 throw of ("AOT: '" + fvar + "' is a loop-scoped for binder over a BOXED binding; per-iteration ownership past break is not emitted yet (see EigenScript#1056).")
@@ -3984,7 +4135,7 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
                 if g_traced == 1:
                     # see the unboxed arm: binder stores trace in every scope
                     fo is fo + ind + "    aot_trace_assign_val(\"" + fvar + "\", " + (cn of fvar) + ");\n"
-            elif (g_cur_params[fvar] == 1) and (g_observed == 0):
+            elif (g_cur_params[fvar] == 1) and ((obs_name of fvar) == 0):
                 # a NUMERIC parameter as binder, where unboxing is off because
                 # the program is TRACED. The param lives in a C double and
                 # every read takes it; the terminal env arm wrote __eigs_g and
@@ -4002,7 +4153,7 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
                 fo is fo + ind + "    " + (cn of fvar) + " = aot_num_ck_at(aot_iter_get(" + itv + ", " + kv + "), \"" + (c_escape of (G_CUR_FN[0])) + ": for-in " + (c_escape of fvar) + "\");\n"
                 if g_traced == 1:
                     fo is fo + ind + "    aot_trace_assign(\"" + fvar + "\", " + (cn of fvar) + ");\n"
-            elif (lscope == 0) and (nm[fvar] == 1) and (g_observed == 0):
+            elif (lscope == 0) and (nm[fvar] == 1) and ((obs_name of fvar) == 0):
                 # (round 145, #161 cell 2) the block-local shadow below is a C
                 # double, so the iterable must PROVABLY yield numbers (the round-120
                 # rule, at module scope): `for v in ["a", "b"]` over a numeric
@@ -7874,7 +8025,7 @@ define emit_args(node, fname, nm, bt) as:
                 # null); otherwise read the env BORROWED.
                 if (bt[te[1]] == 1) or (g_dict[te[1]] == 1) or (g_genp[te[1]] == 1):
                     s is s + (cn of te[1])
-                elif (nm[te[1]] == 1) and (g_observed == 0):
+                elif (nm[te[1]] == 1) and ((obs_name of te[1]) == 0):
                     # A NUMERIC C variable is not in the env either -- the same
                     # hazard the line above names for buffers, one type over.
                     #
@@ -8770,7 +8921,7 @@ define emit_function(fn, finfo, gnm, gbt) as:
     local gn is keys of gnm
     for k in range of (len of gn):
         if gnm[gn[k]] == 1:
-            if (g_mod_observed == 1) and (g_observed == 0):
+            if ((obs_mod_name of (gn[k])) == 1) and (g_observed == 0):
                 fnm[gn[k]] is 0
             else:
                 fnm[gn[k]] is 1
@@ -8833,7 +8984,7 @@ define emit_function(fn, finfo, gnm, gbt) as:
     # loop below), not here.
     if g_observed == 1:
         for p2 in range of (len of params):
-            if (ptypes[p2]) == "num":
+            if ((ptypes[p2]) == "num") and ((obs_name of (params[p2])) == 1):
                 local _pn is params[p2]
                 if gnm[_pn] != null:
                     throw of ("AOT: numeric parameter `" + _pn + "` shadows a module binding in an observed function — Part 2a keys it into the global env BY NAME (aot_set below), so the call silently overwrites the caller's `" + _pn + "` (ouroboros#123). Rename the parameter.")
@@ -9394,7 +9545,19 @@ define emit_function(fn, finfo, gnm, gbt) as:
                 decls is decls + "    if (__argc <= " + (str of k) + ") " + (cn of params[k]) + " = " + dexpr + ";\n"
     if g_observed == 1:
         for k in range of (len of params):
-            if (ptypes[k]) == "num":
+            if ((ptypes[k]) == "num") and ((obs_name of (params[k])) == 1):
+                # (#126) #217's rule reaches PARAMETERS too, and the fixture
+                # for `report of <parameter>` is what found it: an observed
+                # function's parameter gets a FRESH observer slot per call on
+                # the VM (a new frame env), but Part 2a keys it into the
+                # global env by NAME and aot_set does not touch the slot, so
+                # the second call read the first call's trajectory --
+                # `probe of 10.0 / probe of 4.0 / probe of 1.0` answered
+                # VM improving/improving/improving, AOT improving/moving/
+                # oscillating, both rc 0. Measured identical on HEAD before
+                # this line, so it is a pre-existing sibling of #217, not a
+                # per-name regression. Reset before the seed.
+                decls is decls + "    aot_obs_reset_name(__eigs_g, \"" + params[k] + "\");\n"
                 decls is decls + "    aot_set(__eigs_g, \"" + params[k] + "\", make_num(" + (cn of params[k]) + "));\n"
     # (round 196, #217) an observed function's OWN locals (not params, not
     # module globals unless shadowed) get a fresh observer slot per call, as
@@ -9408,7 +9571,7 @@ define emit_function(fn, finfo, gnm, gbt) as:
                     risp is 1
             if ((gnm[rv] == 1) or (gbt[rv] == 1)) and (shadowed[rv] != 1):
                 risp is 1
-            if risp == 0:
+            if (risp == 0) and ((obs_name of rv) == 1):
                 decls is decls + "    aot_obs_reset_name(__eigs_g, \"" + rv + "\");\n"
     # locals: tensors -> AotTensor, buffers -> Value*, integers -> long, other
     # numerics -> double (params + globals excluded; an assign to a global
@@ -9464,7 +9627,7 @@ define emit_function(fn, finfo, gnm, gbt) as:
                 # aot_observe_num / aot_observe_val -- the name's regime,
                 # not the writer's. A buffer takes round 110's observe-store
                 # on the same mark (bt assign arm). t207/t208 pin it.
-                if (g_mod_observed == 1) and (g_observed != 1) and (g_cur_interloc[v] != 1):
+                if ((obs_mod_name of v) == 1) and (g_observed != 1) and (g_cur_interloc[v] != 1):
                     g_outward_obs[v] is 1
                     # and DEMOTE it in this function's maps: the body's own
                     # numeric pass re-promoted `total is total + k` to a C
@@ -9521,7 +9684,7 @@ define emit_function(fn, finfo, gnm, gbt) as:
             # slot, so `report of v` answered from a short window --
             # VM `5 / moving`, AOT `5 / equilibrium`, both rc 0. Mark the
             # name so the assign arms use the observe-store.
-            if g_mod_observed == 1:
+            if (obs_mod_name of v) == 1:
                 g_outward_obs[v] is 1
         # a local that shadows a global buffer is declared locally, not skipped.
         if shadowed[v] == 1:
@@ -10908,6 +11071,13 @@ define emit_program(ast) as:
     # both rc 0. Order was guarded to death over seven rounds; the regime
     # axis was never asked.
     g_mod_observed is g_observed
+    # (#126) the per-name census. Program-wide and computed ONCE, here, before
+    # any emission: emit_function re-derives g_observed per body, but the set
+    # of names a read can NAME is a property of the whole unit.
+    g_obs_names is {}
+    g_obs_all is 0
+    if g_observed == 1:
+        collect_obs_names of ast
     # (round 65) Module-scope for binders are loop-scoped by the VM in EVERY
     # regime, but observed/traced module emission routes the binder through
     # the env -- the C block-scope mechanism is regime-gated off -- where it
@@ -11714,7 +11884,7 @@ define emit_program(ast) as:
         # no file-scope decl; otherwise emit static long/double.
         # unboxed module for-vars (g_forunbox==2) are declared INSIDE their
         # loop's C block, not file-scope — the VM loop-scopes the binding.
-        if (nm[names[i]] == 1) and (g_observed == 0) and ((g_forunbox[names[i]] != 2) or (g_bound_bit[names[i]] == 1)):
+        if (nm[names[i]] == 1) and ((obs_name of (names[i])) == 0) and ((g_forunbox[names[i]] != 2) or (g_bound_bit[names[i]] == 1)):
             # (round 117) a for-only module name (g_forunbox == 2) had NO
             # file-scope decl since round 106, so a post-loop read was a gcc
             # "undeclared" error (#185's silent 0 in its earlier form). It

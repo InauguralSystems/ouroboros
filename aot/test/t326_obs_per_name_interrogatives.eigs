@@ -1,0 +1,24 @@
+# (#126) INTERROGATIVES ARE CENSUS ENTRIES. `prev of p`, `where is p` and
+# `what is q at L` all NAME a binding, so p and q keep their env slot and
+# their boundness answers come from the env exactly as before; `m` is named
+# by no read and compiles to a plain C static with its own boundness bit.
+#
+# The observer-snapshot kinds (where/why/how) and the tape-reading kinds
+# (what/who/when/prev) go into the census TOGETHER rather than being split
+# by kind: boundness (bound_bit_of, and the `prev of` env-membership arm)
+# and the observed-storage arms key on the SAME name, so a split would let
+# the two disagree about where the binding lives -- which is invariant 14's
+# storage-regime trap, and the way the first draft of this gate died.
+p is 1.0
+q is 1.0
+m is 0
+loop while m < 4:
+    p is p * 2.0
+    q is q * 3.0
+    m is m + 1
+print of f"p {p} q {q} m {m}"
+print of f"p-report {report of p}"
+print of f"prev-p {prev of p}"
+print of f"where-p-at {where is p at 16}"
+print of f"why-p-at {why is p at 16}"
+print of f"what-q-at {what is q at 17}"

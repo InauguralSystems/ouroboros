@@ -1,0 +1,17 @@
+# (#126) `report of` ON A PARAMETER. Part 2a seeds an observed function's
+# NUMERIC parameters into the global env at entry (aot_set) so the body's
+# named reads find them; that seed -- and the #123 shadow refusal that is
+# gated on the seed's own condition -- are now per-parameter. `v` is named,
+# so it is seeded and observed; `s` and `n` are not, so they stay C doubles
+# and the entry prologue carries no aot_set for them.
+define probe(v) as:
+    local s is 0.0
+    local n is 0
+    loop while n < 5:
+        s is s + v
+        v is v * 0.5
+        n is n + 1
+    return [report of v, s, n]
+print of (probe of 10.0)
+print of (probe of 4.0)
+print of (probe of 1.0)
