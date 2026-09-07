@@ -2055,6 +2055,28 @@ left the whole tier green — which is what sent the search for
 guards still exercised), `bash test/run.sh` 63 programs + bootstrap
 fixed point, both against the pinned v0.43.0 oracle.
 
+**Follow-up (2026-09-07): the compiler's own storage report was left
+STALE by this round, and is now gated.** `--dump-inference` (#65) prints
+one record per name saying which storage class the emitter picked; three
+of its sites still keyed the reported `kind` off the whole-program
+`g_observed` flag, so `compile.eigs test/t297_obs_per_name_module.eigs
+--dump-inference` called `total` and `i` `observed-env` while the same
+transpile emitted `static double eig_total` / `static double eig_i` with
+no `aot_observe_num` or `aot_get_num_named_ic` on either — the parameter
+and function-local records were wrong the same way. No value, verdict or
+exit code moved; what was wrong was the instrument, which is the class of
+a comment that overclaims. All three now call `obs_name`, the predicate
+the emitter itself consults (a sweep of every `g_observed` read inside a
+`--dump-inference` producer found exactly those three; the `for`-binder
+records already read `g_forunbox`, which IS what the emitter reads). And
+the dump had no test at all, which is why it could drift: the new
+`aot/test/dump_inference_gate.sh` (wired into `aot/test/run.sh`) joins
+the dump against the C the SAME transpile emits for t297 and t298 — a
+name reported `double`/`long` must carry no observer storage call and
+must be declared at that C type, a name reported `observed-env` must
+carry one — and its header states which dump fields it does NOT
+adjudicate. Reverting any one of the three sites reddens it by name.
+
 ## F-OURO-40 — struct lowering of statically-shaped dicts: re-scoped from "~2.8x, the gap to real-time" to ~10% of DMG's runtime; do the numeric-dispatch calling convention first — BY-DESIGN / not-now (#133; recorded, not scheduled)
 
 Ledger of record for ouroboros#133 (split from #130). Nothing here is a

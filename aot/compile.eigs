@@ -9443,7 +9443,13 @@ define emit_function(fn, finfo, gnm, gbt) as:
                 dkind is "buffer"
             elif dpk == "num":
                 dkind is "double"
-                if g_observed == 1:
+                # (#126 follow-up) storage is decided PER NAME, so the dump
+                # asks obs_name -- the very call the parameter-seed loop
+                # below makes -- not the program-wide g_observed. Under the
+                # flag this printed `observed-env` for every numeric
+                # parameter of an observed unit while the emitter handed the
+                # un-named ones a plain C double.
+                if (obs_name of (params[k])) == 1:
                     dkind is "observed-env"
                 elif g_int[params[k]] == 1:
                     dkind is "long"
@@ -9466,7 +9472,11 @@ define emit_function(fn, finfo, gnm, gbt) as:
                     lkind is "buffer"
                 elif fnm[dv] == 1:
                     lkind is "double"
-                    if g_observed == 1:
+                    # (#126 follow-up) same predicate the numeric assign arm
+                    # consults (emit_stmt's `if (obs_name of name) == 1`):
+                    # an un-named local in an observed function is a C double
+                    # declared by the decls loop, not an env slot.
+                    if (obs_name of dv) == 1:
                         lkind is "observed-env"
                     elif g_int[dv] == 1:
                         lkind is "long"
@@ -11861,7 +11871,15 @@ define emit_program(ast) as:
                 mkind is "buffer"
             elif nm[mv] == 1:
                 mkind is "double"
-                if g_observed == 1:
+                # (#126 follow-up) mirrors the module decl loop's own test
+                # below (`(obs_name of names[i]) == 0` -> emit the static):
+                # a module numeric no observer names IS a file-scope C
+                # double/long, and the dump used to call it observed-env.
+                # obs_name, not obs_mod_name: at this point g_observed is
+                # still the module regime (emit_function saves/restores it),
+                # so the two agree and the decl loop's call is the one to
+                # copy.
+                if (obs_name of mv) == 1:
                     mkind is "observed-env"
                 elif g_int[mv] == 1:
                     mkind is "long"

@@ -374,7 +374,14 @@ eigenscript tools/spec_audit.eigs run.tape inf.dump             # the join
 
 `--dump-inference` prints one deterministic record per name (scope, role,
 inferred storage kind as the assign path actually dispatches it,
-first-assignment line). The audit joins those against the tape's
+first-assignment line). "As the assign path actually dispatches it" is a
+claim the dump has to keep earning: after #126 made the observer gate
+PER NAME, three of its sites still read the whole-program `g_observed`
+flag and reported `observed-env` for names the emitter had given plain C
+doubles. They now call `obs_name`, the emitter's own predicate, and
+`test/dump_inference_gate.sh` (a tier of `test/run.sh`) joins the dump
+against the C of the same transpile so the two cannot drift apart again
+unnoticed; its header states which record fields it adjudicates. The audit joins those against the tape's
 `A name=value` records and ranks by assign count: **MISSED** = inference
 boxed it, the tape proves every value was numeric (a specialization the
 compiler left on the table); OKBOXED / CONFIRMED / AMBIG / BLIND keep the

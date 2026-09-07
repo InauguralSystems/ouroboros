@@ -192,6 +192,15 @@ fi
 # disagreement. This arm builds the #147 A/B layout in a temp dir and runs
 # both sides from the SHADOWING cwd (test/load_file_shadow.sh).
 if EIGS="$EIG" bash test/load_file_shadow.sh; then :; else fail=1; fi
+# ---- --dump-inference agreement gate (#126 follow-up) ---------------------
+# The tiers above adjudicate what a fixture PRINTS. The compiler's own storage
+# report (--dump-inference, #65) prints nothing at run time and had no test at
+# all, so it drifted silently when #126 made the observer gate per-name. This
+# arm joins the dump against the C the SAME transpile emits, for a fixture with
+# both an observed and an un-observed numeric name at each scope. Two
+# transpiles and a grep per fixture -- no gcc. Its own header states which dump
+# fields it adjudicates and which it does not.
+if EIGS="$EIG" bash test/dump_inference_gate.sh; then :; else fail=1; fi
 # ---- REFUSAL TIER (ouroboros#112) ----------------------------------------
 # The parity tiers above can only assert that a program COMPILES AND MATCHES.
 # A program the AOT is supposed to REJECT reads to them as BUILD FAIL, so every
