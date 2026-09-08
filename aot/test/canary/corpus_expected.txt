@@ -10,7 +10,6 @@ test_closure_mutation.eigs REFUSE
 test_closures.eigs REFUSE
 test_concurrent.eigs DIVERGE
 test_control_flow_interactions.eigs REFUSE
-test_convergence_oracle.eigs REFUSE
 test_coverage_gaps.eigs REFUSE
 test_coverage_v2.eigs REFUSE
 test_default_params.eigs REFUSE
@@ -42,10 +41,10 @@ test_listcomp_interrogate.eigs REFUSE
 test_module_scope.eigs REFUSE
 test_multiline.eigs REFUSE
 test_numerics.eigs REFUSE
+test_obs_mt_race.eigs REFUSE
 test_observer_coherence.eigs REFUSE
 test_observer_interactions.eigs REFUSE
 test_observer_saturation.eigs REFUSE
-test_obs_mt_race.eigs REFUSE
 test_optimize.eigs REFUSE
 test_pipe_lambda.eigs REFUSE
 test_predicate_matrix.eigs REFUSE
@@ -60,15 +59,15 @@ test_stem_accuracy.eigs REFUSE
 test_supervise.eigs DIVERGE
 test_sync.eigs REFUSE
 test_task_osr.eigs REFUSE
-test_tasks.eigs REFUSE
 test_task_sleep_order.eigs REFUSE
+test_tasks.eigs REFUSE
 test_temporal.eigs REFUSE
 test_temporal_param.eigs REFUSE
 test_temporal_when.eigs REFUSE
 test_throw_unwind.eigs REFUSE
 test_trycatch.eigs REFUSE
-test_ui_containment_gfx.eigs REFUSE
 test_ui.eigs REFUSE
+test_ui_containment_gfx.eigs REFUSE
 test_unobserved.eigs REFUSE
 test_walker_matrix.eigs REFUSE
 test_worker_intern_escape.eigs DIVERGE

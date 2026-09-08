@@ -1,0 +1,16 @@
+# ouroboros#147 / EigenScript#1056 (v0.43.0 pin): literal load_file targets
+# resolve through the VM's file-relative chain, mirrored statically by the
+# splicer. Three steps in one program, each proven SPLICED (compiled) by the
+# loaded file calling a function defined HERE -- a runtime (interpreted)
+# load could not see it and would die "undefined variable":
+#   sibling/subdir  data/lf147_sub/child.eigs   (containing directory)
+#   nested          child -> "helper.eigs"       (the CHILD's directory, not
+#                                                 this file's and not the cwd)
+#   project root    child -> "aot/test/data/lf147_root_helper.eigs" via the
+#                   repo's eigs.json (the harness runs from aot/, where
+#                   aot/test/data/... does not exist relative to the cwd)
+define compiled_here(n) as:
+    return n * 10
+load_file of "data/lf147_sub/child.eigs"
+print of (from_child of 4)
+print of (from_root_helper of 5)

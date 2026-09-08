@@ -193,6 +193,130 @@ define uses_observer(ast) as:
         return 1
     return has_report of ast
 
+# ---- (#126) THE PER-NAME OBSERVER GATE ------------------------------------
+# `g_observed` is all-or-nothing: one observer read anywhere in a unit demotes
+# EVERY scalar in it to a name-keyed env slot (aot_observe_num on write,
+# aot_get_num_named_ic on read -- a hash lookup plus a type check per access).
+# Measured (F-OURO-39, ouroboros#126): that gate is the LARGER HALF of the
+# AOT's observer overhead, and the names paying it are loop counters no
+# observer read can ever name.
+#
+# THE CENSUS is the set of names an observer READ can name. It is
+# PROGRAM-WIDE, not per-scope: Part 2a routes an observed function's locals
+# through the GLOBAL env by name, so a `report of total` anywhere names
+# `total` everywhere. Over-approximating is the safe direction -- a name in
+# the census keeps today's byte-exact bookkeeping unchanged.
+#
+# WHY IT IS SOUND (issue #126 comment 2, re-derived against the v0.43.0
+# runtime): a verdict is determined by a BOUNDED SUFFIX of a name's
+# assignments. ObserverSlot carries scalars plus three OBSERVER_WINDOW_N
+# rings; the six classifiers read none of its one cumulative field
+# (obs_age), which observer_slot_from_trajectory already SYNTHESISES when it
+# rebuilds a classifiable slot from bounded state. So a name no read can name
+# has no observable measurement at all, and declining to maintain its slot
+# changes nothing a program can print. Values stay byte-exact either way;
+# `g_traced` stays a SEPARATE gate, because per-assignment entropy IS
+# observable on the tape.
+#
+# g_obs_all is the fallback: when the reachable set cannot be enumerated the
+# census answers "every name", which is exactly today's behaviour.
+g_obs_names is {}
+g_obs_all is 0
+# Builtins that can read observer state under a name this walk cannot see.
+# MIRRORED from the VM's own gate rather than re-derived (chunk.c
+# const_pool_names_observer + SANDBOX_ALLOW's observer-READ group): `eval` /
+# `sandbox_run` / `vm_run_bytecode` compile a unit that need not exist until
+# it runs; a nested `load_file` / a residual `import` brings in a unit this
+# compilation did not splice; `classify` / `state_at` /
+# `get_observer_thresholds` / `record_history` are observer readers with NO
+# opcode form, so a name is their only fingerprint. Any of them -> ALL.
+OBS_OPAQUE_BUILTINS is {"eval": 1, "sandbox_run": 1, "vm_run_bytecode": 1, "load_file": 1, "import": 1, "classify": 1, "state_at": 1, "get_observer_thresholds": 1, "record_history": 1}
+
+# One operand of one observer read. An identifier names a binding; anything
+# else (an index, a dot, a call, a parenthesised expression) names none
+# statically, so the census gives up on the whole program rather than guess.
+define obs_census_operand(arg) as:
+    local a is unwrap of arg
+    if a[0] == "ident":
+        g_obs_names[(a[1])] is 1
+        return 0
+    g_obs_all is 1
+    return 0
+
+define collect_obs_names(node) as:
+    if (type of node) != "list":
+        return 0
+    if (len of node) == 0:
+        return 0
+    if node[0] == "predicate":
+        # A BARE predicate (not applied to a name) reads the runtime's
+        # last-observed-slot alias, which can be ANY name -- OP_PREDICATE_SLOT.
+        # This is why #125's NAMED form is the enabler for the whole analysis:
+        # without it the query set is undecidable by construction.
+        g_obs_all is 1
+        return 0
+    if node[0] == "import":
+        # a residual (unspliced) import: its unit is not in this AST
+        g_obs_all is 1
+        return 0
+    if node[0] == "interrogate":
+        # every interrogative -- what/who/when/where/why/how/prev. The
+        # tape-reading kinds do not need the env slot, but boundness and the
+        # observed-storage arms both key on the same name, so the census keeps
+        # the whole family together rather than splitting on kind.
+        obs_census_operand of node[2]
+        for ik in range of (len of node):
+            if ik > 2:
+                collect_obs_names of node[ik]
+        return 0
+    if node[0] == "call":
+        local c is unwrap of node[1]
+        if c[0] == "predicate":
+            obs_census_operand of node[2]
+            collect_obs_names of node[2]
+            return 0
+        if c[0] == "ident":
+            if (c[1] == "report") or (c[1] == "report_value") or (c[1] == "trajectory") or (c[1] == "observe"):
+                obs_census_operand of node[2]
+                collect_obs_names of node[2]
+                return 0
+            if OBS_OPAQUE_BUILTINS[(c[1])] == 1:
+                g_obs_all is 1
+        collect_obs_names of node[1]
+        collect_obs_names of node[2]
+        return 0
+    for k in range of (len of node):
+        collect_obs_names of node[k]
+    return 0
+
+# Is NAME subject to observer bookkeeping in the CURRENT scope's regime?
+# THE drop-in for `g_observed == 1` at every site that decides a NAME's
+# storage. Strictly narrower than the flag -- obs_name(n) == 1 implies
+# g_observed == 1 -- so no site can start observing where the flag did not,
+# and the un-named half compiles exactly like an unobserved program.
+define obs_name(n) as:
+    if g_observed != 1:
+        return 0
+    if g_obs_all == 1:
+        return 1
+    if g_obs_names[n] == 1:
+        return 1
+    return 0
+
+# The MODULE regime's twin. aot-differential invariant 14b: an effect lands in
+# the regime of the NAME it targets, not of the function emitting it -- a
+# non-observing helper writing an observed module name must still observe, and
+# an OBSERVING helper reading an un-named module name must still read the C
+# static the module decl loop emitted for it.
+define obs_mod_name(n) as:
+    if g_mod_observed != 1:
+        return 0
+    if g_obs_all == 1:
+        return 1
+    if g_obs_names[n] == 1:
+        return 1
+    return 0
+
 # Does this AST contain a temporal interrogative (`prev of x`, `what is x at L`)?
 # When set, every numeric assignment is recorded on the trace tape (independent
 # of the env, so temporal vars stay unboxed) and each source line is stamped.
@@ -257,6 +381,26 @@ g_cur_localmarked is {}
 # such name gets a call-local shadow (`<cn>__loc` / `<cn>__isloc`); stores
 # route on the module bit, reads on the shadow flag.
 g_cur_shadowbit is {}
+# (#218) INTERROGATED CALL-LOCALS of the CURRENT function: a module NUMERIC
+# name the function plainly assigns AND interrogates (`prev of`, `what/when
+# is .. at`). compile_ast's escape pre-scan (#99 round 2) routes such a
+# name to OP_SET_FN_NAME_LOCAL -- a fresh frame binding -- so on the VM the
+# write never reaches the module binding, a read BEFORE the first write in
+# the call still walks the chain to the module binding, and `prev of` reads
+# the process-global name-keyed tape (module writes included). Measured on
+# the v0.43.0 pin: the issue's program (1 1 / 0.25 0.25), a read before
+# the write (module 1, then 0.25), a nested-block write, a `loop while`
+# body write, recursion (each frame its own `z`), another function reading
+# the module value during the call, and a for-binder over the name (round
+# 182's loop scope, post-loop read = the call-local if written, else the
+# module). Mirrored with round 151's shadow pair (`<cn>__loc` /
+# `<cn>__isloc`): every write lands in __loc and sets the flag, every read
+# dispatches on the flag and falls back to whatever this regime's MODULE
+# read is (C static, bit-guarded static, env read). C stack storage makes
+# recursion exact for free; the pair is suppressed inside a loop-scoped
+# for-body over the same name. Boxed / observed / nested-reference members
+# stay refused by name (emit_function).
+g_cur_interloc is {}
 # (round 153) try/catch: does the CURRENT function (or the module body)
 # contain a `try`? Its C locals must survive a longjmp, so the function is
 # compiled at -O0 and declares `_tryb` (the handler depth at entry) so a
@@ -273,6 +417,15 @@ g_mod_has_try is 0
 g_cur_genp_rebound is {}
 g_cur_genp_release is ""
 g_stmt_tmp_used is 0
+# (#139 census) the statement's temp-pool MARK. Statement drains are
+# RELATIVE (`aot_tmp_drain_to(mark)`), never the whole pool: a user call
+# nested in an argument list runs the callee's statements while the
+# caller's `_sqa` temporaries are still live in the pool, and the callee's
+# full `aot_tmp_drain()` freed them under the caller (use-after-free;
+# `check of ["label", g of 1, 1]` died "cannot apply '+' to ? and str" --
+# reduced from EigenRegex's stage suites, which import regex.eigs).
+g_stmt_tmp_mark is ""
+g_stmt_tmp_seq is 0
 # (round 154) does the program's call graph admit unbounded nesting? Only
 # then does every compiled function carry the frame-depth bracket (the VM's
 # 4096-frame cap). An acyclic graph bounds nesting by its longest path, far
@@ -289,7 +442,7 @@ define bound_bit_of(name, nmap) as:
         # dies, and with the exclusion applied the prev answered 7).
         if nmap[name] != 1:
             return 0
-        if g_observed == 1:
+        if (obs_name of name) == 1:
             return 0
         return 1
     if g_bound_bit[name] != 1:
@@ -309,7 +462,7 @@ define bound_bit_read_of(name, nmap) as:
 define bound_bit_common(name, nmap) as:
     if nmap[name] != 1:
         return 0
-    if g_observed == 1:
+    if (obs_name of name) == 1:
         return 0
     if g_cur_localmarked[name] == 1:
         return 0
@@ -2108,11 +2261,19 @@ define emit_num(node, nm, bt, raw) as:
     if t == "predicate":
         return "((double)aot_predicate(" + (str of node[1]) + "))"
     if t == "ident":
+        # (#218) an interrogated call-local: the call-local wins once bound
+        # in this call; otherwise the read is whatever this regime's module
+        # read is -- computed by re-entering with the mark cleared.
+        if g_cur_interloc[node[1]] == 1:
+            g_cur_interloc[node[1]] is 0
+            local _ilfb is emit_num of [node, nm, bt, raw]
+            g_cur_interloc[node[1]] is 1
+            return "(" + (cn of node[1]) + "__isloc ? " + (cn of node[1]) + "__loc : " + _ilfb + ")"
         # in an observed program numeric vars live in the env (boxed).
         # CHECKED (#100 item 4): the one branch F-OURO-29 missed — a
         # non-number read here is a VM raise ("cannot apply ... to str"),
         # and aot_num's silent 0.0 was the worst-outcome class.
-        if g_observed == 1:
+        if (obs_name of node[1]) == 1:
             return env_read_num of [node[1], "\"" + (c_escape of (G_CUR_FN[0])) + ": name " + (c_escape of node[1]) + "\""]
         if nm[node[1]] == 1:
             # (round 74) an int-classified name in the DOUBLE path must be
@@ -2532,8 +2693,15 @@ define emit_val(node, nm, bt) as:
                     # after (raise, both sides agree).
                     return "aot_undefined_name(\"" + ie[1] + "\")"
                 if (bound_bit_of of [ie[1], nm]) == 1:
+                    if g_cur_interloc[(ie[1])] == 1:
+                        # (#218) the call-local binding satisfies the VM's
+                        # bound-in-scope rule as well as the module bit does
+                        # (measured: a conditionally-unbound module `z`,
+                        # `z is 0.25` then `prev of z` answers null, then
+                        # 0.25 on the second call; the module read still dies)
+                        return "((" + (cn of ie[1]) + "__isloc || " + (cn of ie[1]) + "_b) ? aot_prev_val(\"" + ie[1] + "\") : aot_undefined_name(\"" + ie[1] + "\"))"
                     return "(" + (cn of ie[1]) + "_b ? aot_prev_val(\"" + ie[1] + "\") : aot_undefined_name(\"" + ie[1] + "\"))"
-                if (g_observed == 1) and (g_bound_bit[ie[1]] == 1) and (g_cur_localmarked[ie[1]] != 1):
+                if ((obs_name of ie[1]) == 1) and (g_bound_bit[ie[1]] == 1) and (g_cur_localmarked[ie[1]] != 1):
                     # (round 117) observed regime: no C static, no bit -- the
                     # env holds the binding from its first executed store, so
                     # env membership answers boundness (critic f3: t219 plus a
@@ -2551,6 +2719,14 @@ define emit_val(node, nm, bt) as:
         # unlike `prev of z`, which dies.
         return "aot_query_at_val(" + (str of ik) + ", \"" + ie[1] + "\", (int)(" + (emit_num of [iat, nm, bt, 0]) + "))"
     if t == "ident":
+        # (#218) an interrogated call-local read in VALUE position (reached
+        # when the regime keeps the module name off the numeric map, e.g. a
+        # module-observed program): the pair wins once bound in this call.
+        if g_cur_interloc[node[1]] == 1:
+            g_cur_interloc[node[1]] is 0
+            local _ilvb is emit_val of [node, nm, bt]
+            g_cur_interloc[node[1]] is 1
+            return "(" + (cn of node[1]) + "__isloc ? make_num(" + (cn of node[1]) + "__loc) : " + _ilvb + ")"
         # Value-typed C names are NOT in the env: a buffer/dict local or param
         # is a C Value* — hand out a new ref (emit_val's result is owned); a
         # tensor is an AotTensor, serialized like the return path. The env
@@ -3002,7 +3178,7 @@ define borrowable_cvar(node, nm, bt) as:
     # reads apply to it as they do to a C-variable list. Before this,
     # `_exec_ctx[2] is op` was an incref'd name read plus a boxed store on
     # every emulated instruction.
-    if (g_mod_assigned[n[1]] == 1) and (nm[n[1]] != 1) and (g_cur_params[n[1]] != 1) and (g_locshadow[n[1]] != 1) and (g_observed == 0) and (g_envloc[n[1]] != 1) and (g_boxshadow[n[1]] != 1) and (g_fn_rebinds[n[1]] != 1) and ((g_elem_maps[n[1]] != null) or (g_shadow_tbl[n[1]] == 1)):
+    if (g_mod_assigned[n[1]] == 1) and (nm[n[1]] != 1) and (g_cur_params[n[1]] != 1) and (g_locshadow[n[1]] != 1) and ((obs_name of n[1]) == 0) and (g_envloc[n[1]] != 1) and (g_boxshadow[n[1]] != 1) and (g_fn_rebinds[n[1]] != 1) and ((g_elem_maps[n[1]] != null) or (g_shadow_tbl[n[1]] == 1)):
         return env_readb of n[1]
     return ""
 
@@ -3127,7 +3303,9 @@ define emit_return(ctype, expr, ind, pre) as:
         return ind + "return " + expr + ";\n"
     local s is ind + "{ " + ctype + " _rv = " + expr + ";"
     if g_stmt_tmp_used == 1:
-        s is s + " aot_tmp_drain();"
+        # Relative to this statement's mark (declared by emit_stmts just
+        # before the statement): the caller's pending temporaries stay.
+        s is s + " aot_tmp_drain_to(" + g_stmt_tmp_mark + ");"
     if g_cur_genp_release != "":
         # (round 162) the value is evaluated (and incref'd if it IS the
         # parameter) before the frame's owned rebinds are released.
@@ -3175,17 +3353,28 @@ define emit_stmts(stmts, ind, nm, bt, minits, gf) as:
     local out is ""
     for i in range of (len of stmts):
         local _tu is g_stmt_tmp_used
+        local _tm is g_stmt_tmp_mark
         g_stmt_tmp_used is 0
+        g_stmt_tmp_seq is g_stmt_tmp_seq + 1
+        g_stmt_tmp_mark is "_tms" + (str of g_stmt_tmp_seq)
         local one is emit_stmt of [stmts[i], ind, nm, bt, minits, gf]
         mark_bound_so_far of [stmts[i]]
         if g_stmt_tmp_used == 1:
             # (round 171) release the statement's owned argument temporaries.
             # A compound statement (if/loop/for) drains after its whole body
             # too; the bodies' own statements drained their own.
-            one is one + ind + "aot_tmp_drain();\n"
+            # (#139 census) release DOWN TO THE STATEMENT'S MARK, not the
+            # whole pool: below the mark sit the temporaries of the CALLER
+            # whose argument list this function is being evaluated inside
+            # (`f of ["s", g of 1]` -- g's statements run while "s" is
+            # live). A whole-pool drain there freed the caller's argument
+            # under it. Marked per statement so a loop body still releases
+            # per iteration.
+            one is ind + "int " + g_stmt_tmp_mark + " = aot_tmp_mark();\n" + one + ind + "aot_tmp_drain_to(" + g_stmt_tmp_mark + ");\n"
         out is out + one
         out is out + (sh_after_stmt of [stmts[i], ind, nm, bt])
         g_stmt_tmp_used is _tu
+        g_stmt_tmp_mark is _tm
     return out
 
 # (round 139, #172) a C-variable buffer REBIND releases the previous value:
@@ -3288,7 +3477,7 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
             # C static are visible at query time), and buffer names take the
             # env lookup in the observer arms instead of band 2.
             local bobs is ""
-            if (g_observed == 1) or (g_outward_obs[name] == 1):
+            if ((obs_name of name) == 1) or (g_outward_obs[name] == 1):
                 bobs is ind + "val_incref(" + (cn of name) + "); aot_observe_val(" + (envc of name) + ", \"" + name + "\", " + (cn of name) + ");\n"
             if (is_buf_create of node[2]) == 1:
                 # `buffer of [r, c]` -> a shaped 2-D buffer; pass the list Value.
@@ -3306,10 +3495,24 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
             if (rcallee[0] == "ident") and (g_funcs[rcallee[1]] != null):
                 return ind + (bt_rebind of [name, (emit_call_num of [node[2], nm, bt])]) + bobs
             return ind + (bt_rebind of [name, (emit_val of [node[2], nm, bt])]) + bobs
+        if (g_cur_interloc[name] == 1) and ((obs_name of name) == 0):
+            # (#218) the interrogated call-local: the store lands in the
+            # call-local pair, never the module binding (the VM's
+            # OP_SET_FN_NAME_LOCAL); the write is traced under the name
+            # (the tape is name-keyed on both sides) and observes nothing --
+            # measured on the pin: a module-observed `z`'s report/predicate
+            # answers are unchanged by the function's writes.
+            local _ilraw is 0
+            if gf[name] == 1:
+                _ilraw is 1
+            local _ilst is ind + "{ " + (cn of name) + "__loc = " + (emit_num of [node[2], nm, bt, _ilraw]) + "; " + (cn of name) + "__isloc = 1;"
+            if (traced_name of name) == 1:
+                _ilst is _ilst + " aot_trace_assign(\"" + name + "\", " + (cn of name) + "__loc);"
+            return _ilst + " }\n"
         if nm[name] == 1:
             # observed program: numeric assign goes through the runtime observer
             # (store in env + update the slot's entropy/dH + set last-observer).
-            if g_observed == 1:
+            if (obs_name of name) == 1:
                 local orhs is emit_num of [node[2], nm, bt, 0]
                 local oa is ""
                 # trace entry FIRST (creates the history slot), then observe --
@@ -3362,7 +3565,7 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
                 asn is asn + ind + "aot_trace_assign(\"" + name + "\", " + (cn of name) + ");\n"
             return asn
         if (is_num_expr of [node[2], nm, bt]) == 1:
-            if (g_observed == 1) or (g_outward_obs[name] == 1):
+            if ((obs_name of name) == 1) or (g_outward_obs[name] == 1):
                 # a numeric RHS to a DEMOTED name (nm[name] != 1, e.g. after a
                 # module-dict call elsewhere demoted it) still must observe --
                 # this arm was the third unobserved store in the same family,
@@ -3387,7 +3590,7 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
             # execute. A traced program's locals stay env-resident, and traced
             # boxed stores go through the terminal arm below.
             return ind + "aot_lv_set(&" + (lv of name) + ", " + (emit_val of [node[2], nm, bt]) + ");\n"
-        if (g_observed == 1) or (g_outward_obs[name] == 1):
+        if ((obs_name of name) == 1) or (g_outward_obs[name] == 1):
             # A BOXED assign in an observed program must still observe. This
             # path is reached when a name is demoted off the numeric class --
             # (round 63: also when a NON-observing function's accepted
@@ -3562,6 +3765,24 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
             local chk is "eigs_loop_cap_step(__eigs_g)"
             if (has_predicate of node[1]) == 1:
                 chk is "eigs_loop_stall_step(__eigs_g)"
+            elif (g_loopexit_gate == 0) and (g_obs_all == 0):
+                # (#126) The per-name gate reaches the loop safepoint too,
+                # because the safepoint is ITSELF a named env write. A
+                # NON-predicate loop's cap step does exactly three things
+                # (vm.c eigs_loop_cap_step): it stores `__loop_iterations__`
+                # into the env and, on a cap exit, `__loop_exit__`; it tests
+                # g_sandbox_loop_max, which only sandbox_run sets and which
+                # cannot wrap a compiled main; and it runs the SIGUSR1
+                # observe-safepoint. The first is gated by g_loopexit_gate --
+                # THE program-wide test for a use of either name -- so with
+                # that gate closed neither name is readable, and the other two
+                # are exactly what every UNOBSERVED binary already elides at
+                # the plain-`while` arm below. So the step is dropped here on
+                # the same warrant, one regime over. A PREDICATE condition
+                # keeps its stall step: auto-halt is observer SEMANTICS, not
+                # bookkeeping. g_obs_all keeps it too -- an eval'd string can
+                # name `__loop_iterations__` where uses_ident cannot see it.
+                chk is ""
             local olg is loop_gf of [node, minits]
             if (g_loopexit_gate == 1) and ((G_CUR_FN[0]) == "<module>"):
                 # (round 134, #190) the observed arm ran the step (which
@@ -3576,7 +3797,8 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
                 return ogs + ind + "}\n"
             local os is ind + "while (" + (emit_cond of [node[1], nm, bt]) + ") {\n"
             os is os + (emit_stmts of [node[2], ind + "    ", nm, bt, minits, olg])
-            os is os + ind + "    if (" + chk + ") break;\n"
+            if chk != "":
+                os is os + ind + "    if (" + chk + ") break;\n"
             return os + ind + "}\n"
         local vinfo is vec_loop of [node, nm, bt]
         if vinfo != null:
@@ -3695,6 +3917,14 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
         # differently per loop-env TIER in the VM (EigenScript#1062), and
         # under trace the tape is process-global and name-keyed, so an
         # interrogated binder would read a different history renamed.
+        # (#126) NOT per-name, deliberately. The rename is what keeps a
+        # MODULE binder out of the surviving module slot, and it is needed for
+        # an un-named binder too: module-scope for-unboxing is still gated on
+        # the whole-program flag, so an un-named binder in an observed module
+        # is STILL env-resident and would leak the same phantom binding. The
+        # rename is conservative in the safe direction -- the fresh name is in
+        # no census, so every arm below treats it as the env-resident binder it
+        # is. Making this per-name needs the module for-unbox gate per-name too.
         if (g_observed == 1) and ((G_CUR_FN[0]) == "<module>"):
             if (observes_name of [fbody, fvar]) == 1:
                 throw of ("AOT: observer read of the loop binder inside its own loop ('" + fvar + "'): the history a report/observe/predicate sees there depends on the loop-env tier the VM's compiler picks (persist-overwrite skips the per-iteration CLEAR when the name was bound before the loop) -- refused rather than mirror a tier (EigenScript#1062).")
@@ -3715,7 +3945,7 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
         local _lsc_early is 0
         if ((G_CUR_FN[0]) != "<module>") and ((g_module_names[fvar] == 1) or ((g_interrogated_names[fvar] == 1) and (g_cur_params[fvar] != 1))):
             _lsc_early is 1
-        if (_lsc_early == 0) and ((G_CUR_FN[0]) != "<module>") and (g_observed == 0):
+        if (_lsc_early == 0) and ((G_CUR_FN[0]) != "<module>") and ((obs_name of fvar) == 0):
             if (g_cur_params[fvar] == 1) or ((G_BOUND_SO_FAR[0])[fvar] == 1):
                 if g_genp[fvar] == 1:
                     fsv_kind is "genp"
@@ -3772,6 +4002,7 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
         local lscope is 0
         local lsc_seeded is 0
         local lsc_nm_prev is null
+        local lsc_il_prev is null
         # (round 116, #187) The lscope table keyed on ONE axis (module-bound
         # or interrogated); the VM's rule keys on the binding KIND. Measured
         # on the a5bc350 pin (EigenScript#1063 made an interrogated
@@ -3829,7 +4060,7 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
             # threaded past `break`, and an OBSERVED program's body reads
             # resolve through the env, which a C block-local cannot shadow --
             # both refuse rather than answer wrongly.
-            if g_observed == 1:
+            if (obs_name of fvar) == 1:
                 throw of ("AOT: '" + fvar + "' is a loop-scoped for binder (module-bound or interrogated name) in an OBSERVED program; observed reads resolve through the env, which a block-scoped C variable cannot shadow (see EigenScript#1056).")
             if bt[fvar] == 1:
                 throw of ("AOT: '" + fvar + "' is a loop-scoped for binder over a BOXED binding; per-iteration ownership past break is not emitted yet (see EigenScript#1056).")
@@ -3858,6 +4089,12 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
             lsc_nm_prev is nm[fvar]
             nm[fvar] is 1
             lsc_seeded is 1
+            # (#218) inside the loop-scoped body the binder's block-local IS
+            # the binding (EigenScript#1074: body writes land in the loop
+            # env), so the interrogated call-local pair is suppressed for
+            # the body; post-loop reads dispatch on the pair again.
+            lsc_il_prev is g_cur_interloc[fvar]
+            g_cur_interloc[fvar] is 0
         if (lscope == 0) and (g_forunbox[fvar] != null):
             # unboxed: bind the C double directly — no env write, no boxed
             # read-back in the body. A buffer iterable reads elementwise
@@ -3898,7 +4135,7 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
                 if g_traced == 1:
                     # see the unboxed arm: binder stores trace in every scope
                     fo is fo + ind + "    aot_trace_assign_val(\"" + fvar + "\", " + (cn of fvar) + ");\n"
-            elif (g_cur_params[fvar] == 1) and (g_observed == 0):
+            elif (g_cur_params[fvar] == 1) and ((obs_name of fvar) == 0):
                 # a NUMERIC parameter as binder, where unboxing is off because
                 # the program is TRACED. The param lives in a C double and
                 # every read takes it; the terminal env arm wrote __eigs_g and
@@ -3916,7 +4153,7 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
                 fo is fo + ind + "    " + (cn of fvar) + " = aot_num_ck_at(aot_iter_get(" + itv + ", " + kv + "), \"" + (c_escape of (G_CUR_FN[0])) + ": for-in " + (c_escape of fvar) + "\");\n"
                 if g_traced == 1:
                     fo is fo + ind + "    aot_trace_assign(\"" + fvar + "\", " + (cn of fvar) + ");\n"
-            elif (lscope == 0) and (nm[fvar] == 1) and (g_observed == 0):
+            elif (lscope == 0) and (nm[fvar] == 1) and ((obs_name of fvar) == 0):
                 # (round 145, #161 cell 2) the block-local shadow below is a C
                 # double, so the iterable must PROVABLY yield numbers (the round-120
                 # rule, at module scope): `for v in ["a", "b"]` over a numeric
@@ -3982,6 +4219,8 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
         fo is fo + (emit_stmts of [fbody, ind + "    ", nm, bt, minits, gf])
         if lsc_seeded == 1:
             nm[fvar] is lsc_nm_prev
+            if lsc_il_prev == 1:
+                g_cur_interloc[fvar] is 1
         fo is fo + ind + "  }\n"
         # The VM's restore is a SET_LOCAL, recorded in a traced name's history
         # (`prev of p` after the loop answers the last body write, t218/t119);
@@ -7786,7 +8025,7 @@ define emit_args(node, fname, nm, bt) as:
                 # null); otherwise read the env BORROWED.
                 if (bt[te[1]] == 1) or (g_dict[te[1]] == 1) or (g_genp[te[1]] == 1):
                     s is s + (cn of te[1])
-                elif (nm[te[1]] == 1) and (g_observed == 0):
+                elif (nm[te[1]] == 1) and ((obs_name of te[1]) == 0):
                     # A NUMERIC C variable is not in the env either -- the same
                     # hazard the line above names for buffers, one type over.
                     #
@@ -8058,6 +8297,23 @@ define has_try(node) as:
             return 1
     return 0
 
+# (#218) Does every PLAIN assign to `name` in the subtree carry a numeric
+# RHS under these maps? The interrogated call-local pair is a C double, so
+# one boxed writer excludes the name from the class (the by-name refusal
+# then says so). Nested defines are lifted before this runs.
+define plain_assigns_all_num(node, name, nm, bt) as:
+    if (type of node) != "list":
+        return 1
+    if (len of node) == 0:
+        return 1
+    if (node[0] == "assign") and ((len of node) == 3) and (node[1] == name):
+        if (is_num_expr of [node[2], nm, bt]) != 1:
+            return 0
+    for k in range of (len of node):
+        if (plain_assigns_all_num of [node[k], name, nm, bt]) == 0:
+            return 0
+    return 1
+
 define collect_plain_assigns(node, acc) as:
     if (type of node) != "list":
         return 0
@@ -8289,6 +8545,17 @@ AOT_BUILTIN_NAMES is {}
 define aot_is_builtin_name(name) as:
     if has_key of [AOT_BUILTIN_NAMES, name]:
         return AOT_BUILTIN_NAMES[name]
+    # `report` / `report_value` are reserved observer FORMS since v0.43.0
+    # (EigenScript#1102), never values: `eval of "report"` cannot answer
+    # "builtin", and on the pin it PRINTS the E005 parse error to stderr
+    # before throwing into the catch below. That line then became the FIRST
+    # stderr line of every transpile of a program that mentions `report`,
+    # which is what aot/tools/envelope_census.sh and the #141 stdlib sweep
+    # read as the refusal reason -- `import observer` / `import eigen` were
+    # both misattributed to it (their real refusals are a generic-parameter
+    # rebind in an observed program and a `lambda`). Answered here instead.
+    if (name == "report") or (name == "report_value"):
+        return 0
     local r is 0
     try:
         if (type of (eval of name)) == "builtin":
@@ -8654,7 +8921,7 @@ define emit_function(fn, finfo, gnm, gbt) as:
     local gn is keys of gnm
     for k in range of (len of gn):
         if gnm[gn[k]] == 1:
-            if (g_mod_observed == 1) and (g_observed == 0):
+            if ((obs_mod_name of (gn[k])) == 1) and (g_observed == 0):
                 fnm[gn[k]] is 0
             else:
                 fnm[gn[k]] is 1
@@ -8717,7 +8984,7 @@ define emit_function(fn, finfo, gnm, gbt) as:
     # loop below), not here.
     if g_observed == 1:
         for p2 in range of (len of params):
-            if (ptypes[p2]) == "num":
+            if ((ptypes[p2]) == "num") and ((obs_name of (params[p2])) == 1):
                 local _pn is params[p2]
                 if gnm[_pn] != null:
                     throw of ("AOT: numeric parameter `" + _pn + "` shadows a module binding in an observed function — Part 2a keys it into the global env BY NAME (aot_set below), so the call silently overwrites the caller's `" + _pn + "` (ouroboros#123). Rename the parameter.")
@@ -8842,28 +9109,6 @@ define emit_function(fn, finfo, gnm, gbt) as:
                     _isf is 1
             if _isf == 0:
                 throw of ("AOT: `" + _pan[k] + " is ...` inside function '" + name + "' assigns the name of a compiled module function. On the VM that rebinds the module binding outward (the function is gone afterwards); a C function cannot be rebound, so it is refused rather than dying at run time (ouroboros#162).")
-    # (round 197, #218) a plain assign to a MODULE name that this function
-    # also INTERROGATES: compile_ast's escape pre-scan (#99 round 2) routes
-    # an interrogated name to OP_SET_FN_NAME_LOCAL -- a fresh function-scope
-    # binding -- so on the VM the write never reaches the module binding
-    # (`z is 0.25` in u, `print of z` after the call prints the OLD module
-    # value); the AOT's Part-2a lowering wrote it outward (silent, rc 0
-    # both). The per-call env that would mirror the VM is the Part-2b
-    # design; until then refuse by name so the shape is loud.
-    # A for-BINDER of this function is loop-scoped by round 182's fsv_kind
-    # save/restore (an interrogated binder already reads its own history),
-    # so binder-body writes are not module writes: excluded (the gate's
-    # corpus tier caught test_for_binder_loopenv_write refusing otherwise).
-    local _fbs is {}
-    collect_for_binders of [body, _fbs]
-    for k in range of (len of _pan):
-        if (_lmk[_pan[k]] != 1) and (_fbs[_pan[k]] != 1) and (g_interrogated_names[_pan[k]] == 1) and ((g_module_names[_pan[k]] == 1) or (gnm[_pan[k]] == 1) or (gbt[_pan[k]] == 1)):
-            local _isq is 0
-            for p in range of (len of params):
-                if params[p] == _pan[k]:
-                    _isq is 1
-            if _isq == 0:
-                throw of ("AOT: function '" + name + "' assigns module name '" + _pan[k] + "' that it also interrogates. On the VM an interrogated name binds function-LOCAL (the #99 escape pre-scan), so the write never reaches the module binding; the AOT would write it outward (silent wrong). Mark it `local` to make the VM's binding explicit, or rename the module binding (ouroboros#218).")
     # tensor (nested-list) layer for this scope: tensor locals (assigned from a
     # tensor RHS) + tensor/dict params.
     g_dict is {}
@@ -8963,6 +9208,67 @@ define emit_function(fn, finfo, gnm, gbt) as:
                         lparam_boxed is 1
             if lparam_boxed == 0:
                 fnm[lnk[k]] is 1
+    # (#218) interrogated call-locals of this function (see g_cur_interloc).
+    # Computed HERE, after the numeric merge, so the all-numeric-writers
+    # test sees the body's numeric locals (`z is k` with a body-local k
+    # excluded the name when it ran on the seed map alone -- t310's `v`).
+    # a plain (unmarked) assign anywhere in the body, the name in THIS
+    # function's interrogated set, not a parameter, a module NUMERIC binding
+    # (gnm -- the round-133 demotion already took any name a function
+    # writes a boxed value into off that map), the function not observed
+    # (Part 2a), and no nested define/lambda reading the name. Every member
+    # of the refused complement is named in the refusal below.
+    g_cur_interloc is {}
+    if g_observed == 0:
+        local _ilpa is {}
+        collect_plain_assigns of [body, _ilpa]
+        local _ilk is keys of _ilpa
+        for _ili in range of (len of _ilk):
+            local _ilv is _ilk[_ili]
+            local _ilisp is 0
+            for _ilp in range of (len of params):
+                if (params[_ilp]) == _ilv:
+                    _ilisp is 1
+            if (_ilisp == 0) and (_lmk[_ilv] != 1) and (g_cur_interrogated[_ilv] == 1) and (gnm[_ilv] == 1) and (gbt[_ilv] != 1) and ((sh_deferred_ref of [body, _ilv]) != 1) and ((plain_assigns_all_num of [body, _ilv, fnm, fbt]) == 1):
+                g_cur_interloc[_ilv] is 1
+    # ...and a member is never ALSO a round-151 shadow (its writes route on
+    # the module bit there; here they are unconditionally call-local).
+    local _ilsb is {}
+    local _ilsk is keys of g_cur_shadowbit
+    for _ilsi in range of (len of _ilsk):
+        if g_cur_interloc[(_ilsk[_ilsi])] != 1:
+            _ilsb[(_ilsk[_ilsi])] is 1
+    g_cur_shadowbit is _ilsb
+    # (#218) a plain assign to a MODULE name that this function also
+    # INTERROGATES binds function-LOCAL on the VM (OP_SET_FN_NAME_LOCAL via
+    # compile_ast's escape pre-scan, #99 round 2); round 197 refused the
+    # whole class by name. The NUMERIC class now compiles as an interrogated
+    # call-local (g_cur_interloc above). What stays refused, each by its
+    # reason: an OBSERVED function (Part 2a keys its locals into __eigs_g by
+    # name, where the module binding already lives -- the per-call env,
+    # Part 2b, lifts it); a boxed / buffer / demoted module binding (the
+    # pair is a C double; a Value* pair under the owned-read convention is
+    # not emitted yet); a nested define/lambda reading the name (a lifted C
+    # function reads the module static where the VM's chain walk sees this
+    # function's frame binding -- measured 1.25 on the pin, 2 otherwise).
+    # A for-BINDER is not a plain assign; a body write inside its own loop
+    # is a loop-env write (round 182 / EigenScript#1074) and only counts
+    # here when the name is also outside the numeric class.
+    for k in range of (len of _pan):
+        if (_lmk[_pan[k]] != 1) and (g_cur_interloc[_pan[k]] != 1) and (g_interrogated_names[_pan[k]] == 1) and ((g_module_names[_pan[k]] == 1) or (gnm[_pan[k]] == 1) or (gbt[_pan[k]] == 1)):
+            local _isq is 0
+            for p in range of (len of params):
+                if params[p] == _pan[k]:
+                    _isq is 1
+            if _isq == 0:
+                local _ilwhy is "the module binding is boxed, a buffer, or demoted off the numeric class (only a NUMERIC module binding compiles as an interrogated call-local)"
+                if g_observed == 1:
+                    _ilwhy is "this function is observed (Part 2a keys its locals into the global env by name, where the module binding already lives; the per-call env, Part 2b, lifts it)"
+                elif (gnm[_pan[k]] == 1) and ((plain_assigns_all_num of [body, _pan[k], fnm, fbt]) != 1):
+                    _ilwhy is "this function assigns it a value that is not PROVABLY numeric here -- either a genuinely non-numeric value, or one this pass cannot type (an env-boxed read such as a for-binder, which the VM would happily bind to the frame-local) -- and the interrogated call-local pair is a C double; a Value* pair (or an unconditional unbox, which would die where the VM does not) is not emitted yet"
+                elif (sh_deferred_ref of [body, _pan[k]]) == 1:
+                    _ilwhy is "a nested define/lambda reads the name (the VM's chain walk sees this function's frame binding; a lifted C function would read the module binding)"
+                throw of ("AOT: function '" + name + "' assigns module name '" + _pan[k] + "' that it also interrogates. On the VM an interrogated name binds function-LOCAL (the #99 escape pre-scan), so the write never reaches the module binding; " + _ilwhy + ". The exit is to RENAME the module binding so the function's name is its own -- measured on all five refused members of this class, each transpiles once the module name differs. `local` is not an exit here (a function that interrogates a name is traced, and both `local`-shadow guards refuse an observed/temporal function first), which is what the earlier wording advertised (ouroboros#218).")
     # integer names for this scope (params forced + int-by-assignment locals);
     # sets g_int, which is_int_expr/emit_num/emit_stmt read while emitting. In an
     # OBSERVED function, numerics are env-boxed (routed through aot_get/observe),
@@ -8972,6 +9278,11 @@ define emit_function(fn, finfo, gnm, gbt) as:
     g_btmap is fbt
     if g_observed == 0:
         g_int is infer_int of [body, params, fnm, fbt]
+    # (#218) the interrogated call-local pair is a double; an int-typed read
+    # (emit_int's raw C name) would bypass the pair's dispatch.
+    local _ilgk is keys of g_cur_interloc
+    for _ilgi in range of (len of _ilgk):
+        g_int[(_ilgk[_ilgi])] is 0
     # Numeric module-shadow `local` validation (#109). Runs after inference
     # so it can consult lnm (every assignment to the shadow must stay
     # numeric — the seeded fnm keeps the name on the numeric emission path
@@ -9132,7 +9443,13 @@ define emit_function(fn, finfo, gnm, gbt) as:
                 dkind is "buffer"
             elif dpk == "num":
                 dkind is "double"
-                if g_observed == 1:
+                # (#126 follow-up) storage is decided PER NAME, so the dump
+                # asks obs_name -- the very call the parameter-seed loop
+                # below makes -- not the program-wide g_observed. Under the
+                # flag this printed `observed-env` for every numeric
+                # parameter of an observed unit while the emitter handed the
+                # un-named ones a plain C double.
+                if (obs_name of (params[k])) == 1:
                     dkind is "observed-env"
                 elif g_int[params[k]] == 1:
                     dkind is "long"
@@ -9155,7 +9472,11 @@ define emit_function(fn, finfo, gnm, gbt) as:
                     lkind is "buffer"
                 elif fnm[dv] == 1:
                     lkind is "double"
-                    if g_observed == 1:
+                    # (#126 follow-up) same predicate the numeric assign arm
+                    # consults (emit_stmt's `if (obs_name of name) == 1`):
+                    # an un-named local in an observed function is a C double
+                    # declared by the decls loop, not an env slot.
+                    if (obs_name of dv) == 1:
                         lkind is "observed-env"
                     elif g_int[dv] == 1:
                         lkind is "long"
@@ -9234,7 +9555,19 @@ define emit_function(fn, finfo, gnm, gbt) as:
                 decls is decls + "    if (__argc <= " + (str of k) + ") " + (cn of params[k]) + " = " + dexpr + ";\n"
     if g_observed == 1:
         for k in range of (len of params):
-            if (ptypes[k]) == "num":
+            if ((ptypes[k]) == "num") and ((obs_name of (params[k])) == 1):
+                # (#126) #217's rule reaches PARAMETERS too, and the fixture
+                # for `report of <parameter>` is what found it: an observed
+                # function's parameter gets a FRESH observer slot per call on
+                # the VM (a new frame env), but Part 2a keys it into the
+                # global env by NAME and aot_set does not touch the slot, so
+                # the second call read the first call's trajectory --
+                # `probe of 10.0 / probe of 4.0 / probe of 1.0` answered
+                # VM improving/improving/improving, AOT improving/moving/
+                # oscillating, both rc 0. Measured identical on HEAD before
+                # this line, so it is a pre-existing sibling of #217, not a
+                # per-name regression. Reset before the seed.
+                decls is decls + "    aot_obs_reset_name(__eigs_g, \"" + params[k] + "\");\n"
                 decls is decls + "    aot_set(__eigs_g, \"" + params[k] + "\", make_num(" + (cn of params[k]) + "));\n"
     # (round 196, #217) an observed function's OWN locals (not params, not
     # module globals unless shadowed) get a fresh observer slot per call, as
@@ -9248,7 +9581,7 @@ define emit_function(fn, finfo, gnm, gbt) as:
                     risp is 1
             if ((gnm[rv] == 1) or (gbt[rv] == 1)) and (shadowed[rv] != 1):
                 risp is 1
-            if risp == 0:
+            if (risp == 0) and ((obs_name of rv) == 1):
                 decls is decls + "    aot_obs_reset_name(__eigs_g, \"" + rv + "\");\n"
     # locals: tensors -> AotTensor, buffers -> Value*, integers -> long, other
     # numerics -> double (params + globals excluded; an assign to a global
@@ -9304,7 +9637,7 @@ define emit_function(fn, finfo, gnm, gbt) as:
                 # aot_observe_num / aot_observe_val -- the name's regime,
                 # not the writer's. A buffer takes round 110's observe-store
                 # on the same mark (bt assign arm). t207/t208 pin it.
-                if (g_mod_observed == 1) and (g_observed != 1):
+                if ((obs_mod_name of v) == 1) and (g_observed != 1) and (g_cur_interloc[v] != 1):
                     g_outward_obs[v] is 1
                     # and DEMOTE it in this function's maps: the body's own
                     # numeric pass re-promoted `total is total + k` to a C
@@ -9361,7 +9694,7 @@ define emit_function(fn, finfo, gnm, gbt) as:
             # slot, so `report of v` answered from a short window --
             # VM `5 / moving`, AOT `5 / equilibrium`, both rc 0. Mark the
             # name so the assign arms use the observe-store.
-            if g_mod_observed == 1:
+            if (obs_mod_name of v) == 1:
                 g_outward_obs[v] is 1
         # a local that shadows a global buffer is declared locally, not skipped.
         if shadowed[v] == 1:
@@ -9391,6 +9724,9 @@ define emit_function(fn, finfo, gnm, gbt) as:
     local _sbdk is keys of g_cur_shadowbit
     for _sbdi in range of (len of _sbdk):
         decls is decls + "    double " + (cn of (_sbdk[_sbdi])) + "__loc = 0; int " + (cn of (_sbdk[_sbdi])) + "__isloc = 0;   /* call-local shadow of a conditionally-bound module name (round 151, #197) */\n"
+    local _ildk is keys of g_cur_interloc
+    for _ildi in range of (len of _ildk):
+        decls is decls + "    double " + (cn of (_ildk[_ildi])) + "__loc = 0; int " + (cn of (_ildk[_ildi])) + "__isloc = 0;   /* interrogated call-local (#218): OP_SET_FN_NAME_LOCAL's frame binding */\n"
     # unboxed for-in vars that are neither params, assigned locals, nor
     # globals still need a function-scope C decl (the VM's slot semantics:
     # post-loop reads see the last iterate).
@@ -9445,6 +9781,7 @@ define emit_function(fn, finfo, gnm, gbt) as:
     g_envactive is 0
     g_lowerloc is 0
     g_boxshadow is {}
+    g_cur_interloc is {}
     return _result
 
 # ---- nested `define` lifting (#86) ----
@@ -10744,6 +11081,13 @@ define emit_program(ast) as:
     # both rc 0. Order was guarded to death over seven rounds; the regime
     # axis was never asked.
     g_mod_observed is g_observed
+    # (#126) the per-name census. Program-wide and computed ONCE, here, before
+    # any emission: emit_function re-derives g_observed per body, but the set
+    # of names a read can NAME is a property of the whole unit.
+    g_obs_names is {}
+    g_obs_all is 0
+    if g_observed == 1:
+        collect_obs_names of ast
     # (round 65) Module-scope for binders are loop-scoped by the VM in EVERY
     # regime, but observed/traced module emission routes the binder through
     # the env -- the C block-scope mechanism is regime-gated off -- where it
@@ -11527,7 +11871,15 @@ define emit_program(ast) as:
                 mkind is "buffer"
             elif nm[mv] == 1:
                 mkind is "double"
-                if g_observed == 1:
+                # (#126 follow-up) mirrors the module decl loop's own test
+                # below (`(obs_name of names[i]) == 0` -> emit the static):
+                # a module numeric no observer names IS a file-scope C
+                # double/long, and the dump used to call it observed-env.
+                # obs_name, not obs_mod_name: at this point g_observed is
+                # still the module regime (emit_function saves/restores it),
+                # so the two agree and the decl loop's call is the one to
+                # copy.
+                if (obs_name of mv) == 1:
                     mkind is "observed-env"
                 elif g_int[mv] == 1:
                     mkind is "long"
@@ -11550,7 +11902,7 @@ define emit_program(ast) as:
         # no file-scope decl; otherwise emit static long/double.
         # unboxed module for-vars (g_forunbox==2) are declared INSIDE their
         # loop's C block, not file-scope — the VM loop-scopes the binding.
-        if (nm[names[i]] == 1) and (g_observed == 0) and ((g_forunbox[names[i]] != 2) or (g_bound_bit[names[i]] == 1)):
+        if (nm[names[i]] == 1) and ((obs_name of (names[i])) == 0) and ((g_forunbox[names[i]] != 2) or (g_bound_bit[names[i]] == 1)):
             # (round 117) a for-only module name (g_forunbox == 2) had NO
             # file-scope decl since round 106, so a post-loop read was a gcc
             # "undeclared" error (#185's silent 0 in its earlier form). It
@@ -11606,6 +11958,7 @@ define emit_program(ast) as:
     g_cur_localmarked is {}
     g_cur_bound_bit is {}
     g_cur_shadowbit is {}
+    g_cur_interloc is {}
     g_mod_has_try is has_try of rest
     g_cur_fmap is local_gen_map_for of ["<module>", rest]
     g_cur_has_try is g_mod_has_try
@@ -11725,6 +12078,147 @@ define _lf_dirname(p) as:
         i is i - 1
     return ""
 
+# ---- ouroboros#147 / EigenScript#1056: the VM's resolution chain, mirrored
+# statically. Since v0.43.0 a file's dependencies are a property of the FILE:
+# `load_file`/`import` resolve (1) an absolute path as-is, (2) relative to the
+# directory of the file containing the call, (3) the eigs_modules walk (bare
+# `<name>.eigs` only: <dir>/eigs_modules/<name>/<name>.eigs at each level up
+# to the eigs.json project root), (4) relative to the nearest ancestor with
+# an eigs.json, then (5) the stdlib roots (<exe>/../<path>,
+# <exe>/../lib/eigenscript/<path> with and without a leading lib/, and the
+# same two under $HOME/.local/lib/eigenscript). There is NO cwd step. The
+# old chain (cwd first, then script dir and its parent) is what made
+# build-time splicing unsound (#147: A/inc.eigs vs B/inc.eigs from cwd B
+# printed different things on the two sides, both rc 0).
+#
+# Steps 1-4 are answered here and the target is SPLICED (compiled). A step
+# 5 hit stays a runtime call into the linked VM (same file, interpreted --
+# F-OURO-34's documented tier, t76) -- but it is NOT base-independent: the
+# runtime call re-runs the whole chain from the binary's baked g_script_dir
+# (the MAIN program's directory), and that base's step 2 answers BEFORE the
+# stdlib step. At depth 0 that base is the VM's own, so the literal stands;
+# in a spliced child the literal is rewritten to the ABSOLUTE stdlib path
+# the child's chain answered (step 1 on both sides, t307: main-dir
+# lib/bcd.eigs shadowed the stdlib's and the child printed the shadow --
+# both rc 0, the #147 class again). A path no step answers is left as a
+# runtime call ONLY at depth 0, where the baked g_script_dir is the same
+# base the VM would raise from; in a spliced child the runtime call would
+# resolve from the MAIN program's directory, a base the VM never uses, so it
+# is refused by name (t306's refuse twin). Symlinks are not canonicalised (the runtime realpath()s;
+# no such builtin) -- only a symlinked directory whose physical parent
+# holds a different eigs.json could differ, and the runtime fallback would
+# too.
+define _lf_is_file(p) as:
+    if (file_exists of p) == 0:
+        return 0
+    if (is_dir of p) == 1:
+        return 0
+    return 1
+
+# Absolute directory of source `base`, "." / ".." segments folded, no
+# trailing slash ("/" for the root).
+define _lf_abs_dir(base) as:
+    local d is _lf_dirname of base
+    if (substr of [d, 0, 1]) != "/":
+        d is (getcwd of []) + "/" + d
+    local parts is split of [d, "/"]
+    local out is []
+    for i in range of (len of parts):
+        local seg is parts[i]
+        if (seg == "") or (seg == "."):
+            continue
+        if seg == "..":
+            if (len of out) > 0:
+                out is out[0:(len of out) - 1]
+            continue
+        append of [out, seg]
+    if (len of out) == 0:
+        return "/"
+    return "/" + (join of [out, "/"])
+
+# Parent of an absolute dir, null at the root (parent_directory's contract).
+define _lf_parent(d) as:
+    if d == "/":
+        return null
+    local i is (len of d) - 1
+    loop while i > 0:
+        if (char_at of [d, i]) == "/":
+            return substr of [d, 0, i]
+        i is i - 1
+    return "/"
+
+# Nearest ancestor (the directory itself included) holding eigs.json, or null.
+define _lf_project_root(absdir) as:
+    local cur is absdir
+    loop while cur != null:
+        if (file_exists of (cur + "/eigs.json")) == 1:
+            return cur
+        cur is _lf_parent of cur
+    return null
+
+define _lf_ends_with(s, suf) as:
+    local n is len of s
+    local m is len of suf
+    if n < m:
+        return 0
+    return (substr of [s, n - m, m]) == suf
+
+# [full_path, "static"] to splice, [full_path, "stdlib"] to keep as a
+# runtime call, null when no step answers.
+define _lf_resolve(base, path) as:
+    if (substr of [path, 0, 1]) == "/":
+        if (_lf_is_file of path) == 1:
+            return [path, "static"]
+        return null
+    local absdir is _lf_abs_dir of base
+    local cand is absdir + "/" + path
+    if (_lf_is_file of cand) == 1:
+        return [cand, "static"]
+    # (3) eigs_modules walk: bare <name>.eigs only, stops at the project root
+    if ((index_of of [path, "/"]) < 0) and ((_lf_ends_with of [path, ".eigs"]) == 1) and ((len of path) > 5):
+        local mname is substr of [path, 0, (len of path) - 5]
+        local cur is absdir
+        local steps is 0
+        loop while (cur != null) and (steps < 64):
+            cand is cur + "/eigs_modules/" + mname + "/" + mname + ".eigs"
+            if (_lf_is_file of cand) == 1:
+                return [cand, "static"]
+            if (file_exists of (cur + "/eigs.json")) == 1:
+                cur is null
+            else:
+                cur is _lf_parent of cur
+            steps is steps + 1
+    # (4) project root
+    local root is _lf_project_root of absdir
+    if root != null:
+        cand is root + "/" + path
+        if (_lf_is_file of cand) == 1:
+            return [cand, "static"]
+    # (5) stdlib roots. G_STDLIB[0] is $EIGS_DIR, i.e. <exe>/.. for the
+    # baked exe dir $EIGS_DIR/src. Without it (a hand invocation) the step
+    # cannot be checked, so the pre-#147 best-effort runtime call stands.
+    if (G_STDLIB[0]) == "":
+        return [path, "stdlib"]
+    # build.sh may hand a relative $EIGS_DIR (../../EigenScript); the path
+    # returned is the one a spliced child's literal is rewritten to, so it
+    # must be absolute (the VM's step 1) for the rewrite to be sound.
+    local sd is _lf_abs_dir of ((G_STDLIB[0]) + "/x")
+    if (_lf_is_file of (sd + "/" + path)) == 1:
+        return [sd + "/" + path, "stdlib"]
+    if (_lf_is_file of (sd + "/lib/eigenscript/" + path)) == 1:
+        return [sd + "/lib/eigenscript/" + path, "stdlib"]
+    if (substr of [path, 0, 4]) == "lib/":
+        if (_lf_is_file of (sd + "/lib/eigenscript/" + (substr of [path, 4, (len of path) - 4]))) == 1:
+            return [sd + "/lib/eigenscript/" + (substr of [path, 4, (len of path) - 4]), "stdlib"]
+    local home is env_get of "HOME"
+    if (home != null) and (home != ""):
+        if (_lf_is_file of (home + "/.local/lib/eigenscript/" + path)) == 1:
+            return [home + "/.local/lib/eigenscript/" + path, "stdlib"]
+        if (substr of [path, 0, 4]) == "lib/":
+            if (_lf_is_file of (home + "/.local/lib/eigenscript/" + (substr of [path, 4, (len of path) - 4]))) == 1:
+                return [home + "/.local/lib/eigenscript/" + (substr of [path, 4, (len of path) - 4]), "stdlib"]
+    return null
+
 # The literal path if `st` is `load_file of "<str>"`, else null.
 # (round 186, #127) compiled functions a NESTED literal load_file target calls
 # by name. A nested load (inside a function body or a module-level branch) is
@@ -11746,8 +12240,11 @@ define nlb_scan(node, base, earliest, where) as:
         return 0
     local path is _lf_target of node
     if path != null:
-        local full is (_lf_dirname of base) + path
-        local csrc is read_text of full
+        local csrc is null
+        local lr is _lf_resolve of [base, path]
+        if lr != null:
+            if lr[1] == "static":
+                csrc is read_text of (lr[0])
         if (csrc != null) and ((len of csrc) > 0):
             local cast is eigen_parse of (eigen_tokenize of csrc)
             local ids is {}
@@ -11898,22 +12395,32 @@ define module_bindings_walk(stmts, names, seen) as:
 # only the immediate statement list DROPPED a binding made in a taken `if`
 # (`M.b` read null); descending into every body INVENTED one from a not-taken
 # `else` (`M.z` read 0 — a default-initialised global, so a plausible NUMBER
-# rather than a null). Descending also picked up `for`-body names, which the VM
-# does not have at all because a `for` body gets its own env.
+# rather than a null). Descending also picked up `for`-body names, which the
+# c1684bc VM did not have at all because a `for` body got its own env ON THE
+# IMPORT ROAD -- a road-dependence EigenScript#1056 removed.
 #
 # Only the immediate top level and `unobserved:` are unconditionally executed.
 # Everything else is refused rather than guessed.
 #
 # WHICH bodies leak was MEASURED against the VM, not reasoned from "`if`
 # creates no scope". A module `a is 1 / <body> / b is 2` imported and probed
-# with `keys of M` gives:
+# with `keys of M` gives, at the v0.43.0 pin (a6c50fb, #1106):
 #
 #   if / loop while / try / match case    leak — `inner` is in the dict
-#   for                                   does NOT — ["a", "b"], `M.inner` null
+#   for                                   leaks TOO — ["a", "inner", "b"];
+#                                         nested `for`, and `if` inside the
+#                                         body, leak as well; only the loop
+#                                         BINDER stays loop-scoped (an `i is 9`
+#                                         in the body updates the loop-local
+#                                         and never reaches the dict)
 #
-# so a `for` body can never create a top-level binding, and the first version
-# of this guard, which refused on `for`, was refusing programs that were
-# always fine. Same measurement settled two more: a `local` inside a top-level
+# and the leak is conditional the same way an `if` is: `for i in []: x is 5`
+# and a `break` before the assignment leave the key ABSENT. So a fresh
+# binding in a `for` body is refused exactly like one in an `if` (this is
+# the #147 pin bump's flip of t100's `floop` shape: the c1684bc table said
+# "for does NOT leak", and the exemption below that encoded it -- the
+# invariant-16 "guard inherits its table's axes" case -- was dropped with
+# the bump). Same measurement settled two more: a `local` inside a top-level
 # `if` DOES leak (so `local` is not exempt), and a `define` inside one does
 # too (so a nested `func` is a binding to report, not a subtree to skip).
 #
@@ -11949,7 +12456,7 @@ define module_cond_binds(stmts, bound, out) as:
         local h is u[0]
         if h == "unobserved":
             module_cond_binds of [u[1], bound, out]
-        elif (h == "if") or (h == "loop") or (h == "try") or (h == "match"):
+        elif (h == "if") or (h == "loop") or (h == "try") or (h == "match") or (h == "for"):
             collect_cond_binds of [u, bound, out]
         # A `func`/`assign`/`import` here is an immediate top-level binding, so
         # it joins `bound` and is NOT scanned. It must not `return` — a module
@@ -11968,7 +12475,19 @@ define collect_cond_binds(node, bound, out) as:
         return 0
     local h is node[0]
     if h == "for":
-        # a `for` body has its own env: nothing inside it reaches the module
+        # v0.43.0 (#1106): a `for` body's fresh `is` reaches the module dict
+        # like an `if` body's -- conditionally. Only the BINDER is
+        # loop-scoped, so a write to it inside the body is not a module
+        # binding: scan the body with the binder added to a COPY of `bound`
+        # (a later `if c: i is 5` after the loop is still a fresh conditional
+        # binding of the module and must not be hidden by the loop's `i`).
+        collect_cond_binds of [node[2], bound, out]
+        local lb is {}
+        local bk is keys of bound
+        for bi in range of (len of bk):
+            lb[(bk[bi])] is 1
+        lb[(node[1])] is 1
+        collect_cond_binds of [node[3], lb, out]
         return 0
     if h == "func":
         if bound[(node[1])] != 1:
@@ -12121,24 +12640,206 @@ define collect_local_decls(node, bound) as:
         collect_local_decls of [node[k], bound]
     return 0
 
-define module_shadow_names(stmts, out) as:
+# ---- a module's free READ that can run before its first free WRITE --------
+# (residual of ouroboros#141, found by that issue's blind critic)
+#
+# The rename set below is `module_bindings ∪ collect_free_assigns`. For a name
+# the module BINDS at its top level that set is exactly right. For a name the
+# module only free-ASSIGNS inside a body it is right for the WRITE and WRONG
+# for a READ that can run first. Measured on the v0.43.0 pin (a6c50fb):
+#
+#   _pmix.eigs                     p_readwrite.eigs
+#     define f() as:                 gx is 42
+#         print of gx                import _pmix
+#         gx is 5                    print of (_pmix.f of null)
+#         return gx                  print of gx
+#
+#   VM   42 / 5 / 42   rc 0
+#   AOT  null / 5 / 42 rc 0, build rc 0, empty build log   <-- SILENT WRONG
+#
+# The VM's two rules, both measured, are not each other's mirror image:
+#   READ  of a name the module never bound resolves OUTWARD into the importer
+#         (`_xread.readg` -> the program's 42, t322), and DIES "undefined
+#         variable 'gx'" at the read if the importer has none;
+#   WRITE of that name is CALL-LOCAL -- it does not reach the module scope
+#         either: two calls of `f` above print 42/5 twice, and a sibling
+#         `setit`/`getit` pair gives 0 / 42 / 42, never 5.
+# So the answer to a read depends on whether THIS CALL has already written the
+# name -- per-call dynamic state, with an outward lookup that must be able to
+# die AT THE READ. There is no cheap correct compile of that, and a rename
+# that guesses is the silent-wrong class this repo exists to kill. Refused by
+# name instead, exactly as the PROGRAM-scope member of the same order class
+# already is (the "does not provably precede" guard;
+# test/refuse/outward_write_before_binding.eigs).
+#
+# The refusal is scoped to names the module never binds at its top level: a
+# top-level binding is spliced in program order, so its reads are answered by
+# the renamed name and stay correct (t319's arm B, `bump`, still compiles --
+# it WRITES `ctr` before reading it).
+#
+# Definite-assignment, statement by statement, deliberately conservative:
+# an `if` counts only when BOTH arms assign, a loop body never counts (it may
+# run zero times), a `try` body never counts (it may die part-way). `st` is
+# the two-cell state [assigned, found], mutated in place.
+define fr_reads(node, nm) as:
+    if (type of node) != "list":
+        return 0
+    if (len of node) == 0:
+        return 0
+    if node[0] == "ident":
+        if node[1] == nm:
+            return 1
+        return 0
+    for k in range of (len of node):
+        if (fr_reads of [node[k], nm]) == 1:
+            return 1
+    return 0
+
+# A nested `define`: its body runs when the function is CALLED, which is
+# necessarily AFTER the `define` statement itself, so whatever is definitely
+# assigned at that point (`st[0]`) still holds inside -- but nothing later in
+# the enclosing list does. Inheriting that state rather than restarting from
+# zero is what keeps `lib/ui_w_dialog`'s `file_dialog` in the envelope: it
+# binds `fd` and only then defines the `_fd_on_select` callback that reads it.
+# Parameters and `local` declarations shadow the module name (collect_local_
+# decls is the same whole-body approximation collect_free_assigns itself
+# uses), so those bodies are skipped.
+define fr_func(fnode, nm, st) as:
+    local ps is fnode[2]
+    for pk in range of (len of ps):
+        if ps[pk] == nm:
+            return 0
+    local decls is {}
+    local fk is 3
+    loop while fk < (len of fnode):
+        collect_local_decls of [fnode[fk], decls]
+        fk is fk + 1
+    if decls[nm] == 1:
+        return 0
+    # ["func", name, params, BODY, param_defaults] -- the body is ONE slot (a
+    # statement list), and slot 4 holds the default expressions, which the VM
+    # evaluates in the callee's scope before the body runs.
+    local sg is [st[0], 0]
+    if (len of fnode) > 4:
+        if ((fr_reads of [fnode[4], nm]) == 1) and (st[0] != 1):
+            sg[1] is 1
+    fr_scan of [fnode[3], nm, sg]
+    if sg[1] == 1:
+        st[1] is 1
+    return 0
+
+define fr_branch(body, nm, st) as:
+    local sb is [st[0], 0]
+    fr_scan of [body, nm, sb]
+    if sb[1] == 1:
+        st[1] is 1
+    return sb[0]
+
+define fr_scan(stmts, nm, st) as:
     if (type of stmts) != "list":
         return 0
-    if (len of stmts) == 0:
-        return 0
-    if stmts[0] == "func":
-        local ps is stmts[2]
-        for pk in range of (len of ps):
-            out[(ps[pk])] is 1
-    if stmts[0] == "assign":
-        if (len of stmts) >= 4:
-            out[stmts[1]] is 1
-    if (stmts[0] == "for") or (stmts[0] == "catch"):
-        if (type of stmts[1]) == "str":
-            out[stmts[1]] is 1
-    for k in range of (len of stmts):
-        module_shadow_names of [stmts[k], out]
+    for i in range of (len of stmts):
+        local u is unwrap of stmts[i]
+        if (type of u) != "list":
+            continue
+        if (len of u) == 0:
+            continue
+        local h is u[0]
+        if h == "func":
+            # a `define nm(...)` BINDS nm, and it binds it BEFORE its own body
+            # can run (the body runs only on a call, which is after this
+            # statement) -- so the mark goes ahead of the body scan, and a
+            # self-recursive define does not read itself "before the write".
+            # (lib/ui_w_dialog `_make_prop_cb`: `define cb(w) as: ...` then
+            # `return cb`, with `cb` in the rename set from a free assign in
+            # another function.)
+            if u[1] == nm:
+                st[0] is 1
+            fr_func of [u, nm, st]
+            continue
+        if h == "assign":
+            # the RHS is evaluated BEFORE the name is bound, so `x is x + 1`
+            # with no earlier binding is a read-before-write.
+            if ((fr_reads of [u[2], nm]) == 1) and (st[0] != 1):
+                st[1] is 1
+            if u[1] == nm:
+                st[0] is 1
+            continue
+        if h == "if":
+            if ((fr_reads of [u[1], nm]) == 1) and (st[0] != 1):
+                st[1] is 1
+            local a1 is fr_branch of [u[2], nm, st]
+            local a2 is fr_branch of [u[3], nm, st]
+            # An `if` with no `else` has a null/empty arm, so a2 can only be 1
+            # when the name was already assigned before the statement.
+            if (a1 == 1) and (a2 == 1):
+                st[0] is 1
+            continue
+        if h == "for":
+            if ((fr_reads of [u[2], nm]) == 1) and (st[0] != 1):
+                st[1] is 1
+            if u[1] != nm:
+                fr_branch of [u[3], nm, st]
+            continue
+        if h == "loop":
+            if ((fr_reads of [u[1], nm]) == 1) and (st[0] != 1):
+                st[1] is 1
+            fr_branch of [u[2], nm, st]
+            continue
+        if h == "try":
+            fr_branch of [u[1], nm, st]
+            if u[2] != nm:
+                fr_branch of [u[3], nm, st]
+            continue
+        if h == "match":
+            if ((fr_reads of [u[1], nm]) == 1) and (st[0] != 1):
+                st[1] is 1
+            local cs is u[2]
+            for ci in range of (len of cs):
+                local cse is cs[ci]
+                if ((fr_reads of [cse[0], nm]) == 1) and (st[0] != 1):
+                    st[1] is 1
+                fr_branch of [cse[1], nm, st]
+            continue
+        if h == "destructure":
+            # ["destructure", names, rhs] -- the RHS runs first, then every
+            # name binds.
+            if ((fr_reads of [u[2], nm]) == 1) and (st[0] != 1):
+                st[1] is 1
+            local dns is u[1]
+            for di in range of (len of dns):
+                if dns[di] == nm:
+                    st[0] is 1
+            continue
+        if h == "import":
+            if u[1] == nm:
+                st[0] is 1
+            continue
+        if h == "unobserved":
+            # `unobserved:` always executes, so its assignments ARE definite.
+            fr_scan of [u[1], nm, st]
+            continue
+        if ((fr_reads of [u, nm]) == 1) and (st[0] != 1):
+            st[1] is 1
     return 0
+
+# The first rename-set name the module reads before it can have written it, or
+# null. `rtop` (the module's top-level bindings) is excluded -- those are
+# spliced in program order and their reads are answered correctly.
+define module_freeread_name(stmts, rset, rtop) as:
+    local topb is {}
+    for ri in range of (len of rtop):
+        topb[(rtop[ri])] is 1
+    local rk is keys of rset
+    for ri in range of (len of rk):
+        local nm is rk[ri]
+        if topb[nm] == 1:
+            continue
+        local st is [0, 0]
+        fr_scan of [stmts, nm, st]
+        if st[1] == 1:
+            return nm
+    return null
 
 # ---- MODULE NAMESPACING (ouroboros#141) -----------------------------------
 # Rename every name a module can create in the merged scope to `<M>__<name>`,
@@ -12276,14 +12977,21 @@ define splice_module(mname, base, depth, out) as:
         # refuses nearly everything; a precise one has holes. Prefixed
         # names cannot collide, so there is nothing left to compare.
         if G_IMPORTED[mname] != 1:
-            local mpath is (_lf_dirname of base) + mname + ".eigs"
-            local msrc is read_text of mpath
+            # The VM's import requests `<name>.eigs`, then `lib/<name>.eigs`,
+            # each through the one resolution chain (#1056) -- containing
+            # directory, eigs_modules walk, eigs.json project root, stdlib
+            # roots. Both kinds are spliced: a module is compiled wherever it
+            # came from.
+            local mpath is null
+            local msrc is null
+            local mr is _lf_resolve of [base, mname + ".eigs"]
+            if mr == null:
+                mr is _lf_resolve of [base, "lib/" + mname + ".eigs"]
+            if mr != null:
+                mpath is mr[0]
+                msrc is read_text of mpath
             if (msrc == null) or ((len of msrc) == 0):
-                if (G_STDLIB[0]) != "":
-                    mpath is (G_STDLIB[0]) + "/lib/" + mname + ".eigs"
-                    msrc is read_text of mpath
-            if (msrc == null) or ((len of msrc) == 0):
-                throw of ("AOT: import '" + mname + "' not found (looked beside the program, then in the stdlib lib/)")
+                throw of ("AOT: import '" + mname + "' not found (the VM's chain from '" + base + "': containing directory, eigs_modules walk, eigs.json project root, stdlib roots -- for <name>.eigs then lib/<name>.eigs)")
             local mast is eigen_parse of (eigen_tokenize of msrc)
             # The rename set: every name the module can create in the merged
             # scope — top-level bindings plus free assignment targets at any
@@ -12295,6 +13003,16 @@ define splice_module(mname, base, depth, out) as:
             for ri in range of (len of rtop):
                 rset[(rtop[ri])] is 1
             collect_free_assigns of [["block", (mast[1])], {}, rset]
+            # A rename-set name the module never BINDS at its top level, READ
+            # on a path that can run before its first write in the module: the
+            # rename answers that read from the module-private name (null, or a
+            # loud `undefined variable '<M>__<n>'` from another function) where
+            # the VM resolves it outward into the importer. Refused by name --
+            # see fr_scan's header for the measurement and why no cheap correct
+            # compile exists.
+            local frn is module_freeread_name of [(mast[1]), rset, rtop]
+            if frn != null:
+                throw of ("AOT: module '" + mname + "' READS '" + frn + "' on a path that can run before the module's own first write to it, and never binds it at its top level. On the VM that read resolves OUTWARD into the importing program (and dies `undefined variable '" + frn + "'` if the importer has none) while the write is call-local; the AOT splices the module under a private prefix, so the same read would answer from '" + mname + "__" + frn + "' -- null, silently. Refused rather than guessed (ouroboros#141 residual). THE EXIT is to give '" + frn + "' a definite first write ahead of that read -- an unconditional assignment at the top of the body that reads it, or a module top-level binding (measured: one such line restores lib/ui_w_special to the envelope). Marking the write `local` also works wherever the module-shadow guard admits it (it is refused in an observed/temporal function, and where the shadow's C block would not cover every later use).")
             # A module top-level binding made inside conditional control flow
             # cannot be represented: the dict is a snapshot of what RAN.
             if (module_has_toplevel_return of ["block", (mast[1])]) == 1:
@@ -12310,7 +13028,30 @@ define splice_module(mname, base, depth, out) as:
                 ren[(rk[ri])] is mname + "__" + (rk[ri])
             # Mark BEFORE recursing so an import cycle terminates.
             G_IMPORTED[mname] is 1
-            # Prefix for this module's binders, read by rename_ast's binder arms.
+            # Prefix for this module's binders, read by rename_ast's binder
+            # arms. SAVED HERE AND RESTORED AT THE END, because the recursive
+            # splice of a module's own `import` (below) sets it to the inner
+            # module's prefix. Without the restore every binder of THIS module
+            # after its `import` line carried the INNERMOST module's prefix:
+            # t311's three-link chain emitted `eig_ch_leaf__bnd__ctr` 18x and
+            # `eig_ch_leaf__bnd__n` 18x -- ch_top's and ch_mid's binders under
+            # ch_leaf's name -- where the fixed compiler emits ch_leaf__bnd__n
+            # 4, ch_mid__bnd__n 6, ch_top__bnd__ctr 18, ch_top__bnd__n 8.
+            #
+            # HONESTY ABOUT THE COST: no output divergence was found for it.
+            # A binder is a C BLOCK-local in the emitted code (the file-scope
+            # `static long eig_<M>__bnd__<v>` beside it is never written by
+            # the loop), so two modules sharing one binder name still read
+            # their own values -- t309/t311 and a probe crossing a numeric
+            # module-level `for` binder with a string one all stay green with
+            # the restore removed. It is fixed as a construction bug: the
+            # whole point of a per-module prefix is that two modules cannot
+            # share a name, and the evidence is the symbol census above, not
+            # a red fixture. Restoring at the end of the branch is enough --
+            # the inner call's own restore puts back what it found, so a
+            # second restore after each recursion is dead (measured: the
+            # emitted C is byte-identical with and without it).
+            local saved_pfx is G_MODPFX[0]
             G_MODPFX[0] is mname + "__"
             local mstmts is (mast[1])
             for mk in range of (len of mstmts):
@@ -12341,6 +13082,7 @@ define splice_module(mname, base, depth, out) as:
                     continue
                 append of [pairs, [rtn, ["ident", (ren[rtn])]]]
             append of [out, ["assign", "__moddict_" + mname, ["dict", pairs]]]
+            G_MODPFX[0] is saved_pfx
 
 # (round 114, ouroboros#127) A `load_file` whose path is COMPUTED cannot be
 # spliced, so it would be emitted as a runtime call into the linked VM: the
@@ -12377,6 +13119,43 @@ define has_computed_load_file(node) as:
             return 1
     return 0
 
+# A literal load_file in a NESTED position (a function body, a branch, a
+# try) of a SPLICED child stays a runtime call (#127's documented residual),
+# and so does a top-level one in a spliced child whose chain ends at a
+# STDLIB root (the splice loop hands that statement here). At run time the
+# linked VM resolves the call from the native program's baked g_script_dir
+# -- the MAIN program's directory -- where the VM uses the CHILD's
+# directory. Rewrite the literal to the absolute path the VM's chain answers
+# from the child's base: an absolute path is step 1 of that chain, used
+# as-is on both sides, so the runtime call is base-independent. A target no
+# step answers is refused by name (the VM raises from a base the native
+# program cannot reproduce), and so is a stdlib-tier hit the transpiler
+# could not check (no $EIGS_DIR: the resolved path is not absolute, and
+# leaving the literal would let the main directory's step 2 shadow the
+# stdlib -- t307's silent-wrong class). Depth 0 is untouched: there the
+# baked base IS the VM's base.
+define _lf_rewrite_nested(node, base) as:
+    if (type of node) != "list":
+        return 0
+    if (len of node) == 0:
+        return 0
+    if node[0] == "call":
+        local c is unwrap of node[1]
+        if ((type of c) == "list") and ((len of c) > 1):
+            if (c[0] == "ident") and (c[1] == "load_file"):
+                local a is unwrap of node[2]
+                if ((type of a) == "list") and ((len of a) > 1) and (a[0] == "str"):
+                    local lr is _lf_resolve of [base, a[1]]
+                    if lr == null:
+                        throw of ("AOT: load_file target '" + (a[1]) + "' (from '" + base + "') resolves nowhere on the VM's chain from that file's directory -- containing directory, eigs_modules walk, eigs.json project root, stdlib roots (EigenScript#1056). Left as a runtime call inside the native program it would resolve from the MAIN program's directory instead, a base the VM never uses; refused rather than guessed (ouroboros#147). Add an eigs.json at the project root or fix the path.")
+                    if (substr of [(lr[0]), 0, 1]) != "/":
+                        throw of ("AOT: load_file target '" + (a[1]) + "' (from '" + base + "') is not answered by the file's directory, the eigs_modules walk or an eigs.json project root, and the stdlib step could not be checked (no EIGS_DIR handed to the transpiler). Left as a runtime call inside the native program it would resolve from the MAIN program's directory, whose own lib/ shadows the stdlib on the VM's chain; refused rather than guessed (ouroboros#147). Build through aot/build.sh (it passes EIGS_DIR).")
+                    a[1] is lr[0]
+                return 0
+    for k in range of (len of node):
+        _lf_rewrite_nested of [node[k], base]
+    return 0
+
 define splice_static_loads(blk, base, depth) as:
     if depth > 16:
         throw of "AOT: load_file nesting deeper than 16 — cyclic load?"
@@ -12391,21 +13170,34 @@ define splice_static_loads(blk, base, depth) as:
         else:
             local path is _lf_target of st
             if path == null:
+                if depth > 0:
+                    _lf_rewrite_nested of [st, base]
                 append of [out, st]
             else:
-                # BEST-EFFORT, and that is the design rather than a shortcut.
-                # The VM resolves load_file through a CHAIN: script-dir first,
-                # then the exe-dir stdlib step (g_exe_dir/../<path>, which is how
-                # `load_file of "lib/int_vector.eigs"` finds the stdlib). This
-                # pass can only resolve the script-dir step — it has no idea what
-                # the built binary's exe dir will be — so anything it cannot read
-                # STAYS a runtime call and behaves exactly as it does today.
-                #
-                # Caught by t76_load_file_paths, which exercises both prongs: the
-                # first version threw on an unresolvable path and turned a passing
-                # stdlib load into a build failure.
-                local full is (_lf_dirname of base) + path
-                local csrc is read_text of full
+                # The VM's chain, mirrored statically (_lf_resolve, #147 /
+                # EigenScript#1056): containing directory, eigs_modules walk,
+                # eigs.json project root -> SPLICED; stdlib roots -> the
+                # runtime call (t76's stdlib prong, F-OURO-34) -- at depth 0
+                # with the literal as written (the baked base is the VM's),
+                # in a spliced child with the literal rewritten to the
+                # ABSOLUTE stdlib path (the runtime call would otherwise
+                # re-run the chain from the MAIN directory, whose step 2
+                # shadows the stdlib: t307). Unresolvable: a runtime call at
+                # depth 0 (the VM raises from the same base), refused in a
+                # spliced child (the runtime call would use the main
+                # program's dir).
+                local lr is _lf_resolve of [base, path]
+                local full is null
+                local csrc is null
+                if lr == null:
+                    if depth > 0:
+                        throw of ("AOT: load_file target '" + path + "' (from '" + base + "') resolves nowhere on the VM's chain from that file's directory -- containing directory, eigs_modules walk, eigs.json project root, stdlib roots (EigenScript#1056). Left as a runtime call inside the native program it would resolve from the MAIN program's directory instead, a base the VM never uses; refused rather than guessed (ouroboros#147). Add an eigs.json at the project root or fix the path.")
+                elif lr[1] == "stdlib":
+                    if depth > 0:
+                        _lf_rewrite_nested of [st, base]
+                elif lr[1] == "static":
+                    full is lr[0]
+                    csrc is read_text of full
                 if csrc == null:
                     append of [out, st]
                 elif (len of csrc) == 0:

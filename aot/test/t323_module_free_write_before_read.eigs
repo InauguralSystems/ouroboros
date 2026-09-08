@@ -1,0 +1,27 @@
+# The ACCEPTED side of the #141-residual boundary — the control for
+# test/refuse/module_free_read_*.eigs.
+#
+# The guard refuses a module name that is in the rename set (free-assigned,
+# never top-level bound) and READ on a path that can run before its first
+# write. Everything here is on the other side of exactly that decision, one
+# instance per thing the scan branches on: a plain earlier write; an `if` whose
+# BOTH arms write (the meet); a nested `define` that binds the name; a nested
+# `define` that reads a name the encloser already bound (the arm that keeps
+# lib/ui_w_dialog in the envelope); a write at loop-body depth 0 read later in
+# the same body; and — the control that must never enter the rename set at all
+# — a free read with no write anywhere, which resolves outward into this
+# program (t322's rule, re-asserted here beside its refused neighbours).
+#
+# Planted fault: delete the `module_freeread_name` guard from splice_module and
+# this fixture stays GREEN while the four refuse fixtures go red; break the
+# guard the other way (drop the `func`/`assign` binding arms from fr_scan) and
+# THIS one goes red as a build refusal. The pair brackets the boundary.
+gouter is 100
+import _frok
+print of (_frok.wr of null)
+print of (_frok.bothif of 1)
+print of (_frok.bothif of 0)
+print of ((_frok.mk of 3) of 4)
+print of (_frok.outerbind of null)
+print of (_frok.inloop of null)
+print of (_frok.readout of null)

@@ -1,0 +1,28 @@
+# (#126) THE PART-2a PARAMETER LEAK, closed for un-named parameters -- and
+# the discriminator for the parameter env seed.
+#
+# Part 2a keys an observed function's numeric parameters into the GLOBAL env
+# by name at entry, and there is no env-removal API, so the binding SURVIVED
+# the return and a module-scope read of it answered where the VM dies. That
+# is #124's known residual, and it was reported as unfixable short of a
+# per-call env: "a refusal covering that would reject essentially every
+# observed function with a local variable".
+#
+# Per-name, the seed is emitted only for parameters an observer read NAMES,
+# so an un-named parameter is never keyed into the module env and there is
+# nothing to leak. Measured, base compiler vs this one:
+#
+#   VM    moving / Error line 28: undefined variable 'v'  rc 1
+#   base  moving / 8                                     rc 0   <- leak
+#   new   moving / Error line 28: undefined variable 'v' rc 1
+#
+# This fixture is also the ONLY thing that discriminates the seed's gate:
+# reverting it to the whole-program flag leaves every other observer fixture
+# green (measured -- the redundant env write is invisible until something
+# reads the leaked name).
+define f(v) as:
+    local w is v
+    w is w * 0.5
+    return report of w
+print of (f of 8.0)
+print of v

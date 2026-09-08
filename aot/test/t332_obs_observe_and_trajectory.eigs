@@ -1,0 +1,18 @@
+# (#126) `observe of` and `trajectory of` are census reads too -- the
+# census's naming set is the VM's own reader set (predicate / report /
+# report_value / trajectory / observe plus every interrogative), not just
+# `report`. Round 109 already had to widen has_report for the same reason;
+# a census that counted only `report` would leave `a` a C static and the
+# two reads below would answer from an empty slot.
+#
+# `b` and `k` are un-named neighbours carrying the same arithmetic.
+a is 1.0
+b is 1.0
+k is 0
+loop while k < 5:
+    a is a * 2.0
+    b is b * 3.0
+    k is k + 1
+print of (observe of a)
+print of (trajectory of a)
+print of f"b {b} k {k}"

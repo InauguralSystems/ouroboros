@@ -1,0 +1,11 @@
+# EXPECT: is not PROVABLY numeric here
+# (#218) A NUMERIC module binding written a string by the interrogating
+# function: the VM binds it function-local (prev 1, module 1); the pair is
+# a C double, so the name leaves the class and is refused by name with the
+# writer's kind as the reason.
+z is 1.0
+define u() as:
+    z is "s"
+    return prev of z
+print of (u of [])
+print of z

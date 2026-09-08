@@ -80,8 +80,22 @@ for repo in "$ROOT"/*/; do
     elif [ $rc -eq 124 ]; then
       printf '%-46s %-10s %s\n' "$rel" "TIMEOUT" "(> ${TIMEOUT}s — raise CENSUS_TIMEOUT)"; timedout=$((timedout+1))
     else
-      why=$(grep -m1 -v '^[[:space:]]*$' "$tmp/err" | sed -E 's/^AOT: //' | cut -c1-58)
-      [ -z "$why" ] && why="(no diagnostic)"
+      # `|| true`, and it is load-bearing rather than defensive noise: under
+      # `set -Eeuo pipefail` a refusal that printed NOTHING to stderr (a
+      # transpiler crash, an OOM kill, a `timeout` signal) makes this `grep`
+      # exit 1, which fails the assignment, which aborts the whole census
+      # mid-table -- no summary line, no remaining rows, and an exit 1 that
+      # contradicts this script's own "Exit: 0 always" contract, so a caller
+      # redirecting to a file is left with a partial table that looks whole.
+      # That is the one output this instrument must never produce. Measured
+      # 2026-09-07: two runs stopped at row 40 of 116 and were read as
+      # "stalled" until the exit path was traced; reproduced deterministically
+      # with `EIGS=<a script that exits 3 silently>`, which stops the
+      # unpatched census after the header (rc 1) and tables cleanly here. The
+      # `(no diagnostic)` fallback below was written for this case and could
+      # never run.
+      why=$(grep -m1 -v '^[[:space:]]*$' "$tmp/err" | sed -E 's/^AOT: //' | cut -c1-58 || true)
+      [ -z "$why" ] && why="(no diagnostic, exit $rc)"
       printf '%-46s %-10s %s\n' "$rel" "REFUSED" "$why"; refused=$((refused+1))
     fi
   done < <(find "$repo" -maxdepth "$DEPTH" -name '*.eigs' 2>/dev/null | sort)

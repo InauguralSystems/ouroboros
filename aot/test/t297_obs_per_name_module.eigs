@@ -1,0 +1,26 @@
+# (#126) THE PER-NAME OBSERVER GATE, module scope.
+#
+# `ch` is NAMED by two observer reads, so it keeps today's byte-exact
+# bookkeeping: a name-keyed env slot, aot_observe_num on every write, a
+# named env read on every read. `total` and `i` are named by NO observer
+# read anywhere in the program, so they compile to plain C statics -- the
+# emitted C carries no aot_observe_num / aot_get_num_named_ic for them.
+#
+# Before the per-name gate one `report of ch` demoted EVERY scalar in the
+# unit: `i` became a hash lookup by name plus a type check four times per
+# iteration (measured: the larger half of the AOT's observer overhead,
+# F-OURO-39). What this fixture pins is that the SPLIT changes nothing a
+# program prints -- values byte-exact, verdicts byte-exact.
+ch is 1.0
+total is 0.0
+i is 0
+loop while i < 12:
+    ch is ch * 0.5
+    total is total + ch
+    i is i + 1
+print of f"total {total}"
+print of f"i {i}"
+print of f"ch {ch}"
+print of f"ch-report {report of ch}"
+print of f"ch-converged {converged of ch}"
+print of f"ch-diverging {diverging of ch}"

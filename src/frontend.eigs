@@ -476,6 +476,15 @@ define eigen_tokenize(source) as:
                     append of [tokens, ["interrogative", buf, line]]
                 elif (_is_predicate of buf) == 1:
                     append of [tokens, ["predicate", buf, line]]
+                elif (buf == "report") or (buf == "report_value"):
+                    # v0.43.0 (upstream #1102/#1110): `report` and
+                    # `report_value` are RESERVED observer forms — their own
+                    # token kind (TOK_REPORT / TOK_REPORT_VALUE), never an
+                    # identifier. Only `<word> of <ident>` and the dot-key
+                    # grammar consume them; every binding position and any
+                    # non-identifier operand is parse error E005 on both
+                    # sides (_p_report_error).
+                    append of [tokens, ["report", buf, line]]
                 elif (_is_keyword of buf) == 1:
                     append of [tokens, ["kw", buf, line]]
                 else:
@@ -665,9 +674,23 @@ define _p_peek_at(p, offset) as:
         return ["eof", null, 0]
     return p[0][idx]
 
+# E005 (upstream #1102, v0.43.0 pin): one reservation rule for every parser
+# entry point, mirroring parser.c's p_report_error. `operand` = 1 is the
+# `report of <non-identifier>` arm ("requires a variable name operand"); 0 is
+# the binding/value arm. Raises — the frontend's parse errors are throws.
+define _p_report_error(tok, operand) as:
+    local why is "use it with 'of variable', never as a binding"
+    if operand == 1:
+        why is "requires a variable name operand"
+    throw of ("ouroboros: Parse error line " + (str of tok[2]) + ": '" + tok[1] + "' is a reserved observer form; " + why + " [E005]")
+
 define _p_expect(p, ttype) as:
     tok is _p_cur of p
     if tok[0] != ttype:
+        # p_expect's first check: a report word in any expected position is
+        # E005 (`define report`, `import report`, `catch report:` ...).
+        if tok[0] == "report":
+            _p_report_error of [tok, 0]
         throw of f"parse error: expected {ttype}, got {tok[0]} ('{tok[1]}') at line {tok[2]}"
     _p_advance of p
     return tok
@@ -712,6 +735,9 @@ define _tok_assign_name(tok) as:
 define _p_expect_ident_like(p) as:
     tok is _p_cur of p
     if (_tok_ident_like of tok) == 0:
+        # C: `if (!tok_is_ident_like) p_expect(p, TOK_IDENT)` — E005 first.
+        if tok[0] == "report":
+            _p_report_error of [tok, 0]
         throw of f"parse error: expected identifier, got {tok[0]} ('{tok[1]}') at line {tok[2]}"
     _p_advance of p
     return tok
@@ -733,7 +759,7 @@ define _p_expect_dot_key(p) as:
     if tok[0] == "ident":
         _p_advance of p
         return tok[1]
-    if (tok[0] == "kw") or (tok[0] == "interrogative") or (tok[0] == "predicate"):
+    if (tok[0] == "kw") or (tok[0] == "interrogative") or (tok[0] == "predicate") or (tok[0] == "report"):
         _p_advance of p
         return tok[1]
     if tok[0] == "null":
@@ -841,7 +867,9 @@ define _p_parse_statement(p) as:
             first_default is 0 - 1
             if (_p_peek_type of p) == "lparen":
                 _p_advance of p
-                loop while (_tok_ident_like of (_p_cur of p)) == 1:
+                loop while ((_tok_ident_like of (_p_cur of p)) == 1) or (((_p_cur of p)[0]) == "report"):
+                    if ((_p_cur of p)[0]) == "report":
+                        _p_report_error of [(_p_cur of p), 0]
                     append of [params, (_p_cur of p)[1]]
                     _p_advance of p
                     has_default is 0
@@ -1041,6 +1069,8 @@ define _p_parse_statement(p) as:
             d_collect is 1
             loop while d_collect == 1:
                 if (_p_peek_type of p) != "ident":
+                    if (_p_peek_type of p) == "report":
+                        _p_report_error of [(_p_cur of p), 0]
                     throw of f"parse error: destructuring pattern requires identifiers at line {_stmt_line}"
                 append of [d_names, (_p_cur of p)[1]]
                 _p_advance of p
@@ -1360,6 +1390,9 @@ define _p_parse_unary(p) as:
     return _p_parse_call of p
 
 define _p_parse_call(p) as:
+    # parse_relation's `callee` snapshot: the token that starts the primary,
+    # for the E005 operand check below.
+    local callee_tok is _p_cur of p
     left is _p_parse_primary of p
     # Handle `of` application only. Dot/index postfix lives INSIDE
     # _p_parse_primary per primary kind, mirroring the canonical C parser
@@ -1380,6 +1413,13 @@ define _p_parse_call(p) as:
                 # `len of xs - 1` is `(len of xs) - 1`. Right-associative
                 # `f of g of x` and `f of -x` still work (unary recurses).
                 arg is _p_parse_unary of p
+                # E005 operand arm: `report of <x>` / `report_value of <x>`
+                # need a variable NAME — `(x)` is fine (parens return the
+                # inner ident node, as in C), but a literal, index, dot,
+                # call, unary or predicate operand is a parse error.
+                if callee_tok[0] == "report":
+                    if arg[0] != "ident":
+                        _p_report_error of [callee_tok, 1]
                 left is ["call", left, arg]
             else:
                 parsing is 0
@@ -1513,6 +1553,21 @@ define _p_parse_primary(p) as:
         _p_advance of p
         return _p_postfix_full of [p, ["ident", tok[1]]]
 
+    # Reserved observer forms (E005, v0.43.0 pin): mirror parse_primary's
+    # TOK_REPORT arm — the word is an ident node ONLY as the callee of `of`
+    # (`print of report`, `report is 5`, `report.x` are all E005), and it
+    # takes NO postfix chain. The operand check is in _p_parse_call.
+    if tt == "report":
+        tok is _p_cur of p
+        _p_advance of p
+        local _rep_ok is 0
+        if (_p_peek_type of p) == "kw":
+            if (_p_peek_val of p) == "of":
+                _rep_ok is 1
+        if _rep_ok == 0:
+            _p_report_error of [tok, 0]
+        return ["ident", tok[1]]
+
     if tt == "lparen":
         # Check for lambda: (params) => expr
         saved_pos is p[1]
@@ -1528,7 +1583,7 @@ define _p_parse_primary(p) as:
                 stok is p[0][scan_pos]
                 # C scan: tok_is_ident_like or COMMA — soft keywords (prev/
                 # at/question words) are valid lambda params (#99 item 8).
-                if ((_tok_ident_like of stok) == 1) or (stok[0] == "comma"):
+                if ((_tok_ident_like of stok) == 1) or (stok[0] == "comma") or (stok[0] == "report"):
                     scan_pos is scan_pos + 1
                 elif stok[0] == "rparen":
                     # Check if next is arrow
@@ -1540,7 +1595,9 @@ define _p_parse_primary(p) as:
                     scan_ok is 0
         if is_lambda == 1:
             params is []
-            loop while (_tok_ident_like of (_p_cur of p)) == 1:
+            loop while ((_tok_ident_like of (_p_cur of p)) == 1) or (((_p_cur of p)[0]) == "report"):
+                if ((_p_cur of p)[0]) == "report":
+                    _p_report_error of [(_p_cur of p), 0]
                 append of [params, (_p_cur of p)[1]]
                 _p_advance of p
                 if (_p_peek_type of p) == "comma":
@@ -1890,6 +1947,15 @@ define eigen_eval(node, env) as:
             return 1
 
     if ntype == "call":
+        # Reserved observer forms (E005, #1102): the parser only lets
+        # `report`/`report_value` through as the callee of `of <ident>`, and
+        # the C builtin can no longer be named as a value to bridge into
+        # this env. The meta-evaluator keeps no assignment history, so it
+        # refuses loudly instead of answering a made-up band.
+        local _rcal is node[1]
+        if ((type of _rcal) == "list") and ((len of _rcal) > 1):
+            if (_rcal[0] == "ident") and ((_rcal[1] == "report") or (_rcal[1] == "report_value")):
+                throw of ("ouroboros meta-evaluator: '" + (_rcal[1]) + " of' is a reserved observer form with no observer history here (EigenScript#1102)")
         fn is eigen_eval of [node[1], env]
         arg is eigen_eval of [node[2], env]
         # Check for eigen function (meta-interpreter defined)
@@ -2297,7 +2363,9 @@ define _make_default_env as:
     _env_set_local of [env, "num", num]
     _env_set_local of [env, "append", append]
     _env_set_local of [env, "type", type]
-    _env_set_local of [env, "report", report]
+    # `report` is NOT bridged: since v0.43.0 (#1102) naming it as a value is
+    # parse error E005 in this very file. The evaluator's call arm answers
+    # the reserved forms itself (see eigen_eval "call").
     _env_set_local of [env, "assert", assert]
     _env_set_local of [env, "throw", throw]
     _env_set_local of [env, "keys", keys]

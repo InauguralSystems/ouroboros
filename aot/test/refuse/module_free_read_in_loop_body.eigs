@@ -1,0 +1,13 @@
+# EXPECT: READS 'gx' on a path that can run before the module's own first write
+#
+# (#141 residual — the LOOP-BODY arm, a silent divergence in its own right.)
+# Measured on the parent commit (93b6e42) against the v0.43.0 pin:
+#   VM   42 / 42 / 1 / 42   rc 0
+#   AOT  null / 0 / 1 / 42  rc 0, build rc 0, empty build log
+# Two lines wrong, silently. The VM answers the in-loop reads from the
+# IMPORTER's binding on both iterations (its loop env is cleared per
+# iteration) while the renamed C local carries the previous iteration's write.
+gx is 42
+import _frbw_loop
+print of (_frbw_loop.f of null)
+print of gx

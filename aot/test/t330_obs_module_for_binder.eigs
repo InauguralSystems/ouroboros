@@ -1,0 +1,16 @@
+# (#126) A MODULE-scope for binder in an OBSERVED program, un-named.
+#
+# This arm is deliberately NOT per-name and the fixture is what pins that.
+# The module binder is renamed to a fresh env slot in every observed
+# program, because module-scope for-UNBOXING is still gated on the
+# whole-program flag: an un-named binder there is STILL env-resident, so
+# skipping the rename would leak the same phantom post-loop binding the
+# round-65 rename exists to prevent. The fresh name is in no census, so
+# every arm below treats it as the env-resident binder it is.
+ch is 1.0
+acc is 0.0
+for v in [1.0, 2.0, 3.0]:
+    acc is acc + v
+    ch is ch * 0.5
+print of f"acc {acc} ch {ch}"
+print of f"ch-report {report of ch}"

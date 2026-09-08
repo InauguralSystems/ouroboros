@@ -1,0 +1,24 @@
+# A transitively imported module — ouroboros#141 arm A.
+#
+# THE POINT OF THIS FIXTURE is that the collision guard compared the PROGRAM
+# against the modules the program imported; a module imported by a module was
+# never compared against anything, so its bindings merged into the spliced
+# scope unguarded. Here three files bind `ctr` — the program (1), _arm_outer
+# (50) and _arm_inner (7) — and each must keep its own.
+#
+# The renamer is applied recursively: _arm_inner is spliced under
+# `_arm_inner__`, _arm_outer under `_arm_outer__`, and _arm_outer's own
+# `import _arm_inner` binds `_arm_outer___arm_inner` to the SAME dict object
+# the program would get from `import _arm_inner` (the VM's module cache).
+# `keys of _arm_outer` does NOT carry `_arm_inner`: an import is a top-level
+# binding of the importing module, but a `_`-prefixed binding is omitted from
+# the module dict (#142) — which is why the dict-chain read lives in t311,
+# whose links have public names. Here the chain is reached through FUNCTIONS
+# only, the road the old guard left unchecked.
+ctr is 1
+import _arm_outer
+print of (_arm_outer.via of null)
+print of (_arm_outer.mine of null)
+print of ctr
+print of (keys of _arm_outer)
+print of _arm_outer.ctr

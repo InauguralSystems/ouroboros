@@ -1,0 +1,19 @@
+# Companion module for t311 (ouroboros#141, three-module chain). The top link:
+# imports the middle one, binds the same names, and CONTINUES after its own
+# import with functions and a module-level `for` whose binder shares the
+# global's name -- the statements the first renamer prefixed with the
+# innermost module's prefix (G_MODPFX was never restored after the recursive
+# splice).
+import ch_mid
+ctr is 100
+define bump() as:
+    ctr is ctr + (ch_mid.bump of null)
+    return ctr
+define get() as:
+    return ctr
+define midget() as:
+    return ch_mid.get of null
+define leafget() as:
+    return ch_mid.leafget of null
+for ctr in range of 3:
+    ctr is ctr + 1

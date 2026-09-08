@@ -1,0 +1,46 @@
+# Companion module for t323_module_free_write_before_read.eigs. Not a test.
+# Every arm the #141-residual guard ACCEPTS, one per thing it branches on.
+# None of these names is a top-level binding of this module: each is in the
+# rename set only because of a free `is` inside a body.
+
+# 1. plain write, then read (arm B's shape plus a read after the write)
+define wr() as:
+    a is 5
+    return a + 1
+
+# 2. both `if` arms write, then read after the join
+define bothif(c) as:
+    if c == 1:
+        b is 10
+    else:
+        b is 20
+    return b
+
+# 3. a nested `define` BINDS the name, which is then read
+#    (lib/ui_w_dialog `_make_prop_cb`'s shape)
+define mk(k) as:
+    define cb(x) as:
+        return x + k
+    return cb
+
+# 4. a nested `define` READS a name the encloser bound first
+#    (lib/ui_w_dialog `file_dialog`'s shape: the closure can only run after
+#    the `define` statement, so the encloser's binding is already made)
+define outerbind() as:
+    d is 7
+    define inner(x) as:
+        return x + d
+    return inner of 1
+
+# 5. write at loop-body depth 0, read after it in the same body
+define inloop() as:
+    tot is 0
+    for i in range of 3:
+        e is i * 2
+        tot is tot + e
+    return tot
+
+# 6. CONTROL: a free READ with no write anywhere in the module. Not in the
+#    rename set at all, so it must keep resolving outward into the importer.
+define readout() as:
+    return gouter + 1

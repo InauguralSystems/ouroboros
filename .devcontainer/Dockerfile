@@ -39,7 +39,18 @@ RUN apt-get update \
 # provenance (EigsChunk.compiler_scanned) and made trace_assign the
 # unconditional producer-facing entry point, which is what aot_rt.h already
 # calls — so there is nothing to mirror on this side.
-ARG EIGS_REF=c1684bc5c5525838dec5b9b5f34c73e49e9fa830
+#
+# v0.43.0 (a6c50fb): three upstream changes this side mirrors (ouroboros#147).
+# #1106 (EigenScript#1056): load_file/import resolve from the CONTAINING
+# FILE's directory -> eigs_modules walk -> nearest eigs.json project root ->
+# stdlib roots; the process cwd is no longer a step, which is what made the
+# AOT's build-time splicing of literal load_file targets sound (the splicer
+# now mirrors that chain statically). #1110 (EigenScript#1102): `report` and
+# `report_value` are reserved observer forms -- parse error E005 as a binding
+# or value or over a non-identifier operand -- mirrored in src/frontend.eigs
+# (own token kind, every p_report_error arm) and pinned by test/run.sh's
+# reject_one cases. #1113: embed observer gate default -- no mirror needed.
+ARG EIGS_REF=a6c50fba6a6250ea347a34500d6c9fa503a5c931
 RUN mkdir -p /opt/eigenscript-src && cd /opt/eigenscript-src && git init -q \
  && git remote add origin https://github.com/InauguralSystems/EigenScript.git \
  && git fetch -q --depth 1 origin "${EIGS_REF}" && git checkout -q FETCH_HEAD \

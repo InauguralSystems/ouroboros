@@ -1,0 +1,6 @@
+# Companion module for t310 (ouroboros#141 arm B). Not a test itself.
+# `ctr` is NOT a top-level binding of this module: the only place it is
+# assigned is a bare `is` inside a function body.
+define bump() as:
+    ctr is 99
+    return ctr

@@ -1,0 +1,39 @@
+# v0.43.0 pin (upstream #1102/#1110): `report` and `report_value` are reserved
+# observer forms. What the parser still ADMITS, pinned for parity: the two
+# forms over a bare identifier (module scope, function-local slot, and a
+# module name read from inside a function), a parenthesized identifier
+# operand (`report of (x)` -- parens return the ident node on both sides),
+# the soft-keyword identifier fallbacks as operands, and the words as DOT
+# KEYS (`d.report` is a data field, not a binding). `report_value of` and
+# `trajectory of` are slot-reading opcodes with no builtin behind them, so
+# the self-host codegen needs the same name/slot arms compile_node_inner has.
+x is 1
+x is 2
+x is 3
+print of (report of x)
+print of (report_value of x)
+print of (report of (x))
+print of (report_value of ((x)))
+t is trajectory of x
+print of (type of t)
+define f(n) as:
+    local acc is 0
+    for i in range of 5:
+        acc is acc + n
+    print of (report_value of acc)
+    print of (report of acc)
+    print of (report_value of x)
+    return acc
+print of (f of 2)
+prev is 4
+print of (report_value of prev)
+define g(what) as:
+    return report_value of what
+print of (g of 9)
+d is {"report": 1, "report_value": 2}
+print of d.report
+print of d.report_value
+d.report is 5
+d.report_value += 1
+print of d.report
+print of d.report_value

@@ -1,0 +1,20 @@
+# (#218) The `at`-qualified interrogatives on the same shape: `what is z
+# at L` and `when is z at L` read the name-keyed tape exactly as `prev of`
+# does, so a function's call-local writes are visible to a module-level
+# query and the module binding is untouched. (The bare `what is z` /
+# `when is z` forms are a pre-existing program-wide AOT refusal --
+# "temporal interrogative without `at` only supports `prev`" -- not this
+# shape's.)
+z is 1.0
+define u() as:
+    z is 0.25
+    z is 0.5
+    print of (what is z at 11)
+    print of (when is z at 11)
+    return prev of z
+print of (u of [])
+print of z
+print of (what is z at 11)
+print of (what is z at 12)
+print of (when is z at 12)
+print of (what is z at 8)

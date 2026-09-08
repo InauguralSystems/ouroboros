@@ -1,0 +1,21 @@
+# (#218) In a MODULE-observed program (the observer reads `z` at module
+# scope; the function itself observes nothing) the module numeric has no C
+# static -- reads go through the env -- and the pair's fallback read is
+# that env read. Measured on the pin: the function's call-local writes do
+# not observe the module slot (report/stable answer exactly as in the
+# control program without the writes), and the module value stays 1.
+z is 1.0
+define u() as:
+    z is 0.25
+    z is 0.5
+    return prev of z
+print of (u of [])
+print of z
+print of (report of z)
+print of (stable of z)
+z is 3.0
+z is 3.0
+print of (u of [])
+print of z
+print of (report of z)
+print of (stable of z)

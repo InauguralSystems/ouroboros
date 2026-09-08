@@ -1,0 +1,13 @@
+# EXPECT: a nested define/lambda reads the name
+# (#218) A nested define reading the interrogated name: the VM's chain walk
+# from the nested frame meets the encloser's call-local (g of 1 = 1.25); a
+# lifted C function would read the module static (2). Refused by name.
+z is 1.0
+define u() as:
+    z is 0.25
+    define g(a) as:
+        return a + z
+    print of (g of 1)
+    return prev of z
+print of (u of [])
+print of z

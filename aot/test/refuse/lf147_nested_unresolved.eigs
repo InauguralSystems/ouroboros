@@ -1,0 +1,8 @@
+# EXPECT: resolves nowhere on the VM's chain from that file's directory
+# ouroboros#147: a literal load_file in a SPLICED child that no step of the
+# VM's chain answers. The VM raises from the child's directory (caught here,
+# so the program runs rc 0); a runtime call inside the native program would
+# resolve from the MAIN program's directory instead -- a base the VM never
+# uses -- so the AOT refuses by name rather than guessing.
+load_file of "_lf147_child.eigs"
+print of "after"

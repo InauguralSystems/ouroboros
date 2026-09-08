@@ -1,0 +1,19 @@
+# (#126) A for BINDER over a name BOUND BEFORE the loop in the same
+# function, in an OBSERVED function -- the save/restore arm (#198, round
+# 182 / EigenScript#1064). Observed programs kept "the old persisting
+# path", which is right for a NAMED binder and wrong for every other one:
+# measured on the base compiler, post-loop `t` read 2 (the binder's last
+# value, persisted) where the VM restores the pre-loop binding's 100:
+#
+#   f of 4.0   VM ["moving", 100, 3.5]  AOT ["moving", 2, 3.5]
+#   f of 2.0   VM ["moving", 100, 2.5]  AOT ["moving", 2, 2.5]
+#   both rc 0, no diagnostic
+define f(n) as:
+    local w is n
+    local t is 100.0
+    for t in [1.0, 2.0]:
+        w is w + t
+    w is w * 0.5
+    return [report of w, t, w]
+print of (f of 4.0)
+print of (f of 2.0)

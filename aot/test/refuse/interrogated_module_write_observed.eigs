@@ -1,0 +1,14 @@
+# EXPECT: this function is observed
+# (#218) The OBSERVED member of the class: the function observes `z` itself
+# (a predicate), so Part 2a keys its locals into the global env BY NAME --
+# where the module `z` already lives. The VM gives the frame binding its own
+# observer slot (converged 0, prev 0.25, module 1); the per-call env (Part
+# 2b) is what lifts this, so it stays a loud by-name refusal.
+z is 1.0
+define u() as:
+    z is 0.25
+    z is 0.5
+    print of (converged of z)
+    return prev of z
+print of (u of [])
+print of z

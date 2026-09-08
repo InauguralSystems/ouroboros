@@ -1,0 +1,28 @@
+# (#126) A numeric PARAMETER used as a for BINDER inside an OBSERVED
+# function, where the parameter is named by no observer read.
+#
+# THE POINT: this shape was SILENTLY WRONG before the per-name gate, and
+# the fixture is the discriminator for the binder arms (invariant 22 -- the
+# first per-name binder fixture put its binder on the terminal env arm and
+# stayed green with all three binder conversions reverted). Measured on the
+# base compiler: post-loop `x` read 9 -- the last ITERABLE element, left in
+# the env by the terminal env arm -- where the VM's parameter binding holds
+# 4 and then 2:
+#
+#   f of 4.0   VM ["moving", 4, 25]    AOT ["moving", 9, 25]
+#   f of 2.0   VM ["moving", 2, 24.5]  AOT ["moving", 9, 24.5]
+#   both rc 0, no diagnostic
+#
+# The g_observed guard on the numeric-parameter binder arm was load-bearing
+# for a NAMED parameter (an observed function routes those through the env,
+# so a C-var write there is a dead store) and over-broad for every other
+# one; per-name it fires exactly where the parameter really is a C double.
+define f(x) as:
+    local w is x
+    w is w * 0.5
+    w is w * 0.5
+    for x in [7.0, 8.0, 9.0]:
+        w is w + x
+    return [report of w, x, w]
+print of (f of 4.0)
+print of (f of 2.0)

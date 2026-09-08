@@ -1,0 +1,11 @@
+# EXPECT: creates the top-level binding 'floop' inside conditional control flow
+# v0.43.0 pin (#1106, via ouroboros#147): on the import road a `for` body's
+# fresh `is` binds in the MODULE -- `keys of M` carries `floop` -- but only if
+# the body ran (an empty iterable or a `break` before it leaves the key
+# absent). The AOT builds the module dict statically, so this is the same
+# snapshot-of-what-ran class as a fresh binding inside an `if` (#141), refused
+# rather than guessed. Was t100's ACCEPT shape at the c1684bc pin, where a
+# `for` body had its own env on the import road.
+import _for_body_fresh
+print of (keys of _for_body_fresh)
+print of _for_body_fresh.floop

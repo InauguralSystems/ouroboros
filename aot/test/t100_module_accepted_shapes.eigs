@@ -1,4 +1,7 @@
 # The ACCEPT side of the module-dict conditional-binding guard — ouroboros#141.
+# (#147 / v0.43.0 pin: the `for` block flipped from "never reaches the dict"
+# to "reaches it conditionally", so its FRESH-binding form is now a refuse
+# fixture and the module keeps only the re-assignment forms.)
 #
 # THE POINT OF THIS FIXTURE is that a guard has two ways to be wrong and the
 # refusal tier only gates one of them. The first version of this guard refused
@@ -15,4 +18,5 @@ print of _t100mod.a
 print of _t100mod.b
 print of _t100mod.u1
 print of _t100mod.floop
+print of _t100mod.qv
 print of (_t100mod.g of null)

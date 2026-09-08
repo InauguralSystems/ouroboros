@@ -1,0 +1,25 @@
+# (#126) THE ALL FALLBACK, arm 1: a BARE predicate.
+#
+# `converged` with no operand reads the runtime's last-observed-slot alias
+# (OP_PREDICATE_SLOT), which can be ANY name -- so the query set is not
+# statically knowable and the census answers "every name". Every scalar here
+# keeps today's full bookkeeping, which is what makes the bare read answer
+# about `n`, the last name assigned before it.
+#
+# This is why #125's NAMED predicate form is the ENABLER for the whole
+# analysis rather than a convenience: without it per-name gating is
+# undecidable by construction.
+x is 100.0
+y is 1.0
+n is 0
+loop while n < 8:
+    x is x * 0.5
+    y is y + 1.0
+    n is n + 1
+print of f"x {x} y {y} n {n}"
+print of f"bare-converged {converged}"
+print of f"bare-stable {stable}"
+print of f"bare-diverging {diverging}"
+y is y + 1.0
+print of f"after-y-converged {converged}"
+print of f"after-y-improving {improving}"

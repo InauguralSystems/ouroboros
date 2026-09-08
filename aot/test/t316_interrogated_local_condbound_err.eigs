@@ -1,0 +1,14 @@
+# (#218) The module binding is CONDITIONALLY bound (never, here) and carries
+# a boundness bit. The function's call-local binding satisfies `prev of z`'s
+# bound-in-scope rule on its own: the first call answers null (one tape
+# entry), the second 0.25; the module read after the calls still dies
+# "undefined variable 'z'" on both sides.
+q is 0
+if q == 1:
+    z is 9
+define u() as:
+    z is 0.25
+    return prev of z
+print of (u of [])
+print of (u of [])
+print of z

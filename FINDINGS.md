@@ -1465,3 +1465,1344 @@ rung is met at 3x5 scale.
 Gates: aot/test/run.sh (t80–t82 added) + test/run.sh (57 programs +
 bootstrap) green at the v0.39.0 pin; fuzzdiff 40 programs seed 42 → 0
 divergences / 0 run-pasts / 0 gaps.
+
+## F-OURO-37 — static `load_file` splicing is sound at the v0.43.0 pin: the VM's chain is file-relative and the splicer mirrors it — FIXED-by-pin + mirror (#147, EigenScript#1056/#1106)
+
+**BUG (upstream, fixed by the pin; AOT mirror landed with the bump).**
+`splice_static_loads` (#129) resolves a literal `load_file` target at build
+time as `dirname(source) + path`, while the c1684bc VM resolved **cwd
+first**. The issue's layout, reproduced exactly (2026-09-06, both rc 0 —
+the silent-wrong class):
+
+```
+A/inc.eigs  print of "SCRIPTDIR-COPY"    B/inc.eigs  print of "CWD-COPY"
+A/prog.eigs load_file of "inc.eigs"
+cd B && eigenscript(c1684bc) ../A/prog.eigs   -> CWD-COPY
+cd B && ./prog_compiled_from_A (AOT @61f8319) -> SCRIPTDIR-COPY
+```
+
+**The rule now (v0.43.0 = a6c50fb, #1106; docs/SPEC.md "Modules",
+docs/LANGUAGE_CONTRACT.md "One file, three roads").** `load_file` and
+`import` share ONE chain, anchored on the directory of the **file
+containing the call** (nested loads use the loaded file's directory; a
+function's `eval` uses its defining file's): (1) an absolute path as-is;
+(2) `<containing dir>/<path>`, symlinks and `..` canonicalized; (3) the
+`eigs_modules` walk — bare `<name>.eigs` only, `<dir>/eigs_modules/<name>/
+<name>.eigs` at each level up to the project root; (4) `<project root>/
+<path>`, the project root being the nearest ancestor of the containing
+directory (itself included) holding `eigs.json` — skipped when none; (5)
+the stdlib roots `<exe>/../<path>`, `<exe>/../lib/eigenscript/<path>` (and
+lib/-stripped), then `$HOME/.local/lib/eigenscript/` likewise. **There is
+no process-cwd step** and no containing-dir-parent fallback (that is why
+this repo's own `eigs.json` landed in 61f8319: `aot/compile.eigs` reaches
+`src/frontend.eigs` through step 4 now). `import name` requests
+`name.eigs` then `lib/name.eigs` through the same chain. Measured on the
+pin: `cd B && eigenscript ../A/prog.eigs` prints SCRIPTDIR-COPY from both
+cwds.
+
+**Does the splicer match it, case by case?** Before this bump it answered
+step 2 only and left everything else to a runtime call into the linked VM,
+which resolves from the binary's BAKED `g_script_dir` (F-OURO-34) — the
+main program's directory. That is the VM's base for the main file but not
+for a spliced child, so:
+
+| case | VM (v0.43.0) | splicer before | now |
+|---|---|---|---|
+| sibling `inc.eigs` | step 2 | spliced | spliced (`_lf_resolve` step 2) |
+| subdir `sub/x.eigs` | step 2 | spliced | spliced |
+| child's own sibling (nested load) | child's dir | spliced (base = child path) | spliced |
+| project-root-relative from a subdir file | step 4 | **runtime call, interpreted** — dies "undefined variable" if it calls a compiled fn (the #127 class) | spliced (step 4, eigs.json walk) |
+| `eigs_modules/<n>/<n>.eigs` | step 3 | runtime call, interpreted | spliced (step 3) |
+| absolute literal | step 1 | `dir//abs` unreadable → runtime call | spliced (step 1) |
+| stdlib `lib/int_vector.eigs`, main file | step 5 | runtime call (t76) | runtime call, literal as written (the baked base is the VM's; F-OURO-34's tier) |
+| stdlib reached from a SPLICED child (`sub/child.eigs` → `lib/bcd.eigs`, main dir holds its own `lib/bcd.eigs`) | step 5 from the child's dir — the main dir's copy is never consulted | runtime call — the linked VM re-runs the chain from the baked MAIN dir, whose **step 2 answers first**: `MAIN-DIR-BCD-SHADOW` then `undefined variable 'from_bcd'` rc 1 (both rc 0 when the child calls nothing — silent wrong) | **literal rewritten to the absolute stdlib path** the child's chain answered (step 1 on both sides; `t307`, arm assertion 4). Round 2: the first cut of this table called the tier "base-independent" — measured false by the blind critic (`min147`: `lib/test.eigs` + `sub/child.eigs` + `prog.eigs`, no eigs.json; VM `child-done` / AOT `PROJECT-LIB-TEST`) |
+| stdlib-tier hit the transpiler cannot check (no `$EIGS_DIR`), spliced child | step 5 | runtime call | **refused by name** (`build.sh` always passes `EIGS_DIR`; a hand invocation without it would otherwise guess) |
+| nested-POSITION literal in a spliced child (branch/try/function) | resolved from the CHILD's dir at run time | runtime call from the MAIN dir — wrong base | literal rewritten to the absolute path the child's chain answers (step 1 on both sides) |
+| unresolvable, main file | io error from the main dir | runtime call → same error | unchanged |
+| unresolvable, spliced child | io error from the child's dir | runtime call from the main dir — can resolve where the VM raises | **refused by name** (`aot/test/refuse/lf147_nested_unresolved.eigs`; the VM runs it rc 0 via try/catch) |
+
+`_lf_resolve` (aot/compile.eigs) answers steps 1–4 statically (absolute
+base from `getcwd`, `.`/`..` folded; no realpath builtin, so a symlinked
+directory's physical parent is the one un-mirrored edge) and step 5
+against `G_STDLIB` = `$EIGS_DIR` (== `<exe>/..` for the baked exe dir;
+absolutized, since the path it returns is what a spliced child's literal
+is rewritten to). The one rule that fell out of round 2: **a runtime
+`load_file` call inside the native program is only sound when its base is
+the VM's** — at depth 0 (baked `g_script_dir` == the main file's dir) or
+when the literal is absolute (step 1). Every other literal in a spliced
+child is spliced, rewritten to an absolute path, or refused;
+`splice_module` uses the same resolver for `<name>.eigs` then
+`lib/<name>.eigs`; `nlb_scan` reads nested targets through it.
+
+**Fixtures.** `aot/test/t306_load_file_project_root.eigs` (+ `test/data/
+lf147_*`): sibling, nested-sibling and project-root loads, each proven
+SPLICED by the loaded file calling a function defined in the main file
+(an interpreted load cannot see it). `aot/test/t307_load_file_stdlib_from_
+child.eigs` (round 2): `data/lf147_sub/stdlib_child.eigs` loads
+`lib/bcd.eigs` — from its directory the chain ends at the stdlib — while
+`aot/test/lib/bcd.eigs` is a decoy at the MAIN file's step 2 that prints
+and defines nothing; the child calls `from_bcd`. `aot/test/load_file_
+shadow.sh`, an arm of `aot/test/run.sh`: the issue's A/B layout under a
+temp dir with the subdir and project-root steps shadowed too, four
+assertions — the shadow is live on the VM (a B/control.eigs prints
+CWD-COPY), the VM from B prints the A copies, the binary from B is
+byte-identical, and (4, round 2) the critic's exact no-eigs.json layout
+(`C/lib/test.eigs` decoy, `C/sub/child.eigs` → `lib/test.eigs` +
+`assert_eq`, run from C itself) is byte-identical VM vs AOT with the decoy
+proven live by `C/control.eigs`. Planted: the splicer made cwd-first
+(`getcwd + path` tried before step 2) → the arm goes red on assertion 3
+(AOT prints `CWD-COPY|CWD-SUB|undefined variable 'helper'` — it spliced
+B's copies, which define nothing); the shadow deleted → red on assertion
+1; the depth>0 stdlib rewrite removed (round 2's fix) → `t307` FAILs
+(`MAIN-DIR-BCD-SHADOW` / `undefined variable 'from_bcd'` rc 1 vs the VM's
+`26` rc 0) and the arm goes red on assertion 4 by name; the C decoy not
+written → red on assertion 4's control. Four more plants, each red by name: the frontend's `report`
+lexer arm reverted → `report is 5` accepted by the self-host driver (the
+reject tier's case goes red); the codegen `report_value` arm removed →
+`report_reserved_forms.eigs` dies "undefined variable 'report_value'";
+the `for` exemption restored → `for_body_fresh_binding.eigs` ACCEPTED; the
+depth>0 refusal removed → `lf147_nested_unresolved.eigs` ACCEPTED.
+
+**Bump fallout mirrored in the same commit (the deferred-mirror rule):**
+
+- **#1110 / EigenScript#1102 — `report` and `report_value` are reserved
+  observer forms (E005).** `src/frontend.eigs` lexes them as their own
+  token kind and mirrors every `p_report_error` arm of parser.c: any
+  binding position (assign, compound, `local`, `define` name and params,
+  lambda params, `for`/listcomp binder, `catch` name, destructuring,
+  `import`), any value use, and a non-identifier operand (`report of
+  (x + 0)`, `report of d.a`, `report of 5`, `report of converged`); still
+  admitted: `report of (x)` (parens return the ident node, as in C), the
+  soft-keyword identifier fallbacks as operands, and `d.report` as a dot
+  key. Probed on the oracle: 20 programs, rc agrees on all 20 for both the
+  self-host driver and the AOT transpiler. The frontend's own
+  `_env_set_local of [env, "report", report]` was the first casualty —
+  every self-host program and every AOT build died on it. The evaluator's
+  call arm now refuses the two forms by name (it keeps no history).
+  Pinned by 16 `reject_one` cases in test/run.sh; the
+  `observer_report_shadowed.eigs` matched-bug canary (`define report(v)`
+  half-shadow, EigenScript#1102) flipped as designed and became one of
+  them. New parity program `test/programs/report_reserved_forms.eigs`.
+- **Self-host codegen had no `report_value of <ident>` arm** (fell to a
+  plain call → "undefined variable 'report_value'": the form is an opcode
+  pair with no builtin behind it). Latent while no parity program used it;
+  the pin made it the only way to write the word. Mirrored from
+  compile_node_inner (OP_REPORT_VALUE_SLOT/NAME = 89/90), and
+  `trajectory of <ident>` alongside (91/92), same shape.
+- **#1106's for-body scoping on the import road.** Self-host codegen: no
+  mirror needed — it compiles the main road only (`import` is the VM's
+  OP), and for the main road compiler.c's new `lev_has` arm still emits
+  OP_SET_NAME. AOT: t100 went red — the VM's `keys of M` now carries
+  `floop` from a module-level `for qv in range of 2: floop is 5`, the AOT's
+  static dict did not (`M.floop` null, a wrong VALUE). Measured on the pin
+  (`a is 1 / <body> / b is 2` imported, `keys of M`): a fresh `is` in a
+  `for` body, in a nested `for`, and in an `if` inside a `for` all reach
+  the module dict; only the loop BINDER stays loop-scoped (`i is 9` in the
+  body updates the loop-local, `M.i` absent); and the key is ABSENT when
+  the body did not run (`for i in []:`, a `break` before the assignment).
+  So a `for` body is an `if` body for the snapshot: `collect_cond_binds`'
+  measured-table exemption ("a `for` body has its own env") — the c1684bc
+  row the pin flipped, invariant 16's axis case — is dropped; a fresh
+  for-body binding is refused like a fresh `if` binding (#141's message),
+  with the binder excluded via a copy of `bound`. t100's `floop` shape
+  became `test/refuse/for_body_fresh_binding.eigs` (the VM runs it rc 0,
+  `["a", "floop", "b"]`); `_t100mod` keeps the accepted forms (re-assign
+  of a top-level name, write to the binder) and t100 prints `M.qv` (null on
+  both sides). t95–t99 unchanged.
+- `build.sh` gained `AOT_TRANSPILE_CWD` (paths absolutized, transpiler run
+  from that directory) so the shadow arm can drive the transpiler from B;
+  the default path is unchanged.
+- **#1113** (embed observer gate default): no mirror.
+- Pin recorded in two places (`.devcontainer/Dockerfile` `EIGS_REF`,
+  `.github/workflows/aot-avx2-bench.yml`'s checkout SHA — invariant 30).
+
+Gates at a6c50fb (`EIGS=<v0.43.0 checkout>/src/eigenscript
+EIGS_DIR=<v0.43.0 checkout>`): `bash test/run.sh` → `ALL PASSED (63
+programs + bootstrap)` (`PASS: bootstrap fixed point (and the
+self-compiled program runs)` — the fixed point holds with the frontend
+change); `bash aot/test/run.sh` → 369 PASS lines, `PASS: load_file_shadow
+(A/B layout from the shadowing cwd, 3 assertions)`, `--- bench tier: 12
+program(s) build-checked ---`, `--- refusal tier: 56 guard(s) exercised
+---`, `--- runtime-refusal tier: 1 residual(s) exercised ---`, `--- all
+AOT parity tests passed ---`; `aot/core_check.sh` → `build.sh CORE matches
+upstream SOURCES minus CLI_ONLY (20 TUs)`.
+
+## F-OURO-38 — #139 census closure: 5 of the original 9 compile at HEAD, the temp-pool drain freed a caller's argument under a nested call — FIXED; the v0.43.0 oracle cannot run the compiler at all (pin, #147)
+
+**The instrument, run three ways (HEAD 61f8319, 2026-09-06).**
+
+1. **Against the v0.43.0 release oracle, as the brief asked:
+   `transpiles: 0 / refused: 116`** — every row the same first refusal,
+   `Parse error line 2300:39: 'report' is a reserved observer form ...
+   [E005]` in `src/frontend.eigs` (`_env_set_local of [env, "report",
+   report]`). That is the COMPILER failing to parse, not the consumers:
+   EigenScript#1102 (v0.43.0) reserved `report`/`report_value`, and the
+   frontend binds the word. Nothing about the envelope can be measured on
+   that oracle until the pin moves (#147, in flight); the number is
+   recorded so nobody reads a 0/116 as an envelope collapse.
+2. **Against the PINNED oracle c1684bc (the `EIGS_REF` in
+   `.devcontainer/Dockerfile`, 60 s transpile budget):
+   `transpiles: 85 / refused: 29 / timeout: 2 (total 116)`.** The total
+   is 116, not the 120 of the 2026-09-05 rows, because this box has no
+   `legibility-experiment` checkout; the discovery roots are the same.
+3. **The two timeouts re-run with a 600 s budget:** `EigenMiniSat/
+   minisat.eigs` transpiles (41 s alone, >60 s under a loaded box);
+   `Tidepool/tidepool.eigs` is a REFUSAL after 122 s (`function
+   'predators_for_tier' assigns module name 'n' whose first module-level
+   binding does not provably precede` — the order guard). So the honest
+   split is **86 transpile / 30 refused / 0 timeout**.
+
+First-refusal histogram over the 30 (messages normalized):
+
+| n | first refusal |
+|---|---|
+| 10 | function assigns module name whose first module-level binding is later (order guard; Tidepool x7 incl. tidepool.eigs, dynamics/life, train) |
+| 9 | task_spawn — cooperative tasks are pumped by the VM run loop (#188, design; liferaft x4, eddy x4, cross_lab) |
+| 4 | `local X` shadowing a module binding is not supported here (tidelog, dynamics/orbit, predicate_calibration, predicate_fit) |
+| 2 | nested define assigns enclosing name (outward; token_train, phugoid/swarm) |
+| 2 | cannot emit statement node (`import` in module_scope_lab, `binop` in transformer_eval_sequence_v2) |
+| 1 | zero-arg call binds the parameter null and the callee reads it (polymethod) |
+| 1 | a local of an OBSERVED function (gauntlet) |
+| 1 | temporal interrogative without `at` only supports `prev` (observer_lab) |
+
+**The original nine, BUILT (transpile + gcc link) and RUN against the
+c1684bc VM** — "compiles" here means the binary links; the run column is
+the program's own headless mode:
+
+| program | build | run vs VM |
+|---|---|---|
+| DMG/dmg.eigs | COMPILES (41 s) | `roms/cpu_instrs.gb --cycles 500000`: byte-exact modulo the two wall-clock lines (`Time:`/`Speed:`), rc 0 |
+| EigenMiniSat/minisat.eigs | COMPILES (71 s) | `--cdcl simple_sat.cnf`, `simple_sat.cnf` (DPLL), `--cdcl pigeonhole_3_2.cnf`: byte-exact modulo `ms=`, rc 0 — every counter identical |
+| EigenRegex/regex.eigs | COMPILES (4 s) | a package: standalone prints nothing both sides (rc 0). Driven through `import regex` by its own stage suites (copied beside the package so the AOT's beside-the-program import resolution finds it): **s1 (20 checks) and s8 (48 checks) DIED rc 1 on the first check** before this entry, byte-exact after — see the bug below |
+| liferaft/liferaft.eigs | REFUSED | `task_spawn` (#188, design) |
+| tidelog/tidelog.eigs | REFUSED | `` `local buf` shadowing a module binding `` (buffer-classified shadow) |
+| dynamics/dynamics.eigs | COMPILES (1 s) | a package: prints nothing both sides (rc 0); `dynamics/solve.eigs` byte-exact (14 lines), `logistic.eigs` byte-exact |
+| eddy/explorer.eigs | COMPILES (1 s) | a module fragment (loaded by explorer_main, which is refused on `task_spawn`): standalone defines only, prints nothing both sides (rc 0); no headless driver reaches it under the AOT |
+| polymethod/polymethod.eigs | REFUSED | zero-arg call to `main` — the callee reads its parameter (`main()` then `local n is 12` inside a branch, so the implicit `n` is not provably dead) |
+| Tidepool/eval_policy.eigs | REFUSED | `_unflatten_weights` assigns module name `policy` (order guard) |
+
+**5 of 9 compile** (DMG, EigenMiniSat, EigenRegex, dynamics, eddy);
+newly admitted since the issue's first table: EigenMiniSat, EigenRegex,
+dynamics, eddy. Consumer-derived fixtures per admitted program:
+EigenMiniSat t77/t80/t81/t82/t108/t210; EigenRegex t187 (its callback
+convention) and now **t309**; dynamics t303/t304/t305; eddy had NONE —
+**t308** added (its `on_scrub` shape: a two-parameter callback stored into
+a widget field the library initialised null, fired through the field
+behind a `!= null` guard, mutating module dict state). Exit condition
+(≥5 of 9 compile AND a fixture per admitted program): **MET**.
+
+**The bug the census paid for (BUG, FIXED here, t309).** Round 171 made
+every statement that owns argument temporaries end with
+`aot_tmp_drain()` — the WHOLE pool. A user call nested in an argument
+list (`check of ["a matches a", regex.re_match of [prog, "a"], 1]`)
+evaluates its sequenced arguments into the pool (`_sqa0` = the label)
+and then runs the callee, whose statements drain the pool under the
+caller: the label is freed, its memory reused, and `label + " OK"` dies
+`cannot apply '+' to ? and str` (rc 1) where the VM prints — or, with a
+luckier allocator, prints garbage. 14-line repro
+(`check of ["x", g of 1, 1]` where g's body makes any call with a
+list-literal argument). Fix: drains are RELATIVE — `emit_stmts` declares
+`int _tmsN = aot_tmp_mark();` before a temp-owning statement and drains
+to it after; `emit_return` drains to the same mark. The per-iteration
+release in loops is unchanged (each body statement has its own mark),
+and a callee's leftovers are released by the caller's own drain-to.
+Planted: reverting the two drain sites in place turns t309 red (rc 1,
+the original message); emitting `make_null()` for a function-as-value
+turns t308 red (the callback never fires).
+
+**Residuals.** (a) `import` resolves beside the program then the stdlib
+only — EigenRegex's real suites (`tests/test_s1_literals.eigs` importing
+the package at the repo root) refuse at build time, `import 'regex' not
+found`; the VM at c1684bc resolves via cwd and at v0.43.0 via the
+`eigs.json` project root (EigenScript#1056) — the pin bump is where that
+road should be matched. (b) The census counts acceptance, not runs: this
+entry is the second time a "compiles" row died on its first real driver
+(F-OURO-36 was the first) — `CENSUS_BUILD=1` plus a per-repo headless
+command is the next instrument. (c) The order guard is now the largest
+class (10), all Tidepool-shaped (`new_game` assigning `game`); #218 lifts
+one form of it.
+
+Gates at c1684bc: aot/test/run.sh and test/run.sh — see the commit body.
+
+## F-OURO-39 — the all-or-nothing `g_observed` gate was the larger half of the AOT's observer overhead; the PER-NAME gate is landed — FIXED (#126)
+
+Ledger of record for ouroboros#126 (a measurement, not a defect: no
+silent-wrong was involved — every observed program was byte-exact
+already, it was only slower than it needed to be). Recorded against HEAD
+61f8319 on 2026-09-06; re-RAN vs re-READ is marked per item. **FIXED
+2026-09-07** — the threading round below is landed; the closing
+measurement and what it cost are at the end of the entry.
+
+**The finding.** One observer read anywhere in a unit sets `g_observed`
+for the WHOLE unit, and under it every module-scope scalar is demoted
+from a C variable to a name-keyed env slot: a loop counter nobody ever
+asks about becomes `aot_observe_num(__eigs_g, "i", …)` on write and
+`aot_get_num_named_ic(__eigs_g, "i", …)` on every read — a hash lookup
+plus a type check per access. `unobserved:` is the WRONG lever for this
+cost: it makes `aot_observe_num` return early from the entropy walk, but
+the name-keyed store and lookup are already emitted (upstream it is the
+right lever — 8.51x on EigenMiniSat, EigenScript#915 — because there the
+cost IS the walk).
+
+**Executed evidence — the bench triple** (`aot/bench/obs_gate_a_unobserved`
+/ `_b_gate_only` / `_c_full.eigs`, committed by #125: identical
+arithmetic, ranged-dot kernel D=256 M=512 x30; A no observer, B one
+`report` at the end with the hot loops inside `unobserved:`, C the same
+without the wrap; `aot/test/run.sh`'s bench tier build-checks them,
+run.sh:161-184). The invariant that makes the arms comparable is that
+all three print the same checksum — re-RAN: the three AOT binaries
+print `checksum 0.018599999999997712`, the three VM runs
+`0.018600000000004294`; the arms agree with each other (the invariant),
+and the AOT-vs-VM tail difference is the `dot` lane-reassociation
+tolerance class (`_tol`, by the dot spec; build.sh is `-march=native`
+and this host is AVX-512), not a divergence.
+
+| arm | at filing 2026-08-28 (dev box, median) | round-191 tree 2026-09-05 (dev box, n=5 sorted) | per-name DRAFT (dev box) | HEAD 61f8319, 2026-09-06, THIS host, two n=5 runs (sorted) |
+|---|---|---|---|---|
+| A unobserved | 28 | 27 27 **28** 32 42 | 27 29 **31** 32 34 | 13 13 **14** 14 14 / 13 13 **13** 13 14 |
+| B gate only | 85 | 49 49 **51** 54 55 | 34 34 **38** 39 40 | 22 23 **23** 24 36 / 22 23 **23** 23 23 |
+| C full | 102 | 67 69 **70** 70 105 | 34 35 **36** 36 41 | 29 30 **30** 31 32 / 30 31 **31** 31 33 |
+
+The dev-box columns are re-READ from the issue (the per-name draft is
+not in the tree). The last column is re-RAN here: Xeon @ 2.80 GHz
+(AVX-512), 4 vCPUs shared with ~5 other agents (load ~4.6), pinned
+c1684bc oracle as `EIGS`/`EIGS_DIR`; absolute ms are this host's and
+NOT comparable to the dev box, the ratios are. Gate share
+(B−A)/(C−A): 57/74 = **77%** at filing; 23/42 = 55% on the round-191
+tree; 9–10/16–17 = **56–59%** at HEAD here. B = 1.8x A (round 191),
+1.7x A (HEAD here). Rounds 126→191 cut the gate from 57 ms to 23 ms on
+the dev box; it is still the larger half of the overhead. VM on the same
+kernel here, n=5 sorted: A 51 51 52 52 52, B 46 48 48 48 48, C 55 55 56
+56 57 — so the AOT is 3.8x the VM unobserved and only ~2x observed; the
+gate is where the AOT's own multiplier goes.
+
+**Mechanism, re-RAN in the generated C** (compile.eigs on the two arms;
+`gen_a.c` / `gen_b.c`): arm A carries 0 `aot_observe_num` and 0
+name-keyed reads; arm B carries 12 `aot_observe_num` stores and 23
+`aot_get_num_named_ic` reads, the module loop `i` among them
+(`aot_observe_num(__eigs_g, "i", 0)` then every read of `i` in the
+loop condition and the two buffer writes a named lookup). `aot_dot_range`
+(the SIMD dot) is present once in BOTH — the gate is not about
+vectorised builtins.
+
+**Why per-name gating is SOUND: verdicts are suffix-determined.** The
+issue's second comment measured four trajectory shapes over 60
+assignments (converging / oscillating / diverging / drift) against
+suffixes 11, 12, 15 of the same sequence, all six predicates plus
+`report`: byte-identical on every verdict — **11 assignments suffice**
+(the `OBSERVER_WINDOW_N` window plus one seed). That table is re-READ.
+The source-level reason is re-RAN against the v0.43.0 runtime
+(`/home/user/wt/eigs-pin/src`): `OBSERVER_WINDOW_N` is 10
+(eigenscript.h:361); the six classifiers
+`observer_slot_{converged,equilibrium,improving,diverging,oscillating,stable}`
+(eigenscript.c:965–1031) contain **zero** references to `obs_age`, the
+slot's only cumulative field; `obs_age` is read only as the
+first-observation test (eigenscript.c:592) and is SYNTHESISED from the
+window counts by `observer_slot_from_trajectory` (eigenscript.c:1208,
+the comment at 1262: "a full slot re-fed through the classifiers needs
+obs_age > 0 so the partial-window fallbacks behave like a live slot's")
+— the runtime already contains, as working code, the proof that a
+classifiable slot is reconstructible from bounded state. Consequences
+for an untraced program: (1) unqueried slots need NO maintenance — that
+is the gate cost, and those are the loop counters; (2) queried slots
+need only their last 11 assignments, and the naive split (keep today's
+machinery for queried names, plain C locals for the rest) captures
+essentially the whole win because the queried slot in the kernel takes
+2 assignments while the counters take millions. This costs no
+exactness: values stay byte-exact, verdicts are what programs print, so
+a verdict-exact AOT is byte-identical at the output and the existing
+differential validates it unchanged. `g_traced` stays a SEPARATE gate
+(per-assignment entropy is genuinely observable on the tape). The
+enabler is #125's NAMED predicate form: a bare predicate reads
+`g_last_obs_slot_*`, a runtime alias that can reach any slot, so only
+`diverging of a` / `report of x` give a statically knowable query set.
+
+**The per-name draft (2026-09-05, not landed) and what blocked it.** A
+program-wide census of every name an observer read can name
+(predicate / report / report_value / trajectory / observe operands,
+every interrogative) with an ALL fallback for a bare predicate, a
+non-ident operand, or any builtin that runs interpreted code (#1027),
+applied as `obs_name(n)` at the module declaration, the numeric read
+and the four observe-on-write sites: module-level observer fixtures
+matched (t27_observer, t108_genp_rebind_c_name,
+t119_interrogated_set_per_scope, t218_interrogated_binder_kinds,
+t244_param_binder_string_list — all present at HEAD, re-RAN `ls`) and
+three new fixtures covered the fallbacks (draft numbers t297 per-name,
+t298 bare-predicate ALL, t299 eval ALL — NOT in the tree; t297–t299
+are still free but t300–t305 have since been taken, so the draft's
+fixtures must be renumbered on landing). It BROKE the FUNCTION-scope
+storage model: a function's numeric map is seeded from the module map
+only when the program is unobserved (`emit_function`, compile.eigs:8590;
+the `g_mod_observed == 1 and g_observed == 0` seed at 8657), so a
+function reading a module numeric fell to the env-read arm
+(`total is total + 1` inside `check`: `undefined variable 'total'` in
+test_entropy_reference_stop / test_entropy_types / test_observer_slots),
+and a boxed call argument in an observed function read its local from
+the env (t107 `g of m`; t202 `limit`). The whole-program flag is
+consulted on 61 lines of compile.eigs at HEAD (`grep -c g_observed`;
+the draft counted ~40 sites — same job, the tree has grown). The
+per-name rule has to be threaded, each site classified name-specific vs
+genuinely global, through: the function seeding (emit_function /
+`g_mod_observed`), the boxed read arms, boundness (`G_BOUND_SO_FAR`,
+3160), the loop-binder kinds (the loop-scoped shadow arm, ~3938) and
+the outward-write regime (`g_outward_obs`, 3291/3365 — the
+aot-differential skill's invariant 14: an effect lands in the regime of
+the NAME it targets), with
+fixtures across module / function / outward-write scopes. That is its
+own round.
+
+## The threading round, landed 2026-09-07
+
+**The mechanism.** A program-wide CENSUS (`g_obs_names` / `g_obs_all`,
+`collect_obs_names`) of every name an observer read can NAME:
+predicate / `report` / `report_value` / `trajectory` / `observe`
+operands and every interrogative subject. It is program-wide, not
+per-scope, because Part 2a routes an observed function's locals through
+the GLOBAL env by name — a `report of total` anywhere names `total`
+everywhere. `g_obs_all` is the fallback for a bare predicate (it reads
+the runtime's last-observed-slot alias, which can reach any name), a
+non-identifier operand, and any builtin that can read observer state
+under a name the walk cannot see — `eval`, `sandbox_run`,
+`vm_run_bytecode`, a nested `load_file`, a residual `import`,
+`classify`, `state_at`, `get_observer_thresholds`, `record_history`,
+MIRRORED from the VM's own gate (chunk.c `const_pool_names_observer` +
+`SANDBOX_ALLOW`'s observer-READ group) rather than re-derived.
+
+Two predicates consume it: `obs_name(n)` (the current scope's regime,
+the drop-in for `g_observed == 1` wherever a NAME's storage is decided)
+and `obs_mod_name(n)` (the module's regime — invariant 14b, an effect
+lands in the regime of the NAME it targets). Both are strictly narrower
+than the flag: `obs_name(n) == 1` implies `g_observed == 1`, so no site
+can start observing where the flag did not, and the un-named half
+compiles exactly as an unobserved program does.
+
+**Sites converted (name in hand, storage-deciding), 23 in all:** the
+module decl loop; `emit_function`'s module-numeric seed (the
+`g_mod_observed`/`g_observed` pair that broke the draft — an OBSERVING
+function reading an UN-NAMED module numeric now gets the C-static seed,
+so `total is total + 1` inside `check` reads the static the decl loop
+emitted, and `undefined variable 'total'` is gone); `emit_num`'s ident
+read; the four observe-on-write arms (numeric, demoted-numeric, boxed,
+buffer); the interrogated call-local arm; the boxed-call-argument arm
+(t107's lesson one gate finer); boundness (`bound_bit_of`,
+`bound_bit_common`, the `prev of` env-membership arm); `borrowable_cvar`;
+the for-binder kinds (save/restore kind, the loop-scoped refusal, the
+numeric-parameter binder, the module-numeric binder); Part 2a's
+parameter env seed and the #123 shadow refusal gated on that seed's own
+condition; the per-call observer-slot reset (#217); and both
+outward-observe marks.
+
+**Sites deliberately KEPT on the whole-program flag, each for a stated
+reason** (the conservative direction — they cost some perf and change
+no verdict): the nested-observed-function refusal, the genp-rebind
+refusal, the interrogated-call-local eligibility scan, the
+`local`-shadow and boxed-shadow refusals, int-typing (`infer_int`),
+for-in unboxing, the per-call local env, parameter defaults, the
+kind-flip refusal, and — the one that is NOT merely conservative —
+**the MODULE for-binder rename**. That rename is what keeps a module
+binder out of the surviving module slot, and module-scope for-unboxing
+is still gated on the whole-program flag, so an un-named binder in an
+observed module is STILL env-resident and would leak the same phantom
+binding. Making it per-name needs the module for-unbox gate per-name
+first; the comment at the site says so.
+
+**The loop safepoint went with it.** A non-predicate loop's
+`eigs_loop_cap_step` is itself a NAMED env write: vm.c's helper stores
+`__loop_iterations__` and, on a cap exit, `__loop_exit__`; tests
+`g_sandbox_loop_max`, which only `sandbox_run` sets and which cannot
+wrap a compiled main; and runs the SIGUSR1 observe-safepoint. The first
+is gated by `g_loopexit_gate` — the program-wide test for a use of
+either name — and the other two are exactly what every UNOBSERVED
+binary already elides at the plain-`while` arm. So an observed program
+whose loop condition holds no predicate and whose `g_loopexit_gate` is
+closed now drops the per-iteration call on the same warrant, one regime
+over. A PREDICATE condition keeps its stall step (auto-halt is observer
+SEMANTICS, not bookkeeping) and so does `g_obs_all` (an eval'd string
+can name `__loop_iterations__` where `uses_ident` cannot see it).
+
+**Closing measurement** (this host, 4 vCPUs shared with ~8 agents, load
+average 8.2 — **under load, PROVISIONAL** per the fleet's timing rule;
+interleaved base-vs-new, n=25 per arm per binary, same `-march=native`
+build both sides, pinned v0.43.0 oracle):
+
+| arm | base median | per-name median | base min | per-name min |
+|---|---|---|---|---|
+| A unobserved | 27 | 24 | 14 | 12 |
+| B gate only | 39 | **30** | 19 | **13** |
+| C full | 52 | **31** | 24 | **15** |
+
+Medians: B falls from 1.44x A to **1.25x A**, C from 1.93x A to
+**1.29x A**. Mins: B 1.36x → 1.08x, C 1.71x → 1.25x. All six binaries
+print the same checksum (`0.018599999999997712`), which is the
+invariant that makes the arms comparable at all.
+
+**Mechanism, re-RAN in the generated C.** Arm B carried 12
+`aot_observe_num` stores and 23 `aot_get_num_named_ic` reads before;
+it now carries **2** stores (both on `ch`, the one named channel) and
+**0** named reads, and `grep` for any env operation on `i` / `r` / `j` /
+`acc` returns nothing — they are `static double`s. `eigs_loop_cap_step`
+count goes 3 → 0 in B and C.
+
+**Inert where nothing is observed, proven byte-exactly:** DMG's
+`dmg.eigs` transpiles to a gen.c that is BYTE-IDENTICAL between the
+base tree and this one (8,168 lines, `cmp` clean).
+
+**A refusal became an implementation.** `test_convergence_oracle.eigs`
+was ledgered REFUSE in `aot/test/canary/corpus_expected.txt` on the
+loop-scoped-binder-in-an-OBSERVED-program guard (`'i' is a loop-scoped
+for binder ... observed reads resolve through the env`); `i` is named by
+no observer read, so the guard no longer applies and the program now
+compiles and MATCHES the VM. That is the only ledger row that moved —
+230 programs examined, one improvement, zero regressions — and the
+baseline is updated: `aot/corpus_diff.sh` then reports
+`157 / 230 programs match the VM byte-for-byte; the rest match the
+ledger (2 NONDET excluded)`, exit 0. The envelope census is unchanged at 81 transpiles
+of 130 (zero row changes outside the fleet's own scratch worktrees).
+
+**SIX PRE-EXISTING divergences the new fixtures surfaced**, all measured
+on the base compiler first so none is a per-name regression. Five are
+closed here; the sixth is recorded and left open.
+
+*Closed by the per-name arms themselves* — each a silent wrong number in
+an OBSERVED function, each invisible to the whole suite because every
+observer fixture in it put its binder on the terminal env arm
+(invariant 22: a fixtured path with no DISCRIMINATING fixture):
+
+1. A numeric PARAMETER used as a for BINDER read the last ITERABLE
+   element after the loop: `f of 4.0` VM `["moving", 4, 25]`, base AOT
+   `["moving", 9, 25]`, both rc 0 (`t333_obs_param_for_binder`).
+2. A numeric LOCAL used as a for BINDER, the same one storage class
+   over: VM `["moving", 1, 14]`, base AOT `["moving", 9, 14]`
+   (`t334_obs_local_for_binder`).
+3. A binder over a name BOUND BEFORE the loop kept the binder's last
+   value instead of restoring the pre-loop binding: VM
+   `["moving", 100, 3.5]`, base AOT `["moving", 2, 3.5]`
+   (`t335_obs_prebound_for_binder`). All three were the observed
+   regime's "old persisting path" (#198), right for a NAMED binder and
+   wrong for every other one.
+4. **The Part-2a PARAMETER LEAK (#124's known residual) closes for
+   un-named parameters.** The seed keys a numeric parameter into the
+   GLOBAL env by name and there is no env-removal API, so the binding
+   survived the return: `define f(v) as: … / f of 8.0 / print of v`
+   printed `8` rc 0 where the VM dies `undefined variable 'v'` rc 1.
+   Per-name the seed is emitted only for parameters a read NAMES, so an
+   un-named one is never keyed into the module env and there is nothing
+   to leak (`t336_obs_param_leaks_after_call_err`). #124 stays open for
+   the NAMED half, which still needs the per-call env.
+
+*Closed by an extra fix in the same commit:*
+
+5. An observed function's numeric PARAMETER kept its observer slot
+   across calls — #217's rule for locals, never applied to parameters,
+   because Part 2a's `aot_set` does not touch the slot.
+   `probe of 10.0 / probe of 4.0 / probe of 1.0` answered VM
+   improving/improving/improving, AOT improving/moving/oscillating,
+   both rc 0. Fixed with an `aot_obs_reset_name` before the seed;
+   `t327_obs_report_of_param` is the regression.
+
+*Recorded, NOT fixed:*
+
+6. *`eval` does not open the AOT's whole-program observer gate.* The
+   VM's gate lists `eval` (const_pool_names_observer); the AOT's
+   `uses_observer` counts only predicates and the four special forms, so
+   an UNOBSERVED program whose only observer read is inside an eval'd
+   string compiles its names to C statics and the eval'd read dies:
+   `x is 100.0 ... eval of "report of c"` → `Error line 1: undefined
+   variable 'c'` where the VM answers `diverging`. **NOT fixed here** —
+   the honest fix is to widen `uses_observer` to the VM's reader-name
+   set, and that set includes `classify`, which four existing fixtures
+   (t43, t94, t203, t206) and `test/programs/match.eigs` use as an
+   ordinary `match` helper; widening would turn every one of them into
+   an observed (boxed, unvectorised) program. Out of scope for the
+   per-name round, recorded here as the next question. `t325_obs_eval_all`
+   pins the ALL fallback in a program that IS observed, which is the
+   half this round owns.
+
+**Pinned by:** sixteen new fixtures — `t297_obs_per_name_module` (a
+named channel beside un-named counters at module scope),
+`t298_obs_per_name_function` (a function reading a module numeric, a
+boxed call argument, an outward write from an observed function),
+`t299_obs_per_name_outward` (invariant 14b: one non-observing helper
+writing one named and one un-named module name),
+`t324_obs_bare_predicate_all`, `t325_obs_eval_all`,
+`t326_obs_per_name_interrogatives` (`prev of` / `where is _ at` /
+`why is _ at` / `what is _ at` beside an un-named counter),
+`t327_obs_report_of_param`, `t328_obs_fn_called_from_unobserved`,
+`t329_obs_per_name_fn_for_binder`, `t330_obs_module_for_binder` (the
+arm deliberately left on the flag), `t331_obs_named_written_in_fn`,
+`t332_obs_observe_and_trajectory` (the census's naming set is the VM's
+reader set, not just `report`), `t333`/`t334`/`t335` (the three binder
+discriminators) and `t336_obs_param_leaks_after_call_err` — plus the
+pre-existing observed set (t27, t107, t108, t119, t202, t203, t206,
+t218, t244, t305) and the bench tier.
+
+**Planted faults, each red for its own reason** (revert-in-place on the
+tree being committed, rebuild, `git checkout -- .`): dropping the
+`report`/`observe` operand from the census reddens six fixtures
+including t202 and t305; treating ONE named channel as un-named reddens
+t297 (`undefined variable 'ch'`) and, on the other channel's name, t331;
+deleting the bare-predicate ALL fallback reddens t324 AND t27; removing
+`eval` from the opaque set reddens t325; reverting the module-numeric
+seed reddens t202/t299/t328; reverting the boxed-call-argument arm
+reddens t107/t298; reverting the outward-observe marks reddens t299;
+reverting the three binder arms reddens t333/t334/t335; reverting the
+ident read + module decl loop reddens fifteen. The parameter env seed
+was the ONE conversion no existing fixture discriminated — reverting it
+left the whole tier green — which is what sent the search for
+`t336`; with t336 present the revert is red.
+
+**Status: FIXED.** `bash aot/test/run.sh` 402 PASS / 0 FAIL (64 refusal
+guards still exercised), `bash test/run.sh` 63 programs + bootstrap
+fixed point, both against the pinned v0.43.0 oracle.
+
+**Follow-up (2026-09-07): the compiler's own storage report was left
+STALE by this round, and is now gated.** `--dump-inference` (#65) prints
+one record per name saying which storage class the emitter picked; three
+of its sites still keyed the reported `kind` off the whole-program
+`g_observed` flag, so `compile.eigs test/t297_obs_per_name_module.eigs
+--dump-inference` called `total` and `i` `observed-env` while the same
+transpile emitted `static double eig_total` / `static double eig_i` with
+no `aot_observe_num` or `aot_get_num_named_ic` on either — the parameter
+and function-local records were wrong the same way. No value, verdict or
+exit code moved; what was wrong was the instrument, which is the class of
+a comment that overclaims. All three now call `obs_name`, the predicate
+the emitter itself consults (a sweep of every `g_observed` read inside a
+`--dump-inference` producer found exactly those three; the `for`-binder
+records already read `g_forunbox`, which IS what the emitter reads). And
+the dump had no test at all, which is why it could drift: the new
+`aot/test/dump_inference_gate.sh` (wired into `aot/test/run.sh`) joins
+the dump against the C the SAME transpile emits for t297 and t298 — a
+name reported `double`/`long` must carry no observer storage call and
+must be declared at that C type, a name reported `observed-env` must
+carry one — and its header states which dump fields it does NOT
+adjudicate. Reverting any one of the three sites reddens it by name.
+
+## F-OURO-40 — struct lowering of statically-shaped dicts: re-scoped from "~2.8x, the gap to real-time" to ~10% of DMG's runtime; do the numeric-dispatch calling convention first — BY-DESIGN / not-now (#133; recorded, not scheduled)
+
+Ledger of record for ouroboros#133 (split from #130). Nothing here is a
+divergence: field access through the inline caches is byte-exact and
+gated (t88_dispatch, t92_field_fastpath_hot). It is a sizing record so
+the next session does not start from the premise in the old title.
+
+**The estimate history — the finding worth keeping.** #130's title
+claimed struct lowering was worth ~2.8x and was "the remaining gap to
+Game Boy real-time". Both halves were wrong: the gap was closed WITHOUT
+it (ouroboros#129 stopped interpreting loaded modules, #130 added inline
+caches on dict fields and env names, unboxed comparison against a
+numeric operand, borrowed field/index access and a stack argument vector
+for `dispatch` — DMG at 135.8% of hardware, AOT 5.6977 MHz vs VM 1.3010
+MHz, `cpu_instrs.gb --cycles 1500000` n=7, dev box, re-READ from
+DMG/CLAUDE.md); and the ~2.8x came from SUMMING the profile's dict-access
+rows, which assumes the cost is the OPERATION when it was the LOOKUP —
+far cheaper to remove. #133's body then sized the residue at ~13% (the
+three field helpers, fully cached: `aot_dot_get_tb_ic` 5.8%,
+`aot_dot_set_num_tb_ic` 4.7%, `aot_dot_num_tb_ic` 3.5%). PR #137 took the
+cheap half and re-measured: the three helpers plus `aot_index_get_ib`
+were 20.8% across 968 call sites, every one a plain out-of-line `static`
+— a real call for what is, on a hit, a bounds check, a pointer compare
+and an array index. Splitting each into an inlinable fast path plus a
+`noinline` slow path (semantics unchanged by construction: every non-hit
+case falls through to the untouched original) bought **1.062x** and cut
+the helpers 16.7% → **9.8%**; boxing + refcount (`make_num` /
+`free_value` / `val_*`) went 20.9% → 27.4% of the remainder;
+machinery:work 4.36:1 → 3.87:1. So struct lowering now targets ~10% of
+runtime directly plus whatever share of the boxing is attributable to
+dict-held numbers: best case ~1.1–1.15x. (Profile percentages re-READ
+from the #133 thread; they need the DMG ROM run under `perf` on the dev
+box to re-run.)
+
+**Verified at HEAD (re-RAN):** the #137 split is in the tree —
+`aot/aot_rt.h:424–481` holds the four `static inline` fast paths
+(`aot_dot_get_tb_ic`, `aot_dot_num_tb_ic`, `aot_dot_set_num_tb_ic`,
+`aot_index_get_ib`), their slow paths are `__attribute__((noinline))` at
+1923 / 2352 / 2366 / 2381 (merge 70f78bf). DMG transpiled at HEAD with
+the pinned c1684bc compiler (`compile.eigs /home/user/DMG/dmg.eigs`, rc 0,
+27 s, 8,163 lines of C): `aot_dot_num_tb_ic` 352 sites,
+`aot_dot_set_num_tb_ic` 248, `aot_dot_get_tb_ic` 24, `aot_index_get_ib`
+49 — 673 in total, against #137's 968 on its own tree (rounds 138–191
+rewrote element and field access — round 170's borrowed field/element
+arguments and numeric element class among them — so this is the tree's
+count, not a measured reduction of the same sites). The generated C also
+shows the shape the lowering would target: 805 function-static
+`AotNameIC` caches and 898 dict-field IC pairs (`static int __icN = -1;
+static const char *__ickN`).
+
+**Why the boxing is not dict-shaped** (attributed with a frame-pointer
+build after three guesses were wrong — re-READ): `run_headless_loop`
+directly 2.47%, opcode-handler wrappers via `aot_dispatch` 2.46%,
+`fetch8` 1.20%, `handle_interrupts` 0.95%; no dominant source, and the
+largest single one is `__wrap__op_*` boxing a `double` return the caller
+immediately unboxes — which a **numeric-dispatch calling convention**
+fixes, not struct lowering. Hypotheses killed by counting before any
+code: interning literal constants (268 of 523 `make_num(` sites are
+literals, only 18 in hot functions); `mem.data[addr]` boxing dominating
+(45 static sites index a buffer through a dict field; most
+`aot_index_get_ib` calls index a LIST to reach a dict, `ctx[0].pc`, and
+allocate nothing); box-then-collapse on assignment
+(`aot_lv_set(&slot, make_num(...))` appears 0 times — #132's
+numeric-write inference already catches those).
+
+**Recommendation, unchanged:** size any struct-lowering work against the
+~10%, not the old estimate, and do the numeric-dispatch calling
+convention first — smaller, safer, and it targets the larger measured
+cost. This is the second time on this axis that an estimate built by
+summing profile rows came out wrong; the next one needs a
+frame-pointer attribution before a design.
+
+**What a SOUND bail-out would need** (the hard part is the bail-out, not
+the lowering — a dict is a first-class value and the failure mode is a
+silent wrong number, the class this repo exists to eliminate): a
+whole-program escape analysis that refuses lowering for any dict that
+is printed or formatted, passed to a builtin, returned or stored into a
+generic context (a list element, another dict's field, a function
+value's capture), indexed by a computed string, aliased through a
+container (`ctx[0].pc` is the common DMG shape), compared or hashed by
+identity, or can gain, lose or retype a key at runtime — and it must be
+conservative in the direction of NOT lowering, with a differential
+fixture per escape class (the F-OURO-32 rule: a refused shape must be
+loud, never coerced). Without that analysis in hand the lowering is not
+buildable safely; with it, the ceiling is the ~10% above.
+
+**Status: recorded, not scheduled.** Reopen as an issue when the
+numeric-dispatch convention has landed and the residue is re-measured;
+if the helpers are still ~10% then, this entry is the sizing.
+
+## F-OURO-41 — concurrency under the AOT: `task_spawn` has no run loop, `spawn` races the name-keyed observer env, compiled threads share emitter globals — CONSTRAINT (#188; every arm loud, design halves recorded, not scheduled)
+
+Ledger of record for ouroboros#188 (blind-critic round 108). One root —
+concurrency builtins were admitted through generic dispatch with no
+execution basis — three arms. Every silent-wrong the issue describes is
+now LOUD (build-time refusal, named runtime death, or a NONDET ledger row
+excluded from both sides of the corpus comparison); what remains is
+design work. Verified at HEAD 61f8319, 2026-09-06, against the pinned
+c1684bc oracle; each item marked re-RAN or re-READ.
+
+**Arm A — `task_spawn`: the task never runs.** `task_spawn` accepts the
+AOT's `make_builtin` wrapper and enqueues the task, but the cooperative
+scheduler is pumped only by the VM dispatch loop (vm.c `CASE(CALL)`:
+`g_task_suspend_request` honoured at `base_frame == 0` →
+`vm_suspend_halt`); `task_join` sets the request and returns its
+placeholder `make_null()`, and native `main()` is plain C with no run
+loop. Same root for the `task_sleep` racers (VM `["a", "b"]`, AOT `[]`)
+and `task_recv` (VM `hello`, AOT `null`). Shipped: (1) round 108's
+BUILD-TIME refusal by name — `mentions_ident of [ast, "task_spawn"]`
+(compile.eigs:11134; the program-wide rationale at 427–432: a function
+value can flow to `task_spawn` through any binding, so scoping the
+predicate to the call's bare argument would breed an invariant-20 hole);
+(2) round 189's BOOT REBIND for the seam the AST walk cannot see —
+`aot_no_loop_rebinds` (aot_rt.h:2181, called from `main` at
+compile.eigs:11700) binds `task_spawn` in the global env to
+`aot_task_spawn_no_loop`, which raises `AOT: task_spawn -- no run loop …
+(ouroboros#188)` at the call line, the same shape the VM uses for
+sandbox-blocked builtins. A computed-path `load_file` is refused at build
+time since #127 (`aot/test/refuse/load_file_computed_path.eigs`), so the
+residual shapes are an `eval` string and a literal `load_file` the
+static pass cannot resolve (test_supervise: `load_file of
+"lib/supervise.eigs"` from `tests/`, still a DIVERGE row, but its binary
+now dies naming this instead of `cannot suspend … nested evaluation`).
+Re-RAN the issue's repro (`define worker(x) … w is task_spawn of
+[worker, 21] / print of task_join of w`): VM `42` rc 0; AOT build
+refused with the round-108 text. Re-RAN the rtrefuse fixture
+(`aot/test/rtrefuse/task_spawn_runtime_load.eigs`, the eval shape): VM
+prints `spawned` rc 0; the binary BUILDS and dies `Error line 3: AOT:
+task_spawn -- no run loop: …` rc 1 (the run.sh arm at 271–300 requires
+exactly that: VM rc 0, AOT builds, binary nonzero with the `# EXPECT:`
+text; rc 0 fails as "still silent"; planted at round 189 by removing the
+rebind line — the binary printed `spawned` at rc 0).
+*To lift:* a native task substrate. A compiled worker is a C function,
+so it cannot be suspended at `task_sleep` / `task_recv` without a
+coroutine mechanism (ucontext, per-task C stacks, or threads with a
+baton). That is a runtime design decision, not a patch — and the VM's
+scheduler contract ("a task suspends only at base_frame 0, never inside
+a nested evaluation") is itself a VM-shaped rule worth questioning
+before mirroring (CLAUDE.md: match the VM by default, but a refusal
+forced by a rule that is not a property of the source is a LANGUAGE
+finding).
+
+**Arm B — `spawn` with an observed/temporal function: SIGSEGV rc 139 or
+silent wrong counts.** Part 2a routes every local of an observed
+function through the PROCESS-GLOBAL env by name
+(`aot_observe_num(__eigs_g, "seen", …)`, `aot_set(__eigs_g, "i", …)`);
+two OS threads race one slot while first-observation grows the obs
+array: `undefined variable 'seen'` then rc 139 where the VM prints
+`4000 / 4000`, and LOWER contention is worse — an unobserved worker
+calling an observed helper printed `6397 / 6223` at rc 0. The axis is
+exactly `func_observed` (compile.eigs:5933): unobserved workers, traced
+programs, and module-scope observation while workers run are byte-exact.
+Shipped: round 108's program-wide refusal — `spawn` mentioned anywhere
+AND any function in the unit observed (compile.eigs:11145–11150, keyed on
+any observed function, not on `spawn`'s argument, because the function
+value can flow dynamically). Pinned by
+`aot/test/refuse/spawn_with_observed_fn.eigs` (the direct shape) and
+`spawn_observed_helper.eigs` (the unobserved-worker-calls-observed-helper
+shape). Re-RAN the issue's repro: VM `4000 / 4000` rc 0; AOT refused
+naming `'reader'`. Re-RAN the control (same program, no `report`): VM
+and AOT both `4000 / 4000` rc 0, byte-exact — the refusal is on the
+axis and not wider.
+*To lift:* per-call envs for observed functions — the observer slot must
+be FRAME-owned, not name-keyed on the global env. This is the same Part
+2a design gap #123/#124 (locals leaking into module scope), #126 /
+F-OURO-39 (the gate — now PER-NAME, which removes the cost for names no
+read can name but leaves the name-keying itself in place for the ones it
+does) and #217 (round 196, t305: a function's observed locals — and,
+since #126, its observed numeric PARAMETERS — get
+`aot_obs_reset_name(__eigs_g, …)` at entry so the slot is fresh per call
+— a reset ON the global slot, which is exactly what two threads cannot
+share) all name from different sides. F-OURO-32/35's
+per-call env `__eigs_l` already exists for boxed locals; the observer
+store has to move with it. Inherited design, pre-v1 — question it rather
+than design around it.
+
+**Arm C — compiled threads share mutable emitter globals**
+(test_spawn_parallel). Corpus round 170 (1eabb16): the program built
+under the AOT and re-run three times against the VM gave mismatch (w9
+1719 for 1675, w10 1775 for 1725; 7/12 passed), SIGSEGV, mismatch — it
+had matched once inside the gate by luck. Its ledger row is **NONDET**
+(`aot/test/canary/corpus_expected.txt:56`, re-RAN `grep`; test_spawn_gc
+at :55 carries the same class), a class `aot/corpus_diff.sh` (68–105)
+excludes from BOTH sides of the comparison so a lucky run cannot read as
+an improvement and the kept observed set carries the row forward
+(8dc140f). Root: spawned compiled code shares the emitter's per-program
+statics — the inline caches (`static AotNameIC __nNN` and the dict-field
+`ic`/`ick` pairs are function-static in the generated C: 805 and 898 of
+them in DMG's unit at HEAD), the dispatch tables, and
+`g_trace_current_line`. Rule already in force: any NEW per-program
+runtime state is thread-local from day one — round 171's temporary stack
+is `__thread` (aot_rt.h:2017, re-RAN). *To lift:* make the existing
+emitter globals thread-local or per-thread-arena (the ICs are the bulk:
+a `__thread` IC costs a TLS indirection on every cached access, so this
+wants measuring on the DMG canary before it is the default), then the
+row leaves the ledger when the outcome is MATCH on every run.
+
+**Corpus rows at HEAD (re-RAN):** test_task_osr REFUSE,
+test_task_sleep_order REFUSE, test_obs_mt_race REFUSE, test_supervise
+DIVERGE (named death, above), test_spawn_parallel NONDET, test_spawn_gc
+NONDET. Reach beyond tests (re-READ): `lib/supervise.eigs`,
+`lib/sync.eigs`, `lib/concurrent.eigs`, liferaft's `cluster.eigs`, eddy's
+`dst_core` / `txn_dst` / `rw_dst`, EigenGauntlet's `concurrent_lab` /
+`cross_lab`, EigenOS demos, three `examples/task_*.eigs` — every
+task-using consumer previously compiled to a binary whose tasks silently
+never executed; they now refuse loudly.
+
+**Status: recorded, not scheduled.** Three separate design decisions
+(task substrate; frame-owned observer slots; thread-local emitter state),
+each reopenable as its own issue when picked up. The refusals and the
+rtrefuse arm are the contract until then — a lift must delete the
+refusal it replaces, not widen it.
+
+---
+
+## F-OURO-42 — a module NUMERIC name a function both assigns and interrogates is an interrogated call-local (OP_SET_FN_NAME_LOCAL's frame binding), no longer a refusal — FIXED for the numeric class; CONSTRAINT for the boxed / observed / nested-reference members (#218)
+
+**The VM's rule (v0.43.0, `compiler.c` `emit_assign_for_tos` +
+`scan_for_interrogated`).** Inside a function, a plain assign to a name
+the SAME function interrogates (`prev of`, `what/when is .. at`, the
+observer interrogatives) is never slot-eligible and never outward: it
+compiles to `OP_SET_FN_NAME_LOCAL`, a fresh binding in the frame env. So
+the write never reaches a same-named module binding, a read BEFORE the
+first write in the call still walks the chain to the module binding, the
+frame binding dies with the call, and `prev of` / `what is .. at` read the
+process-global name-keyed tape, module writes included. Round 197 refused
+the whole class by name (silent-wrong before that: the AOT wrote the
+module static). Measured on the pin, every row rc 0 unless said:
+
+| shape | VM | AOT before | AOT now |
+|---|---|---|---|
+| the issue's program: `z is 1.0`; `u`: `z is 0.25 / return prev of z`; `u2` same without the interrogative | `1 1 0.25 0.25` | build refusal (round 197); silent `1 0.25 0.25 0.25` before it | `1 1 0.25 0.25` (t310) |
+| read / `prev of` before the write, then after; a sibling fn reading `z` during the call; second call (module `z` written twice: 1.0 then 2.0) | `2 1 0.25 2 2 2` on call one (the pre-write read and the sibling both see the module 2, the tape's `prev` is 1 then 2), module still 2, then `2 2 0.25 2 0.25 2` | refusal | match (t311) |
+| write in an if/else arm, in a `loop while` body, compound `+=`, an int-class module name (`m is 1`), `z is z + 1` (reads the module 1 each call) | call-local each time, module untouched | refusal | match (t312) |
+| for-binder over the name (round 182 loop scope) with a plain write before / after / only inside the loop | binder loop-scoped; post-loop read = the call-local if written, else the module; `prev of z` = last binder value | refusal (only the binder-only form was excluded) | match (t313) |
+| `what is z at L` / `when is z at L` from the function and from module scope | tape reads see the call-local's writes | refusal | match (t314) |
+| module-OBSERVED program (`report of z` / `stable of z` at module scope), non-observing function | the module slot's answers are those of the control without the writes; module value unchanged | refusal | match (t315) |
+| module `z` conditionally UNBOUND (a boundness bit); `u` writes and reads `prev of z` twice; module read after | `null`, `0.25`, then `undefined variable 'z'` rc 1 | refusal | match incl. the death (t316, `_err`) |
+| recursion (`z is n` then `print of (u of (n - 1))` inside `u`, `u of 2`) | each frame its own `z`; the tape carries 1.0/2/1/0 so every `prev of z` answers 1 and the module stays 1 (`1 1 1 1`) | Part 2a's own refusal ("observed/temporal function calls another observed/temporal function") | unchanged — that refusal predates this round and is not this class; the pair itself would be exact, C stack storage gives a frame its own copy |
+
+**Mechanism.** `g_cur_interloc` (per function; `aot/compile.eigs`): a
+plain (unmarked) assign anywhere in the body, the name in THIS function's
+interrogated set (`g_cur_interrogated`), not a parameter, a module NUMERIC
+binding (`gnm`; the round-133 demotion already takes any name a function
+writes a boxed value into off that map) whose every writer in this body is
+numeric under the post-merge maps, the function not observed, and no
+nested define/lambda reading the name. Members get round 151's shadow pair
+(`double eig_z__loc; int eig_z__isloc`): every write stores into the pair
+and traces under the name (`aot_trace_assign`, observing nothing); every
+read — `emit_num`'s and `emit_val`'s ident arms — dispatches
+`(eig_z__isloc ? eig_z__loc : <this regime's module read>)`, the fallback
+computed by re-entering the arm with the mark cleared, so the bit-guarded
+static, the int-cast static and the env read (module-observed regime) all
+stay exactly what they were. `prev of z` under a module boundness bit
+accepts the pair's flag as bound-in-scope. C stack storage makes recursion
+exact for free; the pair is suppressed while a loop-scoped for-body over
+the same name is emitted (the block-local IS the binding there, EigenScript
+#1074), and `g_int` drops the name so no `long` read bypasses the pair. The
+round-151 shadow (`g_cur_shadowbit`, writes routed on the module bit) is
+pruned of members: their writes are unconditionally call-local.
+
+**CONSTRAINT — still refused by name, each with its own reason in the
+message and a `test/refuse/` fixture (the VM runs every one rc 0):**
+
+- **boxed module binding** (`z is "a"`; `interrogated_module_write_boxed`)
+  and a **numeric binding written a non-numeric value**
+  (`interrogated_module_write_nonnum`): the pair is a C double; a `Value*`
+  pair under the owned-read convention (env reads hand out a new ref, the
+  pair would have to as well, and release at every exit as the generic-
+  parameter rebind does) is not emitted. VM: `a a` / `1 1`.
+- **an RHS this pass cannot TYPE**
+  (`interrogated_module_write_boxed_rhs`): `z is k` with `k` a plain `for`
+  binder in a traced program is an env-boxed read (`g_forunbox` only fires
+  untraced), so `is_num_expr` says no even though the value IS a number at
+  run time. The VM binds `z` function-local regardless (prev 1, module 1);
+  the pair is a C double and an unconditional unbox would die where the VM
+  does not, so the name leaves the class and the refusal says exactly that
+  ("not PROVABLY numeric here"). The same reason arm covers the genuinely
+  non-numeric writer above — one message, both causes named.
+- **observed function** (`converged of z` in the body;
+  `interrogated_module_write_observed`): Part 2a keys its locals into
+  `__eigs_g` by NAME, where the module binding already lives; the VM gives
+  the frame binding its own observer slot (`0`, prev 0.25, module 1). The
+  per-call env (Part 2b, #123/#124 lineage) lifts it.
+- **nested define/lambda reading the name**
+  (`interrogated_module_write_nested_ref`): the VM's chain walk from the
+  nested frame meets the encloser's call-local (`g of 1` = 1.25); a lifted
+  C function reads the module static (2).
+- **the bare `what is z` / `when is z`** (no `at`) are a PRE-EXISTING
+  program-wide refusal ("temporal interrogative without `at` only supports
+  `prev`"), not this shape's; t314 pins the `at` forms.
+
+**The refusal advertised a DEAD EXIT, and the message is corrected**
+(residual review 2026-09-07; found by the #218 critic on the boxed member,
+measured here across all five). The message said "Mark it `local` to make the
+VM's binding explicit, or rename the module binding". `local` is not an exit
+for ANY member of this class, and it cannot be, by construction: a function
+that interrogates a name is traced, and BOTH `local`-shadow guards
+(`g_locshadow`'s numeric one and `g_boxshadow`'s boxed one) test
+`(g_observed == 1) or (g_traced == 1)` first. Measured — each refuse fixture
+rewritten with `local` on the write, then transpiled against the v0.43.0 pin:
+
+| fixture | with `local` | with the module binding renamed |
+|---|---|---|
+| `interrogated_module_write_boxed` | refused: ``` `local z` shadowing a module binding is not supported here (observed/temporal function …) ``` | transpiles |
+| `interrogated_module_write_boxed_rhs` | same refusal | transpiles |
+| `interrogated_module_write_nested_ref` | same refusal | transpiles |
+| `interrogated_module_write_nonnum` | same refusal | transpiles |
+| `interrogated_module_write_observed` | same refusal | transpiles |
+
+5 of 5 dead, 5 of 5 reachable. The message now names the RENAME exit and says
+plainly that `local` is not one here and why. `interrogated_module_write_
+boxed.eigs`'s `# EXPECT:` line was moved off "assigns module name 'z' that it
+also interrogates" onto the exit sentence itself, so the wording cannot rot
+back: restoring the old message leaves the transpile refusing (rc 1) but
+makes the refuse tier fail "refused, but not for the stated reason" —
+verified by planting the old string. A refusal may only name exits reachable
+for the shape it refuses; that is now pinned rather than reviewed.
+
+**Not this class, found while checking the flagship program (residual,
+needs its own issue).** `dynamics/physics.eigs`'s `frame-velocity` line
+still diverges (VM `-0.38236…`, AOT `0`) — but `x` there is NOT a module
+name (every `x is state[0]` sits in a function body), so the round-195
+attribution to #218 was wrong. Reduced to one cause
+(`scratchpad r2_phys_shape.eigs`): a NON-parameter, non-interrogating
+function's plain local is a frame SLOT on the pin, and EigenScript#1063
+records a slot's writes only in a chunk that interrogates the name
+(`local_traced`); the AOT's `traced_name` applies that rule to parameters
+only and tapes every other local's writes. `define stp(st) as: x is st[0] /
+x is x + 1 / return [x]` then `fv`: `x is st[0] / st is stp of [st] / x is
+st[0] / return x - (prev of x)` prints 1 on the VM (fv's two writes on the
+tape) and 0 under the AOT (stp's writes taped too, so `prev` is the value
+just re-written). Name-routed locals still tape on both sides (`local w`
+over a module name, a plain write to a module name before its binding
+exists: VM 6 = AOT's rule) — the mirror is `local_eligible`'s predicate
+(slot iff not captured / interrogated / env-bound / outer / module-named),
+not "every non-parameter".
+
+Also pre-existing, met by t312's first draft: a module variable named `n`
+makes every zero-argument call refuse "passes a 0-element literal list to
+its single parameter" (`n is 1 / define bumpn() as: return n / print of
+(bumpn of [])`; the base compiler refuses it too) — a name clash inside
+the compiler's own arity bookkeeping; t312 uses `m`.
+
+Gates (oracle `/home/user/wt/eigs-pin`, the v0.43.0 pin): `aot/test/run.sh`
+→ `381 PASS / 0 FAIL`, `--- bench tier: 12 program(s) build-checked ---`,
+`PASS: load_file_shadow (A/B layout from the shadowing cwd + stdlib-from-child
+layout, 4 assertions)`, `--- refusal tier: 60 guard(s) exercised ---`,
+`--- runtime-refusal tier: 1 residual(s) exercised ---`, `--- all AOT parity
+tests passed ---`; `test/run.sh` → `ALL PASSED (63 programs + bootstrap)`.
+Planted faults: re-emitting the outward write flips t310 (`print of z`
+1 → 0.25) and t311; forcing the read dispatch to the module fallback flips
+t311 and t312. `aot/tools/envelope_census.sh` (transpile tier,
+CENSUS_TIMEOUT=120, over a symlink root of the 26 ecosystem repos — the
+default root under `/home/user` also sweeps the throwaway `wt/` worktrees,
+whose population changes mid-run and makes two runs incomparable): base
+8fb02d6 and this branch both `transpiles: 81   refused: 35   timeout: 0
+(total 116)`, and the per-program verdicts are byte-identical. The class is
+absent from the ecosystem corpus, so the count neither rises nor falls —
+the envelope gain is measured by the fixtures, not by this instrument.
+
+## F-OURO-43 — module namespacing is the whole answer to splice collisions: the guard is gone, the renamer covers every free write at every depth, recursively — FIXED (#141)
+
+**BUG (in ouroboros; the class the issue was opened on).** `import` (#121)
+SPLICES a module's top-level statements into the program, which merges the
+two scopes. Three silent divergences followed, each rc 0 with an empty build
+log: a program binding a module's private name at depth (`define reset() as:
+counter is 999` → VM `0, 1`, AOT `999, 1000`); two modules sharing a
+top-level name (`ma.state`/`mb.state` merged — the dict snapshots stayed
+right while the FUNCTIONS went wrong); a program reading a module-private
+name it never bound (`import mymod; print of counter` → VM `undefined
+variable`, AOT `0`, a default-initialised C global). The first answer was a
+name-comparison GUARD; four blind-critic rounds found four holes in it, and
+round 7's measurement ended it: `is` is outward-mutable, so a bare `ctr is
+99` inside ANY module function writes the merged scope — 66 of 77 stdlib
+modules do it (892 distinct names, median 10, 56 modules with names as
+common as `i`/`n`/`key`). A sound guard refuses nearly every program that
+imports anything; a precise one has holes.
+
+**The fix (on the tree since the #121 follow-on rounds; this entry closes the
+issue against its bar at the v0.43.0 pin, and fixes what re-checking it
+found).** `splice_module` renames a module under its own prefix: every
+top-level binding AND every free assignment target at any depth
+(`module_bindings` ∪ `collect_free_assigns`) becomes `<M>__<name>`; every
+binder — parameter, `for` variable, `try` name, listcomp variable — becomes
+`<M>__bnd__<name>` with occurrence-scoped shadowing (`rename_ast`); a
+module's own `import` recurses, so a transitively imported module is renamed
+under ITS prefix and bound in the importer's namespace as `<outer>__<inner>`
+→ `__moddict_<inner>`, the VM's cache identity. The issue body's spec
+("rename top-level bindings") is insufficient and the first comment's
+correction is what is implemented — arm B is the planted fault below.
+
+**Two boundaries the renamer must NOT cross, both now fixtured.**
+
+- A free **READ** of a name **that is not in the rename set** is left alone.
+  The criterion is membership of `module_bindings ∪ collect_free_assigns`,
+  NOT "the module binds it" — an earlier version of this sentence said the
+  latter and was false, which is the whole of F-OURO-44 below: `_pmix` never
+  binds `gx` at its top level, yet a free `gx is 5` inside a function body
+  puts `gx` in the set, and the READ on the line above it was renamed with
+  the write and answered `null` where the VM resolves outward. What is true,
+  and what t322 pins, is the case where nothing in the module writes the name
+  at all: the VM resolves reads and calls dynamically across the module
+  boundary; only WRITES stop at its edge (`docs/LANGUAGE_CONTRACT.md`,
+  Modules; EigenScript#373/#1056). Measured on the pin, `_xread.readg` → 42
+  and `_xread.callg` → 6, VM = AOT (t322). The overlap — in the set AND read
+  before its first write — is refused by name since F-OURO-44; the residual
+  review is what turned this bullet from a claim into a boundary with
+  fixtures on both sides of it (t323 / `refuse/module_free_read_*`).
+- A module `local` is not renamed either; it is handled by the emitter's
+  `g_locshadow`/`g_boxshadow` layer. That covers the one case the issue's
+  first comment flagged as maybe needing a refusal by name — `lib/tensor.
+  eigs`'s `scale` (a top-level function plus `local scale is …` in two other
+  functions), measured there as 1 of 77 modules. It needs no refusal, over a
+  top-level function AND over a top-level number: t321 is byte-exact
+  (`7/11/110/12/100/1/2`), and `import tensor` still refuses — for the
+  unrelated reason that `tensor__linear` is used as a value and takes a
+  tensor parameter.
+
+**What re-checking the closure fixed in the renamer itself.** `G_MODPFX` —
+the binder prefix — was never restored after the recursive splice of a
+module's own `import`, so every binder of THAT module after its `import`
+line carried the INNERMOST module's prefix.
+
+**The two `ctr` counts in the first version of this paragraph were wrong and
+are corrected here** (found by the #141 critic, re-measured 2026-09-07 with
+`grep -oE '\b<sym>\b' | wc -l` on the transpile of
+`t320_import_chain_three.eigs` against the v0.43.0 pin — the metric is
+occurrences of the exact C identifier; `grep -c`, which counts LINES and
+also matches the `_b` boundness twin, reads 6 for the same symbol, which is
+the number the critic reported):
+
+| symbol | base (restore removed) | head (restore in place) |
+|---|---|---|
+| `eig_ch_leaf__bnd__ctr` | **4** (was written "18x") | 0 |
+| `eig_ch_leaf__bnd__n`   | 18 ✓ | 4 ✓ |
+| `eig_ch_mid__bnd__n`    | 0 | 6 ✓ |
+| `eig_ch_top__bnd__ctr`  | 0 | **4** (was written "18x") |
+| `eig_ch_top__bnd__n`    | 0 | 8 ✓ |
+
+The 18 belongs to `__bnd__n`, and had been copied onto `__bnd__ctr` on both
+sides. Every other count reproduced exactly, and the CLAIM is unharmed and
+sharper for the correction: on base, `ch_mid`'s and `ch_top`'s binders do not
+appear under their own names AT ALL (0 occurrences each) because all three
+modules' binders carry `ch_leaf`'s prefix; on head each module's binders
+carry its own.
+
+**No output divergence was found for it, and that is stated rather than
+dressed up.** A binder is a C BLOCK-local in the emitted code (the file-scope
+`static long eig_<M>__bnd__<v>` beside it is never written by the loop), so
+two modules sharing one binder name still read their own values: with the
+restore removed, t318 and t320 both stay GREEN, and so does a probe crossing
+a numeric module-level `for` binder in one module with a string one in
+another. It is fixed as a construction bug — the point of a per-module prefix
+is that two modules cannot share a name — and its evidence is the symbol
+census above, not a red fixture. Restoring once at the end of the branch is
+enough; a second restore after each recursion is dead (the inner call's own
+restore puts back what it found — emitted C byte-identical with and without
+it), so it was removed rather than kept as decoration. `module_shadow_names`,
+the last unreferenced limb of the deleted guard, went with it.
+
+**A second bug, found by the census and costing it seven honest rows:
+`aot_is_builtin_name`'s `eval of name` probe printed E005 to stderr for
+`report`.** Since v0.43.0 (EigenScript#1102) `report` is a reserved observer
+FORM, never a value, so `eval of "report"` on the pin PRINTS `Parse error
+line 1:1: 'report' is a reserved observer form; use it with 'of variable',
+never as a binding [E005]` before throwing into the catch below it. That line
+then became the FIRST stderr line of every transpile of a program that
+mentions `report` — which is exactly what `aot/tools/envelope_census.sh`
+reports as the refusal reason. Measured on
+`aot/test/t127_obs_outward_writer.eigs`: base 8fb02d6 prints the E005 line on
+a SUCCESSFUL transpile (rc 0), this branch prints nothing.
+`report`/`report_value` are answered `0` before the probe, and seven census
+rows recovered their real reason (below).
+
+**A third, in the instrument: `envelope_census.sh` silently truncated its own
+table.** Under `set -Eeuo pipefail`, a refusal that printed NOTHING to stderr
+made the `why=$(grep …)` assignment exit non-zero, which aborted the run
+mid-table — no summary line, no remaining rows, and exit 1 against the
+script's own documented "Exit: 0 always" contract, so a caller redirecting to
+a file is left with a partial table that looks whole. Two runs here stopped
+at row 40 of 116 and were read as "stalled" until the exit path was traced;
+reproduced deterministically with a fake `EIGS` that exits 3 silently (the
+unpatched script stops after the header, rc 1; patched it tables both rows
+and summarises, rc 0). The `(no diagnostic)` fallback already written for
+this case could never run. Now `|| true`, and the fallback names the exit
+code.
+
+**Fixtures** (all byte-exact vs `/home/user/wt/eigs-pin/src/eigenscript`,
+v0.43.0): `t96` (body repro 1, importer binds the module's name at depth),
+`t97` (repro 2, two modules one name), `t98`/`t99` (the guard's exemption
+hole / binder shadowing), and new here: `t317_module_private_read_err`
+(repro 3 — both die `undefined variable 'counter'` at line 16, rc 1 both,
+`_err` class); `t318_import_transitive` (arm A — `8 / 50 / 1`, and `keys of
+_arm_outer` omits `_arm_inner` per the #142 privacy rule);
+`t319_module_nested_free_assign` (arm B — `99 / 1`);
+`t320_import_chain_three` (`ch_top` → `ch_mid` → `ch_leaf` under
+`test/eigs_modules/<n>/<n>.eigs`, the one import fixture that resolves
+through the `eigs_modules` step of the VM's chain; `112 / 127 / 127 / 15 / 3
+/ 1000` with snapshots `100 / 10 / 1`);
+`t321_module_local_shadows_own_fn`; `t322_module_free_read_crosses`.
+(This paragraph named them `t308`–`t313` when it was written — the files have
+always been `t317`–`t322`, as the planted-fault paragraph below and the
+G_MODPFX one above both say. Corrected in the residual review.)
+
+**Planted fault:** delete the `collect_free_assigns` line from
+`splice_module` — i.e. build exactly the issue body's spec, top-level rename
+only — and t319 goes AOT `99 / 99` against VM `99 / 1`, rc 0 both, empty
+build log: red on output, in the silent-wrong class. t96 (repro 1), t318 and
+t320 all stay GREEN under the same plant, which is why arm B is the gate and
+repro 1 is not.
+
+**The guard is gone.** `grep -n 'collid\|collision' aot/compile.eigs` leaves
+comment mentions, the #165 nested-define guard and the kind-flip guard
+("colliding pair") — no name-comparison refusal between a module and the
+program — and `aot/test/refuse/` holds no fixture on it (its three became
+t96–t98).
+
+**The two road guards (the issue's second comment; EigenScript#1056 landed in
+v0.43.0).** Both KEPT, both reclassified: neither is a road-dependence any
+more, both are AOT lowering gaps, and each was re-measured on the pin here.
+
+- *Conditional top-level binding* (`module_cond_binds`;
+  `refuse/module_conditional_binding.eigs`,
+  `refuse/for_body_fresh_binding.eigs`). #1056 made the `for` body uniform,
+  so the road-dependent `for` exemption is already gone (it went with the
+  #147 bump). What is left is not a road question but a RUN question: on one
+  road, one file, `keys of M` is `["a", "t"]` when the `if` ran and `["a"]`
+  when it did not, and the AOT builds that dict statically with no boundness
+  bit on a C global — including the key invents one the VM lacks, omitting it
+  drops one it has. Cost: `test_runner`, 1 of 77 stdlib modules.
+- *Top-level `return`* (`module_has_toplevel_return`;
+  `refuse/module_toplevel_return.eigs`,
+  `refuse/loadfile_toplevel_return.eigs`). #1056 made the rule uniform —
+  "ends the current FILE and yields its value" — and the roads now differ
+  only in what the caller does with it (measured on the pin, one file `a is 1
+  / return 7 / b is 2`: import → `keys of M` `["a"]`, `M.a` 1; `load_file` →
+  7; as a main program → rc 0). The splice has no file boundary: a module's
+  `return` inside main ends the program. Lowering it needs a per-file
+  boundary (a `goto` past the spliced statements, or the module body as its
+  own C function) — not built under this issue. Cost: 0 of 77 stdlib modules.
+
+**Measured** (2026-09-07, under load — `uptime` load average 11–13 on a
+4-core box shared with ~8 agents; these are COUNTS, not timings, so load
+affects only how long they took):
+
+- **Stdlib sweep**, `import M` for each of the 77 `lib/*.eigs` in the pin,
+  through the transpiler: **71 transpile, 6 refuse**, and NONE of the six is
+  a collision — `concurrent` (nested define captures `concurrent__item`,
+  which the encloser rebinds), `eigen` (`lambda`), `observer` (rebinding the
+  generic parameter `observer__bnd__val` in an observed program), `supervise`
+  (`task_spawn`, ouroboros#188), `tensor` (`tensor__linear` used as a value
+  takes a tensor parameter), `test_runner` (the conditional-binding guard
+  above). The renamed names in those messages are themselves evidence the
+  renamer ran.
+  (Residual review, 2026-09-07: this becomes **70 transpile, 7 refuse** with
+  F-OURO-44's guard in — `ui_w_special` is the one module it costs, and one
+  `bnote is 0` line upstream restores it. `eigen` also changes WHICH refusal
+  it hits first, `lambda` → the new guard; it refuses either way.)
+
+- **Envelope census** (`aot/tools/envelope_census.sh` over a symlink farm of
+  the 16 consumer repos, `EIGS`/`EIGS_DIR` = the v0.43.0 checkout,
+  `CENSUS_TIMEOUT=240`, the patched script on BOTH sides so the only variable
+  is `compile.eigs`): base 8fb02d6 **transpiles: 81 refused: 35 timeout: 0
+  (total 116)**; this branch **transpiles: 81 refused: 35 timeout: 0 (total
+  116)**. No regression, and **seven rows recovered their true refusal
+  reason** from the `report` misattribution: `EigenGauntlet/src/cross_lab`
+  (really `task_spawn`), `EigenGauntlet/src/observer_lab` (a temporal
+  interrogative without `at`), `dynamics/life` (a function assigning a module
+  name), `dynamics/orbit`, `dynamics/predicate_calibration`,
+  `dynamics/predicate_fit` (`local` shadows of module bindings) and
+  `iLambdaAi/scripts/generate_transformer` (`lambda`).
+- **phugoid: 8 of 9 both before and after**, the recovery the issue's first
+  comment demanded (it had fallen to 3/9 under the sound guard). The one
+  refusal, `swarm.eigs`, is the unrelated nested-define outward-write guard.
+- The issue comment's "census 85 → 79" is not directly comparable to these
+  totals: discovery and the corpus have both changed since (116 rows now).
+  What is comparable is the ratio's direction and phugoid's 9 rows, and both
+  are recovered.
+
+**Residual (probed, not fixtured — no home in the harness).** An `import`
+cycle: the VM raises `import: circular dependency — 'cyc_a' is already being
+loaded`; the AOT refuses at BUILD time, loudly and with a different message
+("top-level use of module name '__moddict_cyc_a' precedes its first
+module-level binding"). Both die, neither is silent, so nothing is at risk —
+but it fits no tier: `refuse/` requires the VM to RUN the program, and the
+parity tiers require a binary. The `G_IMPORTED[mname] is 1` mark placed
+BEFORE the recursion is what terminates the walk; moving it after turns the
+refusal into `call stack overflow` from the parser (still loud, rc 1, no
+binary).
+
+Gates at a6c50fb (`EIGS=/home/user/wt/eigs-pin/src/eigenscript
+EIGS_DIR=/home/user/wt/eigs-pin`): `bash aot/test/run.sh` → 376 PASS lines,
+`--- bench tier: 12 program(s) build-checked ---`, `--- refusal tier: 56
+guard(s) exercised ---`, `--- runtime-refusal tier: 1 residual(s) exercised
+---`, `--- all AOT parity tests passed ---`, rc 0; `bash test/run.sh` → `ALL
+PASSED (63 programs + bootstrap)` incl. `PASS: bootstrap fixed point (and the
+self-compiled program runs)`, rc 0.
+
+## F-OURO-44 — a module's free READ that can run before its first free WRITE was renamed with the write and answered `null`; refused by name — BUG (fixed as a CONSTRAINT; #141 residual)
+
+**BUG, silent-wrong, pre-existing.** The splice renamer's set is
+`module_bindings ∪ collect_free_assigns` (F-OURO-43): every top-level binding
+of a module PLUS every free assignment target at any depth. For a top-level
+binding that is exactly right. For a name the module only free-ASSIGNS inside
+a body it is right for the write and wrong for a read that can run first.
+
+```
+_pmix.eigs                     p_readwrite.eigs
+  define f() as:                 gx is 42
+      print of gx                import _pmix
+      gx is 5                    print of (_pmix.f of null)
+      return gx                  print of gx
+
+VM  (v0.43.0 pin, a6c50fb):  42 / 5 / 42   rc 0
+AOT (93b6e42, and identical emitted C at its parent 8f4127b — this is NOT a
+     #141 regression):       null / 5 / 42 rc 0, build rc 0, EMPTY build log
+```
+
+Found by #141's blind critic; F-OURO-43's own text described the boundary as
+"a free READ of a name the module never binds is left alone", which this is a
+counter-example to (the criterion is set MEMBERSHIP, not "the module binds
+it"). That sentence is corrected in place.
+
+**The VM's two rules are not mirror images, and both were measured before
+anything was designed** (all on the pin):
+
+- a **READ** of a name the module never bound at its top level resolves
+  OUTWARD into the IMPORTER (`_xread.readg` → the program's 42, t322), and
+  raises `undefined variable 'gx'` **at the read** when the importer has none;
+- the **WRITE** is CALL-LOCAL. It does not reach the module scope either:
+  calling `f` twice prints `42 / 5` BOTH times, and a `setit`/`getit` pair
+  across two functions gives `0 / 42 / 42` — never 5. (Contrast PROGRAM scope,
+  where the same three lines print `42 / 5 / 5`: the write IS outward there.)
+  When the module DOES bind the name at its top level, the write goes to that
+  binding and the importer's stays untouched (`7 → 5`, importer 42).
+
+**Why not a correct compile.** The read's answer is per-call dynamic state
+(has THIS call written the name yet?), the fallback is an outward lookup that
+must be able to raise AT THE READ (not at entry — a body that only writes the
+name must not die when the importer lacks it), and the emitted storage is a C
+local with no boundness notion on the boxed path (`EigsSlot … = slot_null()`,
+which is where the `null` comes from; the numeric path has `_b` but raises
+instead of falling back). That is a storage-regime change across every read
+arm, not a cheap proof. Refused by name instead — the same answer the
+PROGRAM-scope member of this order class already gets ("…does not provably
+precede…", `refuse/outward_write_before_binding.eigs`).
+
+**The guard** (`module_freeread_name` / `fr_scan` / `fr_func` / `fr_reads`,
+called from `splice_module` right after `rset` is built). For each name in
+`rset` that is NOT in `module_bindings`, a definite-assignment walk of the
+module's statements: an `assign` counts only after its RHS is scanned (`x is
+x + 1` with no earlier binding is a read-before-write); an `if` counts only
+when BOTH arms assign; a loop body is never assigned on entry and never
+assigns after; a `try` body never assigns; `unobserved:` does; a `func`
+statement BINDS its name and its body is scanned INHERITING the enclosing
+state (a closure can only run after its `define` statement — this is what
+keeps `lib/ui_w_dialog`'s `file_dialog`/`_fd_on_select` in the envelope);
+parameters, `local` declarations and `for`/`try` binders shadow the name and
+skip the body, using `collect_local_decls`, the same whole-body approximation
+`collect_free_assigns` itself uses.
+
+**Sibling shapes, all measured VM vs the parent commit's AOT** (the
+`p_readwrite` importer, `f` called once):
+
+| module shape | VM | AOT at 93b6e42 | now |
+|---|---|---|---|
+| read at body depth 0, then write (`_pmix`) | `42 / 5 / 42` | `null / 5 / 42` **silent** | refused |
+| read behind an `if`, write after | `42 / 5 / 42` | `null / 5 / 42` **silent** | refused |
+| read in a doubly-nested block, write after | `42 / 5 / 42` | `null / 5 / 42` **silent** | refused |
+| read then write inside a `for` body | `42 / 42 / 1 / 42` | `null / 0 / 1 / 42` **silent, 2 lines** | refused |
+| write in one function, read in another | `0 / 42 / 42` | rc 1, `undefined variable '_frbw_split__gx'` (loud, at run time) | refused at build |
+| write behind an `if` INSIDE a loop, read after it in the body | `null / 7 / 0 / 42` | same — MATCHES | refused (the conservative cost, below) |
+| write at body depth 0, then read | `5 / 5 / 42` | match | accepted |
+| BOTH `if` arms write, then read | `1 / 42` | match | accepted |
+| nested `define nm` then `return nm` | — | match | accepted |
+| write only, never read | `0 / 42` | match | accepted |
+| read only, no write anywhere in the module (t322) | `42 / 42` | match | accepted |
+
+The population was split between a SILENT member and a LOUD one; it is now
+one build-time refusal for the whole order class.
+
+**COST, measured, not estimated.** Stdlib sweep (`import M` for each of the
+pin's 77 `lib/*.eigs`): **71 transpile / 6 refuse → 70 / 7**. The one module
+is `ui_w_special` (`bnote`, written in five `elif` arms and read under a
+correlated `has_black == 1` guard — sound analysis cannot accept it), and
+**one `bnote is 0` line before the chain restores it** (verified: rc 1 → rc
+0). `ui_w_dialog` was a second until the nested-`define` inheritance rule
+above; `eigen` changes which refusal it hits first (`lambda` → this one) and
+refuses either way. Envelope census over the 16-repo symlink farm at
+`CENSUS_TIMEOUT=240`: base `transpiles: 81 refused: 35 timeout: 0 (total
+116)`, this branch the same — and the tables are BYTE-IDENTICAL row for row,
+verdict column and refusal reason alike, so the guard fires on none of the
+116 consumer entry points.
+
+**Fixtures.** `refuse/module_free_read_before_write.eigs` (the silent member,
+with `_frbw_mix`), `refuse/module_free_read_no_write_in_fn.eigs` (the member
+that was loud at run time, `_frbw_split`),
+`refuse/module_free_read_in_loop_body.eigs` (the loop arm — two silent lines
+on the parent, `_frbw_loop`), `refuse/module_free_read_loop_write_first.eigs`
+(the control that rules out the cheap "first mention is a write" test AND the
+honest record of the over-refusal, `_frbw_lexfirst`), and the parity fixture
+`t323_module_free_write_before_read.eigs` (`_frok`) with one instance per arm
+the scan branches on plus the never-written control.
+
+**Planted faults.** (1) The pre-fix compiler (93b6e42's `compile.eigs`, run
+from `aot/`) ACCEPTS all four refuse fixtures, rc 0 — the proof they detect
+this change and not something else. (2) Deleting `fr_scan`'s two binding arms
+(`func` binds its name, `assign` binds after its RHS) turns t323 into a build
+refusal on `_frok`'s `a`. (3) Making `fr_func` restart at `[0, 0]` instead of
+inheriting turns t323 red on `_frok`'s `d` AND evicts `lib/ui_w_dialog`
+again — the arm has its own plant.
+
+**Gates** at a6c50fb (`EIGS=/home/user/wt/eigs-pin/src/eigenscript
+EIGS_DIR=/home/user/wt/eigs-pin`): `bash aot/test/run.sh` → 394 PASS lines, 0
+FAIL, `--- bench tier: 12 program(s) build-checked ---`, `--- refusal tier: 64
+guard(s) exercised ---` (60 → 64), `--- runtime-refusal tier: 1 residual(s)
+exercised ---`, `--- all AOT parity tests passed ---`, rc 0; `bash
+test/run.sh` → `ALL PASSED (63 programs + bootstrap)` including `PASS:
+bootstrap fixed point (and the self-compiled program runs)`, rc 0. (Measured
+under load — `uptime` 7–13 on a 4-core box shared with ~8 agents; these are
+counts, not timings.)
+
+**Residual (upstream, not fixed here).** `lib/ui_w_special.eigs`'s
+`draw_piano` writes `bnote` in five `elif` arms and reads it under a
+correlated guard; the module leaves the AOT envelope until one unconditional
+`bnote is 0` lands upstream in EigenScript. The AOT is the only consumer that
+has to know what the construct means before running it, which is why it is
+the one that noticed.

@@ -116,5 +116,19 @@ PDEFS="-DAOT_SCRIPT_DIR='\"$PROG_DIR\"' -DAOT_EXE_DIR='\"$SRC_ABS\"'"
 # argv[2] is the stdlib root, used by compile.eigs to resolve `import` of a
 # stdlib module (#121). Project-local modules resolve beside the program and
 # do not need it.
-"$EIG" compile.eigs "$PROG" "$EIGS_DIR" > "$GEN"
+# (ouroboros#147) The transpiler's resolution of literal load_file/import
+# targets is a property of the SOURCE FILE, never of the cwd it happens to run
+# in -- the same rule the VM follows since EigenScript#1056. Normally it runs
+# from aot/ (the cd above). AOT_TRANSPILE_CWD runs it from another directory,
+# with every path absolutized, so test/load_file_shadow.sh can drive it from
+# the SHADOWING cwd of the #147 layout and prove the output does not move.
+if [ -n "${AOT_TRANSPILE_CWD:-}" ]; then
+  case "$EIG" in */*) EIG_ABS="$(cd "$(dirname "$EIG")" && pwd -P)/$(basename "$EIG")";; *) EIG_ABS="$EIG";; esac
+  PROG_ABS="$PROG_DIR/$(basename "$PROG")"
+  EIGS_DIR_ABS="$(cd "$EIGS_DIR" && pwd -P)"
+  COMPILE_ABS="$(pwd -P)/compile.eigs"
+  ( cd "$AOT_TRANSPILE_CWD" && "$EIG_ABS" "$COMPILE_ABS" "$PROG_ABS" "$EIGS_DIR_ABS" ) > "$GEN"
+else
+  "$EIG" compile.eigs "$PROG" "$EIGS_DIR" > "$GEN"
+fi
 eval gcc $CFLAGS $DEFS $PDEFS -I. -I"$SRC" "$GEN" "$LIB" -lm -lpthread -o "$OUT"

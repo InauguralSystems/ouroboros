@@ -158,6 +158,38 @@ reject_one 'l is [1]
 l[0] is 8 9'
 reject_one 'l is [1]
 l[0] += 1 4'
+# v0.43.0 pin (upstream #1102/#1110): `report` / `report_value` are RESERVED
+# observer forms -- parse error E005 in every binding position and as a
+# value, and `report of <non-identifier>` is E005 too. The frontend lexes
+# them as their own token kind and mirrors parser.c's p_report_error arms.
+# `define report(v)` was the observer_report_shadowed.eigs matched-bug canary
+# (the half-shadow wart filed as EigenScript#1102); the pin decided the
+# contract, so the canary became this reject case in the same bump.
+reject_one 'define report(v) as:
+    return "mine"'
+reject_one 'report is 5'
+reject_one 'report_value is 5'
+reject_one 'report += 1'
+reject_one 'local report is 1'
+reject_one 'print of report'
+reject_one 'define f(report) as:
+    return 1'
+reject_one 'f is (report_value) => 1'
+reject_one 'for report in [1]:
+    print of 1'
+reject_one 'try:
+    x is 1
+catch report:
+    print of 1'
+reject_one '[report, b] is [1, 2]'
+reject_one 'import report'
+reject_one 'x is 1
+print of (report of (x + 0))'
+reject_one 'x is 1
+print of (report_value of 5)'
+reject_one 'd is {"a": 1}
+print of (report of d.a)'
+reject_one 'print of (report of converged)'
 
 # Inverse-direction rejects (#101): reject_one's population is parse/lex-time
 # errors the FRONT-END must refuse. This tier is the complement — programs the

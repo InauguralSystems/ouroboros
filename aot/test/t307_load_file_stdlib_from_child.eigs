@@ -1,0 +1,15 @@
+# ouroboros#147 (round 2): a literal load_file in a SPLICED child that the
+# VM's chain answers at the STDLIB step is not base-independent. Left as a
+# runtime call inside the native program, the linked VM re-runs the chain
+# from the baked MAIN directory (this file's), whose step 2 answers BEFORE
+# the stdlib step: lib/bcd.eigs here is a decoy that prints and defines
+# nothing. Measured before the fix (both sides rc differ, same class as the
+# issue):
+#   VM   26 / stdlib-child-done / main-done            rc 0
+#   AOT  MAIN-DIR-BCD-SHADOW / undefined variable 'from_bcd'   rc 1
+# and with the child not calling into the stdlib file, both rc 0 with
+# different stdout -- the silent-wrong class. The splicer now rewrites the
+# child's literal to the absolute stdlib path it resolved (step 1 on both
+# sides), exactly as it already did for nested-position literals.
+load_file of "data/lf147_sub/stdlib_child.eigs"
+print of "main-done"

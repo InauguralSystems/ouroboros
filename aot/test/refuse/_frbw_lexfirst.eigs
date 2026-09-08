@@ -1,0 +1,9 @@
+# Companion module for module_free_read_loop_write_first.eigs. Not a test.
+# The WRITE is the lexically first mention of `gx` in the body; iteration 0
+# still reads before it, because the write is behind a condition.
+define f() as:
+    for i in range of 2:
+        if i == 1:
+            gx is 7
+        print of gx
+    return 0

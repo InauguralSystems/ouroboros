@@ -1,0 +1,42 @@
+# (#126) THE PER-NAME OBSERVER GATE inside a function, and the two shapes
+# that blocked the first draft of it (issue #126 comment 3).
+#
+# 1. A FUNCTION READING A MODULE NUMERIC. emit_function seeds the function's
+#    numeric map from the module map only when the module name is env-boxed,
+#    and the first draft left that seed on the whole-program flag: `total is
+#    total + k` inside an observed function fell to the env-read arm while
+#    the module store had become a plain C static -- "undefined variable
+#    'total'" at run time. The seed is now per-name (obs_mod_name).
+#
+# 2. A BOXED CALL ARGUMENT. `nm[x] == 1` means "inferred numeric", NOT "is a
+#    live C double": emit_args' `make_num(eig_x)` arm is right only when the
+#    name really is a C double, which under the per-name gate is decided by
+#    the census, not by the flag (this is t107's lesson, one gate finer).
+#
+# `w` is the one NAMED channel; `acc`, `n`, `k`, `total`, `m` are named by no
+# observer read and compile as plain C numerics inside an OBSERVED function.
+total is 0.0
+define show(y) as:
+    if (type of y) == "str":
+        print of y
+    else:
+        print of (y * 2)
+    return 0
+define bump(k) as:
+    total is total + k
+    local acc is 0.0
+    local n is 0
+    loop while n < 5:
+        acc is acc + (k * 0.5)
+        n is n + 1
+    local m is acc + 1
+    print of (show of "tag")
+    print of (show of m)
+    local w is acc
+    w is w * 0.25
+    w is w * 0.25
+    w is w * 0.25
+    return [report of w, acc, total, m]
+print of (bump of 4.0)
+print of (bump of 2.0)
+print of f"total {total}"

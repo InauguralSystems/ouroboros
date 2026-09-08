@@ -1,0 +1,9 @@
+# Companion module for t309 (ouroboros#141 arm A). Imported by _arm_outer,
+# never by the program: its bindings were never compared against the program
+# by the old collision guard (the transitive hole).
+ctr is 7
+define get() as:
+    return ctr
+define bump() as:
+    ctr is ctr + 1
+    return ctr
