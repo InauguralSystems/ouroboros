@@ -40,7 +40,7 @@ RUN apt-get update \
 # unconditional producer-facing entry point, which is what aot_rt.h already
 # calls — so there is nothing to mirror on this side.
 #
-# v0.43.0 (a6c50fb): three upstream changes this side mirrors (ouroboros#147).
+# v0.43.0 tag (stamp a6c50fb): three upstream changes this side mirrors (ouroboros#147).
 # #1106 (EigenScript#1056): load_file/import resolve from the CONTAINING
 # FILE's directory -> eigs_modules walk -> nearest eigs.json project root ->
 # stdlib roots; the process cwd is no longer a step, which is what made the
@@ -50,7 +50,7 @@ RUN apt-get update \
 # or value or over a non-identifier operand -- mirrored in src/frontend.eigs
 # (own token kind, every p_report_error arm) and pinned by test/run.sh's
 # reject_one cases. #1113: embed observer gate default -- no mirror needed.
-ARG EIGS_REF=a6c50fba6a6250ea347a34500d6c9fa503a5c931
+ARG EIGS_REF=v0.43.0
 RUN mkdir -p /opt/eigenscript-src && cd /opt/eigenscript-src && git init -q \
  && git remote add origin https://github.com/InauguralSystems/EigenScript.git \
  && git fetch -q --depth 1 origin "${EIGS_REF}" && git checkout -q FETCH_HEAD \
