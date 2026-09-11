@@ -1,0 +1,15 @@
+{
+  "cleanup": null,
+  "command": [
+    "/usr/bin/minisat",
+    "/tmp/ems-close-20260911/scalar-ladder-5x5/oracle/case.FffRCx/input.cnf",
+    "/tmp/ems-close-20260911/scalar-ladder-5x5/samples/simple-sat/4-native/native.result"
+  ],
+  "cwd": "/home/jon/src/wt/ems-cert-20260911",
+  "directory": "/tmp/ems-close-20260911/scalar-ladder-5x5/samples/simple-sat/4-native",
+  "interrupted_signal": null,
+  "returncode": 10,
+  "timed_out": false,
+  "timeout_seconds": 7200,
+  "wall_ns": 6415505
+}

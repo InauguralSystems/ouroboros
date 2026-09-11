@@ -1,0 +1,136 @@
+{
+  "interpretation": "AOT/native wall ratios and conflicts/sec are descriptive across different solver policies",
+  "rows": [
+    {
+      "aot": {
+        "conflicts": 140,
+        "max_wall_s": 0.093465093,
+        "median_conflicts_per_wall_second_descriptive": 2056.468540269128,
+        "median_wall_s": 0.068077871,
+        "min_wall_s": 0.064978076
+      },
+      "aot_over_native_wall_ratio_policy_confounded": 8.398186018976201,
+      "aot_policy": "CDCL current defaults (regime C); --cdcl; no policy overrides",
+      "baseline_over_candidate_wall_ratio_same_policy": 1.0406107530613378,
+      "candidate": {
+        "conflicts": 140,
+        "max_wall_s": 0.091280757,
+        "median_conflicts_per_wall_second_descriptive": 2139.9832763364075,
+        "median_wall_s": 0.065421072,
+        "min_wall_s": 0.061167559
+      },
+      "candidate_policy": "CDCL current defaults (regime C); --cdcl; no policy overrides; candidate=timing-only existing buf_fill in interpreted int_vector",
+      "case": "pigeonhole-6-5",
+      "input_sha256": "5b884b97debd41c9d89378c4414fb1b7b03365725e09992ba0709c23a3cebb7e",
+      "n": 5,
+      "native": {
+        "conflicts": 138,
+        "max_wall_s": 0.008427178,
+        "median_conflicts_per_wall_second_descriptive": 17023.88240987612,
+        "median_wall_s": 0.008106259,
+        "min_wall_s": 0.007153468
+      },
+      "native_policy": "native MiniSat executable defaults; no policy overrides",
+      "validation": "vm-differential+certificate"
+    },
+    {
+      "aot": {
+        "conflicts": 0,
+        "max_wall_s": 0.007250877,
+        "median_conflicts_per_wall_second_descriptive": 0.0,
+        "median_wall_s": 0.005744089,
+        "min_wall_s": 0.005088801
+      },
+      "aot_over_native_wall_ratio_policy_confounded": 0.7623618091319284,
+      "aot_policy": "CDCL current defaults (regime C); --cdcl; no policy overrides",
+      "baseline_over_candidate_wall_ratio_same_policy": 1.0845688112751113,
+      "candidate": {
+        "conflicts": 0,
+        "max_wall_s": 0.013147914,
+        "median_conflicts_per_wall_second_descriptive": 0.0,
+        "median_wall_s": 0.005296196,
+        "min_wall_s": 0.005248999
+      },
+      "candidate_policy": "CDCL current defaults (regime C); --cdcl; no policy overrides; candidate=timing-only existing buf_fill in interpreted int_vector",
+      "case": "simple-sat",
+      "input_sha256": "144d0deff0c2a9ac20a740de4e12c5de9b2ef19a6f489cd8e765919e33556841",
+      "n": 5,
+      "native": {
+        "conflicts": 0,
+        "max_wall_s": 0.010530235,
+        "median_conflicts_per_wall_second_descriptive": 0.0,
+        "median_wall_s": 0.007534597,
+        "min_wall_s": 0.007128207
+      },
+      "native_policy": "native MiniSat executable defaults; no policy overrides",
+      "validation": "vm-differential+certificate"
+    },
+    {
+      "aot": {
+        "conflicts": 592,
+        "max_wall_s": 0.215584483,
+        "median_conflicts_per_wall_second_descriptive": 2901.589380872974,
+        "median_wall_s": 0.204026112,
+        "min_wall_s": 0.190851979
+      },
+      "aot_over_native_wall_ratio_policy_confounded": 23.289341364692607,
+      "aot_policy": "CDCL current defaults (regime C); --cdcl; no policy overrides",
+      "baseline_over_candidate_wall_ratio_same_policy": 1.1632753689817805,
+      "candidate": {
+        "conflicts": 592,
+        "max_wall_s": 0.340792882,
+        "median_conflicts_per_wall_second_descriptive": 3375.3474576686244,
+        "median_wall_s": 0.175389351,
+        "min_wall_s": 0.16471799
+      },
+      "candidate_policy": "CDCL current defaults (regime C); --cdcl; no policy overrides; candidate=timing-only existing buf_fill in interpreted int_vector",
+      "case": "tseitin-3x3-odd",
+      "input_sha256": "fe1938d0377c2e32566cad276df525053397d0cb617981515e73884005cf83f2",
+      "n": 5,
+      "native": {
+        "conflicts": 731,
+        "max_wall_s": 0.011622408,
+        "median_conflicts_per_wall_second_descriptive": 83442.79254603594,
+        "median_wall_s": 0.008760493,
+        "min_wall_s": 0.008219411
+      },
+      "native_policy": "native MiniSat executable defaults; no policy overrides",
+      "validation": "vm-differential+certificate"
+    },
+    {
+      "aot": {
+        "conflicts": 9986,
+        "max_wall_s": 9.954748181,
+        "median_conflicts_per_wall_second_descriptive": 1061.8281048803142,
+        "median_wall_s": 9.404535399,
+        "min_wall_s": 8.871026963
+      },
+      "aot_over_native_wall_ratio_policy_confounded": 35.297803756359784,
+      "aot_policy": "CDCL current defaults (regime C); --cdcl; no policy overrides",
+      "baseline_over_candidate_wall_ratio_same_policy": 1.0516510578055223,
+      "candidate": {
+        "conflicts": 9986,
+        "max_wall_s": 9.309050589,
+        "median_conflicts_per_wall_second_descriptive": 1116.6726497050156,
+        "median_wall_s": 8.942638653,
+        "min_wall_s": 8.676719489
+      },
+      "candidate_policy": "CDCL current defaults (regime C); --cdcl; no policy overrides; candidate=timing-only existing buf_fill in interpreted int_vector",
+      "case": "tseitin-4x4-odd",
+      "input_sha256": "f0148e8b4ce9692de61347005af8179e8d8d38134283b6fb0c35a8b9efd32b71",
+      "n": 5,
+      "native": {
+        "conflicts": 84150,
+        "max_wall_s": 0.281669922,
+        "median_conflicts_per_wall_second_descriptive": 315838.05686068384,
+        "median_wall_s": 0.26643401,
+        "min_wall_s": 0.259408731
+      },
+      "native_policy": "native MiniSat executable defaults; no policy overrides",
+      "validation": "vm-differential+certificate"
+    }
+  ],
+  "status": "complete",
+  "timing_scope": "perf_counter_ns before process launch through blocking waitpid return; includes launch, input parsing, solving, output and process exit; excludes preflight and sample validation",
+  "validation": "certificate"
+}

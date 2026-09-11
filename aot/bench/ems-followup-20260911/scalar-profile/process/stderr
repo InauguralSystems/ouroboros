@@ -1,0 +1,2 @@
+[ perf record: Woken up 53 times to write data ]
+[ perf record: Captured and wrote 13.220 MB /tmp/ems-close-20260911/scalar-production.perf.data (1635 samples) ]

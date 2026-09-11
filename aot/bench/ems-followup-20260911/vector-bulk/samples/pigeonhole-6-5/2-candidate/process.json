@@ -1,0 +1,15 @@
+{
+  "cleanup": null,
+  "command": [
+    "/tmp/ems-close-20260911/bulk-probe/ems-bulk-only",
+    "--cdcl",
+    "/tmp/ems-close-20260911/wall-bulk-only/oracle/case.MCv1Zv/input.cnf"
+  ],
+  "cwd": "/home/jon/src/wt/ems-cert-20260911",
+  "directory": "/tmp/ems-close-20260911/wall-bulk-only/samples/pigeonhole-6-5/2-candidate",
+  "interrupted_signal": null,
+  "returncode": 0,
+  "timed_out": false,
+  "timeout_seconds": 7200,
+  "wall_ns": 67469006
+}

@@ -1,0 +1,19 @@
+/home/jon/src/wt/es-v043/src/lint_host.c: In function ‘check_stdlib_shadow’:
+/home/jon/src/wt/es-v043/src/lint_host.c:165:62: warning: ‘%s’ directive output may be truncated writing up to 8191 bytes into a region of size 4096 [-Wformat-truncation=]
+  165 |     if (!realpath(full, real)) snprintf(real, sizeof(real), "%s", full);
+      |                                                              ^~   ~~~~
+In file included from /usr/include/stdio.h:980,
+                 from /home/jon/src/wt/es-v043/src/eigenscript.h:80,
+                 from /home/jon/src/wt/es-v043/src/lint_host.c:10:
+In function ‘snprintf’,
+    inlined from ‘w021_scan_file’ at /home/jon/src/wt/es-v043/src/lint_host.c:165:32,
+    inlined from ‘w021_scan_dir’ at /home/jon/src/wt/es-v043/src/lint_host.c:199:13,
+    inlined from ‘w021_build’ at /home/jon/src/wt/es-v043/src/lint_host.c:250:9,
+    inlined from ‘check_stdlib_shadow’ at /home/jon/src/wt/es-v043/src/lint_host.c:666:5:
+/usr/include/x86_64-linux-gnu/bits/stdio2.h:54:10: note: ‘__builtin_snprintf’ output between 1 and 8192 bytes into a destination of size 4096
+   54 |   return __builtin___snprintf_chk (__s, __n, __USE_FORTIFY_LEVEL - 1,
+      |          ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+   55 |                                    __glibc_objsize (__s), __fmt,
+      |                                    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+   56 |                                    __va_arg_pack ());
+      |                                    ~~~~~~~~~~~~~~~~~

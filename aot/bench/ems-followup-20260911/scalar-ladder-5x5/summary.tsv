@@ -1,0 +1,11 @@
+case	validation	arm	policy	n	median_wall_s	min_wall_s	max_wall_s	conflicts	descriptive_conflicts_per_wall_second
+pigeonhole-6-5	vm-differential+certificate	aot	CDCL current defaults (regime C); --cdcl; no policy overrides	5	0.070833695	0.067363018	0.075155066	140	1976.460
+pigeonhole-6-5	vm-differential+certificate	native	native MiniSat executable defaults; no policy overrides	5	0.007347893	0.007244349	0.008123978	138	18780.894
+simple-sat	vm-differential+certificate	aot	CDCL current defaults (regime C); --cdcl; no policy overrides	5	0.005264093	0.005179496	0.018575297	0	0.000
+simple-sat	vm-differential+certificate	native	native MiniSat executable defaults; no policy overrides	5	0.007760519	0.006415505	0.009435557	0	0.000
+tseitin-3x3-odd	vm-differential+certificate	aot	CDCL current defaults (regime C); --cdcl; no policy overrides	5	0.189905184	0.173941027	0.207390867	592	3117.345
+tseitin-3x3-odd	vm-differential+certificate	native	native MiniSat executable defaults; no policy overrides	5	0.009213681	0.008281323	0.010601487	731	79338.540
+tseitin-4x4-odd	vm-differential+certificate	aot	CDCL current defaults (regime C); --cdcl; no policy overrides	5	8.430606959	7.981668100	8.538530616	9986	1184.494
+tseitin-4x4-odd	vm-differential+certificate	native	native MiniSat executable defaults; no policy overrides	5	0.259709928	0.250396977	0.484980367	84150	324015.338
+tseitin-5x5-odd	certificate	aot	CDCL current defaults (regime C); --cdcl; no policy overrides	5	302.121644533	291.904933173	317.722734257	87981	291.211
+tseitin-5x5-odd	certificate	native	native MiniSat executable defaults; no policy overrides	5	8.851535137	8.685464057	9.495678075	2236075	252620.022

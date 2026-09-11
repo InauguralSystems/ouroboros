@@ -1,0 +1,15 @@
+{
+  "cleanup": null,
+  "command": [
+    "/usr/bin/minisat",
+    "/tmp/ems-close-20260911/wall-stdlib-only/oracle/case.WQIROr/input.cnf",
+    "/tmp/ems-close-20260911/wall-stdlib-only/certificates/pigeonhole-6-5/native/native.result"
+  ],
+  "cwd": "/home/jon/src/wt/ems-cert-20260911",
+  "directory": "/tmp/ems-close-20260911/wall-stdlib-only/certificates/pigeonhole-6-5/native",
+  "interrupted_signal": null,
+  "returncode": 20,
+  "timed_out": false,
+  "timeout_seconds": 7200,
+  "wall_ns": 12786955
+}

@@ -1,0 +1,22 @@
+{
+  "cleanup": null,
+  "command": [
+    "bash",
+    "/home/jon/src/wt/ems-cert-20260911/benchmarks/run_native_oracle.sh",
+    "--aot",
+    "on",
+    "--rungs",
+    "3x3 4x4",
+    "--instances",
+    "/tmp/ems-close-20260911/wall-stdlib-only/preflight-inputs",
+    "--timeout",
+    "7200"
+  ],
+  "cwd": "/home/jon/src/wt/ems-cert-20260911",
+  "directory": "/tmp/ems-close-20260911/wall-stdlib-only/preflight-process",
+  "interrupted_signal": null,
+  "returncode": 0,
+  "timed_out": false,
+  "timeout_seconds": 21598.905822628643,
+  "wall_ns": 34585461921
+}

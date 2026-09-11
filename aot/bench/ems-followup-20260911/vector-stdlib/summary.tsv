@@ -1,0 +1,13 @@
+case	validation	arm	policy	n	median_wall_s	min_wall_s	max_wall_s	conflicts	descriptive_conflicts_per_wall_second
+pigeonhole-6-5	vm-differential+certificate	aot	CDCL current defaults (regime C); --cdcl; no policy overrides	5	0.064325219	0.061482687	0.076749211	140	2176.440
+pigeonhole-6-5	vm-differential+certificate	candidate	CDCL current defaults (regime C); --cdcl; no policy overrides; candidate=timing-only static pinned int_vector	5	0.059961019	0.057450059	0.065904189	140	2334.850
+pigeonhole-6-5	vm-differential+certificate	native	native MiniSat executable defaults; no policy overrides	5	0.008047314	0.007276574	0.010162909	138	17148.579
+simple-sat	vm-differential+certificate	aot	CDCL current defaults (regime C); --cdcl; no policy overrides	5	0.005634261	0.005450322	0.006222042	0	0.000
+simple-sat	vm-differential+certificate	candidate	CDCL current defaults (regime C); --cdcl; no policy overrides; candidate=timing-only static pinned int_vector	5	0.004584849	0.004396252	0.004877214	0	0.000
+simple-sat	vm-differential+certificate	native	native MiniSat executable defaults; no policy overrides	5	0.006427080	0.006224529	0.007792942	0	0.000
+tseitin-3x3-odd	vm-differential+certificate	aot	CDCL current defaults (regime C); --cdcl; no policy overrides	5	0.220704699	0.175775013	0.315809631	592	2682.317
+tseitin-3x3-odd	vm-differential+certificate	candidate	CDCL current defaults (regime C); --cdcl; no policy overrides; candidate=timing-only static pinned int_vector	5	0.181218170	0.150189510	0.208816834	592	3266.781
+tseitin-3x3-odd	vm-differential+certificate	native	native MiniSat executable defaults; no policy overrides	5	0.008858433	0.008176170	0.011376434	731	82520.238
+tseitin-4x4-odd	vm-differential+certificate	aot	CDCL current defaults (regime C); --cdcl; no policy overrides	5	8.781040393	8.132009827	9.658058463	9986	1137.223
+tseitin-4x4-odd	vm-differential+certificate	candidate	CDCL current defaults (regime C); --cdcl; no policy overrides; candidate=timing-only static pinned int_vector	5	8.067980423	7.113688679	8.630196741	9986	1237.732
+tseitin-4x4-odd	vm-differential+certificate	native	native MiniSat executable defaults; no policy overrides	5	0.239963975	0.231669504	0.263415109	84150	350677.638

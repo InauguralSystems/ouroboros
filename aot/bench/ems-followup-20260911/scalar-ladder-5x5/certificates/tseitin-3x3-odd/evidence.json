@@ -1,0 +1,32 @@
+{
+  "arms": [
+    "aot"
+  ],
+  "files": {
+    "/tmp/ems-close-20260911/ems-scalar-production": "3dce2fd61d0c3edccbca5edd7ab00b30b56398e03199a11edfc63c0a026a89d2",
+    "/tmp/ems-close-20260911/scalar-ladder-5x5/certificates/tseitin-3x3-odd/aot-checker/process.json": "77a728bf0da22a83064854706a7e1e52befad08797a3c50b7a92d9f8488f258c",
+    "/tmp/ems-close-20260911/scalar-ladder-5x5/certificates/tseitin-3x3-odd/aot-checker/stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "/tmp/ems-close-20260911/scalar-ladder-5x5/certificates/tseitin-3x3-odd/aot-checker/stdout": "1f457a1a16f84b547ed4bc1a18ae221704f2e3c2693c5c48fd5f4a7a2caa181a",
+    "/tmp/ems-close-20260911/scalar-ladder-5x5/certificates/tseitin-3x3-odd/aot.drat": "575ad5645d48aa6ea83339dc67d34e3f9a66a0ba2e478543f0f651f6eb0f7c18",
+    "/tmp/ems-close-20260911/scalar-ladder-5x5/certificates/tseitin-3x3-odd/aot/process.json": "137e3f4acd5a3495c95874d589856ed4578cccf47f80409aec0bf66cb350b011",
+    "/tmp/ems-close-20260911/scalar-ladder-5x5/certificates/tseitin-3x3-odd/aot/stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "/tmp/ems-close-20260911/scalar-ladder-5x5/certificates/tseitin-3x3-odd/aot/stdout": "e9d0783116f10b64a1bbd382a973faabe618b4f12cf2a13de2e3bdee1ee7cd7c",
+    "/tmp/ems-close-20260911/scalar-ladder-5x5/certificates/tseitin-3x3-odd/native/native.result": "8e47e39240b5b347f444074f97e7ab4b4c11d3f534469b5cb23f4b6d2f7390df",
+    "/tmp/ems-close-20260911/scalar-ladder-5x5/certificates/tseitin-3x3-odd/native/process.json": "b30691b36ec3a85f9c20df261d6a26c2321df18f8fd3ce3716c8589bb1a46412",
+    "/tmp/ems-close-20260911/scalar-ladder-5x5/certificates/tseitin-3x3-odd/native/stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "/tmp/ems-close-20260911/scalar-ladder-5x5/certificates/tseitin-3x3-odd/native/stdout": "1a76d3a322a56f169f553c74c03e7e6d23afe6538b9938d3c14cf5304cd24d30",
+    "/tmp/ems-close-20260911/scalar-ladder-5x5/oracle/case.rA1Elf/aot.err": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "/tmp/ems-close-20260911/scalar-ladder-5x5/oracle/case.rA1Elf/aot.out": "dcaf03cf76aadea7b8fa1530a18bd894de695f1f1cfa75c8a7a025922d7468c8",
+    "/tmp/ems-close-20260911/scalar-ladder-5x5/oracle/case.rA1Elf/aot.out.normalized": "a6ee6eaf797002ac13a87b234adb5d2e9efbde1795614a77f76f8a009a1a228f",
+    "/tmp/ems-close-20260911/scalar-ladder-5x5/oracle/case.rA1Elf/input.cnf": "fe1938d0377c2e32566cad276df525053397d0cb617981515e73884005cf83f2",
+    "/tmp/ems-close-20260911/scalar-ladder-5x5/oracle/case.rA1Elf/name": "ace6ba87fe997d03ba7b88b5632885bb9639a13cedd4dc391c4e44d4c5555bab",
+    "/tmp/ems-close-20260911/scalar-ladder-5x5/oracle/case.rA1Elf/native.err": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "/tmp/ems-close-20260911/scalar-ladder-5x5/oracle/case.rA1Elf/native.out": "c3da6be0cd3a5de957de74edf79750d6b39865be64e990f08e810bb1a9a89938",
+    "/tmp/ems-close-20260911/scalar-ladder-5x5/oracle/case.rA1Elf/native.result": "8e47e39240b5b347f444074f97e7ab4b4c11d3f534469b5cb23f4b6d2f7390df",
+    "/tmp/ems-close-20260911/scalar-ladder-5x5/oracle/case.rA1Elf/vm.err": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "/tmp/ems-close-20260911/scalar-ladder-5x5/oracle/case.rA1Elf/vm.out": "873a276936e734c71177374167250b2b11c415d7c4cc211f2a058b3863a1ab48",
+    "/tmp/ems-close-20260911/scalar-ladder-5x5/oracle/case.rA1Elf/vm.out.normalized": "a6ee6eaf797002ac13a87b234adb5d2e9efbde1795614a77f76f8a009a1a228f",
+    "/tmp/ems-native-20260910/drat-trim": "3b2f43765b738cdc5210d874dafc0a0d9921f816156003c6b6fe3f762041c930",
+    "/usr/bin/minisat": "d880e77e8f0f5a462a55c866aec9dd3325e582a83b94a3416a2debd7c9bac4b7"
+  }
+}

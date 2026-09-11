@@ -1,0 +1,19 @@
+{
+  "arm": "aot",
+  "case": "tseitin-5x5-odd",
+  "cleanup": null,
+  "command": [
+    "/tmp/ems-close-20260911/ems-scalar-production",
+    "--cdcl",
+    "/tmp/ems-close-20260911/scalar-ladder-5x5/certificate-inputs/5x5/input.cnf"
+  ],
+  "cwd": "/home/jon/src/wt/ems-cert-20260911",
+  "directory": "/tmp/ems-close-20260911/scalar-ladder-5x5/pilots/tseitin-5x5-odd/aot",
+  "interrupted_signal": null,
+  "returncode": 0,
+  "timed_out": false,
+  "timeout_seconds": 7200,
+  "validated": true,
+  "validation": "certificate",
+  "wall_ns": 304238310613
+}

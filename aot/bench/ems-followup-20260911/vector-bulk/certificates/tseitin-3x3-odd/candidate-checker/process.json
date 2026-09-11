@@ -1,0 +1,15 @@
+{
+  "cleanup": null,
+  "command": [
+    "/tmp/ems-native-20260910/drat-trim",
+    "/tmp/ems-close-20260911/wall-bulk-only/oracle/case.X8xCQt/input.cnf",
+    "/tmp/ems-close-20260911/wall-bulk-only/certificates/tseitin-3x3-odd/candidate.drat"
+  ],
+  "cwd": "/home/jon/src/wt/ems-cert-20260911",
+  "directory": "/tmp/ems-close-20260911/wall-bulk-only/certificates/tseitin-3x3-odd/candidate-checker",
+  "interrupted_signal": null,
+  "returncode": 0,
+  "timed_out": false,
+  "timeout_seconds": 7200,
+  "wall_ns": 159439252
+}
