@@ -23,6 +23,9 @@ define read_local_table(source) as:
     print of item
     item is table[index + index]
     print of item
+    # Keep the general owned-index arm covered after two-slot sum lowering.
+    item is table[index + 0]
+    print of item
     item is table[-1]
     print of item
     index is -3

@@ -1,0 +1,42 @@
+# Generic parameters force actual lowered locals, not inferred element types.
+define scalar_conditions(source, selector, offset, expected) as:
+    local table is source
+    local index is selector
+    local extra is offset
+    local wanted is expected
+    if table[index] == wanted:
+        print of "equal"
+    else:
+        print of "different"
+    if table[index + extra] != 0:
+        print of "nonzero"
+    if (index != 2) and (extra != 3):
+        print of "both"
+    if (index == 2) or (extra == 0):
+        print of "either"
+    local result is "old"
+    result is table[index + extra]
+    print of result
+    print of table
+    return 0
+
+scalar_conditions of [[10, 20, 30], 0, 1, 10]
+scalar_conditions of [[null, "word", [7, 8]], 1, 0, "word"]
+scalar_conditions of [[null, "word", [7, 8]], 2, 0, [7, 8]]
+scalar_conditions of [{"ab": 7, "a": null}, "a", "b", null]
+scalar_conditions of ["abc", 0, 1, "a"]
+local values is buffer of 3
+values[1] is 4.5
+scalar_conditions of [values, 1, 0, 4.5]
+
+define sum_alias(n) as:
+    local target is [["survives", n]]
+    local first is "unknown"
+    local second is "unknown"
+    first is 0
+    second is 0
+    target is target[first + second]
+    print of target
+    return 0
+
+sum_alias of 9

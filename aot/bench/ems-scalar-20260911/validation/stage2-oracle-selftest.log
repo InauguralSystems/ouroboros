@@ -1,0 +1,48 @@
+START certificate-oracle-selftest
+DONE certificate-oracle-selftest rc= 1 wall_s= 275.4399766
+ion]: ordered DIMACS token lines changed during shared preparation
+SELFTEST header-line-merge: RED (production CLI rc=1; exact subject/class/evidence)
+FAIL tseitin-3x3-odd [input-preservation]: prepared: DIMACS header must occupy its own four-token line
+SELFTEST header-count: RED (production CLI rc=1; exact subject/class/evidence)
+SELFTEST variable-bound: RED (production CLI rc=1; exact subject/class/evidence)
+SELFTEST unterminated-clause: RED (production CLI rc=1; exact subject/class/evidence)
+SELFTEST missing-header: RED (production CLI rc=1; exact subject/class/evidence)
+SELFTEST invalid-header: RED (production CLI rc=1; exact subject/class/evidence)
+SELFTEST invalid-literal: RED (production CLI rc=1; exact subject/class/evidence)
+SELFTEST emitted-read-error: RED (production CLI rc=1; exact subject/class/evidence)
+SELFTEST fixture-read-error: RED (production CLI rc=1; exact subject/class/evidence)
+SELFTEST fixture-3x3: RED (production CLI rc=1; exact subject/class/evidence)
+SELFTEST regime-3x3: RED (production CLI rc=1; exact subject/class/evidence)
+SELFTEST fixture-4x4: RED (production CLI rc=1; exact subject/class/evidence)
+SELFTEST regime-4x4: RED (production CLI rc=1; exact subject/class/evidence)
+SELFTEST resized-emitter: RED (production CLI rc=1; exact subject/class/evidence)
+SELFTEST identity-clauses: RED (production CLI rc=1; exact subject/class/evidence)
+SELFTEST vertex-order: RED (production CLI rc=1; exact subject/class/evidence)
+SELFTEST output-normalize-error: RED (production CLI rc=1; exact subject/class/evidence)
+SELFTEST native-empty-report: RED (production CLI rc=1; exact subject/class/evidence)
+SELFTEST native-empty-result: RED (production CLI rc=1; exact subject/class/evidence)
+SELFTEST native-unterminated-result: RED (production CLI rc=1; exact subject/class/evidence)
+SELFTEST native-inconsistent-result: RED (production CLI rc=1; exact subject/class/evidence)
+SELFTEST empty-output: RED (production CLI rc=1; exact subject/class/evidence)
+SELFTEST corrupted-cnf: RED (production CLI rc=1; exact subject/class/evidence)
+SELFTEST wrong-ems-verdict: RED (production CLI rc=1; exact subject/class/evidence)
+SELFTEST perturbed-aot: RED (production CLI rc=1; exact subject/class/evidence)
+SELFTEST native-error: RED (production CLI rc=1; exact subject/class/evidence)
+SELFTEST odd-torus-answer: RED (production CLI rc=1; exact subject/class/evidence)
+SELFTEST coverage-passed: RED (production CLI rc=1; exact subject/class/evidence)
+SELFTEST coverage-native: RED (production CLI rc=1; exact subject/class/evidence)
+SELFTEST coverage-vm: RED (production CLI rc=1; exact subject/class/evidence)
+SELFTEST coverage-aot: RED (production CLI rc=1; exact subject/class/evidence)
+CONTROL clean: PASS (production CLI rc=0; exact report)
+CONTROL satlib-trailers: PASS (production CLI rc=0; exact report)
+CONTROL auto-degrades: PASS (production CLI rc=0; exact report)
+SELFTEST enrollment: RED (production CLI rc=2; exact subject/class/evidence)
+FAIL harness [enrollment]: uncovered production sites: uncovered_gate:1
+FAIL harness [enrollment]: cases reference absent production sites: execution_failed:1
+SELFTEST enrollment-sourced: RED (production CLI rc=2; exact subject/class/evidence)
+FAIL harness [enrollment]: uncovered production sites: /tmp/ems-native-oracle.OJGFpH/source-inner.sh::sourced_gate:1
+WITNESSES observed=49 eligible=49
+SELFTEST ALL RED checked=71 caught=68 controls=3 skipped=0 (intentional exit 1)
+Artifacts: /tmp/ems-native-oracle.OJGFpH
+
+STAGE_DONE oracle-selftest

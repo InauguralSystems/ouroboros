@@ -1,0 +1,50 @@
+{
+  "inputs": {
+    "/home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a": "5db0ea14d1ce3476b03643622fea11359172075b21cdc6343d80a9e591bd6eca",
+    "/tmp/ems-close-20260911/ems-baseline.c": "ddec94a97948a7f178f924c9b2578b07c0804eed69e7a00b5629c26a0c5c53b2",
+    "/tmp/ems-close-20260911/diagnostics_controls.c": "7654bb2874b2cb591caecb7ef9c5d7855f61b8938feac3a539924c23292e5a95",
+    "/home/jon/src/wt/es-v043/src/eigenscript.c": "7a98f3d2e9100030174c5cb4268384ecdf584bb552b7fec524a06065302da408",
+    "/home/jon/src/InauguralSystems/EigenScriptEcosystem/ouroboros/aot/aot_rt.h": "7a2a091ef0e2117c801b32dfc7853e41130e10f82bf96658afca4b1a9b64e38f",
+    "/tmp/ems-close-20260911/make_diagnostics.py": "be7e9a8f2806e2c90d84a68307a132a7628fe794a150d678010433a9d37d6fc3",
+    "/tmp/ems-close-20260911/run_diagnostics.py": "25a0532c0fb7290d42c56c5e21f8d45bf5ab7bdc392e0eac9f85480a99123593"
+  },
+  "flags": [
+    "gcc",
+    "-O3",
+    "-ffp-contract=off",
+    "-falign-functions=64",
+    "-falign-jumps=32",
+    "-falign-loops=32",
+    "-march=native",
+    "-DEMS_DIAGNOSTICS",
+    "-DEIGENSCRIPT_EXT_HTTP=0",
+    "-DEIGENSCRIPT_EXT_MODEL=0",
+    "-DEIGENSCRIPT_EXT_DB=0",
+    "-DEIGENSCRIPT_VERSION=\"aot\"",
+    "-DAOT_SCRIPT_DIR=\"/home/jon/src/InauguralSystems/EigenScriptEcosystem/EigenMiniSat\"",
+    "-DAOT_EXE_DIR=\"/home/jon/src/wt/es-v043/src\"",
+    "-I/tmp/ems-close-20260911/diagnostics-run/sources",
+    "-I/home/jon/src/wt/ouro-gap-20260911/aot",
+    "-I/home/jon/src/wt/es-v043/src"
+  ],
+  "archive_strategy": "explicit instrumented eigenscript.o precedes baseline archive; linker maps reject old eigenscript.o member",
+  "outputs": {
+    "controls": {
+      "sha256": "add145b48b80cab1eb2435f7d1d9fb5cfb087eb7e4badc394e8a5704a172dfdf",
+      "map_sha256": "4881c0561202fb332e1983609e56038d28b4ab5708fe47346c6816fabb3037ee",
+      "runtime_object_sha256": "b66f44675c51d7d669e31e84b9c7546a7270911e4e51bb8b817c91db1b30c0e5"
+    },
+    "controls-missing-reuse": {
+      "sha256": "6fc53966407ef580d0710ef7721285124710700e620812713cc384a72afcc808",
+      "map_sha256": "561f01dffd121499795fd36722f0995bea34303dd448ec35a0984b334f6a6d7f",
+      "runtime_object_sha256": "260f01e54b09fa0db63e2cf7e8126b70c53ab731db6a0a093dff852be08cf248"
+    },
+    "ems-diagnostics": {
+      "sha256": "8d57778a042b4e0ddde02c35021766e8b38c2dfedc9c2c8208d3bcd7ac40bee4",
+      "map_sha256": "8a73435d26a4addeefd7f110b87b4dfffe4adfa17a03d1c4d03ea83f7dc33267",
+      "runtime_object_sha256": "b66f44675c51d7d669e31e84b9c7546a7270911e4e51bb8b817c91db1b30c0e5"
+    }
+  },
+  "input_cnf_sha256": "f0148e8b4ce9692de61347005af8179e8d8d38134283b6fb0c35a8b9efd32b71",
+  "reference_sha256": "1b2ddec1e64577a29a754f60cd1f9e8820531ee7692fc5512481302405126bde"
+}

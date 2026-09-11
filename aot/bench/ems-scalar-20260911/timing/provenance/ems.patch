@@ -1,0 +1,427 @@
+diff --git a/.github/workflows/ci.yml b/.github/workflows/ci.yml
+index 76d910d..b72fbdb 100644
+--- a/.github/workflows/ci.yml
++++ b/.github/workflows/ci.yml
+@@ -15,7 +15,7 @@ jobs:
+       - name: Verify native timing runner and timeout cleanup
+         env:
+           PYTHONDONTWRITEBYTECODE: '1'
+-        run: python3 benchmarks/test_compare_native.py
++        run: python3 -m unittest discover -s benchmarks -p 'test_*.py' -v
+ 
+       - name: Build EigenScript
+         run: |
+diff --git a/README.md b/README.md
+index a673766..13b0285 100644
+--- a/README.md
++++ b/README.md
+@@ -159,6 +159,9 @@ match and a check written that way passes no matter what the solver emitted.
+ EMS AOT executable with native MiniSat on validated identical CNFs: five external
+ process wall samples, median/range, policy labels and binary/source provenance.
+ An optional second AOT executable joins the same schedule for measured A/B work.
++Its explicit certificate-validation mode keeps the 3x3/4x4 VM anchors and uses
++DRAT proofs or checked SAT models for larger rungs, with separate evidence labels
++and bounded proof-off pilots before timing.
+ 
+ `benchmarks/run_trends.sh` records selected pressure outputs to ignored
+ timestamped logs under `benchmarks/runs/`. The default `quick` profile runs
+diff --git a/benchmarks/NATIVE_TIMING.md b/benchmarks/NATIVE_TIMING.md
+index 8558ba8..fa8db16 100644
+--- a/benchmarks/NATIVE_TIMING.md
++++ b/benchmarks/NATIVE_TIMING.md
+@@ -38,9 +38,55 @@ Larger tori are explicit additions and require both budgets, for example:
+ --extra-rung 4x5 --timeout 600 --budget-seconds 7200
+ ```
+ 
+-An added rung also requires its VM correctness preflight to finish. Native
++In the default `--validation vm-differential` mode, an added rung also requires its VM correctness preflight to finish. Native
+ MiniSat's speed is not an estimate of the time that VM preflight needs.
+ 
++## Certificate validation for larger rungs
++
++Use `--validation certificate` to verify larger-rung answers using DRAT/model
++certificates while retaining the **mandatory 3x3 and 4x4 VM regime anchors**.
++Add these options to the baseline command, with a fresh output directory:
++
++```bash
++--validation certificate --drat-trim /path/to/drat-trim \
++--aot-generated-source /path/to/exact-generated-ems.c \
++--extra-rung 4x5 --timeout 7200 --budget-seconds 21600
++```
++
++The supplied generated C is copied and hashed; its build relationship to the
++binary is still declared by the caller. Solver, emitter and checker processes
++each have a maximum two-hour cap, and the total budget can end them sooner.
++Certificate mode adds `tests/fixtures/simple_sat.cnf` as a required SAT control
++alongside pigeonhole and the two anchors. It never runs a larger-rung VM solve
++and never reports VM parity for that rung. The default oracle remains strict.
++
++Every baseline and optional candidate executable runs once with `--cdcl --model
++--proof FILE`. UNSAT requires a nonempty proof and **drat-trim exit 0**. SAT
++requires one complete assignment that satisfies every input clause; native SAT
++result models are checked too. Native MiniSat independently agrees on every
++verdict. The runner removes only the exact requested proof-report line, a
++validated SAT model line, and the existing trailing numeric timing field before
++comparing all remaining bytes. Certificate output must also match the VM
++reference on the anchors and controls. Every timed EMS invocation has proof and
++model output disabled and must match its certificate reference exactly.
++
++Each extra rung gets a proof-off pilot for every arm. Five-run timing starts
++only after every pilot finishes within **600 seconds**. `--pilot-only` stops
++after certificates and pilots, records `status: pilot-complete`, and emits no
++performance summary; its performance status remains incomplete. Timeouts and
++failed checks exit nonzero with retained evidence, never completed timings.
++
++`certificates/` retains each arm's proof, output and checker process records;
++`certificate-inputs/` retains emission and identity evidence. Input preparation
++uses the same `normalize_cnf.awk`, `cnf_preservation.py` and `torus_identity.awk`
++as the strict oracle. Certificate files, solver/checker executables, and
++prepared inputs are hashed before use and checked around each pilot/sample and
++at completion. Missing or changed evidence fails. Evidence labels are
++`vm-differential+certificate` for anchors/controls and `certificate` for extra
++rungs, including in every summary row and sample record. Certificates verify
++answers on these inputs; the compiler differential/sanitizer gates remain
++required for general semantic correctness.
++
+ ## Correctness and input ownership
+ 
+ The first step invokes **the existing `run_native_oracle.sh`**, with AOT required,
+@@ -48,8 +94,8 @@ the supplied prebuilt binary, the selected tori, and a directory containing only
+ the pigeonhole fixture. That harness owns emission, CNF normalization, formula
+ preservation, torus identity checks, regime anchors, native verdict checks and
+ VM/AOT byte comparisons. The timing runner retains its artifact directory and
+-uses its already prepared `input.cnf` files directly. There is no second CNF
+-normalizer or formula checker in the timing runner.
++uses its already prepared `input.cnf` files directly. The optional certificate
++path shares the same normalizer and independent formula/identity checkers.
+ 
+ Both anchors must match regime C: 3x3 has 592 conflicts / 1,681 resolutions;
+ 4x4 has 9,986 / 33,873. EMS runs `--cdcl` with current defaults and no overrides.
+@@ -102,8 +148,10 @@ Supply all of the following additional options:
+ The source argument is the exact modified generated C source, copied into the
+ result bundle and hashed. The candidate gets one unmeasured validated warmup per
+ input, then five samples interleaved with baseline AOT and native MiniSat. Its
+-stdout and counters must match the baseline preflight's VM reference on every
+-run. The JSON summary includes `baseline_over_candidate_wall_ratio_same_policy`.
++stdout and counters must match the selected validation reference on every run:
++the VM reference in default mode and on the anchors/controls, or the checked
++certificate reference on extra rungs in certificate mode. The JSON summary
++includes `baseline_over_candidate_wall_ratio_same_policy`.
+ An experiment labelled timing-only remains a timing experiment: matching these
+ inputs does not certify its semantics on other programs or instances.
+ 
+@@ -137,7 +185,7 @@ EMS policy and require identical preflight output on every measured run.
+ ## Focused tests
+ 
+ ```bash
+-PYTHONDONTWRITEBYTECODE=1 python3 benchmarks/test_compare_native.py
++PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s benchmarks -p 'test_*.py' -v
+ ```
+ 
+ These lightweight tests launch synthetic child processes through the production
+@@ -148,5 +196,9 @@ timeout regressions include GNU timeout's separate process group and the real,
+ unchanged oracle CLI with a synthetic sleeping emitter. Cancellation regressions
+ send SIGINT/SIGTERM/SIGHUP through that CLI and inject signals during process
+ creation and cleanup. They do not launch real
+-solvers or builds and do not replace the existing oracle selftests. CI runs this
+-focused suite before building EigenScript.
++solvers or builds and do not replace the existing oracle selftests. CI runs these
++focused suites before building EigenScript. Certificate controls additionally
++plant rejected/missing/corrupt proofs, forged VERIFIED text, proof-off output
++drift, bad SAT models, absent anchors, missing arm certificates, checker timeout,
++and artifact deletion/mutation. These synthetic checkers test orchestration;
++real DRAT verification remains a separate acceptance check.
+diff --git a/benchmarks/compare_native.py b/benchmarks/compare_native.py
+index dfc9ff9..15260cf 100644
+--- a/benchmarks/compare_native.py
++++ b/benchmarks/compare_native.py
+@@ -22,6 +22,8 @@ import sys
+ import time
+ 
+ sys.dont_write_bytecode = True
++import certificate_validation
++
+ ROOT = Path(__file__).resolve().parents[1]
+ REPETITIONS = 5
+ ARMS = ("aot", "native")
+@@ -275,7 +277,10 @@ def oracle_preflight(args, output, environment, deadline):
+     inputs.mkdir()
+     pigeonhole = inputs / "pigeonhole_6_5.cnf"
+     shutil.copyfile(ROOT / "tests/fixtures/pigeonhole_6_5.cnf", pigeonhole)
+-    rungs = ["3x3", "4x4", *args.extra_rung]
++    certificate_mode = getattr(args, "validation", "vm-differential") == "certificate"
++    rungs = ["3x3", "4x4", *([] if certificate_mode else args.extra_rung)]
++    if certificate_mode:
++        shutil.copyfile(ROOT / "tests/fixtures/simple_sat.cnf", inputs / "simple_sat.cnf")
+     command = ["bash", str(ROOT / "benchmarks/run_native_oracle.sh"), "--aot", "on",
+                "--rungs", " ".join(rungs), "--instances", str(inputs),
+                "--timeout", str(args.timeout)]
+@@ -286,7 +291,7 @@ def oracle_preflight(args, output, environment, deadline):
+                          remaining(deadline, args.budget_seconds), env)
+     require(record["returncode"] == 0, "correctness preflight failed; see preflight-process/stdout and stderr")
+     data = (output / "preflight-process/stdout").read_text()
+-    count = len(rungs) + 1
++    count = len(rungs) + 1 + int(certificate_mode)
+     summary = f"SUMMARY PASS selected={count} passed={count} native={count} VM={count} AOT={count}"
+     require([line for line in data.splitlines() if line.startswith("SUMMARY ")] == [summary],
+             "correctness preflight completion population differs")
+@@ -298,6 +303,8 @@ def oracle_preflight(args, output, environment, deadline):
+     shutil.move(str(work), output / "oracle")
+     expected = {f"tseitin-{rung}-odd": f"tseitin-{rung}-odd" for rung in rungs}
+     expected[str(pigeonhole)] = "pigeonhole-6-5"
++    if certificate_mode:
++        expected[str(inputs / "simple_sat.cnf")] = "simple-sat"
+     cases = []
+     seen = set()
+     for directory in sorted((output / "oracle").glob("case.*")):
+@@ -309,10 +316,13 @@ def oracle_preflight(args, output, environment, deadline):
+         native_verdict, native_conflicts = native_report((directory / "native.out").read_bytes(),
+                                                         directory / "native.result",
+                                                         10 if verdict == "SATISFIABLE" else 20)
+-        require(native_verdict == verdict == "UNSATISFIABLE", f"unexpected baseline verdict: {name}")
++        expected_verdict = "SATISFIABLE" if expected[name] == "simple-sat" else "UNSATISFIABLE"
++        require(native_verdict == verdict == expected_verdict, f"unexpected baseline verdict: {name}")
+         cases.append({"name": expected[name], "cnf": directory / "input.cnf",
+                       "sha256": sha256(directory / "input.cnf"), "reference": reference,
+-                      "verdict": verdict, "aot_conflicts": ems_conflicts, "native_conflicts": native_conflicts})
++                      "verdict": verdict, "aot_conflicts": ems_conflicts, "native_conflicts": native_conflicts,
++                      "validation": "vm-differential",
++                      "input_evidence": [str(path) for path in directory.rglob("*") if path.is_file()]})
+     require(seen == set(expected), "oracle artifact cases are incomplete")
+     return sorted(cases, key=lambda case: case["name"])
+ 
+@@ -323,9 +333,12 @@ def validate_sample(case, arm, record):
+     if arm != "native":
+         require(record["returncode"] == 0, "AOT exit must be 0")
+         verdict, conflicts = ems_report(data)
+-        require(normalized_ems(data) == case["reference"], "AOT output differs from preflight VM reference")
++        label = "certificate reference" if "certificate_evidence" in case else "preflight VM reference"
++        require(normalized_ems(data) == case["reference"], "AOT output differs from " + label)
+     else:
+         verdict, conflicts = native_report(data, directory / "native.result", record["returncode"])
++        if "certificate_evidence" in case and verdict == "SATISFIABLE":
++            certificate_validation.check_model(case["cnf"], (directory / "native.result").read_bytes(), native=True)
+     require(verdict == case["verdict"], "verdict differs from correctness preflight")
+     require(conflicts == case[("native" if arm == "native" else "aot") + "_conflicts"],
+             "conflicts differ from correctness preflight")
+@@ -341,7 +354,8 @@ def summarize(cases, samples, arms=ARMS, candidate_label=None):
+     rows = []
+     for case in cases:
+         row = {"case": case["name"], "input_sha256": case["sha256"], "n": REPETITIONS,
+-               "aot_policy": EMS_POLICY, "native_policy": NATIVE_POLICY}
++               "aot_policy": EMS_POLICY, "native_policy": NATIVE_POLICY,
++               "validation": case.get("validation", "vm-differential")}
+         if "candidate" in arms:
+             row["candidate_policy"] = EMS_POLICY + "; candidate=" + candidate_label
+         for arm in arms:
+@@ -377,6 +391,10 @@ def measure(cases, commands, output, environment, timeout, deadline, candidate_l
+                     directory = output / "samples" / case["name"] / f"{repetition}-{arm}"
+                     require(sha256(case["cnf"]) == case["sha256"], f"input changed before {case['name']} {arm}")
+                     require(sha256(commands[arm]) == binary_hashes[arm], f"binary changed before {case['name']} {arm}")
++                    if "certificate" in case.get("validation", ""):
++                        certificate_validation.verify_evidence(sys.modules[__name__], case)
++                        require(arm == "native" or arm in case["certificate_evidence"]["arms"],
++                                "timed arm lacks a certificate")
+                     command = [str(commands[arm])]
+                     if arm != "native":
+                         command += ["--cdcl", str(case["cnf"])]
+@@ -389,11 +407,13 @@ def measure(cases, commands, output, environment, timeout, deadline, candidate_l
+                         require(sha256(case["cnf"]) == case["sha256"], "input changed during timed process")
+                         require(sha256(commands[arm]) == binary_hashes[arm], "binary changed during timed process")
+                         conflicts = validate_sample(case, arm, record)
++                        if "certificate" in case.get("validation", ""):
++                            certificate_validation.verify_evidence(sys.modules[__name__], case)
+                     except Failure as error:
+                         raise Failure(f"case={case['name']} repetition={repetition} arm={arm}: {error}") from error
+                     record.update(case=case["name"], arm=arm, repetition=repetition,
+                                   conflicts=conflicts, validated=True, input_sha256=case["sha256"],
+-                                  binary_sha256=binary_hashes[arm])
++                                  binary_sha256=binary_hashes[arm], validation=case.get("validation", "vm-differential"))
+                     write_json(directory / "validation.json", record)
+                     if repetition == 0:
+                         continue
+@@ -403,6 +423,17 @@ def measure(cases, commands, output, environment, timeout, deadline, candidate_l
+     return summarize(cases, samples, arms, candidate_label)
+ 
+ 
++def write_summary_tsv(path, rows, arms):
++    with Path(path).open("w") as table:
++        table.write("case\tvalidation\tarm\tpolicy\tn\tmedian_wall_s\tmin_wall_s\tmax_wall_s\tconflicts\tdescriptive_conflicts_per_wall_second\n")
++        for row in rows:
++            for arm in arms:
++                value = row[arm]
++                table.write(f"{row['case']}\t{row['validation']}\t{arm}\t{row[arm + '_policy']}\t{REPETITIONS}\t"
++                            f"{value['median_wall_s']:.9f}\t{value['min_wall_s']:.9f}\t{value['max_wall_s']:.9f}\t"
++                            f"{value['conflicts']}\t{value['median_conflicts_per_wall_second_descriptive']:.3f}\n")
++
++
+ def arguments(argv):
+     parser = argparse.ArgumentParser(description=__doc__)
+     parser.add_argument("--aot-binary", required=True, type=Path, help="fresh prebuilt EMS binary; never builds")
+@@ -411,6 +442,11 @@ def arguments(argv):
+     parser.add_argument("--minisat-binary", type=Path, default=Path("/usr/bin/minisat"))
+     parser.add_argument("--output", required=True, type=Path, help="new artifact directory (must not exist)")
+     parser.add_argument("--extra-rung", action="append", default=[], metavar="ROWSxCOLS")
++    parser.add_argument("--validation", choices=("vm-differential", "certificate"), default="vm-differential",
++                        help="certificate keeps VM anchors but verifies extra rungs through DRAT/models")
++    parser.add_argument("--drat-trim", type=Path, help="required executable for certificate validation")
++    parser.add_argument("--aot-generated-source", type=Path, help="exact generated C used for AOT; required in certificate mode")
++    parser.add_argument("--pilot-only", action="store_true", help="certificate preflight/pilots only; no n=5 timing report")
+     parser.add_argument("--timeout", type=int, help="seconds per process; default 120; mandatory for extra rungs")
+     parser.add_argument("--budget-seconds", type=int, help="total preflight/timing budget; default 1800; mandatory for extra rungs")
+     parser.add_argument("--cpu", type=int, help="pin this runner and child processes to an available Linux CPU")
+@@ -427,7 +463,16 @@ def arguments(argv):
+             "extra rungs require explicit --timeout and --budget-seconds")
+     args.timeout = 120 if args.timeout is None else args.timeout
+     args.budget_seconds = 1800 if args.budget_seconds is None else args.budget_seconds
+-    require(0 < args.timeout <= 86400 and 0 < args.budget_seconds <= 604800, "invalid timeout or total budget")
++    require(0 < args.timeout <= 7200 and 0 < args.budget_seconds <= 604800, "invalid timeout or total budget (process maximum 7200s)")
++    if args.validation == "certificate":
++        require(args.drat_trim is not None, "certificate validation requires --drat-trim")
++        args.drat_trim = executable(args.drat_trim)
++        require(args.aot_generated_source is not None, "certificate validation requires --aot-generated-source")
++    else:
++        require(args.drat_trim is None and not args.pilot_only, "--drat-trim/--pilot-only require --validation certificate")
++    if args.aot_generated_source:
++        args.aot_generated_source = args.aot_generated_source.resolve()
++        require(args.aot_generated_source.is_file(), "AOT generated source is not a file")
+     seen = {"3x3", "4x4"}
+     for rung in args.extra_rung:
+         require(re.fullmatch(r"[1-9][0-9]?x[1-9][0-9]?", rung) is not None, f"invalid extra rung: {rung}")
+@@ -475,28 +520,37 @@ def main(argv=None):
+         if args.candidate_binary:
+             commands["candidate"] = args.candidate_binary
+         commands["native"] = args.minisat_binary
+-        binaries = {label: {"path": str(path), "sha256": sha256(path)}
+-                    for label, path in {**commands, "vm": args.vm}.items()}
++        tools_used = {**commands, "vm": args.vm}
++        if args.drat_trim:
++            tools_used["drat-trim"] = args.drat_trim
++        binaries = {label: {"path": str(path), "sha256": sha256(path)} for label, path in tools_used.items()}
+         provenance = output / "provenance"
+         provenance.mkdir()
+         for label, snapshot in sources.items():
+             (provenance / f"{label}.patch").write_bytes(git(snapshot["path"], "diff", "--binary", "HEAD"))
+         if args.build_log:
+             shutil.copyfile(args.build_log, provenance / "aot-build.log")
++        generated_source = None
++        if args.aot_generated_source:
++            generated_source = {"path": str(args.aot_generated_source), "sha256": sha256(args.aot_generated_source)}
++            shutil.copyfile(args.aot_generated_source, provenance / "aot-source.c")
+         candidate = None
+         if args.candidate_binary:
+             candidate = {"label": args.candidate_label, "source_path": str(args.candidate_source),
+                          "source_sha256": sha256(args.candidate_source),
+                          "build_command_declared_by_caller": args.candidate_build_command,
+-                         "scope": "timing experiment; every measured stdout matches the preflight VM reference; no broader correctness claim"}
++                         "scope": "timing experiment; measured stdout matches the selected validation reference; no broader correctness claim"}
+             shutil.copyfile(args.candidate_source, provenance / "candidate-source.c")
+             if args.candidate_build_log:
+                 shutil.copyfile(args.candidate_build_log, provenance / "candidate-build.log")
+-        manifest = {"schema": 1, "status": "incomplete", "created_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
++        manifest = {"schema": 2, "status": "incomplete", "created_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
++                    "validation": args.validation, "pilot_only": args.pilot_only,
+                     "n": REPETITIONS, "timing_scope": TIMING, "aot_policy": EMS_POLICY, "native_policy": NATIVE_POLICY,
+-                    "warmup": "one unmeasured native/VM/baseline-AOT correctness preflight per case; optional candidate gets one unmeasured validated run per case",
++                    "warmup": ("strict VM anchors, each AOT arm certified on every case, extra-rung proof-off pilots" if args.validation == "certificate"
++                               else "one unmeasured native/VM/baseline-AOT correctness preflight per case; optional candidate gets one unmeasured validated run per case"),
+                     "ordering": "sequential arm groups; rotate first arm by repetition and case index",
+                     "arms": list(commands), "candidate": candidate,
++                    "generated_source": generated_source,
+                     "timeout_seconds": args.timeout, "budget_seconds": args.budget_seconds,
+                     "extra_rungs": args.extra_rung, "sources": sources, "binaries": binaries,
+                     "build_command_declared_by_caller": args.build_command,
+@@ -509,24 +563,32 @@ def main(argv=None):
+                                             if key.startswith(("EIGS", "AOT_", "OMP_", "MALLOC_", "LD_")) or key == "LC_ALL"}}
+         write_json(output / "manifest.json", manifest)
+         cases = oracle_preflight(args, output, environment, deadline)
++        if args.validation == "certificate":
++            cases = certificate_validation.preflight(sys.modules[__name__], args, output, environment, deadline, cases, commands)
+         write_json(output / "cases.json", [{key: str(value) if isinstance(value, Path) else value
+                                             for key, value in case.items() if key != "reference"} for case in cases])
+-        rows = measure(cases, commands, output, environment, args.timeout, deadline, args.candidate_label)
++        rows = None if args.pilot_only else measure(cases, commands, output, environment, args.timeout, deadline, args.candidate_label)
+         require(time.monotonic() <= deadline, "total run budget exhausted before completion")
+         require(all(sha256(entry["path"]) == entry["sha256"] for entry in binaries.values()), "binary changed during run")
+         require(candidate is None or sha256(candidate["source_path"]) == candidate["source_sha256"],
+                 "candidate source changed during run")
++        require(generated_source is None or sha256(generated_source["path"]) == generated_source["sha256"],
++                "AOT generated source changed during run")
+         require(all(source_snapshot(snapshot["path"]) == snapshot for snapshot in sources.values()), "source changed during run")
++        if args.validation == "certificate":
++            for case in cases:
++                certificate_validation.verify_evidence(sys.modules[__name__], case)
++        if args.pilot_only:
++            manifest["status"] = "pilot-complete"
++            manifest["validated_samples"] = 0
++            manifest["performance_status"] = "incomplete; no five-run measurements requested"
++            write_json(output / "manifest.json", manifest)
++            print(f"PILOT COMPLETE cases={len(cases)} arms={len(commands)} validated_samples=0 performance=incomplete artifacts={output}")
++            return 0
+         write_json(output / "summary.json", {"status": "complete", "timing_scope": TIMING, "rows": rows,
++                                            "validation": args.validation,
+                                             "interpretation": "AOT/native wall ratios and conflicts/sec are descriptive across different solver policies"})
+-        with (output / "summary.tsv").open("w") as table:
+-            table.write("case\tarm\tpolicy\tn\tmedian_wall_s\tmin_wall_s\tmax_wall_s\tconflicts\tdescriptive_conflicts_per_wall_second\n")
+-            for row in rows:
+-                for arm in commands:
+-                    value = row[arm]
+-                    table.write(f"{row['case']}\t{arm}\t{row[arm + '_policy']}\t{REPETITIONS}\t"
+-                                f"{value['median_wall_s']:.9f}\t{value['min_wall_s']:.9f}\t{value['max_wall_s']:.9f}\t"
+-                                f"{value['conflicts']}\t{value['median_conflicts_per_wall_second_descriptive']:.3f}\n")
++        write_summary_tsv(output / "summary.tsv", rows, commands)
+         manifest["status"] = "complete"
+         manifest["validated_samples"] = len(cases) * len(commands) * REPETITIONS
+         write_json(output / "manifest.json", manifest)
+diff --git a/benchmarks/run_native_oracle.sh b/benchmarks/run_native_oracle.sh
+index eed9794..f3560d8 100755
+--- a/benchmarks/run_native_oracle.sh
++++ b/benchmarks/run_native_oracle.sh
+@@ -271,14 +271,7 @@ prepare_cnf() {
+         fail "$name" input-open 'cannot open CNF for reading'
+     fi
+     [[ -s "$input" ]] || fail "$name" input 'CNF is empty'
+-    if "${normalizer_cmd[@]}" '
+-        /^[[:space:]]*%[[:space:]]*$/ && !tail {tail=1; next}
+-        tail && /^[[:space:]]*$/ {next}
+-        tail && /^[[:space:]]*0[[:space:]]*$/ && !zero {zero=1; next}
+-        tail {bad=1; exit 65}
+-        {print}
+-        END {if (bad) exit 65}
+-    ' <&"$input_fd" > "$output"; then
++    if "${normalizer_cmd[@]}" -f "$ROOT/benchmarks/normalize_cnf.awk" <&"$input_fd" > "$output"; then
+         exec {input_fd}<&-
+     else
+         rc=$?
+diff --git a/benchmarks/test_compare_native.py b/benchmarks/test_compare_native.py
+index ba8a05a..364f99b 100644
+--- a/benchmarks/test_compare_native.py
++++ b/benchmarks/test_compare_native.py
+@@ -6,6 +6,7 @@ real CLI. Formula preparation and VM/AOT correctness remain run_native_oracle.sh
+ separately tested responsibility. These tests are not performance measurements.
+ """
+ import json
++import csv
+ import os
+ from pathlib import Path
+ import shutil
+@@ -380,6 +381,19 @@ class SummaryTests(unittest.TestCase):
+         self.assertEqual(row["native"]["median_conflicts_per_wall_second_descriptive"], 4)
+         self.assertEqual(row["aot_over_native_wall_ratio_policy_confounded"], 1)
+ 
++    def test_tsv_retains_validation_on_every_exported_row(self):
++        row = runner.summarize(self.cases, self.samples)[0]
++        rows = [dict(row, case=mode, validation=mode) for mode in
++                ("vm-differential", "vm-differential+certificate", "certificate")]
++        with tempfile.TemporaryDirectory(prefix="ems-summary-tsv-") as directory:
++            path = Path(directory) / "summary.tsv"
++            runner.write_summary_tsv(path, rows, runner.ARMS)
++            with path.open() as stream:
++                exported = list(csv.DictReader(stream, delimiter="\t"))
++        self.assertEqual(len(exported), len(rows) * len(runner.ARMS))
++        self.assertEqual({(row["case"], row["validation"], row["arm"]) for row in exported},
++                         {(row["case"], row["validation"], arm) for row in rows for arm in runner.ARMS})
++
+     def test_missing_sample_cannot_complete(self):
+         with self.assertRaisesRegex(runner.Failure, "incomplete/duplicate sample population"):
+             runner.summarize(self.cases, self.samples[:-1])

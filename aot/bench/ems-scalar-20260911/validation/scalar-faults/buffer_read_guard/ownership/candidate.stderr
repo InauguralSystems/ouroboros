@@ -1,0 +1,1 @@
+candidate: /tmp/aot-slot-scalar-faults-6f5ghnvp/buffer_read_guard/test/slot_index_ownership.c:205: check_scalar_consumers: Assertion `scalar_index_eq_num(values, slot_from_num(0), EIGS_NUM_MAX)' failed.

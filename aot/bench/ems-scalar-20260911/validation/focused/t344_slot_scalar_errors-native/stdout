@@ -1,0 +1,47 @@
+nonzero
+sum nonzero
+5
+{"kind": "value", "message": "index must be an integer, got 0.5", "line": 6}
+{"kind": "value", "message": "index must be an integer, got 0.5", "line": 13}
+{"kind": "value", "message": "index must be an integer, got 0.5", "line": 19}
+unchanged
+{"kind": "value", "message": "index must be an integer, got 1e+100", "line": 6}
+{"kind": "value", "message": "index must be an integer, got 1e+100", "line": 13}
+{"kind": "value", "message": "index must be an integer, got 1e+100", "line": 19}
+unchanged
+{"kind": "value", "message": "index must be an integer, got -1e+100", "line": 6}
+{"kind": "value", "message": "index must be an integer, got -1e+100", "line": 13}
+{"kind": "value", "message": "index must be an integer, got -1e+100", "line": 19}
+unchanged
+{"kind": "type_mismatch", "message": "cannot index list", "line": 6}
+{"kind": "type_mismatch", "message": "cannot apply '+' to null and num", "line": 13}
+{"kind": "type_mismatch", "message": "cannot apply '+' to null and num", "line": 19}
+unchanged
+{"kind": "type_mismatch", "message": "cannot index list", "line": 6}
+{"kind": "type_mismatch", "message": "cannot apply '+' to list and num (use 'append of [xs, v]' to add an element, or 'concat of [a, b]' to join two lists)", "line": 13}
+{"kind": "type_mismatch", "message": "cannot apply '+' to list and num (use 'append of [xs, v]' to add an element, or 'concat of [a, b]' to join two lists)", "line": 19}
+unchanged
+{"kind": "type_mismatch", "message": "cannot index list", "line": 6}
+{"kind": "type_mismatch", "message": "cannot apply '+' to str and num (use an f-string or 'str of' to concatenate)", "line": 13}
+{"kind": "type_mismatch", "message": "cannot apply '+' to str and num (use an f-string or 'str of' to concatenate)", "line": 19}
+unchanged
+nonzero
+sum nonzero
+3
+{"kind": "type_mismatch", "message": "cannot index null", "line": 6}
+{"kind": "type_mismatch", "message": "cannot index null", "line": 13}
+{"kind": "type_mismatch", "message": "cannot index null", "line": 19}
+unchanged
+{"kind": "type_mismatch", "message": "cannot index num", "line": 6}
+{"kind": "type_mismatch", "message": "cannot index num", "line": 13}
+{"kind": "type_mismatch", "message": "cannot index num", "line": 19}
+unchanged
+{"kind": "value", "message": "index must be an integer, got 0.5", "line": 6}
+{"kind": "value", "message": "index must be an integer, got 0.5", "line": 13}
+{"kind": "value", "message": "index must be an integer, got 0.5", "line": 19}
+unchanged
+{"kind": "index_range", "message": "buffer index 2 out of range (length 2)", "line": 6}
+{"kind": "index_range", "message": "buffer index 2 out of range (length 2)", "line": 13}
+{"kind": "index_range", "message": "buffer index 2 out of range (length 2)", "line": 19}
+unchanged
+skipped invalid target

@@ -1,0 +1,13 @@
+# Arithmetic and indexed RHS operands are outside the nonraising-atom
+# whitelist, even when these particular inputs are valid.
+define excluded_rhs(source, selector, values) as:
+    local table is source
+    local index is selector
+    local right is values
+    if table[index] == (4 + 2):
+        print of "arithmetic rhs"
+    if table[index] == right[index]:
+        print of "indexed rhs"
+    return 0
+
+excluded_rhs of [[6, 9], 0, [6, 8]]

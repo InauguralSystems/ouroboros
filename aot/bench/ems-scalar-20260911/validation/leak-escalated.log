@@ -1,0 +1,9 @@
+PASS: leak l1_boxed_local_reassign (253 allocation(s), allowance 253)
+PASS: leak l2_boxed_slot_numeric_read (253 allocation(s), allowance 252)
+PASS: leak l3_genp_rebind (253 allocation(s), allowance 255)
+PASS: leak l4_genp_for_binder (253 allocation(s), allowance 255)
+PASS: leak l5_owned_arg_temp (252 allocation(s), allowance 253)
+--- leak tier: 5 fixture(s) ---
+slot index ownership: baseline witness=1 allocations=253 exit=1
+slot index ownership: candidate witness=1 allocations=253 exit=1
+PASS: slot index ownership arms=2 witnesses=2 baseline_allocations=253 candidate_allocations=253 (no slack)

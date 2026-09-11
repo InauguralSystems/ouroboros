@@ -1,0 +1,33 @@
+equal
+nonzero
+both
+20
+[10, 20, 30]
+equal
+nonzero
+both
+either
+word
+[null, "word", [7, 8]]
+equal
+nonzero
+either
+[7, 8]
+[null, "word", [7, 8]]
+equal
+nonzero
+both
+7
+{"ab": 7, "a": null}
+equal
+nonzero
+both
+b
+abc
+equal
+nonzero
+both
+either
+4.5
+<buffer:3>
+["survives", 9]

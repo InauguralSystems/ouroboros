@@ -1,0 +1,7 @@
+PASS: slot scalar emission t343_slot_scalar_conditions.eigs {'aot_lv_index_add_slots': 2, 'aot_scalar_add_slots': 1, 'aot_scalar_equal': 6, 'aot_scalar_index': 2, 'aot_scalar_number': 5, 'aot_scalar_slot': 6}
+PASS: slot scalar emission t344_slot_scalar_errors.eigs {'aot_lv_index_add_slots': 1, 'aot_scalar_add_slots': 1, 'aot_scalar_equal': 2, 'aot_scalar_index': 2, 'aot_scalar_number': 2, 'aot_scalar_slot': 1}
+PASS: slot scalar emission t345_slot_scalar_callbacks.eigs {}
+PASS: slot scalar emission t346_slot_scalar_traced.eigs {}
+PASS: slot scalar emission t347_slot_scalar_observed.eigs {}
+PASS: slot scalar emission t348_slot_scalar_rhs_excluded.eigs {}
+SLOT_SCALAR_EMISSION_DONE fixtures=6 checks=6

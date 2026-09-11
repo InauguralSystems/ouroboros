@@ -1,0 +1,10 @@
+case	arm	policy	n	median_wall_s	min_wall_s	max_wall_s	conflicts	descriptive_conflicts_per_wall_second
+pigeonhole-6-5	aot	CDCL current defaults (regime C); --cdcl; no policy overrides	5	0.066960222	0.066135475	0.089855230	140	2090.794
+pigeonhole-6-5	candidate	CDCL current defaults (regime C); --cdcl; no policy overrides; candidate=timing-only slot-expressions-only	5	0.069538542	0.061915416	0.075976168	140	2013.272
+pigeonhole-6-5	native	native MiniSat executable defaults; no policy overrides	5	0.007868218	0.007274159	0.009005903	138	17538.914
+tseitin-3x3-odd	aot	CDCL current defaults (regime C); --cdcl; no policy overrides	5	0.205365268	0.187128114	0.256532261	592	2882.669
+tseitin-3x3-odd	candidate	CDCL current defaults (regime C); --cdcl; no policy overrides; candidate=timing-only slot-expressions-only	5	0.209795684	0.181457334	0.223133746	592	2821.793
+tseitin-3x3-odd	native	native MiniSat executable defaults; no policy overrides	5	0.010718116	0.008150892	0.014775276	731	68202.285
+tseitin-4x4-odd	aot	CDCL current defaults (regime C); --cdcl; no policy overrides	5	9.306915478	8.786993843	10.179539075	9986	1072.966
+tseitin-4x4-odd	candidate	CDCL current defaults (regime C); --cdcl; no policy overrides; candidate=timing-only slot-expressions-only	5	8.553617714	8.322311182	8.691385389	9986	1167.459
+tseitin-4x4-odd	native	native MiniSat executable defaults; no policy overrides	5	0.267692026	0.264918689	0.324599747	84150	314353.779

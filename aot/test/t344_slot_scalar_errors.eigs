@@ -1,0 +1,48 @@
+define scalar_errors(source, selector, other) as:
+    local table is source
+    local index is selector
+    local extra is other
+    try:
+        if table[index] == 0:
+            print of "zero"
+        else:
+            print of "nonzero"
+    catch problem:
+        print of problem
+    try:
+        if table[index + extra] != 0:
+            print of "sum nonzero"
+    catch problem:
+        print of problem
+    local result is "unchanged"
+    try:
+        result is table[index + extra]
+    catch problem:
+        print of problem
+    print of result
+    return 0
+
+scalar_errors of [[4, 5], -1, 0]
+scalar_errors of [[4, 5], 0.5, 0]
+scalar_errors of [[4, 5], 1e100, 0]
+scalar_errors of [[4, 5], -1e100, 0]
+scalar_errors of [[4, 5], null, 0]
+scalar_errors of [[4, 5], [0], 0]
+scalar_errors of [[4, 5], "key", 0]
+scalar_errors of [{"key": 3}, "key", ""]
+scalar_errors of [null, 0, 0]
+scalar_errors of [9, 0, 0]
+local values is buffer of 2
+scalar_errors of [values, 0.5, 0]
+scalar_errors of [values, 2, 0]
+
+define skipped_error(source, selector) as:
+    local table is source
+    local index is selector
+    if (index == 0) or (table[index] == 0):
+        print of "skipped invalid target"
+    if (index != 0) and (table[index] == 0):
+        print of "unreachable"
+    return 0
+
+skipped_error of [null, 0]

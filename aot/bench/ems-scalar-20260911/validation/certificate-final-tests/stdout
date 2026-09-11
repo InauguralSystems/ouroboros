@@ -1,0 +1,75 @@
+CERTIFICATE case=tseitin-3x3-odd
+CERTIFICATE case=tseitin-4x4-odd
+CERTIFICATE case=tseitin-4x5-odd
+CERTIFICATE case=tseitin-3x3-odd
+CERTIFICATE case=tseitin-4x4-odd
+CERTIFICATE case=tseitin-4x5-odd
+SAMPLE case=synthetic repetition=1/5 arm=aot
+CERTIFICATE case=tseitin-3x3-odd
+CERTIFICATE case=tseitin-4x4-odd
+CERTIFICATE case=tseitin-4x5-odd
+SAMPLE case=synthetic repetition=1/5 arm=aot
+SAMPLE case=synthetic repetition=1/5 arm=aot
+SAMPLE case=synthetic repetition=1/5 arm=native
+SAMPLE case=synthetic repetition=2/5 arm=native
+SAMPLE case=synthetic repetition=2/5 arm=aot
+SAMPLE case=synthetic repetition=3/5 arm=aot
+SAMPLE case=synthetic repetition=3/5 arm=native
+SAMPLE case=synthetic repetition=4/5 arm=native
+SAMPLE case=synthetic repetition=4/5 arm=aot
+SAMPLE case=synthetic repetition=5/5 arm=aot
+SAMPLE case=synthetic repetition=5/5 arm=native
+SAMPLE case=synthetic repetition=1/5 arm=aot
+SAMPLE case=synthetic repetition=1/5 arm=native
+SAMPLE case=synthetic repetition=2/5 arm=native
+SAMPLE case=synthetic repetition=2/5 arm=aot
+SAMPLE case=synthetic repetition=3/5 arm=aot
+SAMPLE case=synthetic repetition=3/5 arm=native
+SAMPLE case=synthetic repetition=4/5 arm=native
+SAMPLE case=synthetic repetition=4/5 arm=aot
+SAMPLE case=synthetic repetition=5/5 arm=aot
+SAMPLE case=synthetic repetition=5/5 arm=native
+SAMPLE case=synthetic-unsat repetition=1/5 arm=aot
+SAMPLE case=synthetic-unsat repetition=1/5 arm=aot
+WARMUP case=synthetic-unsat repetition=0/5 arm=candidate
+WARMUP case=synthetic-unsat repetition=0/5 arm=candidate
+SAMPLE case=synthetic-unsat repetition=1/5 arm=aot
+SAMPLE case=synthetic-unsat repetition=1/5 arm=candidate
+SAMPLE case=synthetic-unsat repetition=1/5 arm=native
+SAMPLE case=synthetic-unsat repetition=2/5 arm=candidate
+SAMPLE case=synthetic-unsat repetition=2/5 arm=native
+SAMPLE case=synthetic-unsat repetition=2/5 arm=aot
+SAMPLE case=synthetic-unsat repetition=3/5 arm=native
+SAMPLE case=synthetic-unsat repetition=3/5 arm=aot
+SAMPLE case=synthetic-unsat repetition=3/5 arm=candidate
+SAMPLE case=synthetic-unsat repetition=4/5 arm=aot
+SAMPLE case=synthetic-unsat repetition=4/5 arm=candidate
+SAMPLE case=synthetic-unsat repetition=4/5 arm=native
+SAMPLE case=synthetic-unsat repetition=5/5 arm=candidate
+SAMPLE case=synthetic-unsat repetition=5/5 arm=native
+SAMPLE case=synthetic-unsat repetition=5/5 arm=aot
+SAMPLE case=synthetic-unsat repetition=1/5 arm=aot
+SAMPLE case=synthetic-unsat repetition=1/5 arm=aot
+SAMPLE case=synthetic-unsat repetition=1/5 arm=aot
+SAMPLE case=synthetic-unsat repetition=1/5 arm=native
+SAMPLE case=synthetic-unsat repetition=1/5 arm=aot
+SAMPLE case=synthetic-unsat repetition=1/5 arm=native
+SAMPLE case=synthetic-unsat repetition=1/5 arm=aot
+SAMPLE case=synthetic-unsat repetition=1/5 arm=native
+SAMPLE case=synthetic-unsat repetition=1/5 arm=aot
+SAMPLE case=synthetic-unsat repetition=1/5 arm=native
+SAMPLE case=synthetic-unsat repetition=1/5 arm=aot
+SAMPLE case=synthetic-unsat repetition=1/5 arm=native
+SAMPLE case=synthetic-unsat repetition=1/5 arm=aot
+SAMPLE case=synthetic-unsat repetition=1/5 arm=native
+SAMPLE case=synthetic-unsat repetition=2/5 arm=native
+SAMPLE case=synthetic-unsat repetition=2/5 arm=aot
+SAMPLE case=synthetic-unsat repetition=3/5 arm=aot
+SAMPLE case=synthetic-unsat repetition=3/5 arm=native
+SAMPLE case=synthetic-unsat repetition=4/5 arm=native
+SAMPLE case=synthetic-unsat repetition=4/5 arm=aot
+SAMPLE case=synthetic-unsat repetition=5/5 arm=aot
+SAMPLE case=synthetic-unsat repetition=5/5 arm=native
+SAMPLE case=synthetic-unsat repetition=1/5 arm=aot
+SAMPLE case=synthetic-unsat repetition=1/5 arm=aot
+SAMPLE case=synthetic-unsat repetition=1/5 arm=aot

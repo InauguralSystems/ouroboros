@@ -1,0 +1,9 @@
+define observed_condition(source, selector) as:
+    local table is source
+    local index is selector
+    print of (report of index)
+    if table[index] == 7:
+        print of "seven"
+    return 0
+
+observed_condition of [[3, 7], 1]

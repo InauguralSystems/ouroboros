@@ -1,0 +1,13 @@
+{
+  "cleanup": null,
+  "command": [
+    "/tmp/ems-close-20260911/scalar-focused/t344_slot_scalar_errors"
+  ],
+  "cwd": "/home/jon/src/wt/ouro-gap-20260911",
+  "directory": "/tmp/ems-close-20260911/scalar-focused/t344_slot_scalar_errors-native",
+  "interrupted_signal": null,
+  "returncode": 0,
+  "timed_out": false,
+  "timeout_seconds": 60,
+  "wall_ns": 7296119
+}

@@ -1,0 +1,97 @@
+START certificate-final-tests
+DONE certificate-final-tests rc= 0 wall_s= 26.552648898
+=tseitin-4x4-odd
+CERTIFICATE case=tseitin-4x5-odd
+SAMPLE case=synthetic repetition=1/5 arm=aot
+CERTIFICATE case=tseitin-3x3-odd
+CERTIFICATE case=tseitin-4x4-odd
+CERTIFICATE case=tseitin-4x5-odd
+SAMPLE case=synthetic repetition=1/5 arm=aot
+SAMPLE case=synthetic repetition=1/5 arm=aot
+SAMPLE case=synthetic repetition=1/5 arm=native
+SAMPLE case=synthetic repetition=2/5 arm=native
+SAMPLE case=synthetic repetition=2/5 arm=aot
+SAMPLE case=synthetic repetition=3/5 arm=aot
+SAMPLE case=synthetic repetition=3/5 arm=native
+SAMPLE case=synthetic repetition=4/5 arm=native
+SAMPLE case=synthetic repetition=4/5 arm=aot
+SAMPLE case=synthetic repetition=5/5 arm=aot
+SAMPLE case=synthetic repetition=5/5 arm=native
+SAMPLE case=synthetic repetition=1/5 arm=aot
+SAMPLE case=synthetic repetition=1/5 arm=native
+SAMPLE case=synthetic repetition=2/5 arm=native
+SAMPLE case=synthetic repetition=2/5 arm=aot
+SAMPLE case=synthetic repetition=3/5 arm=aot
+SAMPLE case=synthetic repetition=3/5 arm=native
+SAMPLE case=synthetic repetition=4/5 arm=native
+SAMPLE case=synthetic repetition=4/5 arm=aot
+SAMPLE case=synthetic repetition=5/5 arm=aot
+SAMPLE case=synthetic repetition=5/5 arm=native
+SAMPLE case=synthetic-unsat repetition=1/5 arm=aot
+SAMPLE case=synthetic-unsat repetition=1/5 arm=aot
+WARMUP case=synthetic-unsat repetition=0/5 arm=candidate
+WARMUP case=synthetic-unsat repetition=0/5 arm=candidate
+SAMPLE case=synthetic-unsat repetition=1/5 arm=aot
+SAMPLE case=synthetic-unsat repetition=1/5 arm=candidate
+SAMPLE case=synthetic-unsat repetition=1/5 arm=native
+SAMPLE case=synthetic-unsat repetition=2/5 arm=candidate
+SAMPLE case=synthetic-unsat repetition=2/5 arm=native
+SAMPLE case=synthetic-unsat repetition=2/5 arm=aot
+SAMPLE case=synthetic-unsat repetition=3/5 arm=native
+SAMPLE case=synthetic-unsat repetition=3/5 arm=aot
+SAMPLE case=synthetic-unsat repetition=3/5 arm=candidate
+SAMPLE case=synthetic-unsat repetition=4/5 arm=aot
+SAMPLE case=synthetic-unsat repetition=4/5 arm=candidate
+SAMPLE case=synthetic-unsat repetition=4/5 arm=native
+SAMPLE case=synthetic-unsat repetition=5/5 arm=candidate
+SAMPLE case=synthetic-unsat repetition=5/5 arm=native
+SAMPLE case=synthetic-unsat repetition=5/5 arm=aot
+SAMPLE case=synthetic-unsat repetition=1/5 arm=aot
+SAMPLE case=synthetic-unsat repetition=1/5 arm=aot
+SAMPLE case=synthetic-unsat repetition=1/5 arm=aot
+SAMPLE case=synthetic-unsat repetition=1/5 arm=native
+SAMPLE case=synthetic-unsat repetition=1/5 arm=aot
+SAMPLE case=synthetic-unsat repetition=1/5 arm=native
+SAMPLE case=synthetic-unsat repetition=1/5 arm=aot
+SAMPLE case=synthetic-unsat repetition=1/5 arm=native
+SAMPLE case=synthetic-unsat repetition=1/5 arm=aot
+SAMPLE case=synthetic-unsat repetition=1/5 arm=native
+SAMPLE case=synthetic-unsat repetition=1/5 arm=aot
+SAMPLE case=synthetic-unsat repetition=1/5 arm=native
+SAMPLE case=synthetic-unsat repetition=1/5 arm=aot
+SAMPLE case=synthetic-unsat repetition=1/5 arm=native
+SAMPLE case=synthetic-unsat repetition=2/5 arm=native
+SAMPLE case=synthetic-unsat repetition=2/5 arm=aot
+SAMPLE case=synthetic-unsat repetition=3/5 arm=aot
+SAMPLE case=synthetic-unsat repetition=3/5 arm=native
+SAMPLE case=synthetic-unsat repetition=4/5 arm=native
+SAMPLE case=synthetic-unsat repetition=4/5 arm=aot
+SAMPLE case=synthetic-unsat repetition=5/5 arm=aot
+SAMPLE case=synthetic-unsat repetition=5/5 arm=native
+SAMPLE case=synthetic-unsat repetition=1/5 arm=aot
+SAMPLE case=synthetic-unsat repetition=1/5 arm=aot
+SAMPLE case=synthetic-unsat repetition=1/5 arm=aot
+
+sighup_cleans_session (test_compare_native.ProcessTests.test_real_preflight_sighup_cleans_session) ... ok
+test_real_preflight_sigint_cleans_session (test_compare_native.ProcessTests.test_real_preflight_sigint_cleans_session) ... ok
+test_real_preflight_sigterm_cleans_session (test_compare_native.ProcessTests.test_real_preflight_sigterm_cleans_session) ... ok
+test_real_preflight_total_budget_kills_emitter (test_compare_native.ProcessTests.test_real_preflight_total_budget_kills_emitter) ... ok
+test_real_processes_five_samples_each (test_compare_native.ProcessTests.test_real_processes_five_samples_each) ... ok
+test_signals_during_popen_and_cleanup_are_deferred (test_compare_native.ProcessTests.test_signals_during_popen_and_cleanup_are_deferred) ... ok
+test_timeout_is_red (test_compare_native.ProcessTests.test_timeout_is_red) ... ok
+test_timeout_kills_gnu_timeout_process_group (test_compare_native.ProcessTests.test_timeout_kills_gnu_timeout_process_group) ... ok
+test_timeout_kills_process_group (test_compare_native.ProcessTests.test_timeout_kills_process_group) ... ok
+test_wrong_verdict_is_red (test_compare_native.ProcessTests.test_wrong_verdict_is_red) ... ok
+test_duplicate_cannot_replace_missing_sample (test_compare_native.SummaryTests.test_duplicate_cannot_replace_missing_sample) ... ok
+test_known_median_and_range (test_compare_native.SummaryTests.test_known_median_and_range) ... ok
+test_missing_sample_cannot_complete (test_compare_native.SummaryTests.test_missing_sample_cannot_complete) ... ok
+test_nonpositive_time_cannot_complete (test_compare_native.SummaryTests.test_nonpositive_time_cannot_complete) ... ok
+test_tsv_retains_validation_on_every_exported_row (test_compare_native.SummaryTests.test_tsv_retains_validation_on_every_exported_row) ... ok
+test_unvalidated_sample_cannot_complete (test_compare_native.SummaryTests.test_unvalidated_sample_cannot_complete) ... ok
+
+----------------------------------------------------------------------
+Ran 61 tests in 26.125s
+
+OK
+
+STAGE_DONE tests

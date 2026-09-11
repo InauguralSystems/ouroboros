@@ -1,0 +1,14 @@
+{
+  "cleanup": null,
+  "command": [
+    "python3",
+    "/tmp/ems-close-20260911/scalar-old-emitter-cli/layout/aot/test/slot_scalar_emission.py"
+  ],
+  "cwd": "/home/jon/src/wt/ouro-gap-20260911",
+  "directory": "/tmp/ems-close-20260911/scalar-old-emitter-cli/process",
+  "interrupted_signal": null,
+  "returncode": 1,
+  "timed_out": false,
+  "timeout_seconds": 90,
+  "wall_ns": 571777452
+}

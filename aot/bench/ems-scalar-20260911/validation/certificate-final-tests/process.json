@@ -1,0 +1,22 @@
+{
+  "cleanup": null,
+  "command": [
+    "python3",
+    "-B",
+    "-m",
+    "unittest",
+    "discover",
+    "-s",
+    "benchmarks",
+    "-p",
+    "test_*.py",
+    "-v"
+  ],
+  "cwd": "/home/jon/src/wt/ems-cert-20260911",
+  "directory": "/tmp/ems-close-20260911/processes/certificate-final-tests",
+  "interrupted_signal": null,
+  "returncode": 0,
+  "timed_out": false,
+  "timeout_seconds": 180,
+  "wall_ns": 26552648898
+}

@@ -1,0 +1,1 @@
+FAIL: slot scalar emission: t343_slot_scalar_conditions.eigs: expected ['aot_lv_index_add_slots', 'aot_scalar_add_slots', 'aot_scalar_equal', 'aot_scalar_index', 'aot_scalar_slot'], got []

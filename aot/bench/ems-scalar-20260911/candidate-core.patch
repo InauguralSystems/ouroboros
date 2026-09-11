@@ -1,0 +1,222 @@
+diff --git a/aot/aot_rt.h b/aot/aot_rt.h
+index b935ea2..c86c6b2 100644
+--- a/aot/aot_rt.h
++++ b/aot/aot_rt.h
+@@ -2233,6 +2233,93 @@ static inline void aot_lv_index_s(EigsSlot *dst, EigsSlot target, EigsSlot index
+     aot_lv_set(dst, aot_index_get(t, i));
+ }
+ 
++/* Call-free scalar consumers of lowered frame slots. Unlike assignment into
++ * an EigsSlot, reading a heap numeric list element MUST NOT clamp it. A slot
++ * immediate crosses slot_to_value/make_num and a buffer read crosses make_num;
++ * those two boundaries DO clamp. Keep the original owned Value on uncommon
++ * paths so equality and index diagnostics still use the existing helpers.
++ * A null `value` means `number` is available without an owned heap object.
++ * These temporaries never escape a call-free condition/index assignment. */
++typedef struct { double number; Value *value; } AotScalarRead;
++
++static inline AotScalarRead aot_scalar_number(double number) {
++    AotScalarRead result = {number, NULL};
++    return result;
++}
++static inline AotScalarRead aot_scalar_owned(Value *value) {
++    AotScalarRead result = {0, value};
++    return result;
++}
++static inline AotScalarRead aot_scalar_slot(EigsSlot slot) {
++    if (slot_is_num(slot)) return aot_scalar_number(num_guard(slot.d));
++    if (slot_is_bool(slot)) return aot_scalar_number(slot_as_bool(slot) ? 1 : 0);
++    if (slot_is_ptr(slot)) {
++        Value *value = slot_as_ptr(slot);
++        /* Structural equality first checks pointer identity: the same heap
++         * NaN equals itself there even though NaN == NaN is false. */
++        if (value && value->type == VAL_NUM && !isnan(value->data.num))
++            return aot_scalar_number(value->data.num);
++    }
++    return aot_scalar_owned(slot_to_value(slot));
++}
++static inline Value *aot_scalar_view(AotScalarRead scalar, Value *scratch) {
++    if (scalar.value) return scalar.value;
++    memset(scratch, 0, sizeof(*scratch));
++    scratch->type = VAL_NUM;
++    scratch->data.num = scalar.number;
++    scratch->arena = 1; /* Existing consuming helpers may release this view. */
++    return scratch;
++}
++static inline AotScalarRead aot_scalar_add_slots(EigsSlot left, EigsSlot right) {
++    AotScalarRead l = aot_scalar_slot(left);
++    AotScalarRead r = aot_scalar_slot(right);
++    if (!l.value && !r.value)
++        return aot_scalar_number(num_guard(l.number + r.number));
++    Value lv, rv;
++    return aot_scalar_owned(aot_add(aot_scalar_view(l, &lv), aot_scalar_view(r, &rv)));
++}
++static inline AotScalarRead aot_scalar_index(EigsSlot target, AotScalarRead index) {
++    double number = index.number;
++    int numeric = !index.value;
++    if (index.value && index.value->type == VAL_NUM) {
++        number = index.value->data.num;
++        numeric = 1;
++    }
++    if (numeric && slot_is_ptr(target)) {
++        Value *container = slot_as_ptr(target);
++        if (container && container->type == VAL_LIST && number >= 0 &&
++            number < container->data.list.count && (double)(int)number == number) {
++            Value *element = container->data.list.items[(int)number];
++            if (element && element->type == VAL_NUM && !isnan(element->data.num)) {
++                double result = element->data.num; /* raw even for arena nums */
++                val_decref(index.value);
++                return aot_scalar_number(result);
++            }
++        } else if (container && container->type == VAL_BUFFER && number >= 0 &&
++                   number < container->data.buffer.count && (double)(int)number == number) {
++            double result = num_guard(container->data.buffer.data[(int)number]);
++            val_decref(index.value);
++            return aot_scalar_number(result);
++        }
++    }
++    Value scratch;
++    return aot_scalar_owned(aot_index_get(slot_to_value(target), aot_scalar_view(index, &scratch)));
++}
++static inline int aot_scalar_equal(AotScalarRead left, AotScalarRead right) {
++    if (!left.value && !right.value) return left.number == right.number;
++    Value lv, rv;
++    int equal = values_equal(aot_scalar_view(left, &lv), aot_scalar_view(right, &rv));
++    val_decref(left.value);
++    val_decref(right.value);
++    return equal;
++}
++static inline void aot_lv_index_add_slots(EigsSlot *dst, EigsSlot target,
++                                         EigsSlot left, EigsSlot right) {
++    AotScalarRead index = aot_scalar_add_slots(left, right);
++    if (!index.value) aot_lv_index_i(dst, target, index.number);
++    else aot_lv_index_v(dst, target, index.value);
++}
++
+ /* (#86) native argv -> the VM's args convention: builtin_args reads
+  * g_argv[2..] (slot 0 = runtime, 1 = script). The native binary's user
+  * args start at argv[1], so shift by one synthetic slot. */
+diff --git a/aot/compile.eigs b/aot/compile.eigs
+index c574604..2bba21d 100644
+--- a/aot/compile.eigs
++++ b/aot/compile.eigs
+@@ -3281,7 +3281,9 @@ define emit_cond(node, nm, bt) as:
+     if (is_num_expr of [node, nm, bt]) == 1:
+         c is "(" + (emit_num of [node, nm, bt, 0]) + " != 0.0)"
+     else:
+-        local cn1 is emit_cmp_n of [node, nm, bt, 1]
++        local cn1 is emit_slot_condition of [node, nm, bt]
++        if cn1 == "":
++            cn1 is emit_cmp_n of [node, nm, bt, 1]
+         if cn1 != "":
+             c is cn1
+         else:
+@@ -3400,6 +3402,98 @@ define lowered_slot_expr(node, nm, bt) as:
+         return ""
+     return lv of name
+ 
++# Only actual lowered-frame storage participates. The complete consumer is
++# call-free, so borrowed sources cannot be rebound by a sibling expression.
++# Keep this scalar reader separate from assignment: a list's heap number is
++# read raw, whereas storing it in a local may cross a later make_num boundary.
++define slot_sum_operands(node, nm, bt) as:
++    local n is unwrap of node
++    if n[0] != "binop":
++        return []
++    if n[1] != "+":
++        return []
++    local left is lowered_slot_expr of [n[2], nm, bt]
++    local right is lowered_slot_expr of [n[3], nm, bt]
++    if (left == "") or (right == ""):
++        return []
++    return [left, right]
++
++define emit_slot_index_operand(node, nm, bt) as:
++    local source is lowered_slot_expr of [node, nm, bt]
++    if source != "":
++        return "aot_scalar_slot(" + source + ")"
++    local pair is slot_sum_operands of [node, nm, bt]
++    if (len of pair) == 2:
++        return "aot_scalar_add_slots(" + pair[0] + ", " + pair[1] + ")"
++    return ""
++
++define emit_slot_scalar_read(node, nm, bt) as:
++    if (is_num_expr of [node, nm, bt]) == 1:
++        # Preserve the existing numeric emitter's checks and boundaries.
++        return "aot_scalar_number(" + (emit_num of [node, nm, bt, 0]) + ")"
++    local source is lowered_slot_expr of [node, nm, bt]
++    if source != "":
++        return "aot_scalar_slot(" + source + ")"
++    local n is unwrap of node
++    if n[0] == "index":
++        local target is lowered_slot_expr of [n[1], nm, bt]
++        local index is emit_slot_index_operand of [n[2], nm, bt]
++        if (target != "") and (index != ""):
++            return "({ EigsSlot _sct = " + target + "; AotScalarRead _sci = " + index + "; aot_scalar_index(_sct, _sci); })"
++    return ""
++
++define slot_scalar_rhs_safe(node, nm, bt) as:
++    # A borrowed frame slot may need an owned Value fallback on the LHS.
++    # Do not stage that ownership before a RHS which can raise: longjmp does
++    # not run scalar_equal's release. Call-free alone is insufficient.
++    if (lowered_slot_expr of [node, nm, bt]) != "":
++        return 1
++    local n is unwrap of node
++    if n[0] == "num":
++        return 1
++    if n[0] == "unary":
++        local operand is unwrap of n[2]
++        if (n[1] == "-") and (operand[0] == "num"):
++            return 1
++        return 0
++    if n[0] == "ident":
++        if (nm[n[1]] == 1) and ((bound_bit_read_of of [n[1], nm]) == 0) and (g_cur_interloc[n[1]] != 1) and ((obs_name of n[1]) == 0):
++            return 1
++    return 0
++
++define emit_slot_condition(node, nm, bt) as:
++    if (g_lowerloc != 1) or ((has_call_node of node) == 1):
++        return ""
++    local n is unwrap of node
++    if n[0] != "binop":
++        return ""
++    if (n[1] == "and") or (n[1] == "or"):
++        local left_cond is emit_slot_condition of [n[2], nm, bt]
++        local right_cond is emit_slot_condition of [n[3], nm, bt]
++        if (left_cond == "") or (right_cond == ""):
++            return ""
++        local op is " && "
++        if n[1] == "or":
++            op is " || "
++        # Only condition position: and/or in value position return operands.
++        return "(" + left_cond + op + right_cond + ")"
++    if (n[1] != "==") and (n[1] != "!="):
++        return ""
++    if (slot_scalar_rhs_safe of [n[3], nm, bt]) != 1:
++        return ""
++    if ((is_num_expr of [n[2], nm, bt]) == 1) and ((is_num_expr of [n[3], nm, bt]) == 1):
++        return ""
++    local left_read is emit_slot_scalar_read of [n[2], nm, bt]
++    local right_read is emit_slot_scalar_read of [n[3], nm, bt]
++    if (left_read == "") or (right_read == ""):
++        return ""
++    local neg is ""
++    if n[1] == "!=":
++        neg is "!"
++    # Stage the READ, not just its index operands. The RHS is nonraising by
++    # the explicit atom whitelist above, not merely because it is call-free.
++    return "({ AotScalarRead _scl = " + left_read + "; AotScalarRead _scr = " + right_read + "; " + neg + "aot_scalar_equal(_scl, _scr); })"
++
+ define emit_stmt(node, ind, nm, bt, minits, gf) as:
+     local t is node[0]
+     if t == "_line":
+@@ -3606,6 +3700,9 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
+             if (si[0] == "index") and ((has_call_node of si) == 0):
+                 local st is lowered_slot_expr of [si[1], nm, bt]
+                 if st != "":
++                    local sumslots is slot_sum_operands of [si[2], nm, bt]
++                    if (len of sumslots) == 2:
++                        return ind + "{ EigsSlot _sit = " + st + "; EigsSlot _sil = " + sumslots[0] + "; EigsSlot _sir = " + sumslots[1] + "; aot_lv_index_add_slots(&" + (lv of name) + ", _sit, _sil, _sir); }\n"
+                     # Borrow only a call-local target, with no source call in
+                     # either operand. Stage target then index once, before the
+                     # destination changes (which may alias either operand).

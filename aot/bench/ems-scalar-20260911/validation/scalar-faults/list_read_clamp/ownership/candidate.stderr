@@ -1,0 +1,1 @@
+candidate: /tmp/aot-slot-scalar-faults-6f5ghnvp/list_read_clamp/test/slot_index_ownership.c:180: check_scalar_consumers: Assertion `scalar_index_eq_num(numbers, slot_from_num(0), INFINITY)' failed.
