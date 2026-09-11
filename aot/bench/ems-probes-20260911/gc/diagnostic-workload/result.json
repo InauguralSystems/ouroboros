@@ -1,0 +1,60 @@
+{
+  "prep_sha256": "e42272d67a81433bbb65372d57fcce7d9c276c5e227f173477417780d2fe1b87",
+  "status": "complete",
+  "processes": [
+    {
+      "command": [
+        "/usr/bin/time",
+        "-v",
+        "-o",
+        "/tmp/ems-close-20260911/gc-diagnostic-workload/baseline.time",
+        "--",
+        "/tmp/ems-close-20260911/gc-diagnostic-build/baseline",
+        "--cdcl",
+        "/tmp/ems-close-20260911/wall-range-only/oracle/case.HTu63l/input.cnf"
+      ],
+      "cwd": "/home/jon/src/InauguralSystems/EigenScriptEcosystem/EigenMiniSat",
+      "wall_ns": 9114308131,
+      "returncode": 0,
+      "timeout_seconds": 240,
+      "timed_out": false,
+      "interrupted_signal": null,
+      "directory": "/tmp/ems-close-20260911/gc-diagnostic-workload/baseline",
+      "cleanup": null
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-v",
+        "-o",
+        "/tmp/ems-close-20260911/gc-diagnostic-workload/candidate.time",
+        "--",
+        "/tmp/ems-close-20260911/gc-diagnostic-build/candidate",
+        "--cdcl",
+        "/tmp/ems-close-20260911/wall-range-only/oracle/case.HTu63l/input.cnf"
+      ],
+      "cwd": "/home/jon/src/InauguralSystems/EigenScriptEcosystem/EigenMiniSat",
+      "wall_ns": 8142819213,
+      "returncode": 0,
+      "timeout_seconds": 240,
+      "timed_out": false,
+      "interrupted_signal": null,
+      "directory": "/tmp/ems-close-20260911/gc-diagnostic-workload/candidate",
+      "cleanup": null
+    }
+  ],
+  "build_manifest_sha256": "fdd37d18e4487cca80c7391fb7e373e30e5470f7e164d40a8a07086ea088b22e",
+  "case_hashes": {
+    "/tmp/ems-close-20260911/wall-range-only/oracle/case.HTu63l/input.cnf": "f0148e8b4ce9692de61347005af8179e8d8d38134283b6fb0c35a8b9efd32b71",
+    "/tmp/ems-close-20260911/wall-range-only/oracle/case.HTu63l/vm.out.normalized": "1b2ddec1e64577a29a754f60cd1f9e8820531ee7692fc5512481302405126bde"
+  },
+  "validation": "both stdout match VM after timing normalization; exact GC population sequence",
+  "metrics": {
+    "collections": 166,
+    "nodes": 345851,
+    "reclaimed": 298128,
+    "removed_count_slots": 5240954,
+    "removed_mark_slots": 2672348,
+    "nochild_skips": 47181
+  }
+}

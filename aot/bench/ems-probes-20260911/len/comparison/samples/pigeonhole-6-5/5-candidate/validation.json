@@ -1,0 +1,23 @@
+{
+  "arm": "candidate",
+  "binary_sha256": "982fe0a630014e3028e2d6c6e381f6de9877c93fe9217294230f55def1e0bce8",
+  "case": "pigeonhole-6-5",
+  "cleanup": null,
+  "command": [
+    "/tmp/ems-close-20260911/len-probe/candidate-timing",
+    "--cdcl",
+    "/tmp/ems-close-20260911/wall-len-only-4x5/oracle/case.4gY3Eq/input.cnf"
+  ],
+  "conflicts": 140,
+  "cwd": "/home/jon/src/wt/ems-cert-20260911",
+  "directory": "/tmp/ems-close-20260911/wall-len-only-4x5/samples/pigeonhole-6-5/5-candidate",
+  "input_sha256": "5b884b97debd41c9d89378c4414fb1b7b03365725e09992ba0709c23a3cebb7e",
+  "interrupted_signal": null,
+  "repetition": 5,
+  "returncode": 0,
+  "timed_out": false,
+  "timeout_seconds": 7200,
+  "validated": true,
+  "validation": "vm-differential+certificate",
+  "wall_ns": 60991171
+}

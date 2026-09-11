@@ -1,0 +1,58 @@
+[
+  {
+    "label": "pristine",
+    "argv": [
+      "/usr/bin/python3",
+      "/tmp/ems-close-20260911/gc-preflight-controls/pristine/run_prepared.py",
+      "preflight",
+      "--prep-sha256",
+      "e42272d67a81433bbb65372d57fcce7d9c276c5e227f173477417780d2fe1b87",
+      "--out",
+      "/tmp/ems-close-20260911/gc-preflight-controls/pristine/result"
+    ],
+    "returncode": 0,
+    "expected": 0
+  },
+  {
+    "label": "candidate-flag",
+    "argv": [
+      "/usr/bin/python3",
+      "/tmp/ems-close-20260911/gc-preflight-controls/candidate-flag/run_prepared.py",
+      "preflight",
+      "--prep-sha256",
+      "e42272d67a81433bbb65372d57fcce7d9c276c5e227f173477417780d2fe1b87",
+      "--out",
+      "/tmp/ems-close-20260911/gc-preflight-controls/candidate-flag/result"
+    ],
+    "returncode": 1,
+    "expected": 1
+  },
+  {
+    "label": "candidate-source",
+    "argv": [
+      "/usr/bin/python3",
+      "/tmp/ems-close-20260911/gc-preflight-controls/candidate-source/run_prepared.py",
+      "preflight",
+      "--prep-sha256",
+      "e42272d67a81433bbb65372d57fcce7d9c276c5e227f173477417780d2fe1b87",
+      "--out",
+      "/tmp/ems-close-20260911/gc-preflight-controls/candidate-source/result"
+    ],
+    "returncode": 1,
+    "expected": 1
+  },
+  {
+    "label": "inventory-rewrite",
+    "argv": [
+      "/usr/bin/python3",
+      "/tmp/ems-close-20260911/gc-preflight-controls/inventory-rewrite/run_prepared.py",
+      "preflight",
+      "--prep-sha256",
+      "e42272d67a81433bbb65372d57fcce7d9c276c5e227f173477417780d2fe1b87",
+      "--out",
+      "/tmp/ems-close-20260911/gc-preflight-controls/inventory-rewrite/result"
+    ],
+    "returncode": 1,
+    "expected": 1
+  }
+]

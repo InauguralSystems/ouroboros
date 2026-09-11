@@ -1,0 +1,35 @@
+{
+  "argv": [
+    "gcc",
+    "-DLEN_PROBE_DIAGNOSTICS",
+    "-O3",
+    "-ffp-contract=off",
+    "-falign-functions=64",
+    "-falign-jumps=32",
+    "-falign-loops=32",
+    "-march=native",
+    "-DEIGENSCRIPT_EXT_HTTP=0",
+    "-DEIGENSCRIPT_EXT_MODEL=0",
+    "-DEIGENSCRIPT_EXT_DB=0",
+    "-DEIGENSCRIPT_VERSION=\"aot\"",
+    "-DAOT_SCRIPT_DIR=\"/home/jon/src/InauguralSystems/EigenScriptEcosystem/EigenMiniSat\"",
+    "-DAOT_EXE_DIR=\"/home/jon/src/wt/es-v043/src\"",
+    "-I/tmp/ems-close-20260911/len-probe",
+    "-I/home/jon/src/wt/es-v043/src",
+    "/tmp/ems-close-20260911/len-probe/candidate.c",
+    "/home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a",
+    "-lm",
+    "-lpthread",
+    "-o",
+    "/tmp/ems-close-20260911/len-probe/ems-diagnostic"
+  ],
+  "binary_sha256": "abc24a942c43bd5e865765b3497d2494c2cf93cb12df89474e66f154a9cbdd29",
+  "inputs": {
+    "baseline.c": "a2d149ba8997c665db5144f1a1c5e1874658e0195df2cbc0aafc257c53106df1",
+    "aot_rt.h": "ab7c944b18fed52ec1dc0f9d280dab73c296051feb60a6db44bc2dce09d6c4a1",
+    "len_probe.h": "1d539610020884b2e50b4d535180b94ab6d7250484a61e3187063b0be80a5ac1",
+    "candidate.c": "1497de4bdc282009ece18f927292303b224795ab14d3b6c2b35df86b8d32c07b"
+  },
+  "process_directory": "/tmp/ems-close-20260911/len-probe/processes/build-ems-diagnostic",
+  "prepared_sha256": "a56415277e58ec8febd416a056a50b78d81cc3ea63467d6b139e98f664bbfca6"
+}

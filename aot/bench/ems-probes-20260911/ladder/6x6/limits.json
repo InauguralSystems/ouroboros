@@ -1,0 +1,19 @@
+{
+  "rung": "6x6",
+  "driver": "/tmp/ems-close-20260911/run_next_probes.py",
+  "driver_sha256": "69c7fa0daefa7c0a8547ee89dc3bd832aaf32dd4310df92f8fedffd64a5cab15",
+  "address_space_soft_limit_bytes": 3221225472,
+  "original_limits": [
+    -1,
+    -1
+  ],
+  "scope": "wrapper and all child solver/checker/VM processes; inherited RLIMIT_AS",
+  "solver_checker_timeout_seconds": 7200,
+  "pilot_limit_seconds": 600,
+  "interpretation": "resource refusal/timeout is incomplete, never a completed timing point",
+  "status": "ended-with-exception",
+  "exception_type": "SystemExit",
+  "exception": "1",
+  "limits_restored": true,
+  "driver_unchanged": true
+}

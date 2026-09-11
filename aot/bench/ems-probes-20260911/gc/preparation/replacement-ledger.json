@@ -1,0 +1,104 @@
+[
+  {
+    "label": "diagnostic implementation",
+    "count": 1,
+    "old": "#include <pthread.h>\n",
+    "new": "#include <pthread.h>\n#include \"gc_probe_metrics.h\"\n#ifdef GC_PROBE_DIAGNOSTICS\n#include <inttypes.h>\nstatic GcProbeStats gcp_stats;\nstatic int gcp_phase;\nstatic int gcp_registered;\nstatic void gcp_report(void) {\n    fprintf(stderr, \"GC_PROBE_TOTAL {\\\"calls\\\":%\" PRIu64 \",\\\"skipped_busy\\\":%\" PRIu64\n            \",\\\"skipped_empty\\\":%\" PRIu64 \",\\\"started\\\":%\" PRIu64\n            \",\\\"completed\\\":%\" PRIu64 \",\\\"aborted\\\":%\" PRIu64\n            \",\\\"universe\\\":%\" PRIu64 \",\\\"reclaimed\\\":%\" PRIu64\n            \",\\\"survivors\\\":%\" PRIu64 \",\\\"seeds\\\":%\" PRIu64\n            \",\\\"nochild_skips\\\":%\" PRIu64 \",\\\"slots\\\":[\",\n            gcp_stats.calls, gcp_stats.skipped_busy, gcp_stats.skipped_empty,\n            gcp_stats.started, gcp_stats.completed, gcp_stats.aborted,\n            gcp_stats.universe, gcp_stats.reclaimed, gcp_stats.survivors,\n            gcp_stats.seeds, gcp_stats.nochild_skips);\n    for (int p=0; p<4; ++p)\n        fprintf(stderr, \"%s[%\" PRIu64 \",%\" PRIu64 \",%\" PRIu64 \"]\", p?\",\":\"\",\n                gcp_stats.slots[p][0], gcp_stats.slots[p][1], gcp_stats.slots[p][2]);\n    fprintf(stderr, \"],\\\"edges\\\":[\");\n    for (int p=0; p<4; ++p)\n        fprintf(stderr, \"%s[%\" PRIu64 \",%\" PRIu64 \",%\" PRIu64 \"]\", p?\",\":\"\",\n                gcp_stats.edges[p][0], gcp_stats.edges[p][1], gcp_stats.edges[p][2]);\n    fprintf(stderr, \"]}\\n\");\n}\nstatic void gcp_enter(void) {\n    if (!gcp_registered) {\n        if (atexit(gcp_report) != 0) abort();\n        gcp_registered=1;\n    }\n    ++gcp_stats.calls;\n}\nvoid gc_probe_snapshot(GcProbeStats *out) { *out=gcp_stats; }\n#define GCP_ENTER() gcp_enter()\n#define GCP_ADD(field,n) (gcp_stats.field += (uint64_t)(n))\n#define GCP_PHASE(p) (gcp_phase=(p))\n#define GCP_SLOT(k) (++gcp_stats.slots[gcp_phase][k])\n#define GCP_EDGE(k) (++gcp_stats.edges[gcp_phase][k])\n#ifdef GC_PROBE_FAULT_ZERO_SKIP_COUNTER\n#define GCP_NOCHILD() ((void)0)\n#else\n#define GCP_NOCHILD() GCP_ADD(nochild_skips,1)\n#endif\n#define GCP_COLLECTION(nodes,garbage,seed_count) do { \\\n    GCP_ADD(completed,1); GCP_ADD(universe,nodes); \\\n    GCP_ADD(reclaimed,garbage); GCP_ADD(survivors,(nodes)-(garbage)); \\\n    GCP_ADD(seeds,seed_count); \\\n    fprintf(stderr,\"GC_PROBE_COLLECTION {\\\"ordinal\\\":%\" PRIu64 \",\\\"universe\\\":%d,\\\"reclaimed\\\":%d,\\\"survivors\\\":%d,\\\"seeds\\\":%d}\\n\", \\\n            gcp_stats.completed,(nodes),(garbage),(nodes)-(garbage),(seed_count)); \\\n} while(0)\n#else\n#define GCP_ENTER() ((void)0)\n#define GCP_ADD(field,n) ((void)0)\n#define GCP_PHASE(p) ((void)0)\n#define GCP_SLOT(k) ((void)0)\n#define GCP_EDGE(k) ((void)0)\n#define GCP_NOCHILD() ((void)0)\n#define GCP_COLLECTION(nodes,garbage,seed_count) ((void)0)\n#endif\n\n"
+  },
+  {
+    "label": "collection-local child bit",
+    "count": 1,
+    "old": "    uint8_t  *mark;\n",
+    "new": "    uint8_t  *mark;\n#ifdef GC_TRAVERSAL_REUSE\n    uint8_t *has_node_children;\n#endif\n"
+  },
+  {
+    "label": "grow child bit",
+    "count": 1,
+    "old": "        u->mark     = xrealloc_array(u->mark, u->cap, sizeof(uint8_t));",
+    "new": "        u->mark     = xrealloc_array(u->mark, u->cap, sizeof(uint8_t));\n#ifdef GC_TRAVERSAL_REUSE\n        u->has_node_children = xrealloc_array(u->has_node_children, u->cap, sizeof(uint8_t));\n#endif"
+  },
+  {
+    "label": "initialize child bit",
+    "count": 1,
+    "old": "    u->mark[n] = 0;\n",
+    "new": "    u->mark[n] = 0;\n#ifdef GC_TRAVERSAL_REUSE\n    u->has_node_children[n] = 0;\n#endif\n"
+  },
+  {
+    "label": "walk inspected slot count",
+    "count": 1,
+    "old": "            if (IS_NODE) {",
+    "new": "            GCP_SLOT(_k); \\\n            if (IS_NODE) {"
+  },
+  {
+    "label": "walk accepted edge count",
+    "count": 1,
+    "old": "                void *OUT_OBJ = (void *)(CHILD);",
+    "new": "                GCP_EDGE(_k); \\\n                void *OUT_OBJ = (void *)(CHILD);"
+  },
+  {
+    "label": "clear slot count",
+    "count": 1,
+    "old": "            CLEAR                                                             \\",
+    "new": "            { GCP_SLOT(_k); CLEAR }                                          \\"
+  },
+  {
+    "label": "collection attempts",
+    "count": 1,
+    "old": "static void gc_collect_impl(Value **seeds, int seed_count) {\n    if (g_in_gc || g_vm_multithreaded) return;",
+    "new": "static void gc_collect_impl(Value **seeds, int seed_count) {\n    GCP_ENTER();\n    if (g_in_gc || g_vm_multithreaded) { GCP_ADD(skipped_busy,1); return; }"
+  },
+  {
+    "label": "empty collection count",
+    "count": 1,
+    "old": "    if (!g_gc_envs && seed_count == 0) {\n        g_gc_threshold",
+    "new": "    if (!g_gc_envs && seed_count == 0) {\n        GCP_ADD(skipped_empty,1);\n        g_gc_threshold"
+  },
+  {
+    "label": "collection start count",
+    "count": 1,
+    "old": "    g_in_gc = 1;\n\n    GcU u = {0};",
+    "new": "    g_in_gc = 1;\n    GCP_ADD(started,1);\n\n    GcU u = {0};"
+  },
+  {
+    "label": "fuse discovery and internal counts",
+    "count": 1,
+    "old": "    for (int n = 0; n < u.count; n++) {\n        GC_FOR_EACH_CHILD(&u, n, child, child_kind, {\n            gcu_add(&u, child, child_kind);\n        });\n    }\n\n    /* 2. Internal reference counts (edges from inside U). */",
+    "new": "    GCP_PHASE(0);\n    for (int n = 0; n < u.count; n++) {\n        GC_FOR_EACH_CHILD(&u, n, child, child_kind, {\n            gcu_add(&u, child, child_kind);\n#ifdef GC_TRAVERSAL_REUSE\n            /* Indices survive gcu_add's array reallocations. Every owned\n             * edge increments, including duplicates and self edges. */\n            int ci = gcu_find(&u, child);\n            if (ci < 0) abort();\n            u.has_node_children[n] = 1;\n#ifdef GC_PROBE_FAULT_DROP_DUP_COUNT\n            if (u.internal[ci] == 0) u.internal[ci]++;\n#else\n            u.internal[ci]++;\n#endif\n#endif\n        });\n    }\n\n#ifndef GC_TRAVERSAL_REUSE\n    GCP_PHASE(1);\n    /* 2. Internal reference counts (edges from inside U). */"
+  },
+  {
+    "label": "close original internal pass",
+    "count": 1,
+    "old": "    /* 3. Roots: refcount > internal + collector pins.",
+    "new": "#endif\n    /* 3. Roots: refcount > internal + collector pins."
+  },
+  {
+    "label": "count accounting abort",
+    "count": 1,
+    "old": "    if (bad) {\n        if (eigs_env_flag",
+    "new": "    if (bad) {\n        GCP_ADD(aborted,1);\n        if (eigs_env_flag"
+  },
+  {
+    "label": "free child bit",
+    "count": 2,
+    "old": "free(u.internal); free(u.pinned); free(u.mark);",
+    "new": "free(u.internal); free(u.pinned); free(u.mark);\n#ifdef GC_TRAVERSAL_REUSE\n    free(u.has_node_children);\n#endif"
+  },
+  {
+    "label": "mark phase and no-child skip",
+    "count": 1,
+    "old": "    /* 4. Mark everything reachable from the roots within U. */\n    while (sp > 0) {\n        int n = stack[--sp];",
+    "new": "    /* 4. Mark everything reachable from the roots within U. */\n    GCP_PHASE(2);\n    while (sp > 0) {\n        int n = stack[--sp];\n#ifdef GC_TRAVERSAL_REUSE\n        if (!u.has_node_children[n]) { GCP_NOCHILD(); continue; }\n#endif"
+  },
+  {
+    "label": "clear phase",
+    "count": 1,
+    "old": "    if (garbage) {\n        for (int n",
+    "new": "    GCP_PHASE(3);\n    if (garbage) {\n        for (int n"
+  },
+  {
+    "label": "completed collection populations",
+    "count": 1,
+    "old": "    if (eigs_env_flag(\"EIGS_GC_DEBUG\"))\n        fprintf(stderr, \"[gc] universe",
+    "new": "    GCP_COLLECTION(u.count,garbage,seed_count);\n    if (eigs_env_flag(\"EIGS_GC_DEBUG\"))\n        fprintf(stderr, \"[gc] universe"
+  }
+]

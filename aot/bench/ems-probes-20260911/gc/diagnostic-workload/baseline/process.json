@@ -1,0 +1,20 @@
+{
+  "cleanup": null,
+  "command": [
+    "/usr/bin/time",
+    "-v",
+    "-o",
+    "/tmp/ems-close-20260911/gc-diagnostic-workload/baseline.time",
+    "--",
+    "/tmp/ems-close-20260911/gc-diagnostic-build/baseline",
+    "--cdcl",
+    "/tmp/ems-close-20260911/wall-range-only/oracle/case.HTu63l/input.cnf"
+  ],
+  "cwd": "/home/jon/src/InauguralSystems/EigenScriptEcosystem/EigenMiniSat",
+  "directory": "/tmp/ems-close-20260911/gc-diagnostic-workload/baseline",
+  "interrupted_signal": null,
+  "returncode": 0,
+  "timed_out": false,
+  "timeout_seconds": 240,
+  "wall_ns": 9114308131
+}

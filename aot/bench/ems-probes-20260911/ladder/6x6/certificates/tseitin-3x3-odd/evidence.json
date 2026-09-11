@@ -1,0 +1,32 @@
+{
+  "arms": [
+    "aot"
+  ],
+  "files": {
+    "/tmp/ems-close-20260911/ems-scalar-production": "3dce2fd61d0c3edccbca5edd7ab00b30b56398e03199a11edfc63c0a026a89d2",
+    "/tmp/ems-close-20260911/scalar-ladder-6x6/certificates/tseitin-3x3-odd/aot-checker/process.json": "484087904d8367621c761f665d0af7dc4935d91ddcc15b0e8168b2d79cd647f8",
+    "/tmp/ems-close-20260911/scalar-ladder-6x6/certificates/tseitin-3x3-odd/aot-checker/stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "/tmp/ems-close-20260911/scalar-ladder-6x6/certificates/tseitin-3x3-odd/aot-checker/stdout": "6493c320b531033909b2b2703523d80240c88d57a96ee2394bf13d93aad55eee",
+    "/tmp/ems-close-20260911/scalar-ladder-6x6/certificates/tseitin-3x3-odd/aot.drat": "575ad5645d48aa6ea83339dc67d34e3f9a66a0ba2e478543f0f651f6eb0f7c18",
+    "/tmp/ems-close-20260911/scalar-ladder-6x6/certificates/tseitin-3x3-odd/aot/process.json": "c2c0f7a56fe3ac53b2085ebe22f84589f78d696a539e1af5012cf4778a044d9e",
+    "/tmp/ems-close-20260911/scalar-ladder-6x6/certificates/tseitin-3x3-odd/aot/stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "/tmp/ems-close-20260911/scalar-ladder-6x6/certificates/tseitin-3x3-odd/aot/stdout": "9932a5d476dbba279b0ad613685ff82c1c0483e6c77ecdc84b9be2f3198eb813",
+    "/tmp/ems-close-20260911/scalar-ladder-6x6/certificates/tseitin-3x3-odd/native/native.result": "8e47e39240b5b347f444074f97e7ab4b4c11d3f534469b5cb23f4b6d2f7390df",
+    "/tmp/ems-close-20260911/scalar-ladder-6x6/certificates/tseitin-3x3-odd/native/process.json": "b88dc94dd039d0a18c302dc89e34c199f25632f4ff40978426ad24f0ad8f74e5",
+    "/tmp/ems-close-20260911/scalar-ladder-6x6/certificates/tseitin-3x3-odd/native/stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "/tmp/ems-close-20260911/scalar-ladder-6x6/certificates/tseitin-3x3-odd/native/stdout": "06d363ff2ff5a20fd452c96d2c80e3185ed514a4492945ff580795b7a0647790",
+    "/tmp/ems-close-20260911/scalar-ladder-6x6/oracle/case.Xmo7k6/aot.err": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "/tmp/ems-close-20260911/scalar-ladder-6x6/oracle/case.Xmo7k6/aot.out": "27ee80e662bb6801af47b040b94565236f16cb2f9b7e4869f06ac10df7e1d2e6",
+    "/tmp/ems-close-20260911/scalar-ladder-6x6/oracle/case.Xmo7k6/aot.out.normalized": "a6ee6eaf797002ac13a87b234adb5d2e9efbde1795614a77f76f8a009a1a228f",
+    "/tmp/ems-close-20260911/scalar-ladder-6x6/oracle/case.Xmo7k6/input.cnf": "fe1938d0377c2e32566cad276df525053397d0cb617981515e73884005cf83f2",
+    "/tmp/ems-close-20260911/scalar-ladder-6x6/oracle/case.Xmo7k6/name": "ace6ba87fe997d03ba7b88b5632885bb9639a13cedd4dc391c4e44d4c5555bab",
+    "/tmp/ems-close-20260911/scalar-ladder-6x6/oracle/case.Xmo7k6/native.err": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "/tmp/ems-close-20260911/scalar-ladder-6x6/oracle/case.Xmo7k6/native.out": "9443710a7f8b9d42d550d5a2f60e674c4ef768a3bd54eec5b02ef662cbfe1581",
+    "/tmp/ems-close-20260911/scalar-ladder-6x6/oracle/case.Xmo7k6/native.result": "8e47e39240b5b347f444074f97e7ab4b4c11d3f534469b5cb23f4b6d2f7390df",
+    "/tmp/ems-close-20260911/scalar-ladder-6x6/oracle/case.Xmo7k6/vm.err": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "/tmp/ems-close-20260911/scalar-ladder-6x6/oracle/case.Xmo7k6/vm.out": "2825c7d90c701a56fc0b4d5a27a7f48aec5d92aa6e618715a4b6da44e08e81b8",
+    "/tmp/ems-close-20260911/scalar-ladder-6x6/oracle/case.Xmo7k6/vm.out.normalized": "a6ee6eaf797002ac13a87b234adb5d2e9efbde1795614a77f76f8a009a1a228f",
+    "/tmp/ems-native-20260910/drat-trim": "3b2f43765b738cdc5210d874dafc0a0d9921f816156003c6b6fe3f762041c930",
+    "/usr/bin/minisat": "d880e77e8f0f5a462a55c866aec9dd3325e582a83b94a3416a2debd7c9bac4b7"
+  }
+}

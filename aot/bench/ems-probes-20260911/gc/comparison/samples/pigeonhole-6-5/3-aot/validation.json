@@ -1,0 +1,23 @@
+{
+  "arm": "aot",
+  "binary_sha256": "f3548d69ec54b936e050a31f38d9db74cd805038acc111fbed4853e132dd6957",
+  "case": "pigeonhole-6-5",
+  "cleanup": null,
+  "command": [
+    "/tmp/ems-close-20260911/gc-timing-build/baseline",
+    "--cdcl",
+    "/tmp/ems-close-20260911/wall-gc-traversal-4x5/oracle/case.63rmvc/input.cnf"
+  ],
+  "conflicts": 140,
+  "cwd": "/home/jon/src/InauguralSystems/EigenScriptEcosystem/EigenMiniSat",
+  "directory": "/tmp/ems-close-20260911/wall-gc-traversal-4x5/samples/pigeonhole-6-5/3-aot",
+  "input_sha256": "5b884b97debd41c9d89378c4414fb1b7b03365725e09992ba0709c23a3cebb7e",
+  "interrupted_signal": null,
+  "repetition": 3,
+  "returncode": 0,
+  "timed_out": false,
+  "timeout_seconds": 7200,
+  "validated": true,
+  "validation": "vm-differential+certificate",
+  "wall_ns": 63313128
+}

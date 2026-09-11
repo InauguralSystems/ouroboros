@@ -1,0 +1,16 @@
+case	validation	arm	policy	n	median_wall_s	min_wall_s	max_wall_s	conflicts	descriptive_conflicts_per_wall_second
+pigeonhole-6-5	vm-differential+certificate	aot	CDCL current defaults (regime C); --cdcl; no policy overrides	5	0.073182679	0.060342850	0.085784489	140	1913.021
+pigeonhole-6-5	vm-differential+certificate	candidate	CDCL current defaults (regime C); --cdcl; no policy overrides; candidate=timing-only guarded len dispatch scan bypass; boxed result unchanged	5	0.070313988	0.060991171	0.077817891	140	1991.069
+pigeonhole-6-5	vm-differential+certificate	native	native MiniSat executable defaults; no policy overrides	5	0.007966494	0.007385784	0.019227226	138	17322.551
+simple-sat	vm-differential+certificate	aot	CDCL current defaults (regime C); --cdcl; no policy overrides	5	0.005153539	0.004871108	0.009008080	0	0.000
+simple-sat	vm-differential+certificate	candidate	CDCL current defaults (regime C); --cdcl; no policy overrides; candidate=timing-only guarded len dispatch scan bypass; boxed result unchanged	5	0.005396383	0.004992099	0.005652531	0	0.000
+simple-sat	vm-differential+certificate	native	native MiniSat executable defaults; no policy overrides	5	0.007322330	0.006551204	0.018432062	0	0.000
+tseitin-3x3-odd	vm-differential+certificate	aot	CDCL current defaults (regime C); --cdcl; no policy overrides	5	0.189350446	0.165689352	0.214607244	592	3126.478
+tseitin-3x3-odd	vm-differential+certificate	candidate	CDCL current defaults (regime C); --cdcl; no policy overrides; candidate=timing-only guarded len dispatch scan bypass; boxed result unchanged	5	0.186557426	0.167613078	0.204778533	592	3173.286
+tseitin-3x3-odd	vm-differential+certificate	native	native MiniSat executable defaults; no policy overrides	5	0.009083904	0.008281993	0.012275711	731	80472.009
+tseitin-4x4-odd	vm-differential+certificate	aot	CDCL current defaults (regime C); --cdcl; no policy overrides	5	8.366424752	7.303463069	8.779503428	9986	1193.580
+tseitin-4x4-odd	vm-differential+certificate	candidate	CDCL current defaults (regime C); --cdcl; no policy overrides; candidate=timing-only guarded len dispatch scan bypass; boxed result unchanged	5	7.719215782	6.815985663	8.822397870	9986	1293.655
+tseitin-4x4-odd	vm-differential+certificate	native	native MiniSat executable defaults; no policy overrides	5	0.253640811	0.233977878	0.379065024	84150	331768.376
+tseitin-4x5-odd	certificate	aot	CDCL current defaults (regime C); --cdcl; no policy overrides	5	12.185381407	10.894813187	12.579545808	12787	1049.372
+tseitin-4x5-odd	certificate	candidate	CDCL current defaults (regime C); --cdcl; no policy overrides; candidate=timing-only guarded len dispatch scan bypass; boxed result unchanged	5	11.967092816	10.476637677	12.704915622	12787	1068.513
+tseitin-4x5-odd	certificate	native	native MiniSat executable defaults; no policy overrides	5	1.731368656	1.561259515	1.792577405	505975	292239.898

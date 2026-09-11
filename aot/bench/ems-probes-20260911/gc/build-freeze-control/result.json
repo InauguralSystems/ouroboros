@@ -1,0 +1,13 @@
+{
+  "source": "/tmp/ems-close-20260911/run_gc_workload.py",
+  "source_sha256": "a09a2efd322d9a89553d80be09c20c660e573af69d9ff637125ff959495f05f4",
+  "control_sha256": "ac668fc9200a75eb4620a9d63438bd6e1e1c9449734be95fca89332cb8c0aec9",
+  "pristine_current": "accepted",
+  "pristine_old": "accepted",
+  "changed_binary_and_manifest_old": "accepted (expected fault witness)",
+  "changed_binary_and_manifest_current": "rejected",
+  "diagnostic": "build manifest changed during stage",
+  "initial_manifest_sha256": "4aa8fa30857ce5d40b022afeebad4ccc470418d9e9c7042d74868ce26c4d17c3",
+  "changed_manifest_sha256": "a9fb2e7882a03dbd2d6bbf2e388a2c66e704f8dbd266e28c61ea26f97d1df082",
+  "runtime_jobs": 0
+}

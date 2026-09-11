@@ -1,0 +1,23 @@
+{
+  "arm": "candidate",
+  "binary_sha256": "982fe0a630014e3028e2d6c6e381f6de9877c93fe9217294230f55def1e0bce8",
+  "case": "tseitin-4x5-odd",
+  "cleanup": null,
+  "command": [
+    "/tmp/ems-close-20260911/len-probe/candidate-timing",
+    "--cdcl",
+    "/tmp/ems-close-20260911/wall-len-only-4x5/certificate-inputs/4x5/input.cnf"
+  ],
+  "conflicts": 12787,
+  "cwd": "/home/jon/src/wt/ems-cert-20260911",
+  "directory": "/tmp/ems-close-20260911/wall-len-only-4x5/samples/tseitin-4x5-odd/0-candidate",
+  "input_sha256": "37132e372ca93b7a74ecf4d8f05965125e5e5226260927b95092f50f014540a5",
+  "interrupted_signal": null,
+  "repetition": 0,
+  "returncode": 0,
+  "timed_out": false,
+  "timeout_seconds": 7200,
+  "validated": true,
+  "validation": "certificate",
+  "wall_ns": 12207890164
+}

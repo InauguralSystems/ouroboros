@@ -1,0 +1,7 @@
+Traceback (most recent call last):
+  File "/tmp/ems-close-20260911/len-preflight-z_4nkmdz/runner.py", line 32, in <module>
+    check_prepared()
+  File "/tmp/ems-close-20260911/len-preflight-z_4nkmdz/runner.py", line 31, in check_prepared
+    assert sha(PROBE/name)==expected, f'prepared input changed: {name}'
+           ^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: prepared input changed: build-recipes.json

@@ -1,0 +1,4 @@
+{
+  "error": "certificate command failed rc=-6: /tmp/ems-close-20260911/scalar-ladder-5x6/certificates/tseitin-5x6-odd/aot",
+  "status": "failed"
+}

@@ -1,0 +1,20 @@
+{
+  "cases": [
+    {
+      "label": "pristine",
+      "returncode": 0,
+      "expected": 0
+    },
+    {
+      "label": "changed-candidate-flags",
+      "returncode": 1,
+      "expected": 1
+    },
+    {
+      "label": "changed-preparation-fingerprint",
+      "returncode": 1,
+      "expected": 1
+    }
+  ],
+  "runner_sha256": "31aa3bc5324865e2242f51821d44419f340355b161849271e49efeafaf69a67f"
+}

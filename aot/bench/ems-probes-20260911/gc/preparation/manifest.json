@@ -1,0 +1,24 @@
+{
+  "prepared_only": true,
+  "runtime_pin": "a6c50fba6a6250ea347a34500d6c9fa503a5c931",
+  "input_path": "/home/jon/src/wt/es-v043/src/eigenscript.c",
+  "input_sha256": "7a98f3d2e9100030174c5cb4268384ecdf584bb552b7fec524a06065302da408",
+  "output_sha256": "46fc616e71db0716d503cb38b0025797a5aeac07ce2b8a625c1fc64f37015e53",
+  "generator_sha256": "e61cd3cb13f24c85f95d95a4397bc6fc0b0629766149ecdf0119699c05512fc4",
+  "exact_reversible": true,
+  "edit_groups": 17,
+  "changed_occurrences": 18,
+  "variants": {
+    "baseline": [],
+    "candidate": [
+      "GC_TRAVERSAL_REUSE"
+    ],
+    "diagnostic_baseline": [
+      "GC_PROBE_DIAGNOSTICS"
+    ],
+    "diagnostic_candidate": [
+      "GC_PROBE_DIAGNOSTICS",
+      "GC_TRAVERSAL_REUSE"
+    ]
+  }
+}

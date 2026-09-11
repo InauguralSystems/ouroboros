@@ -1,0 +1,20 @@
+{
+  "cleanup": null,
+  "command": [
+    "awk",
+    "-v",
+    "rows=4",
+    "-v",
+    "cols=5",
+    "-f",
+    "/home/jon/src/wt/ems-cert-20260911/benchmarks/torus_identity.awk",
+    "/tmp/ems-close-20260911/wall-len-only-4x5/certificate-inputs/4x5/emitter/stdout"
+  ],
+  "cwd": "/home/jon/src/wt/ems-cert-20260911",
+  "directory": "/tmp/ems-close-20260911/wall-len-only-4x5/certificate-inputs/4x5/identity",
+  "interrupted_signal": null,
+  "returncode": 0,
+  "timed_out": false,
+  "timeout_seconds": 7200,
+  "wall_ns": 9572204
+}

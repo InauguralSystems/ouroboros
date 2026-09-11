@@ -1,0 +1,23 @@
+{
+  "arm": "candidate",
+  "binary_sha256": "87b369cf5512a807a74c51876efb6a0b5438037348f3ae219fb6a0e2bfa0c3e2",
+  "case": "tseitin-4x5-odd",
+  "cleanup": null,
+  "command": [
+    "/tmp/ems-close-20260911/gc-timing-build/candidate",
+    "--cdcl",
+    "/tmp/ems-close-20260911/wall-gc-traversal-4x5/certificate-inputs/4x5/input.cnf"
+  ],
+  "conflicts": 12787,
+  "cwd": "/home/jon/src/InauguralSystems/EigenScriptEcosystem/EigenMiniSat",
+  "directory": "/tmp/ems-close-20260911/wall-gc-traversal-4x5/samples/tseitin-4x5-odd/5-candidate",
+  "input_sha256": "37132e372ca93b7a74ecf4d8f05965125e5e5226260927b95092f50f014540a5",
+  "interrupted_signal": null,
+  "repetition": 5,
+  "returncode": 0,
+  "timed_out": false,
+  "timeout_seconds": 7200,
+  "validated": true,
+  "validation": "certificate",
+  "wall_ns": 11731891912
+}

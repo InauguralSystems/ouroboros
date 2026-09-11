@@ -1,0 +1,15 @@
+{
+  "cleanup": null,
+  "command": [
+    "/usr/bin/minisat",
+    "/tmp/ems-close-20260911/wall-gc-traversal-4x5/oracle/case.L59BDG/input.cnf",
+    "/tmp/ems-close-20260911/wall-gc-traversal-4x5/samples/tseitin-4x4-odd/3-native/native.result"
+  ],
+  "cwd": "/home/jon/src/InauguralSystems/EigenScriptEcosystem/EigenMiniSat",
+  "directory": "/tmp/ems-close-20260911/wall-gc-traversal-4x5/samples/tseitin-4x4-odd/3-native",
+  "interrupted_signal": null,
+  "returncode": 20,
+  "timed_out": false,
+  "timeout_seconds": 7200,
+  "wall_ns": 273874311
+}

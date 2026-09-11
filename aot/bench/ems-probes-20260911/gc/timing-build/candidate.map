@@ -1,0 +1,1646 @@
+Archive member included to satisfy reference by file (symbol)
+
+/home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(parser.o)
+                              /tmp/ems-close-20260911/gc-timing-build/candidate.o (free_ast)
+/home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(builtins.o)
+                              /tmp/ccGxs4oQ.o (builtin_eval)
+/home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(builtins_host.o)
+                              /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(builtins.o) (resolve_eigenscript_file_from)
+/home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(builtins_tensor.o)
+                              /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(builtins.o) (builtin_tensor_add)
+/home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(hash.o)
+                              /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(builtins.o) (register_hash_builtins)
+/home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(arena.o)
+                              /tmp/ems-close-20260911/gc-timing-build/candidate.o (safe_size_mul)
+/home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(state.o)
+                              /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(builtins.o) (eigs_thread_attach)
+/home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(strbuf.o)
+                              /tmp/ems-close-20260911/gc-timing-build/candidate.o (strbuf_init)
+/home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(ext_store.o)
+                              /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(builtins.o) (register_store_builtins)
+/home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(chunk.o)
+                              /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(builtins.o) (chunk_new)
+/home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(compiler.o)
+                              /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(arena.o) (eigs_obs_unmute_for_fatal)
+/home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(vm.o)
+                              /tmp/ems-close-20260911/gc-timing-build/candidate.o (vm_obs_slot_dropped)
+/home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(jit.o)
+                              /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(vm.o) (jit_register_chunk)
+/home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(trace.o)
+                              /tmp/ccGxs4oQ.o (g_trace_current_line)
+/home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(eigs_embed.o)
+                              /tmp/ccGxs4oQ.o (eigs_open)
+/home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(lexer.o)
+                              /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(builtins_host.o) (tok_base_string_id_count)
+/usr/lib/x86_64-linux-gnu/libc_nonshared.a(atexit.oS)
+                              /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(builtins_host.o) (atexit)
+
+Merging program properties
+
+
+As-needed library included to satisfy reference by file (symbol)
+
+libm.so.6                     /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(builtins_tensor.o) (exp@@GLIBC_2.29)
+libc.so.6                     /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(trace.o) (fgetc@@GLIBC_2.2.5)
+
+Discarded input sections
+
+ .note.GNU-stack
+                0x0000000000000000        0x0 /usr/lib/gcc/x86_64-linux-gnu/13/../../../x86_64-linux-gnu/Scrt1.o
+ .note.gnu.property
+                0x0000000000000000       0x20 /usr/lib/gcc/x86_64-linux-gnu/13/../../../x86_64-linux-gnu/crti.o
+ .note.GNU-stack
+                0x0000000000000000        0x0 /usr/lib/gcc/x86_64-linux-gnu/13/../../../x86_64-linux-gnu/crti.o
+ .note.GNU-stack
+                0x0000000000000000        0x0 /usr/lib/gcc/x86_64-linux-gnu/13/crtbeginS.o
+ .note.gnu.property
+                0x0000000000000000       0x20 /usr/lib/gcc/x86_64-linux-gnu/13/crtbeginS.o
+ .note.GNU-stack
+                0x0000000000000000        0x0 /tmp/ccGxs4oQ.o
+ .note.gnu.property
+                0x0000000000000000       0x20 /tmp/ccGxs4oQ.o
+ .note.GNU-stack
+                0x0000000000000000        0x0 /tmp/ems-close-20260911/gc-timing-build/candidate.o
+ .note.gnu.property
+                0x0000000000000000       0x20 /tmp/ems-close-20260911/gc-timing-build/candidate.o
+ .note.GNU-stack
+                0x0000000000000000        0x0 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(parser.o)
+ .note.gnu.property
+                0x0000000000000000       0x20 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(parser.o)
+ .note.GNU-stack
+                0x0000000000000000        0x0 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(builtins.o)
+ .note.gnu.property
+                0x0000000000000000       0x20 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(builtins.o)
+ .note.GNU-stack
+                0x0000000000000000        0x0 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(builtins_host.o)
+ .note.gnu.property
+                0x0000000000000000       0x20 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(builtins_host.o)
+ .note.GNU-stack
+                0x0000000000000000        0x0 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(builtins_tensor.o)
+ .note.gnu.property
+                0x0000000000000000       0x20 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(builtins_tensor.o)
+ .note.GNU-stack
+                0x0000000000000000        0x0 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(hash.o)
+ .note.gnu.property
+                0x0000000000000000       0x20 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(hash.o)
+ .note.GNU-stack
+                0x0000000000000000        0x0 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(arena.o)
+ .note.gnu.property
+                0x0000000000000000       0x20 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(arena.o)
+ .note.GNU-stack
+                0x0000000000000000        0x0 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(state.o)
+ .note.gnu.property
+                0x0000000000000000       0x20 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(state.o)
+ .note.GNU-stack
+                0x0000000000000000        0x0 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(strbuf.o)
+ .note.gnu.property
+                0x0000000000000000       0x20 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(strbuf.o)
+ .note.GNU-stack
+                0x0000000000000000        0x0 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(ext_store.o)
+ .note.gnu.property
+                0x0000000000000000       0x20 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(ext_store.o)
+ .note.GNU-stack
+                0x0000000000000000        0x0 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(chunk.o)
+ .note.gnu.property
+                0x0000000000000000       0x20 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(chunk.o)
+ .note.GNU-stack
+                0x0000000000000000        0x0 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(compiler.o)
+ .note.gnu.property
+                0x0000000000000000       0x20 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(compiler.o)
+ .note.GNU-stack
+                0x0000000000000000        0x0 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(vm.o)
+ .note.gnu.property
+                0x0000000000000000       0x20 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(vm.o)
+ .note.GNU-stack
+                0x0000000000000000        0x0 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(jit.o)
+ .note.gnu.property
+                0x0000000000000000       0x20 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(jit.o)
+ .note.GNU-stack
+                0x0000000000000000        0x0 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(trace.o)
+ .note.gnu.property
+                0x0000000000000000       0x20 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(trace.o)
+ .note.GNU-stack
+                0x0000000000000000        0x0 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(eigs_embed.o)
+ .note.gnu.property
+                0x0000000000000000       0x20 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(eigs_embed.o)
+ .note.GNU-stack
+                0x0000000000000000        0x0 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(lexer.o)
+ .note.gnu.property
+                0x0000000000000000       0x20 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(lexer.o)
+ .note.GNU-stack
+                0x0000000000000000        0x0 /usr/lib/x86_64-linux-gnu/libc_nonshared.a(atexit.oS)
+ .note.gnu.property
+                0x0000000000000000       0x20 /usr/lib/x86_64-linux-gnu/libc_nonshared.a(atexit.oS)
+ .note.GNU-stack
+                0x0000000000000000        0x0 /usr/lib/gcc/x86_64-linux-gnu/13/crtendS.o
+ .note.gnu.property
+                0x0000000000000000       0x20 /usr/lib/gcc/x86_64-linux-gnu/13/crtendS.o
+ .note.gnu.property
+                0x0000000000000000       0x20 /usr/lib/gcc/x86_64-linux-gnu/13/../../../x86_64-linux-gnu/crtn.o
+ .note.GNU-stack
+                0x0000000000000000        0x0 /usr/lib/gcc/x86_64-linux-gnu/13/../../../x86_64-linux-gnu/crtn.o
+
+Memory Configuration
+
+Name             Origin             Length             Attributes
+*default*        0x0000000000000000 0xffffffffffffffff
+
+Linker script and memory map
+
+LOAD /usr/lib/gcc/x86_64-linux-gnu/13/../../../x86_64-linux-gnu/Scrt1.o
+LOAD /usr/lib/gcc/x86_64-linux-gnu/13/../../../x86_64-linux-gnu/crti.o
+LOAD /usr/lib/gcc/x86_64-linux-gnu/13/crtbeginS.o
+LOAD /tmp/ccGxs4oQ.o
+LOAD /tmp/ems-close-20260911/gc-timing-build/candidate.o
+LOAD /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a
+LOAD /usr/lib/gcc/x86_64-linux-gnu/13/../../../x86_64-linux-gnu/libm.so
+START GROUP
+LOAD /lib/x86_64-linux-gnu/libm.so.6
+LOAD /lib/x86_64-linux-gnu/libmvec.so.1
+END GROUP
+LOAD /usr/lib/gcc/x86_64-linux-gnu/13/../../../x86_64-linux-gnu/libpthread.a
+LOAD /usr/lib/gcc/x86_64-linux-gnu/13/libgcc.a
+LOAD /usr/lib/gcc/x86_64-linux-gnu/13/libgcc_s.so
+START GROUP
+LOAD /usr/lib/gcc/x86_64-linux-gnu/13/../../../x86_64-linux-gnu/libgcc_s.so.1
+LOAD /usr/lib/gcc/x86_64-linux-gnu/13/libgcc.a
+END GROUP
+LOAD /usr/lib/gcc/x86_64-linux-gnu/13/../../../x86_64-linux-gnu/libc.so
+START GROUP
+LOAD /lib/x86_64-linux-gnu/libc.so.6
+LOAD /usr/lib/x86_64-linux-gnu/libc_nonshared.a
+LOAD /lib64/ld-linux-x86-64.so.2
+END GROUP
+LOAD /usr/lib/gcc/x86_64-linux-gnu/13/libgcc.a
+LOAD /usr/lib/gcc/x86_64-linux-gnu/13/libgcc_s.so
+START GROUP
+LOAD /usr/lib/gcc/x86_64-linux-gnu/13/../../../x86_64-linux-gnu/libgcc_s.so.1
+LOAD /usr/lib/gcc/x86_64-linux-gnu/13/libgcc.a
+END GROUP
+LOAD /usr/lib/gcc/x86_64-linux-gnu/13/crtendS.o
+LOAD /usr/lib/gcc/x86_64-linux-gnu/13/../../../x86_64-linux-gnu/crtn.o
+                [!provide]                        PROVIDE (__executable_start = SEGMENT_START ("text-segment", 0x0))
+                0x0000000000000350                . = (SEGMENT_START ("text-segment", 0x0) + SIZEOF_HEADERS)
+
+.interp         0x0000000000000350       0x1c
+ *(.interp)
+ .interp        0x0000000000000350       0x1c /usr/lib/gcc/x86_64-linux-gnu/13/../../../x86_64-linux-gnu/Scrt1.o
+
+.note.gnu.property
+                0x0000000000000370       0x30
+ .note.gnu.property
+                0x0000000000000370       0x30 /usr/lib/gcc/x86_64-linux-gnu/13/../../../x86_64-linux-gnu/Scrt1.o
+
+.note.gnu.build-id
+                0x00000000000003a0       0x24
+ *(.note.gnu.build-id)
+ .note.gnu.build-id
+                0x00000000000003a0       0x24 /usr/lib/gcc/x86_64-linux-gnu/13/../../../x86_64-linux-gnu/Scrt1.o
+
+.note.ABI-tag   0x00000000000003c4       0x20
+ .note.ABI-tag  0x00000000000003c4       0x20 /usr/lib/gcc/x86_64-linux-gnu/13/../../../x86_64-linux-gnu/Scrt1.o
+
+.hash
+ *(.hash)
+
+.gnu.hash       0x00000000000003e8       0x38
+ *(.gnu.hash)
+ .gnu.hash      0x00000000000003e8       0x38 /usr/lib/gcc/x86_64-linux-gnu/13/../../../x86_64-linux-gnu/Scrt1.o
+
+.dynsym         0x0000000000000420      0xd08
+ *(.dynsym)
+ .dynsym        0x0000000000000420      0xd08 /usr/lib/gcc/x86_64-linux-gnu/13/../../../x86_64-linux-gnu/Scrt1.o
+
+.dynstr         0x0000000000001128      0x56f
+ *(.dynstr)
+ .dynstr        0x0000000000001128      0x56f /usr/lib/gcc/x86_64-linux-gnu/13/../../../x86_64-linux-gnu/Scrt1.o
+
+.gnu.version    0x0000000000001698      0x116
+ *(.gnu.version)
+ .gnu.version   0x0000000000001698      0x116 /usr/lib/gcc/x86_64-linux-gnu/13/../../../x86_64-linux-gnu/Scrt1.o
+
+.gnu.version_d  0x00000000000017b0        0x0
+ *(.gnu.version_d)
+ .gnu.version_d
+                0x00000000000017b0        0x0 /usr/lib/gcc/x86_64-linux-gnu/13/../../../x86_64-linux-gnu/Scrt1.o
+
+.gnu.version_r  0x00000000000017b0       0xe0
+ *(.gnu.version_r)
+ .gnu.version_r
+                0x00000000000017b0       0xe0 /usr/lib/gcc/x86_64-linux-gnu/13/../../../x86_64-linux-gnu/Scrt1.o
+
+.rela.dyn       0x0000000000001890     0x22e0
+ *(.rela.init)
+ *(.rela.text .rela.text.* .rela.gnu.linkonce.t.*)
+ .rela.text     0x0000000000001890        0x0 /usr/lib/gcc/x86_64-linux-gnu/13/../../../x86_64-linux-gnu/Scrt1.o
+ .rela.text.startup
+                0x0000000000001890        0x0 /usr/lib/gcc/x86_64-linux-gnu/13/../../../x86_64-linux-gnu/Scrt1.o
+ *(.rela.fini)
+ *(.rela.rodata .rela.rodata.* .rela.gnu.linkonce.r.*)
+ *(.rela.data .rela.data.* .rela.gnu.linkonce.d.*)
+ .rela.data.rel.ro
+                0x0000000000001890        0x0 /usr/lib/gcc/x86_64-linux-gnu/13/../../../x86_64-linux-gnu/Scrt1.o
+ .rela.data.rel.local
+                0x0000000000001890       0x30 /usr/lib/gcc/x86_64-linux-gnu/13/../../../x86_64-linux-gnu/Scrt1.o
+ .rela.data.rel.ro.local
+                0x00000000000018c0     0x2148 /usr/lib/gcc/x86_64-linux-gnu/13/../../../x86_64-linux-gnu/Scrt1.o
+ *(.rela.tdata .rela.tdata.* .rela.gnu.linkonce.td.*)
+ *(.rela.tbss .rela.tbss.* .rela.gnu.linkonce.tb.*)
+ *(.rela.ctors)
+ *(.rela.dtors)
+ *(.rela.got)
+ .rela.got      0x0000000000003a08       0xd8 /usr/lib/gcc/x86_64-linux-gnu/13/../../../x86_64-linux-gnu/Scrt1.o
+ *(.rela.bss .rela.bss.* .rela.gnu.linkonce.b.*)
+ .rela.bss      0x0000000000003ae0       0x48 /usr/lib/gcc/x86_64-linux-gnu/13/../../../x86_64-linux-gnu/Scrt1.o
+ *(.rela.ldata .rela.ldata.* .rela.gnu.linkonce.l.*)
+ *(.rela.lbss .rela.lbss.* .rela.gnu.linkonce.lb.*)
+ *(.rela.lrodata .rela.lrodata.* .rela.gnu.linkonce.lr.*)
+ *(.rela.ifunc)
+ .rela.ifunc    0x0000000000003b28        0x0 /usr/lib/gcc/x86_64-linux-gnu/13/../../../x86_64-linux-gnu/Scrt1.o
+ .rela.fini_array
+                0x0000000000003b28       0x18 /usr/lib/gcc/x86_64-linux-gnu/13/../../../x86_64-linux-gnu/Scrt1.o
+ .rela.init_array
+                0x0000000000003b40       0x30 /usr/lib/gcc/x86_64-linux-gnu/13/../../../x86_64-linux-gnu/Scrt1.o
+
+.rela.plt       0x0000000000003b70      0xc18
+ *(.rela.plt)
+ .rela.plt      0x0000000000003b70      0xc18 /usr/lib/gcc/x86_64-linux-gnu/13/../../../x86_64-linux-gnu/Scrt1.o
+ *(.rela.iplt)
+
+.relr.dyn
+ *(.relr.dyn)
+                0x0000000000005000                . = ALIGN (CONSTANT (MAXPAGESIZE))
+
+.init           0x0000000000005000       0x1b
+ *(SORT_NONE(.init))
+ .init          0x0000000000005000       0x16 /usr/lib/gcc/x86_64-linux-gnu/13/../../../x86_64-linux-gnu/crti.o
+                0x0000000000005000                _init
+ .init          0x0000000000005016        0x5 /usr/lib/gcc/x86_64-linux-gnu/13/../../../x86_64-linux-gnu/crtn.o
+
+.plt            0x0000000000005020      0x820
+ *(.plt)
+ .plt           0x0000000000005020      0x820 /usr/lib/gcc/x86_64-linux-gnu/13/../../../x86_64-linux-gnu/Scrt1.o
+ *(.iplt)
+
+.plt.got        0x0000000000005840       0x20
+ *(.plt.got)
+ .plt.got       0x0000000000005840       0x20 /usr/lib/gcc/x86_64-linux-gnu/13/../../../x86_64-linux-gnu/Scrt1.o
+                0x0000000000005840                fmod@@GLIBC_2.38
+                0x0000000000005850                __cxa_finalize@@GLIBC_2.2.5
+
+.plt.sec        0x0000000000005860      0x810
+ *(.plt.sec)
+ .plt.sec       0x0000000000005860      0x810 /usr/lib/gcc/x86_64-linux-gnu/13/../../../x86_64-linux-gnu/Scrt1.o
+                0x0000000000005860                mallinfo2@@GLIBC_2.33
+                0x0000000000005870                __ctype_toupper_loc@@GLIBC_2.3
+                0x0000000000005880                getenv@@GLIBC_2.2.5
+                0x0000000000005890                __snprintf_chk@@GLIBC_2.3.4
+                0x00000000000058a0                free@@GLIBC_2.2.5
+                0x00000000000058b0                log2@@GLIBC_2.29
+                0x00000000000058c0                abort@@GLIBC_2.2.5
+                0x00000000000058d0                __errno_location@@GLIBC_2.2.5
+                0x00000000000058e0                unlink@@GLIBC_2.2.5
+                0x00000000000058f0                round@@GLIBC_2.2.5
+                0x0000000000005900                strncpy@@GLIBC_2.2.5
+                0x0000000000005910                remove@@GLIBC_2.2.5
+                0x0000000000005920                strncmp@@GLIBC_2.2.5
+                0x0000000000005930                _exit@@GLIBC_2.2.5
+                0x0000000000005940                pthread_cond_broadcast@@GLIBC_2.3.2
+                0x0000000000005950                mkdir@@GLIBC_2.2.5
+                0x0000000000005960                puts@@GLIBC_2.2.5
+                0x0000000000005970                qsort@@GLIBC_2.2.5
+                0x0000000000005980                fread@@GLIBC_2.2.5
+                0x0000000000005990                strtod@@GLIBC_2.2.5
+                0x00000000000059a0                readlink@@GLIBC_2.2.5
+                0x00000000000059b0                fcntl@@GLIBC_2.2.5
+                0x00000000000059c0                clock_gettime@@GLIBC_2.17
+                0x00000000000059d0                write@@GLIBC_2.2.5
+                0x00000000000059e0                getpid@@GLIBC_2.2.5
+                0x00000000000059f0                pthread_cond_wait@@GLIBC_2.3.2
+                0x0000000000005a00                atan@@GLIBC_2.2.5
+                0x0000000000005a10                pow@@GLIBC_2.29
+                0x0000000000005a20                fclose@@GLIBC_2.2.5
+                0x0000000000005a30                opendir@@GLIBC_2.2.5
+                0x0000000000005a40                regfree@@GLIBC_2.2.5
+                0x0000000000005a50                strlen@@GLIBC_2.2.5
+                0x0000000000005a60                chdir@@GLIBC_2.2.5
+                0x0000000000005a70                __stack_chk_fail@@GLIBC_2.4
+                0x0000000000005a80                mmap@@GLIBC_2.2.5
+                0x0000000000005a90                dup2@@GLIBC_2.2.5
+                0x0000000000005aa0                strchr@@GLIBC_2.2.5
+                0x0000000000005ab0                pthread_mutex_destroy@@GLIBC_2.2.5
+                0x0000000000005ac0                snprintf@@GLIBC_2.2.5
+                0x0000000000005ad0                strrchr@@GLIBC_2.2.5
+                0x0000000000005ae0                dup@@GLIBC_2.2.5
+                0x0000000000005af0                fputs@@GLIBC_2.2.5
+                0x0000000000005b00                memset@@GLIBC_2.2.5
+                0x0000000000005b10                pthread_condattr_destroy@@GLIBC_2.2.5
+                0x0000000000005b20                getcwd@@GLIBC_2.2.5
+                0x0000000000005b30                fgetc@@GLIBC_2.2.5
+                0x0000000000005b40                close@@GLIBC_2.2.5
+                0x0000000000005b50                __realpath_chk@@GLIBC_2.4
+                0x0000000000005b60                pipe@@GLIBC_2.2.5
+                0x0000000000005b70                log@@GLIBC_2.29
+                0x0000000000005b80                closedir@@GLIBC_2.2.5
+                0x0000000000005b90                cos@@GLIBC_2.2.5
+                0x0000000000005ba0                regcomp@@GLIBC_2.2.5
+                0x0000000000005bb0                fputc@@GLIBC_2.2.5
+                0x0000000000005bc0                strtok_r@@GLIBC_2.2.5
+                0x0000000000005bd0                acos@@GLIBC_2.2.5
+                0x0000000000005be0                read@@GLIBC_2.2.5
+                0x0000000000005bf0                memcmp@@GLIBC_2.2.5
+                0x0000000000005c00                pthread_cond_signal@@GLIBC_2.3.2
+                0x0000000000005c10                pthread_condattr_setclock@@GLIBC_2.34
+                0x0000000000005c20                calloc@@GLIBC_2.2.5
+                0x0000000000005c30                strcmp@@GLIBC_2.2.5
+                0x0000000000005c40                putc@@GLIBC_2.2.5
+                0x0000000000005c50                signal@@GLIBC_2.2.5
+                0x0000000000005c60                __memcpy_chk@@GLIBC_2.3.4
+                0x0000000000005c70                ftell@@GLIBC_2.2.5
+                0x0000000000005c80                stat@@GLIBC_2.33
+                0x0000000000005c90                strtol@@GLIBC_2.2.5
+                0x0000000000005ca0                realpath@@GLIBC_2.3
+                0x0000000000005cb0                memcpy@@GLIBC_2.14
+                0x0000000000005cc0                kill@@GLIBC_2.2.5
+                0x0000000000005cd0                fileno@@GLIBC_2.2.5
+                0x0000000000005ce0                pthread_cond_init@@GLIBC_2.3.2
+                0x0000000000005cf0                readdir@@GLIBC_2.2.5
+                0x0000000000005d00                pthread_mutex_unlock@@GLIBC_2.2.5
+                0x0000000000005d10                malloc@@GLIBC_2.2.5
+                0x0000000000005d20                fflush@@GLIBC_2.2.5
+                0x0000000000005d30                tan@@GLIBC_2.2.5
+                0x0000000000005d40                regexec@@GLIBC_2.3.4
+                0x0000000000005d50                atan2@@GLIBC_2.2.5
+                0x0000000000005d60                lrand48@@GLIBC_2.2.5
+                0x0000000000005d70                mkstemp@@GLIBC_2.2.5
+                0x0000000000005d80                fseek@@GLIBC_2.2.5
+                0x0000000000005d90                __vsnprintf_chk@@GLIBC_2.3.4
+                0x0000000000005da0                realloc@@GLIBC_2.2.5
+                0x0000000000005db0                srand48@@GLIBC_2.2.5
+                0x0000000000005dc0                fdopen@@GLIBC_2.2.5
+                0x0000000000005dd0                munmap@@GLIBC_2.2.5
+                0x0000000000005de0                __printf_chk@@GLIBC_2.3.4
+                0x0000000000005df0                pthread_condattr_init@@GLIBC_2.2.5
+                0x0000000000005e00                setvbuf@@GLIBC_2.2.5
+                0x0000000000005e10                poll@@GLIBC_2.2.5
+                0x0000000000005e20                pthread_create@@GLIBC_2.34
+                0x0000000000005e30                memmove@@GLIBC_2.2.5
+                0x0000000000005e40                pthread_cond_timedwait@@GLIBC_2.3.2
+                0x0000000000005e50                waitpid@@GLIBC_2.2.5
+                0x0000000000005e60                tcgetattr@@GLIBC_2.2.5
+                0x0000000000005e70                tcsetattr@@GLIBC_2.2.5
+                0x0000000000005e80                pthread_cond_destroy@@GLIBC_2.3.2
+                0x0000000000005e90                mprotect@@GLIBC_2.2.5
+                0x0000000000005ea0                open@@GLIBC_2.2.5
+                0x0000000000005eb0                access@@GLIBC_2.2.5
+                0x0000000000005ec0                fopen@@GLIBC_2.2.5
+                0x0000000000005ed0                sysconf@@GLIBC_2.2.5
+                0x0000000000005ee0                rename@@GLIBC_2.2.5
+                0x0000000000005ef0                sin@@GLIBC_2.2.5
+                0x0000000000005f00                execvp@@GLIBC_2.2.5
+                0x0000000000005f10                __cxa_atexit@@GLIBC_2.2.5
+                0x0000000000005f20                getline@@GLIBC_2.2.5
+                0x0000000000005f30                asin@@GLIBC_2.2.5
+                0x0000000000005f40                __memset_chk@@GLIBC_2.3.4
+                0x0000000000005f50                exit@@GLIBC_2.2.5
+                0x0000000000005f60                fwrite@@GLIBC_2.2.5
+                0x0000000000005f70                __fprintf_chk@@GLIBC_2.3.4
+                0x0000000000005f80                sqrt@@GLIBC_2.2.5
+                0x0000000000005f90                pthread_join@@GLIBC_2.34
+                0x0000000000005fa0                strdup@@GLIBC_2.2.5
+                0x0000000000005fb0                strerror@@GLIBC_2.2.5
+                0x0000000000005fc0                pthread_mutex_init@@GLIBC_2.2.5
+                0x0000000000005fd0                fstat@@GLIBC_2.33
+                0x0000000000005fe0                pthread_once@@GLIBC_2.34
+                0x0000000000005ff0                fork@@GLIBC_2.2.5
+                0x0000000000006000                strstr@@GLIBC_2.2.5
+                0x0000000000006010                pthread_mutex_lock@@GLIBC_2.2.5
+                0x0000000000006020                exp@@GLIBC_2.29
+                0x0000000000006030                __ctype_tolower_loc@@GLIBC_2.3
+                0x0000000000006040                __ctype_b_loc@@GLIBC_2.3
+                0x0000000000006050                drand48@@GLIBC_2.2.5
+                0x0000000000006060                usleep@@GLIBC_2.2.5
+
+.text           0x0000000000006080   0x171422
+ *(.text.unlikely .text.*_unlikely .text.unlikely.*)
+ .text.unlikely
+                0x0000000000006080      0x325 /tmp/ccGxs4oQ.o
+ *fill*         0x00000000000063a5        0xb 
+ .text.unlikely
+                0x00000000000063b0        0x9 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(vm.o)
+ *(.text.exit .text.exit.*)
+ *(.text.startup .text.startup.*)
+ *fill*         0x00000000000063b9        0x7 
+ .text.startup  0x00000000000063c0     0x42bc /tmp/ccGxs4oQ.o
+                0x00000000000063c0                main
+ *fill*         0x000000000000a67c        0x4 
+ .text.startup  0x000000000000a680       0x10 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(jit.o)
+ *(.text.hot .text.hot.*)
+ *(SORT_BY_NAME(.text.sorted.*))
+ *(.text .stub .text.* .gnu.linkonce.t.*)
+ .text          0x000000000000a690       0x26 /usr/lib/gcc/x86_64-linux-gnu/13/../../../x86_64-linux-gnu/Scrt1.o
+                0x000000000000a690                _start
+ .text          0x000000000000a6b6        0x0 /usr/lib/gcc/x86_64-linux-gnu/13/../../../x86_64-linux-gnu/crti.o
+ *fill*         0x000000000000a6b6        0xa 
+ .text          0x000000000000a6c0       0xb9 /usr/lib/gcc/x86_64-linux-gnu/13/crtbeginS.o
+ *fill*         0x000000000000a779        0x7 
+ .text          0x000000000000a780    0xacd35 /tmp/ccGxs4oQ.o
+ *fill*         0x00000000000b74b5        0xb 
+ .text          0x00000000000b74c0    0x16c81 /tmp/ems-close-20260911/gc-timing-build/candidate.o
+                0x00000000000bae40                eigs_record_first_error_code_at
+                0x00000000000baf40                eigs_record_first_error_at
+                0x00000000000bb040                eigs_record_first_error
+                0x00000000000bb100                err_kind_name
+                0x00000000000bb2c0                tok_type_name
+                0x00000000000bbc40                eigs_interrogative_word
+                0x00000000000bbc80                val_type_name
+                0x00000000000bbe00                observer_settledness
+                0x00000000000bbe80                compute_entropy
+                0x00000000000bc2c0                observer_slot_record_value
+                0x00000000000bc440                observer_slot_update
+                0x00000000000bc5c0                observer_slot_update_num
+                0x00000000000bc780                observer_slot_reset
+                0x00000000000bc880                observer_slot_converged
+                0x00000000000bcd80                observer_slot_equilibrium
+                0x00000000000bd1c0                observer_slot_improving
+                0x00000000000bd400                observer_slot_diverging
+                0x00000000000bd680                observer_slot_oscillating
+                0x00000000000bda80                observer_slot_stable
+                0x00000000000be040                eigs_predicate_name
+                0x00000000000be080                observer_slot_report_entropy
+                0x00000000000be180                observer_slot_report
+                0x00000000000be7c0                observer_slot_report_value
+                0x00000000000bed40                observer_entropy_of_num
+                0x00000000000bee40                eigs_thread_drain_caches
+                0x00000000000bf100                env_intern_table_new
+                0x00000000000bf140                env_intern_table_ref
+                0x00000000000bf180                env_intern_table_unref
+                0x00000000000bf240                make_num
+                0x00000000000bf380                recycle_intermediate
+                0x00000000000bf400                make_num_permanent
+                0x00000000000bf500                slot_to_value
+                0x00000000000bf640                promote_if_arena
+                0x00000000000bfac0                make_str
+                0x00000000000bfb80                make_str_owned
+                0x00000000000bfc00                make_null
+                0x00000000000bfc40                make_list
+                0x00000000000bfd40                make_list_heap
+                0x00000000000bfdc0                make_text_builder
+                0x00000000000bfe40                make_builtin
+                0x00000000000bfe80                eigs_native_fn_name
+                0x00000000000bff00                make_native_fn
+                0x00000000000c0000                make_dict
+                0x00000000000c0140                dict_get_hashed
+                0x00000000000c02c0                dict_get
+                0x00000000000c0480                observer_slot_from_trajectory
+                0x00000000000c0c40                env_hash_find_dict
+                0x00000000000c0d80                dict_has
+                0x00000000000c0f40                list_append
+                0x00000000000c1140                is_truthy
+                0x00000000000c1280                values_equal
+                0x00000000000c1500                eigs_num_text
+                0x00000000000c1600                value_to_string
+                0x00000000000c1b80                env_hash_name
+                0x00000000000c1c00                env_name_hash
+                0x00000000000c1c80                env_hash_insert
+                0x00000000000c1d00                env_global_shared_lock
+                0x00000000000c1d40                env_global_shared_unlock
+                0x00000000000c1d80                env_dump_lock
+                0x00000000000c1dc0                env_dump_unlock
+                0x00000000000c1e00                env_intern_debug_count
+                0x00000000000c1fc0                env_intern_scope_begin
+                0x00000000000c2000                env_intern_scope_promote
+                0x00000000000c2040                env_intern_scope_retain
+                0x00000000000c2100                env_intern_scope_end
+                0x00000000000c2200                env_intern_release_value
+                0x00000000000c2300                env_intern_release_all_values
+                0x00000000000c23c0                env_intern_name
+                0x00000000000c2540                make_fn
+                0x00000000000c2680                env_new
+                0x00000000000c2800                env_incref
+                0x00000000000c2880                env_resolve_chain
+                0x00000000000c2bc0                env_get_hashed_slot
+                0x00000000000c2ec0                env_get_assign_count
+                0x00000000000c30c0                gc_collect_cycles
+                0x00000000000c3280                env_mark_captured
+                0x00000000000c3440                gc_note_possible_root
+                0x00000000000c3980                free_value
+                0x00000000000c39c0                env_decref
+                0x00000000000c3ec0                list_append_owned
+                0x00000000000c4140                env_destroy_final
+                0x00000000000c4500                eigs_clear_error_value
+                0x00000000000c45c0                rt_error
+                0x00000000000c4a00                observer_entropy_now
+                0x00000000000c4ec0                dict_remove
+                0x00000000000c51c0                slot_from_value
+                0x00000000000c53c0                env_store_slot
+                0x00000000000c57c0                env_set_local_pre_interned_slot
+                0x00000000000c5c00                env_set_local_hashed_slot
+                0x00000000000c5cc0                env_set_hashed_slot
+                0x00000000000c6080                env_bind_fresh_param_slot
+                0x00000000000c6700                dict_set_hashed
+                0x00000000000c6740                dict_set
+                0x00000000000c6800                dict_set_owned
+                0x00000000000c7700                val_clone_for_send
+                0x00000000000c7bc0                observer_slot_trajectory
+                0x00000000000caf00                env_set_local_hashed
+                0x00000000000cb940                env_set_local
+                0x00000000000cb9c0                env_set_hashed
+                0x00000000000cbfc0                env_set
+                0x00000000000cc040                env_set_local_owned
+                0x00000000000cc100                eigs_module_cache_get
+                0x00000000000cc200                eigs_module_cache_put
+                0x00000000000cc3c0                eigs_module_cache_clear
+                0x00000000000cc540                eigs_loading_active
+                0x00000000000cc640                eigs_loading_enter
+                0x00000000000cc740                eigs_loading_leave
+                0x00000000000cc840                gc_collect_at_exit
+                0x00000000000cce40                env_reserve_slots
+                0x00000000000cd2c0                env_clear
+                0x00000000000cd480                env_get_hashed
+                0x00000000000cd8c0                env_get_local_hashed
+                0x00000000000cdd80                eigs_obs_enable_runtime
+                0x00000000000cde00                eigs_obs_enable
+                0x00000000000cde80                env_get
+                0x00000000000cdf00                handle_register
+                0x00000000000ce000                handle_lookup
+                0x00000000000ce0c0                handle_release
+ *fill*         0x00000000000ce141       0x3f 
+ .text          0x00000000000ce180     0x7ddf /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(parser.o)
+                0x00000000000cf040                parser_set_caret_source
+                0x00000000000cf080                eigs_print_caret_src
+                0x00000000000d2ac0                make_node_col
+                0x00000000000d2b00                make_node
+                0x00000000000d2b40                free_ast
+                0x00000000000d5c40                parse
+ *fill*         0x00000000000d5f5f       0x21 
+ .text          0x00000000000d5f80    0x18c1b /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(builtins.o)
+                0x00000000000d6080                builtin_flush
+                0x00000000000d60c0                builtin_exit
+                0x00000000000d6180                builtin_clear_math_flags
+                0x00000000000d61c0                builtin_print
+                0x00000000000d6200                builtin_screen_put
+                0x00000000000d6300                builtin_screen_clear
+                0x00000000000d6340                builtin_screen_end
+                0x00000000000d6380                builtin_write
+                0x00000000000d63c0                builtin_sandbox_blocked
+                0x00000000000d6400                builtin_inflate
+                0x00000000000d6440                builtin_zlib_inflate
+                0x00000000000d6480                builtin_deflate
+                0x00000000000d64c0                builtin_zlib_deflate
+                0x00000000000d6500                builtin_str
+                0x00000000000d6580                builtin_text_builder_new
+                0x00000000000d65c0                builtin_pi
+                0x00000000000d6600                builtin_arena_stats
+                0x00000000000d6680                builtin_f64_from_bytes
+                0x00000000000d6a80                builtin_monotonic_ns
+                0x00000000000d6b40                builtin_monotonic_ms
+                0x00000000000d6c00                builtin_clock_unix
+                0x00000000000d6cc0                builtin_len
+                0x00000000000d6e00                builtin_get_observer_thresholds
+                0x00000000000d6ec0                builtin_observe
+                0x00000000000d6f40                builtin_scan_ints
+                0x00000000000d7240                builtin_scan_tokens
+                0x00000000000d7540                builtin_args
+                0x00000000000d7640                builtin_f64_to_bytes
+                0x00000000000d7700                builtin_hex
+                0x00000000000d78c0                builtin_classify
+                0x00000000000d7b00                builtin_math_flags
+                0x00000000000d7bc0                builtin_type
+                0x00000000000d7d80                builtin_split
+                0x00000000000d7fc0                builtin_env_get
+                0x00000000000d8180                builtin_arena_mark
+                0x00000000000d81c0                builtin_arena_reset
+                0x00000000000d8200                builtin_heap_inuse
+                0x00000000000d82c0                builtin_buffer
+                0x00000000000d84c0                builtin_str_from_bytes
+                0x00000000000d86c0                builtin_buf_deinterleave
+                0x00000000000d8ac0                builtin_channel
+                0x00000000000d8bc0                builtin_task_try_recv
+                0x00000000000d8c40                builtin_task_now
+                0x00000000000d8c80                builtin_task_self
+                0x00000000000d8cc0                builtin_nearest_in_range
+                0x00000000000d9300                builtin_nearest_in_range_all
+                0x00000000000d9bc0                builtin_sort
+                0x00000000000d9d00                builtin_text_builder_clear
+                0x00000000000d9d80                builtin_report
+                0x00000000000d9dc0                builtin_token_name
+                0x00000000000d9e40                builtin_chr
+                0x00000000000d9f80                builtin_ord
+                0x00000000000da040                builtin_values
+                0x00000000000da0c0                builtin_keys
+                0x00000000000da140                builtin_record_history
+                0x00000000000da200                builtin_task_alive
+                0x00000000000da2c0                builtin_recv_timeout
+                0x00000000000da680                builtin_scan_int_tokens
+                0x00000000000dacc0                builtin_random_int
+                0x00000000000dafc0                builtin_list_contains
+                0x00000000000db0c0                builtin_list_index_of
+                0x00000000000db1c0                builtin_task_sched_seed
+                0x00000000000db240                builtin_task_detach
+                0x00000000000db2c0                builtin_dispatch
+                0x00000000000db580                builtin_num_copy
+                0x00000000000db5c0                builtin_reshape
+                0x00000000000db740                builtin_state_at
+                0x00000000000db7c0                builtin_path_ext
+                0x00000000000db880                builtin_path_base
+                0x00000000000db940                builtin_path_dir
+                0x00000000000dba80                builtin_seed_random
+                0x00000000000dbb40                builtin_round
+                0x00000000000dbc00                builtin_ceil
+                0x00000000000dbcc0                builtin_floor
+                0x00000000000dbd80                builtin_atan2
+                0x00000000000dbe80                builtin_atan
+                0x00000000000dbf40                builtin_acos
+                0x00000000000dc0c0                builtin_asin
+                0x00000000000dc240                builtin_tan
+                0x00000000000dc300                builtin_cos
+                0x00000000000dc3c0                builtin_sin
+                0x00000000000dc480                builtin_str_upper
+                0x00000000000dc580                builtin_index_of
+                0x00000000000dc680                builtin_str_replace
+                0x00000000000dc9c0                builtin_contains
+                0x00000000000dcac0                builtin_str_lower
+                0x00000000000dcbc0                builtin_starts_with
+                0x00000000000dcd00                builtin_dict_remove
+                0x00000000000dcd80                builtin_dict_set
+                0x00000000000dce00                builtin_has_key
+                0x00000000000dcf00                builtin_assert
+                0x00000000000dcfc0                builtin_fill
+                0x00000000000dd100                builtin_concat
+                0x00000000000dd240                builtin_list_slice
+                0x00000000000dd400                builtin_append
+                0x00000000000dd4c0                builtin_num
+                0x00000000000dd680                builtin_buf_set
+                0x00000000000dd7c0                builtin_text_builder_to_string
+                0x00000000000dd8c0                builtin_sign_extend
+                0x00000000000dda00                builtin_buf_len
+                0x00000000000ddac0                builtin_buf_get
+                0x00000000000ddbc0                builtin_secure_equals
+                0x00000000000dde00                builtin_min
+                0x00000000000ddf80                builtin_abs
+                0x00000000000de040                builtin_ends_with
+                0x00000000000de180                builtin_bit_not
+                0x00000000000de200                builtin_text_builder_part_count
+                0x00000000000de2c0                builtin_text_builder_append_line
+                0x00000000000de380                builtin_join
+                0x00000000000de6c0                builtin_path_join
+                0x00000000000de8c0                builtin_substr
+                0x00000000000deac0                builtin_trim
+                0x00000000000dec40                builtin_char_at
+                0x00000000000dedc0                builtin_json_raw
+                0x00000000000dee00                builtin_set_observer_thresholds
+                0x00000000000def40                builtin_screen_render
+                0x00000000000df3c0                builtin_usleep
+                0x00000000000df400                builtin_coalesce
+                0x00000000000df4c0                builtin_bit_shift_left
+                0x00000000000df580                builtin_task_yield
+                0x00000000000df640                builtin_task_recv
+                0x00000000000df740                builtin_task_kill
+                0x00000000000df800                builtin_task_sleep
+                0x00000000000df900                builtin_random
+                0x00000000000dfa00                builtin_max
+                0x00000000000dfb80                builtin_bit_and
+                0x00000000000dfc40                builtin_bit_or
+                0x00000000000dfd00                builtin_bit_xor
+                0x00000000000dfdc0                builtin_bit_shift_right
+                0x00000000000dfe80                builtin_channel_closed
+                0x00000000000dff40                builtin_close_channel
+                0x00000000000e0040                builtin_text_builder_extend
+                0x00000000000e0180                builtin_try_recv
+                0x00000000000e02c0                builtin_recv
+                0x00000000000e0440                builtin_throw
+                0x00000000000e0600                builtin_tokenize_ids
+                0x00000000000e0740                builtin_text_builder_append
+                0x00000000000e0800                builtin_tokenize_with_names
+                0x00000000000e0a80                builtin_range
+                0x00000000000e0ec0                builtin_must_not_yield
+                0x00000000000e1000                builtin_free_val
+                0x00000000000e10c0                builtin_list_truncate
+                0x00000000000e1340                builtin_try_parse
+                0x00000000000e15c0                builtin_task_join
+                0x00000000000e1840                builtin_buf_from_list
+                0x00000000000e1a40                builtin_eval
+                0x00000000000e1fc0                builtin_thread_join
+                0x00000000000e2240                builtin_send
+                0x00000000000e2480                builtin_buf_resample_linear
+                0x00000000000e30c0                builtin_list_remove_at
+                0x00000000000e3240                builtin_buf_peak
+                0x00000000000e34c0                builtin_buf_fill
+                0x00000000000e37c0                builtin_buf_scale_range
+                0x00000000000e4440                builtin_spawn
+                0x00000000000e4bc0                builtin_buf_mix
+                0x00000000000e4fc0                builtin_task_send
+                0x00000000000e5b40                builtin_vm_run_bytecode
+                0x00000000000e5c80                builtin_sandbox_run
+                0x00000000000e6d00                builtin_get_at
+                0x00000000000e6f80                builtin_buf_from_pcm16le
+                0x00000000000e73c0                builtin_buf_copy
+                0x00000000000e7640                builtin_buf_to_pcm16le
+                0x00000000000e7c40                builtin_buf_dot
+                0x00000000000e8000                builtin_sort_by
+                0x00000000000e8440                builtin_copy_into
+                0x00000000000e89c0                builtin_list_insert_at
+                0x00000000000e8c40                builtin_set_at
+                0x00000000000e9240                eigs_is_registered_builtin
+                0x00000000000e9340                eigs_json_decode_string_body
+                0x00000000000e9a40                eigs_json_parse_value
+                0x00000000000ea440                eigs_json_parse_root
+                0x00000000000ea480                builtin_json_decode
+                0x00000000000ea6c0                eigs_json_escape_string
+                0x00000000000eadc0                builtin_json_build
+                0x00000000000eba80                builtin_json_encode
+                0x00000000000ebb40                eigs_json_encode
+                0x00000000000ec1c0                builtin_json_path
+                0x00000000000ec280                eigs_ensure_random_seeded
+                0x00000000000ec300                eigenscript_set_args
+                0x00000000000ec340                eigs_current_file_dir
+                0x00000000000ec3c0                resolve_eigenscript_file
+                0x00000000000ec480                replay_blocks
+                0x00000000000ec500                free_tokenlist
+                0x00000000000ec5c0                task_free
+                0x00000000000ecbc0                builtin_task_spawn
+                0x00000000000ecf80                handle_table_drain
+                0x00000000000ed400                register_builtins
+ *fill*         0x00000000000eeb9b       0x25 
+ .text          0x00000000000eebc0     0x747d /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(builtins_host.o)
+                0x00000000000eebc0                builtin_raw_key
+                0x00000000000eed80                builtin_write_bytes
+                0x00000000000ef080                builtin_mkdir
+                0x00000000000ef380                builtin_file_exists
+                0x00000000000ef580                builtin_is_dir
+                0x00000000000ef780                builtin_is_file
+                0x00000000000ef980                builtin_ls
+                0x00000000000efb80                builtin_exe_path
+                0x00000000000efcc0                builtin_read_bytes
+                0x00000000000eff80                builtin_read_text
+                0x00000000000f0240                builtin_random_hex
+                0x00000000000f04c0                builtin_read_line
+                0x00000000000f0680                builtin_proc_read
+                0x00000000000f0780                builtin_proc_read_buf
+                0x00000000000f0980                builtin_stream_close
+                0x00000000000f0a00                builtin_stream_write
+                0x00000000000f0b80                builtin_getcwd
+                0x00000000000f0c80                builtin_mktemp
+                0x00000000000f0d40                builtin_proc_write
+                0x00000000000f0ec0                builtin_proc_read_line
+                0x00000000000f10c0                builtin_proc_wait
+                0x00000000000f1280                builtin_proc_close
+                0x00000000000f1300                builtin_remove_file
+                0x00000000000f13c0                builtin_rename
+                0x00000000000f14c0                builtin_rm
+                0x00000000000f1580                builtin_chdir
+                0x00000000000f1640                builtin_write_text
+                0x00000000000f1780                builtin_stream_open
+                0x00000000000f1980                builtin_regex_replace
+                0x00000000000f1bc0                builtin_match_all
+                0x00000000000f1dc0                builtin_match
+                0x00000000000f2180                builtin_read_bytes_buf
+                0x00000000000f26c0                builtin_proc_spawn
+                0x00000000000f2a00                builtin_exec_capture
+                0x00000000000f30c0                read_file_util
+                0x00000000000f3240                builtin_build_corpus
+                0x00000000000f4e80                eigs_file_directory
+                0x00000000000f5480                builtin_load_file
+                0x00000000000f5500                eigs_file_resolve_error
+                0x00000000000f55c0                resolve_eigenscript_file_from_ex
+                0x00000000000f5b80                resolve_eigenscript_file_from
+                0x00000000000f5bc0                register_host_builtins
+ *fill*         0x00000000000f603d        0x3 
+ .text          0x00000000000f6040     0x964a /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(builtins_tensor.o)
+                0x00000000000f7940                ne_softmax_buf
+                0x00000000000f7c00                ne_matmul_buf
+                0x00000000000f8100                builtin_tensor_add
+                0x00000000000f8340                builtin_tensor_subtract
+                0x00000000000f8400                builtin_tensor_multiply
+                0x00000000000f84c0                builtin_tensor_divide
+                0x00000000000f8580                builtin_tensor_pow
+                0x00000000000f8640                builtin_tensor_sqrt
+                0x00000000000f8d80                builtin_tensor_exp
+                0x00000000000f94c0                builtin_tensor_log
+                0x00000000000f9a40                builtin_tensor_negative
+                0x00000000000f9fc0                builtin_tensor_matmul
+                0x00000000000fa600                builtin_tensor_softmax
+                0x00000000000fa800                builtin_tensor_log_softmax
+                0x00000000000fab00                builtin_tensor_relu
+                0x00000000000fae80                builtin_tensor_leaky_relu
+                0x00000000000fb100                builtin_tensor_mean
+                0x00000000000fb440                builtin_tensor_sum
+                0x00000000000fb780                builtin_tensor_norm
+                0x00000000000fbc80                builtin_tensor_zeros
+                0x00000000000fbec0                builtin_tensor_zeros_like
+                0x00000000000fbf80                builtin_tensor_gather
+                0x00000000000fc140                call_eigs_fn
+                0x00000000000fc4c0                builtin_random_normal
+                0x00000000000fc840                builtin_tensor_shape
+                0x00000000000fca00                builtin_numerical_grad
+                0x00000000000fd740                builtin_sgd_update
+                0x00000000000fdb00                builtin_numerical_grad_rows
+                0x00000000000fe180                builtin_sgd_update_rows
+                0x00000000000fe440                builtin_numerical_grad_cols
+                0x00000000000fed00                builtin_sgd_update_cols
+                0x00000000000ff040                builtin_tensor_save
+                0x00000000000ff300                builtin_tensor_load
+ *fill*         0x00000000000ff68a       0x36 
+ .text          0x00000000000ff6c0     0x175f /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(hash.o)
+                0x0000000000100580                builtin_hmac_sha256
+                0x0000000000100600                builtin_md5
+                0x0000000000100940                builtin_md5_file
+                0x0000000000100b80                builtin_sha256_file
+                0x0000000000100c00                builtin_sha256
+                0x0000000000100d80                register_hash_builtins
+ *fill*         0x0000000000100e1f       0x21 
+ .text          0x0000000000100e40      0xb65 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(arena.o)
+                0x0000000000100e80                safe_size_mul
+                0x0000000000100ec0                xmalloc
+                0x0000000000100f00                xcalloc
+                0x0000000000100f80                xrealloc
+                0x0000000000100fc0                xstrdup
+                0x0000000000101000                xfopen_write
+                0x0000000000101140                xmalloc_array
+                0x00000000001011c0                xcalloc_array
+                0x0000000000101240                xrealloc_array
+                0x00000000001012c0                arena_init
+                0x0000000000101380                arena_alloc
+                0x0000000000101540                arena_track_string
+                0x0000000000101600                arena_mark_pos
+                0x0000000000101680                arena_reset_to_mark
+                0x0000000000101780                arena_destroy
+                0x0000000000101940                free_weight_val
+ *fill*         0x00000000001019a5       0x1b 
+ .text          0x00000000001019c0      0x573 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(state.o)
+                0x00000000001019c0                eigs_state_new
+                0x0000000000101a80                eigs_state_destroy
+                0x0000000000101b80                eigs_process_thread_count
+                0x0000000000101bc0                eigs_thread_attach
+                0x0000000000101d00                eigs_current_state
+                0x0000000000101d40                eigs_thread_switch
+                0x0000000000101e00                eigs_thread_detach
+ *fill*         0x0000000000101f33        0xd 
+ .text          0x0000000000101f40      0x7e9 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(strbuf.o)
+                0x0000000000101f40                strbuf_init
+                0x0000000000101f80                strbuf_reserve
+                0x0000000000102080                strbuf_append_char
+                0x00000000001021c0                strbuf_append_n
+                0x0000000000102300                strbuf_append
+                0x0000000000102440                strbuf_append_fmt
+                0x0000000000102680                strbuf_finish
+                0x0000000000102700                strbuf_free
+ *fill*         0x0000000000102729       0x17 
+ .text          0x0000000000102740     0x5135 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(ext_store.o)
+                0x0000000000107740                register_store_builtins
+ *fill*         0x0000000000107875        0xb 
+ .text          0x0000000000107880     0x4b5a /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(chunk.o)
+                0x0000000000109b40                srcbuf_new
+                0x0000000000109bc0                srcbuf_incref
+                0x0000000000109c40                srcbuf_decref
+                0x0000000000109d00                chunk_new
+                0x0000000000109e80                chunk_incref
+                0x0000000000109f00                chunk_decref
+                0x0000000000109f80                chunk_free
+                0x000000000010a000                chunk_emit
+                0x000000000010a0c0                chunk_emit_u16
+                0x000000000010a240                chunk_emit_u32
+                0x000000000010a4c0                chunk_emit_jump
+                0x000000000010a700                chunk_patch_jump
+                0x000000000010a780                chunk_add_constant
+                0x000000000010a7c0                chunk_add_constant_positional
+                0x000000000010a800                chunk_add_function
+                0x000000000010a880                op_name
+                0x000000000010a8c0                chunk_disassemble
+                0x000000000010ad00                chunk_verify
+                0x000000000010ad40                chunk_verify_self_check
+                0x000000000010b780                chunk_arm_temporal
+                0x000000000010bac0                chunk_scan_leaf_accessor
+                0x000000000010bc40                opcode_is_observer_reader
+                0x000000000010bc80                chunk_has_reader_opcode
+                0x000000000010bdc0                chunk_reads_observer
+                0x000000000010bf00                chunk_scan_static_loads
+ *fill*         0x000000000010c3da       0x26 
+ .text          0x000000000010c400     0xe22b /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(compiler.o)
+                0x0000000000119700                eigs_obs_unmute_for_fatal
+                0x0000000000119780                eigs_obs_memo_release
+                0x0000000000119800                compile_ast
+ *fill*         0x000000000011a62b       0x15 
+ .text          0x000000000011a640    0x4aa8f /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(vm.o)
+                0x000000000011ce40                vm_obs_slot_dropped
+                0x000000000011ce80                eigs_sigusr1_handler
+                0x000000000011cec0                observer_predicate_at
+                0x000000000011d240                callframe_release
+                0x000000000011d2c0                vm_thread_destroy
+                0x000000000011d340                sandbox_charge
+                0x000000000011d400                jit_helper_get_name
+                0x000000000011d800                jit_helper_set_local
+                0x000000000011dc00                jit_helper_set_name
+                0x000000000011df00                jit_helper_set_name_local
+                0x000000000011e100                jit_helper_set_fn_name_local
+                0x000000000011e300                jit_helper_local_idx_get
+                0x000000000011e940                jit_helper_local_dot_get
+                0x000000000011ed80                jit_helper_local_idx_dot_get
+                0x000000000011f2c0                jit_helper_dot_set
+                0x000000000011fd00                jit_helper_dot_get
+                0x0000000000120380                jit_helper_local_dot_set
+                0x00000000001209c0                jit_helper_observe_assign
+                0x0000000000120a00                jit_helper_observe_assign_local
+                0x0000000000120b00                jit_helper_report_slot
+                0x0000000000120fc0                jit_helper_observe_name_post
+                0x0000000000121240                jit_helper_iter_next
+                0x0000000000121640                vm_thread_reset_caches
+                0x0000000000121680                eigs_loop_stall_step
+                0x0000000000121a00                eigs_loop_cap_step
+                0x0000000000121bc0                jit_helper_loop_stall_check
+                0x0000000000121f40                jit_helper_loop_cap_check
+                0x0000000000122100                jit_helper_index_set
+                0x0000000000122e00                jit_helper_index_get
+                0x0000000000123bc0                vm_borrow_compensate
+                0x0000000000123cc0                jit_helper_call
+                0x00000000001251c0                jit_helper_return
+                0x0000000000125640                jit_helper_return_null
+                0x0000000000125a80                eigs_jit_load_eigs_current
+                0x0000000000125ac0                eigs_jit_get_layout
+                0x0000000000125b80                vm_current_line
+                0x0000000000125c00                vm_print_stack_trace
+                0x0000000000163780                task_sched_thread_free
+                0x0000000000163c00                task_any_unobserved_error
+                0x0000000000163cc0                task_sched_set_seed
+                0x0000000000163d80                task_sched_on_spawn
+                0x0000000000163e80                task_request_yield
+                0x0000000000163ec0                task_request_join
+                0x0000000000163f80                task_deliver
+                0x0000000000164180                task_mbox_has
+                0x0000000000164240                task_mbox_pop
+                0x0000000000164300                task_request_recv
+                0x0000000000164380                task_request_sleep
+                0x0000000000164440                task_virtual_now
+                0x0000000000164480                task_current_id
+                0x00000000001644c0                task_do_kill
+                0x0000000000164ac0                task_do_detach
+                0x0000000000164b80                vm_execute_argc
+                0x0000000000164e40                vm_execute
+ *fill*         0x00000000001650cf       0x31 
+ .text          0x0000000000165100     0x6221 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(jit.o)
+                0x0000000000167000                jit_module_shutdown
+                0x0000000000167740                jit_cache_new
+                0x0000000000167800                jit_cache_free
+                0x0000000000167880                jit_cache_alloc
+                0x0000000000167900                jit_cache_seal
+                0x000000000016ac40                jit_cache_unseal
+                0x000000000016acc0                jit_cache_used
+                0x000000000016ad00                jit_emit_const_return
+                0x000000000016ad80                jit_register_chunk
+                0x000000000016ae80                jit_unregister_chunk
+                0x000000000016af40                jit_module_init
+                0x000000000016af80                jit_thread_destroy
+                0x000000000016afc0                jit_state_init_thresholds
+                0x000000000016b080                jit_try_compile_chunk
+                0x000000000016b1c0                jit_try_compile_chunk_osr
+ *fill*         0x000000000016b321       0x1f 
+ .text          0x000000000016b340     0x6cb3 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(trace.o)
+                0x000000000016e380                trace_occ_window
+                0x000000000016e480                trace_arm_occurrences_all
+                0x000000000016e500                trace_arm_snapshot
+                0x000000000016e580                trace_arm_restore
+                0x000000000016e680                trace_arm_history_all_mt
+                0x000000000016e6c0                trace_arm_history_all
+                0x000000000016e700                trace_arm_history_name
+                0x000000000016e880                trace_arm_occurrences_name
+                0x000000000016ea00                trace_history_disable
+                0x000000000016ea40                trace_record_obs
+                0x000000000016eb80                trace_query_prev
+                0x000000000016ed00                trace_query_at
+                0x000000000016f000                trace_query_when
+                0x000000000016f340                trace_name_is_internal
+                0x000000000016f3c0                trace_state_at
+                0x000000000016f780                trace_set_sink
+                0x000000000016f8c0                trace_init
+                0x000000000016fb00                trace_set_replay_mem
+                0x000000000016fd00                trace_replay_take
+                0x0000000000170040                trace_thread_release
+                0x0000000000170640                trace_shutdown
+                0x0000000000170800                trace_line
+                0x0000000000170880                trace_assign
+                0x0000000000170f40                trace_assign_tape_only
+                0x0000000000171600                trace_assign_filtered
+                0x0000000000171cc0                trace_nondet_value
+ *fill*         0x0000000000171ff3        0xd 
+ .text          0x0000000000172000     0x1563 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(eigs_embed.o)
+                0x0000000000172400                eigs_state_init_runtime
+                0x00000000001724c0                eigs_open
+                0x00000000001725c0                eigs_close
+                0x0000000000172680                eigs_set_eval_observer_isolated
+                0x00000000001726c0                eigs_eval_string
+                0x0000000000172700                eigs_eval_file
+                0x00000000001727c0                eigs_last_error_message
+                0x0000000000172840                eigs_has_error
+                0x0000000000172880                eigs_last_error_kind
+                0x0000000000172900                eigs_last_error_line
+                0x0000000000172980                eigs_clear_error
+                0x0000000000172a00                eigs_set_global
+                0x0000000000172a80                eigs_get_global
+                0x0000000000172b40                eigs_value_new_num
+                0x0000000000172b80                eigs_value_new_string
+                0x0000000000172bc0                eigs_value_new_null
+                0x0000000000172c00                eigs_value_new_list
+                0x0000000000172c40                eigs_value_new_dict
+                0x0000000000172c80                eigs_value_retain
+                0x0000000000172d00                eigs_value_release
+                0x0000000000172dc0                eigs_value_type
+                0x0000000000172f00                eigs_value_as_num
+                0x0000000000172f40                eigs_value_as_string
+                0x0000000000172f80                eigs_value_list_len
+                0x0000000000172fc0                eigs_value_list_get
+                0x0000000000173040                eigs_value_list_append
+                0x0000000000173080                eigs_value_dict_get
+                0x0000000000173140                eigs_value_dict_set
+                0x0000000000173180                eigs_value_new_buffer
+                0x0000000000173200                eigs_value_buffer_len
+                0x0000000000173240                eigs_value_buffer_get
+                0x00000000001732c0                eigs_value_buffer_set
+                0x0000000000173300                eigs_set_trace_sink
+                0x0000000000173340                eigs_set_replay_tape
+                0x0000000000173380                eigs_replay_take
+                0x00000000001733c0                eigs_trace_record_nondet
+                0x0000000000173400                eigs_set_abort_flag
+                0x0000000000173440                eigs_register_function
+                0x0000000000173500                eigs_set_source_provider
+                0x0000000000173540                eigs_source_lookup
+ *fill*         0x0000000000173563       0x1d 
+ .text          0x0000000000173580     0x3f10 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(lexer.o)
+                0x00000000001769c0                tok_base_string_id_count
+                0x0000000000176a00                tok_base_string
+                0x0000000000177480                tokenize
+ .text          0x0000000000177490       0x12 /usr/lib/x86_64-linux-gnu/libc_nonshared.a(atexit.oS)
+                0x0000000000177490                atexit
+ .text          0x00000000001774a2        0x0 /usr/lib/gcc/x86_64-linux-gnu/13/crtendS.o
+ .text          0x00000000001774a2        0x0 /usr/lib/gcc/x86_64-linux-gnu/13/../../../x86_64-linux-gnu/crtn.o
+ *(.gnu.warning)
+
+.fini           0x00000000001774a4        0xd
+ *(SORT_NONE(.fini))
+ .fini          0x00000000001774a4        0x8 /usr/lib/gcc/x86_64-linux-gnu/13/../../../x86_64-linux-gnu/crti.o
+                0x00000000001774a4                _fini
+ .fini          0x00000000001774ac        0x5 /usr/lib/gcc/x86_64-linux-gnu/13/../../../x86_64-linux-gnu/crtn.o
+                [!provide]                        PROVIDE (__etext = .)
+                [!provide]                        PROVIDE (_etext = .)
+                [!provide]                        PROVIDE (etext = .)
+                0x0000000000178000                . = ALIGN (CONSTANT (MAXPAGESIZE))
+                0x0000000000178000                . = SEGMENT_START ("rodata-segment", (ALIGN (CONSTANT (MAXPAGESIZE)) + (. & (CONSTANT (MAXPAGESIZE) - 0x1))))
+
+.rodata         0x0000000000178000    0x10cb0
+ *(.rodata .rodata.* .gnu.linkonce.r.*)
+ .rodata.cst4   0x0000000000178000       0x10 /usr/lib/gcc/x86_64-linux-gnu/13/../../../x86_64-linux-gnu/Scrt1.o
+                                          0x4 (size before relaxing)
+                0x0000000000178000                _IO_stdin_used
+ .rodata.str1.1
+                0x0000000000178010     0x54af /tmp/ccGxs4oQ.o
+                                       0x34f0 (size before relaxing)
+ *fill*         0x000000000017d4bf        0x1 
+ .rodata.str1.8
+                0x000000000017d4c0     0x9229 /tmp/ccGxs4oQ.o
+                                       0x4620 (size before relaxing)
+ *fill*         0x00000000001866e9        0x7 
+ .rodata.cst8   0x00000000001866f0      0x370 /tmp/ccGxs4oQ.o
+                                        0x168 (size before relaxing)
+ .rodata.cst16  0x0000000000186a60      0x340 /tmp/ccGxs4oQ.o
+                                         0x60 (size before relaxing)
+ .rodata.str1.8
+                0x0000000000186da0       0xc6 /tmp/ems-close-20260911/gc-timing-build/candidate.o
+ .rodata        0x0000000000186da0      0x370 /tmp/ems-close-20260911/gc-timing-build/candidate.o
+ .rodata.str1.1
+                0x0000000000187110      0x3ac /tmp/ems-close-20260911/gc-timing-build/candidate.o
+ .rodata.cst16  0x0000000000187110      0x130 /tmp/ems-close-20260911/gc-timing-build/candidate.o
+ .rodata.cst8   0x0000000000187110       0x48 /tmp/ems-close-20260911/gc-timing-build/candidate.o
+ .rodata        0x0000000000187110      0x31c /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(parser.o)
+ .rodata.str1.8
+                0x000000000018742c      0x67e /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(parser.o)
+ .rodata.str1.1
+                0x000000000018742c       0xc1 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(parser.o)
+ .rodata.cst16  0x000000000018742c       0x70 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(parser.o)
+ .rodata.str1.1
+                0x000000000018742c      0xf7e /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(builtins.o)
+ .rodata.str1.8
+                0x000000000018742c     0x1999 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(builtins.o)
+ .rodata        0x000000000018742c      0x178 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(builtins.o)
+ .rodata.cst8   0x00000000001875a4       0xd8 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(builtins.o)
+ .rodata.cst16  0x00000000001875a4       0x20 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(builtins.o)
+ .rodata.str1.1
+                0x00000000001875a4      0x440 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(builtins_host.o)
+ .rodata.str1.8
+                0x00000000001875a4      0x8a7 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(builtins_host.o)
+ .rodata.cst8   0x00000000001875a4       0x30 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(builtins_host.o)
+ .rodata.cst16  0x00000000001875a4       0x40 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(builtins_host.o)
+ .rodata.str1.8
+                0x00000000001875a4      0x17f /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(builtins_tensor.o)
+ .rodata.str1.1
+                0x00000000001875a4      0x103 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(builtins_tensor.o)
+ .rodata.cst16  0x00000000001875a4       0x10 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(builtins_tensor.o)
+ .rodata.cst8   0x00000000001875a4       0x40 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(builtins_tensor.o)
+ .rodata.str1.8
+                0x00000000001875a4       0x9b /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(hash.o)
+ .rodata.str1.1
+                0x00000000001875a4       0x9d /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(hash.o)
+ *fill*         0x00000000001875a4       0x1c 
+ .rodata        0x00000000001875c0      0x300 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(hash.o)
+ .rodata.cst16  0x00000000001878c0       0x60 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(hash.o)
+ .rodata.cst8   0x00000000001878c0       0x10 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(hash.o)
+ .rodata.str1.8
+                0x00000000001878c0       0x32 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(arena.o)
+ .rodata.str1.1
+                0x00000000001878c0        0x1 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(arena.o)
+ .rodata.str1.1
+                0x00000000001878c0       0x2b /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(state.o)
+ .rodata.str1.8
+                0x00000000001878c0       0x60 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(state.o)
+ .rodata.cst8   0x00000000001878c0       0x18 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(state.o)
+ .rodata.str1.1
+                0x00000000001878c0      0x1b5 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(ext_store.o)
+ .rodata        0x00000000001878c0       0x28 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(ext_store.o)
+ .rodata.str1.8
+                0x00000000001878e8      0x8a9 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(ext_store.o)
+ .rodata.cst16  0x00000000001878e8       0x10 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(ext_store.o)
+ .rodata.cst8   0x00000000001878e8       0x38 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(ext_store.o)
+ .rodata        0x00000000001878e8      0x540 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(chunk.o)
+ .rodata.str1.1
+                0x0000000000187e28      0x5af /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(chunk.o)
+ .rodata.str1.8
+                0x0000000000187e28      0x193 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(chunk.o)
+ *fill*         0x0000000000187e28       0x18 
+ .rodata        0x0000000000187e40      0x63d /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(compiler.o)
+ .rodata.str1.8
+                0x000000000018847d      0x445 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(compiler.o)
+ .rodata.str1.1
+                0x000000000018847d      0x17c /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(compiler.o)
+ .rodata.cst8   0x000000000018847d        0x8 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(compiler.o)
+ .rodata.str1.1
+                0x000000000018847d      0x322 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(vm.o)
+ .rodata.str1.8
+                0x000000000018847d      0xc0a /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(vm.o)
+ *fill*         0x000000000018847d        0x3 
+ .rodata        0x0000000000188480      0x1ac /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(vm.o)
+ .rodata.cst8   0x000000000018862c       0x20 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(vm.o)
+ .rodata.cst16  0x000000000018862c       0x80 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(vm.o)
+ .rodata        0x000000000018862c      0x29d /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(jit.o)
+ .rodata.str1.1
+                0x00000000001888c9      0x200 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(jit.o)
+ .rodata.str1.8
+                0x00000000001888c9      0x25e /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(jit.o)
+ .rodata.cst8   0x00000000001888c9       0xc8 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(jit.o)
+ .rodata.cst16  0x00000000001888c9       0x70 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(jit.o)
+ .rodata.cst4   0x00000000001888c9        0xc /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(jit.o)
+ .rodata.str1.8
+                0x00000000001888c9      0x338 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(trace.o)
+ .rodata.str1.1
+                0x00000000001888c9       0xf2 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(trace.o)
+ *fill*         0x00000000001888c9        0x3 
+ .rodata        0x00000000001888cc       0xa0 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(trace.o)
+ .rodata.cst8   0x000000000018896c        0x8 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(trace.o)
+ .rodata.str1.1
+                0x000000000018896c        0x4 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(eigs_embed.o)
+ .rodata.str1.8
+                0x000000000018896c       0xc3 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(eigs_embed.o)
+ .rodata        0x000000000018896c       0x24 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(eigs_embed.o)
+ .rodata.str1.1
+                0x0000000000188990      0x2f8 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(lexer.o)
+ .rodata.str1.8
+                0x0000000000188990      0x259 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(lexer.o)
+ .rodata        0x0000000000188990      0x320 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(lexer.o)
+ .rodata.cst8   0x0000000000188cb0        0x8 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(lexer.o)
+
+.rodata1
+ *(.rodata1)
+
+.eh_frame_hdr   0x0000000000188cb0     0x2414
+ *(.eh_frame_hdr)
+ .eh_frame_hdr  0x0000000000188cb0     0x2414 /usr/lib/gcc/x86_64-linux-gnu/13/../../../x86_64-linux-gnu/Scrt1.o
+                0x0000000000188cb0                __GNU_EH_FRAME_HDR
+ *(.eh_frame_entry .eh_frame_entry.*)
+
+.eh_frame       0x000000000018b0c8     0xfd30
+ *(.eh_frame)
+ .eh_frame      0x000000000018b0c8       0x30 /usr/lib/gcc/x86_64-linux-gnu/13/../../../x86_64-linux-gnu/Scrt1.o
+                                         0x2c (size before relaxing)
+ *fill*         0x000000000018b0f8        0x0 
+ .eh_frame      0x000000000018b0f8       0x28 /usr/lib/gcc/x86_64-linux-gnu/13/../../../x86_64-linux-gnu/Scrt1.o
+                                         0x40 (size before relaxing)
+ .eh_frame      0x000000000018b120       0x18 /usr/lib/gcc/x86_64-linux-gnu/13/../../../x86_64-linux-gnu/Scrt1.o
+                                         0x30 (size before relaxing)
+ .eh_frame      0x000000000018b138       0x18 /usr/lib/gcc/x86_64-linux-gnu/13/../../../x86_64-linux-gnu/Scrt1.o
+                                         0x30 (size before relaxing)
+ .eh_frame      0x000000000018b150     0x46d8 /tmp/ccGxs4oQ.o
+                                       0x46f0 (size before relaxing)
+ .eh_frame      0x000000000018f828     0x21e8 /tmp/ems-close-20260911/gc-timing-build/candidate.o
+                                       0x2200 (size before relaxing)
+ .eh_frame      0x0000000000191a10      0x710 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(parser.o)
+                                        0x728 (size before relaxing)
+ .eh_frame      0x0000000000192120     0x2c80 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(builtins.o)
+                                       0x2c98 (size before relaxing)
+ .eh_frame      0x0000000000194da0      0xb10 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(builtins_host.o)
+                                        0xb28 (size before relaxing)
+ .eh_frame      0x00000000001958b0      0xf78 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(builtins_tensor.o)
+                                        0xf90 (size before relaxing)
+ .eh_frame      0x0000000000196828      0x350 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(hash.o)
+                                        0x368 (size before relaxing)
+ .eh_frame      0x0000000000196b78      0x278 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(arena.o)
+                                        0x290 (size before relaxing)
+ .eh_frame      0x0000000000196df0      0x130 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(state.o)
+                                        0x148 (size before relaxing)
+ .eh_frame      0x0000000000196f20      0x1e0 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(strbuf.o)
+                                        0x1f8 (size before relaxing)
+ .eh_frame      0x0000000000197100      0x830 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(ext_store.o)
+                                        0x848 (size before relaxing)
+ .eh_frame      0x0000000000197930      0x518 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(chunk.o)
+                                        0x530 (size before relaxing)
+ .eh_frame      0x0000000000197e48      0xb08 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(compiler.o)
+                                        0xb20 (size before relaxing)
+ .eh_frame      0x0000000000198950     0x1240 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(vm.o)
+                                       0x1258 (size before relaxing)
+ .eh_frame      0x0000000000199b90      0x3d8 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(jit.o)
+                                        0x3f0 (size before relaxing)
+ .eh_frame      0x0000000000199f68      0x978 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(trace.o)
+                                        0x990 (size before relaxing)
+ .eh_frame      0x000000000019a8e0      0x470 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(eigs_embed.o)
+                                        0x488 (size before relaxing)
+ .eh_frame      0x000000000019ad50       0x90 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(lexer.o)
+                                         0xa8 (size before relaxing)
+ .eh_frame      0x000000000019ade0       0x14 /usr/lib/x86_64-linux-gnu/libc_nonshared.a(atexit.oS)
+                                         0x30 (size before relaxing)
+ .eh_frame      0x000000000019adf4        0x4 /usr/lib/gcc/x86_64-linux-gnu/13/crtendS.o
+ *(.eh_frame.*)
+
+.sframe         0x000000000019adf8        0x0
+ *(.sframe)
+ .sframe        0x000000000019adf8        0x0 /usr/lib/gcc/x86_64-linux-gnu/13/../../../x86_64-linux-gnu/Scrt1.o
+ .sframe        0x000000000019adf8        0x0 /usr/lib/gcc/x86_64-linux-gnu/13/../../../x86_64-linux-gnu/Scrt1.o
+ *(.sframe.*)
+
+.gcc_except_table
+ *(.gcc_except_table .gcc_except_table.*)
+
+.gnu_extab
+ *(.gnu_extab*)
+
+.exception_ranges
+ *(.exception_ranges*)
+                0x000000000019bde0                . = DATA_SEGMENT_ALIGN (CONSTANT (MAXPAGESIZE), CONSTANT (COMMONPAGESIZE))
+
+.eh_frame
+ *(.eh_frame)
+ *(.eh_frame.*)
+
+.sframe
+ *(.sframe)
+ *(.sframe.*)
+
+.gnu_extab
+ *(.gnu_extab)
+
+.gcc_except_table
+ *(.gcc_except_table .gcc_except_table.*)
+
+.exception_ranges
+ *(.exception_ranges*)
+
+.tdata          0x000000000019bde0        0x8
+                [!provide]                        PROVIDE (__tdata_start = .)
+ *(.tdata .tdata.* .gnu.linkonce.td.*)
+ .tdata         0x000000000019bde0        0x4 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(parser.o)
+ .tdata         0x000000000019bde4        0x4 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(compiler.o)
+                0x000000000019bde4                g_obs_mute_saved_fd
+
+.tbss           0x000000000019bde8      0x850
+ *(.tbss .tbss.* .gnu.linkonce.tb.*)
+ .tbss          0x000000000019bde8       0x10 /tmp/ccGxs4oQ.o
+ .tbss          0x000000000019bdf8        0x4 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(parser.o)
+ .tbss          0x000000000019bdfc        0xc /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(builtins.o)
+ .tbss          0x000000000019be08        0x8 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(state.o)
+                0x000000000019be08                eigs_current
+ .tbss          0x000000000019be10       0x18 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(compiler.o)
+ .tbss          0x000000000019be28      0x810 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(vm.o)
+ *(.tcommon)
+
+.preinit_array  0x000000000019bde8        0x0
+                [!provide]                        PROVIDE (__preinit_array_start = .)
+ *(.preinit_array)
+                [!provide]                        PROVIDE (__preinit_array_end = .)
+
+.init_array     0x000000000019bde8       0x10
+                [!provide]                        PROVIDE (__init_array_start = .)
+ *(SORT_BY_INIT_PRIORITY(.init_array.*) SORT_BY_INIT_PRIORITY(.ctors.*))
+ *(.init_array EXCLUDE_FILE(*crtend?.o *crtend.o *crtbegin?.o *crtbegin.o) .ctors)
+ .init_array    0x000000000019bde8        0x8 /usr/lib/gcc/x86_64-linux-gnu/13/crtbeginS.o
+ .init_array    0x000000000019bdf0        0x8 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(jit.o)
+                [!provide]                        PROVIDE (__init_array_end = .)
+
+.fini_array     0x000000000019bdf8        0x8
+                [!provide]                        PROVIDE (__fini_array_start = .)
+ *(SORT_BY_INIT_PRIORITY(.fini_array.*) SORT_BY_INIT_PRIORITY(.dtors.*))
+ *(.fini_array EXCLUDE_FILE(*crtend?.o *crtend.o *crtbegin?.o *crtbegin.o) .dtors)
+ .fini_array    0x000000000019bdf8        0x8 /usr/lib/gcc/x86_64-linux-gnu/13/crtbeginS.o
+                [!provide]                        PROVIDE (__fini_array_end = .)
+
+.ctors
+ *crtbegin.o(.ctors)
+ *crtbegin?.o(.ctors)
+ *(EXCLUDE_FILE(*crtend?.o *crtend.o) .ctors)
+ *(SORT_BY_NAME(.ctors.*))
+ *(.ctors)
+
+.dtors
+ *crtbegin.o(.dtors)
+ *crtbegin?.o(.dtors)
+ *(EXCLUDE_FILE(*crtend?.o *crtend.o) .dtors)
+ *(SORT_BY_NAME(.dtors.*))
+ *(.dtors)
+
+.jcr
+ *(.jcr)
+
+.data.rel.ro    0x000000000019be00      0xb90
+ *(.data.rel.ro.local* .gnu.linkonce.d.rel.ro.local.*)
+ .data.rel.ro.local
+                0x000000000019be00       0x70 /tmp/ems-close-20260911/gc-timing-build/candidate.o
+ *fill*         0x000000000019be70       0x10 
+ .data.rel.ro.local
+                0x000000000019be80      0x748 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(builtins.o)
+ *fill*         0x000000000019c5c8       0x18 
+ .data.rel.ro.local
+                0x000000000019c5e0       0x50 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(chunk.o)
+ *fill*         0x000000000019c630       0x10 
+ .data.rel.ro.local
+                0x000000000019c640       0x50 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(compiler.o)
+ *fill*         0x000000000019c690       0x10 
+ .data.rel.ro.local
+                0x000000000019c6a0      0x2f0 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(vm.o)
+ *(.data.rel.ro .data.rel.ro.* .gnu.linkonce.d.rel.ro.*)
+ .data.rel.ro   0x000000000019c990        0x0 /usr/lib/gcc/x86_64-linux-gnu/13/../../../x86_64-linux-gnu/Scrt1.o
+
+.dynamic        0x000000000019c990      0x200
+ *(.dynamic)
+ .dynamic       0x000000000019c990      0x200 /usr/lib/gcc/x86_64-linux-gnu/13/../../../x86_64-linux-gnu/Scrt1.o
+                0x000000000019c990                _DYNAMIC
+
+.got            0x000000000019cb90      0x468
+ *(.got.plt)
+ .got.plt       0x000000000019cb90      0x420 /usr/lib/gcc/x86_64-linux-gnu/13/../../../x86_64-linux-gnu/Scrt1.o
+                0x000000000019cb90                _GLOBAL_OFFSET_TABLE_
+ *(.igot.plt)
+ *(.got)
+ .got           0x000000000019cfb0       0x48 /usr/lib/gcc/x86_64-linux-gnu/13/../../../x86_64-linux-gnu/Scrt1.o
+ *(.igot)
+                0x000000000019d000                . = DATA_SEGMENT_RELRO_END (., 0x0)
+
+.data           0x000000000019d000     0x1cc4
+ *(.data .data.* .gnu.linkonce.d.*)
+ .data          0x000000000019d000        0x4 /usr/lib/gcc/x86_64-linux-gnu/13/../../../x86_64-linux-gnu/Scrt1.o
+                0x000000000019d000                data_start
+                0x000000000019d000                __data_start
+ .data          0x000000000019d004        0x0 /usr/lib/gcc/x86_64-linux-gnu/13/../../../x86_64-linux-gnu/crti.o
+ .data          0x000000000019d004        0x0 /usr/lib/gcc/x86_64-linux-gnu/13/crtbeginS.o
+ *fill*         0x000000000019d004        0x4 
+ .data.rel.local
+                0x000000000019d008        0x8 /usr/lib/gcc/x86_64-linux-gnu/13/crtbeginS.o
+                0x000000000019d008                __dso_handle
+ .data          0x000000000019d010     0x1c38 /tmp/ccGxs4oQ.o
+ *fill*         0x000000000019ec48       0x18 
+ .data          0x000000000019ec60       0x48 /tmp/ems-close-20260911/gc-timing-build/candidate.o
+ .data          0x000000000019eca8        0x0 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(parser.o)
+ .data          0x000000000019eca8        0x0 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(builtins.o)
+ .data          0x000000000019eca8        0x0 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(builtins_host.o)
+ .data          0x000000000019eca8        0x0 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(builtins_tensor.o)
+ .data          0x000000000019eca8        0x0 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(hash.o)
+ .data          0x000000000019eca8        0x0 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(arena.o)
+ .data          0x000000000019eca8        0x0 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(state.o)
+ .data          0x000000000019eca8        0x0 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(strbuf.o)
+ .data          0x000000000019eca8        0x0 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(ext_store.o)
+ .data          0x000000000019eca8        0x0 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(chunk.o)
+ .data          0x000000000019eca8        0x4 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(compiler.o)
+ .data          0x000000000019ecac        0x0 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(vm.o)
+ *fill*         0x000000000019ecac        0x4 
+ .data.rel.local
+                0x000000000019ecb0        0x8 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(vm.o)
+                0x000000000019ecb0                g_vm_abort_flag
+ .data          0x000000000019ecb8        0x0 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(jit.o)
+ .data          0x000000000019ecb8        0xc /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(trace.o)
+ .data          0x000000000019ecc4        0x0 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(eigs_embed.o)
+ .data          0x000000000019ecc4        0x0 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(lexer.o)
+ .data          0x000000000019ecc4        0x0 /usr/lib/x86_64-linux-gnu/libc_nonshared.a(atexit.oS)
+ .data          0x000000000019ecc4        0x0 /usr/lib/gcc/x86_64-linux-gnu/13/crtendS.o
+ .data          0x000000000019ecc4        0x0 /usr/lib/gcc/x86_64-linux-gnu/13/../../../x86_64-linux-gnu/crtn.o
+
+.tm_clone_table
+                0x000000000019ecc8        0x0
+ .tm_clone_table
+                0x000000000019ecc8        0x0 /usr/lib/gcc/x86_64-linux-gnu/13/crtbeginS.o
+ .tm_clone_table
+                0x000000000019ecc8        0x0 /usr/lib/gcc/x86_64-linux-gnu/13/crtendS.o
+
+.data1
+ *(.data1)
+                0x000000000019ecc4                _edata = .
+                [!provide]                        PROVIDE (edata = .)
+                0x000000000019ecc8                . = ALIGN (ALIGNOF (NEXT_SECTION))
+                0x000000000019ece0                __bss_start = .
+
+.bss            0x000000000019ece0    0x2fdc0
+ *(.dynbss)
+ .dynbss        0x000000000019ece0       0x28 /usr/lib/gcc/x86_64-linux-gnu/13/../../../x86_64-linux-gnu/Scrt1.o
+                0x000000000019ece0                stdout@@GLIBC_2.2.5
+                0x000000000019ecf0                stdin@@GLIBC_2.2.5
+                0x000000000019ed00                stderr@@GLIBC_2.2.5
+ *(.bss .bss.* .gnu.linkonce.b.*)
+ .bss           0x000000000019ed08        0x0 /usr/lib/gcc/x86_64-linux-gnu/13/../../../x86_64-linux-gnu/Scrt1.o
+ .bss           0x000000000019ed08        0x0 /usr/lib/gcc/x86_64-linux-gnu/13/../../../x86_64-linux-gnu/crti.o
+ .bss           0x000000000019ed08        0x1 /usr/lib/gcc/x86_64-linux-gnu/13/crtbeginS.o
+ *fill*         0x000000000019ed09       0x17 
+ .bss           0x000000000019ed20    0x26a94 /tmp/ccGxs4oQ.o
+ *fill*         0x00000000001c57b4        0xc 
+ .bss           0x00000000001c57c0     0x8090 /tmp/ems-close-20260911/gc-timing-build/candidate.o
+ .bss           0x00000000001cd850        0x8 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(parser.o)
+ .bss           0x00000000001cd858       0x14 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(builtins.o)
+                0x00000000001cd858                g_argv
+                0x00000000001cd860                g_argc
+ *fill*         0x00000000001cd86c       0x14 
+ .bss           0x00000000001cd880       0x5c /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(builtins_host.o)
+ .bss           0x00000000001cd8dc        0x0 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(builtins_tensor.o)
+ .bss           0x00000000001cd8dc        0x0 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(hash.o)
+ .bss           0x00000000001cd8dc        0x0 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(arena.o)
+ *fill*         0x00000000001cd8dc        0x4 
+ .bss           0x00000000001cd8e0       0x48 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(state.o)
+ .bss           0x00000000001cd928        0x0 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(strbuf.o)
+ .bss           0x00000000001cd928        0x0 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(ext_store.o)
+ .bss           0x00000000001cd928        0x0 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(chunk.o)
+ .bss           0x00000000001cd928        0x4 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(compiler.o)
+                0x00000000001cd928                g_compile_module_slots
+ *fill*         0x00000000001cd92c        0x4 
+ .bss           0x00000000001cd930       0x20 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(vm.o)
+                0x00000000001cd930                g_vm_abort_never
+                0x00000000001cd934                g_eigs_sigusr1_pending
+ *fill*         0x00000000001cd950       0x10 
+ .bss           0x00000000001cd960       0x64 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(jit.o)
+ *fill*         0x00000000001cd9c4       0x1c 
+ .bss           0x00000000001cd9e0     0x10b0 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(trace.o)
+                0x00000000001cd9e0                g_trace_current_line
+                0x00000000001cd9e4                g_trace_hist_storage
+                0x00000000001cd9e8                g_trace_obs_hist_storage
+                0x00000000001cd9ec                g_replay_enabled
+                0x00000000001cd9f0                g_trace_enabled
+ .bss           0x00000000001cea90       0x10 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(eigs_embed.o)
+ .bss           0x00000000001ceaa0        0x0 /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(lexer.o)
+ .bss           0x00000000001ceaa0        0x0 /usr/lib/x86_64-linux-gnu/libc_nonshared.a(atexit.oS)
+ .bss           0x00000000001ceaa0        0x0 /usr/lib/gcc/x86_64-linux-gnu/13/crtendS.o
+ .bss           0x00000000001ceaa0        0x0 /usr/lib/gcc/x86_64-linux-gnu/13/../../../x86_64-linux-gnu/crtn.o
+ *(COMMON)
+                0x00000000001ceaa0                . = ALIGN ((. != 0x0)?0x8:0x1)
+
+.lbss
+ *(.dynlbss)
+ *(.lbss .lbss.* .gnu.linkonce.lb.*)
+ *(LARGE_COMMON)
+                0x00000000001ceaa0                . = ALIGN (0x8)
+                0x00000000001ceaa0                . = SEGMENT_START ("ldata-segment", .)
+
+.lrodata
+ *(.lrodata .lrodata.* .gnu.linkonce.lr.*)
+
+.ldata          0x00000000001d0aa0        0x0
+ *(.ldata .ldata.* .gnu.linkonce.l.*)
+                0x00000000001d0aa0                . = ALIGN ((. != 0x0)?0x8:0x1)
+                0x00000000001d0aa0                . = ALIGN (0x8)
+                0x00000000001ceaa0                _end = .
+                [!provide]                        PROVIDE (end = .)
+                0x00000000001d0aa0                . = DATA_SEGMENT_END (.)
+
+.stab
+ *(.stab)
+
+.stabstr
+ *(.stabstr)
+
+.stab.excl
+ *(.stab.excl)
+
+.stab.exclstr
+ *(.stab.exclstr)
+
+.stab.index
+ *(.stab.index)
+
+.stab.indexstr
+ *(.stab.indexstr)
+
+.comment        0x0000000000000000       0x2d
+ *(.comment)
+ .comment       0x0000000000000000       0x2d /usr/lib/gcc/x86_64-linux-gnu/13/crtbeginS.o
+                                         0x2e (size before relaxing)
+ .comment       0x000000000000002d       0x2e /tmp/ccGxs4oQ.o
+ .comment       0x000000000000002d       0x2e /tmp/ems-close-20260911/gc-timing-build/candidate.o
+ .comment       0x000000000000002d       0x2e /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(parser.o)
+ .comment       0x000000000000002d       0x2e /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(builtins.o)
+ .comment       0x000000000000002d       0x2e /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(builtins_host.o)
+ .comment       0x000000000000002d       0x2e /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(builtins_tensor.o)
+ .comment       0x000000000000002d       0x2e /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(hash.o)
+ .comment       0x000000000000002d       0x2e /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(arena.o)
+ .comment       0x000000000000002d       0x2e /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(state.o)
+ .comment       0x000000000000002d       0x2e /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(strbuf.o)
+ .comment       0x000000000000002d       0x2e /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(ext_store.o)
+ .comment       0x000000000000002d       0x2e /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(chunk.o)
+ .comment       0x000000000000002d       0x2e /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(compiler.o)
+ .comment       0x000000000000002d       0x2e /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(vm.o)
+ .comment       0x000000000000002d       0x2e /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(jit.o)
+ .comment       0x000000000000002d       0x2e /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(trace.o)
+ .comment       0x000000000000002d       0x2e /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(eigs_embed.o)
+ .comment       0x000000000000002d       0x2e /home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a(lexer.o)
+ .comment       0x000000000000002d       0x2e /usr/lib/gcc/x86_64-linux-gnu/13/crtendS.o
+
+.gnu.build.attributes
+ *(.gnu.build.attributes .gnu.build.attributes.*)
+
+.debug
+ *(.debug)
+
+.line
+ *(.line)
+
+.debug_srcinfo
+ *(.debug_srcinfo)
+
+.debug_sfnames
+ *(.debug_sfnames)
+
+.debug_aranges
+ *(.debug_aranges)
+
+.debug_pubnames
+ *(.debug_pubnames)
+
+.debug_info
+ *(.debug_info .gnu.linkonce.wi.*)
+
+.debug_abbrev
+ *(.debug_abbrev)
+
+.debug_line
+ *(.debug_line .debug_line.* .debug_line_end)
+
+.debug_frame
+ *(.debug_frame)
+
+.debug_str
+ *(.debug_str)
+
+.debug_loc
+ *(.debug_loc)
+
+.debug_macinfo
+ *(.debug_macinfo)
+
+.debug_weaknames
+ *(.debug_weaknames)
+
+.debug_funcnames
+ *(.debug_funcnames)
+
+.debug_typenames
+ *(.debug_typenames)
+
+.debug_varnames
+ *(.debug_varnames)
+
+.debug_pubtypes
+ *(.debug_pubtypes)
+
+.debug_ranges
+ *(.debug_ranges)
+
+.debug_addr
+ *(.debug_addr)
+
+.debug_line_str
+ *(.debug_line_str)
+
+.debug_loclists
+ *(.debug_loclists)
+
+.debug_macro
+ *(.debug_macro)
+
+.debug_names
+ *(.debug_names)
+
+.debug_rnglists
+ *(.debug_rnglists)
+
+.debug_str_offsets
+ *(.debug_str_offsets)
+
+.debug_sup
+ *(.debug_sup)
+
+.gnu.attributes
+ *(.gnu.attributes)
+
+/DISCARD/
+ *(.note.GNU-stack)
+ *(.gnu_debuglink)
+ *(.gnu.lto_*)
+OUTPUT(/tmp/ems-close-20260911/gc-timing-build/candidate elf64-x86-64)
