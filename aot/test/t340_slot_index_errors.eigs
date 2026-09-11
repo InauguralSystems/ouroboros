@@ -1,0 +1,74 @@
+# Catch and print the exact oracle messages, then resume with a valid read.
+# Generic targets and local boxed indices keep these on the slot-index path.
+define try_index(source, selector) as:
+    local table is source
+    local index is selector
+    local item is "unchanged"
+    try:
+        item is table[index]
+        print of item
+    catch problem:
+        print of problem
+        print of item
+    return 0
+
+define try_numeric(source) as:
+    local table is source
+    local item is "unchanged"
+    try:
+        item is table[1.5]
+    catch problem:
+        print of problem
+    try:
+        item is table[2147483648]
+    catch problem:
+        print of problem
+    try:
+        item is table[-2147483649]
+    catch problem:
+        print of problem
+    item is table[-1]
+    print of item
+    return 0
+
+define try_owned_index(source, selectors) as:
+    local table is source
+    local indices is selectors
+    local item is "unchanged"
+    try:
+        # The inner generic read returns an owned Value index. Its lifetime
+        # and errors must survive the outer read's fallback unchanged.
+        item is table[indices[0]]
+        print of item
+    catch problem:
+        print of problem
+        print of item
+    return 0
+
+try_index of [[4, 5], -2]
+try_index of [[4, 5], -3]
+try_index of [[4, 5], 2]
+try_index of [[4, 5], 1.5]
+try_index of [[4, 5], 1e100]
+try_index of [[4, 5], -1e100]
+try_index of [[4, 5], "key"]
+try_index of [[4, 5], null]
+try_index of [[4, 5], [0]]
+try_index of [{"key": "value"}, "key"]
+try_index of [{"key": "value"}, 0]
+try_index of ["ab", -3]
+try_index of [null, 0]
+try_index of [7, 0]
+local numbers is buffer of 2
+numbers[1] is 9
+try_index of [numbers, -1]
+try_index of [numbers, 2]
+try_index of [numbers, 0.5]
+try_numeric of ([4, 5])
+try_numeric of numbers
+try_numeric of "ab"
+try_owned_index of [[4, 5], [0, "marker"]]
+try_owned_index of [[4, 5], [1.5, "marker"]]
+try_owned_index of [[4, 5], [1e100, "marker"]]
+try_owned_index of [{"key": "value"}, ["key", 0]]
+try_owned_index of [[4, 5], [null, 0]]

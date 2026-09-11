@@ -1,0 +1,15 @@
+{
+  "cleanup": null,
+  "command": [
+    "/usr/bin/minisat",
+    "/tmp/ems-gap-20260911/wall-production/oracle/case.dEZcX2/input.cnf",
+    "/tmp/ems-gap-20260911/wall-production/samples/pigeonhole-6-5/4-native/native.result"
+  ],
+  "cwd": "/home/jon/src/InauguralSystems/EigenScriptEcosystem/EigenMiniSat",
+  "directory": "/tmp/ems-gap-20260911/wall-production/samples/pigeonhole-6-5/4-native",
+  "interrupted_signal": null,
+  "returncode": 20,
+  "timed_out": false,
+  "timeout_seconds": 120,
+  "wall_ns": 7588336
+}

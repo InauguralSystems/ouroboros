@@ -1,0 +1,42 @@
+[
+  {
+    "label": "direct-new",
+    "original_stderr_path": "/tmp/ems-gap-20260911/asan/direct-new.stderr",
+    "stderr_sha256": "2e4d128f716f4208a79fd1797f03e3c599a350093bde43247557223c7e1c6855",
+    "stderr_bytes": 271516,
+    "summary_lines": [
+      "==3104539==ERROR: LeakSanitizer: detected memory leaks",
+      "SUMMARY: AddressSanitizer: 18216 byte(s) leaked in 253 allocation(s)."
+    ]
+  },
+  {
+    "label": "t341-old",
+    "original_stderr_path": "/tmp/ems-gap-20260911/asan/t341-old.stderr",
+    "stderr_sha256": "b7ee6c9afe93833ab8d97ecf16053ee18eff70590dc155a175299b2631b4bc72",
+    "stderr_bytes": 263169,
+    "summary_lines": [
+      "==3104593==ERROR: LeakSanitizer: detected memory leaks",
+      "SUMMARY: AddressSanitizer: 18216 byte(s) leaked in 253 allocation(s)."
+    ]
+  },
+  {
+    "label": "direct-old",
+    "original_stderr_path": "/tmp/ems-gap-20260911/asan/direct-old.stderr",
+    "stderr_sha256": "490a185d67568b86a26dfb6f0c693771a3eeb3a78f8a75f857baf2dfabefe104",
+    "stderr_bytes": 271516,
+    "summary_lines": [
+      "==3104530==ERROR: LeakSanitizer: detected memory leaks",
+      "SUMMARY: AddressSanitizer: 18216 byte(s) leaked in 253 allocation(s)."
+    ]
+  },
+  {
+    "label": "t341-new",
+    "original_stderr_path": "/tmp/ems-gap-20260911/asan/t341-new.stderr",
+    "stderr_sha256": "0c3e60bcb7cc4782ed924b01cc51a0e998de0a168c127f656ded26f825b9f49c",
+    "stderr_bytes": 249801,
+    "summary_lines": [
+      "==3104601==ERROR: LeakSanitizer: detected memory leaks",
+      "SUMMARY: AddressSanitizer: 18144 byte(s) leaked in 252 allocation(s)."
+    ]
+  }
+]

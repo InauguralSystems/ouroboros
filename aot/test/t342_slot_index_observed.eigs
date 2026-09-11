@@ -1,0 +1,12 @@
+# Observed locals retain observer-aware writes; lowering is excluded.
+define observed_reads(source) as:
+    local table is source
+    local item is table[0]
+    print of (report of item)
+    item is table[1]
+    print of (report of item)
+    print of item
+    return 0
+
+observed_reads of ([0.25, 0.5])
+observed_reads of (["one", "two"])

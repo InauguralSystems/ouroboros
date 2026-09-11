@@ -1,0 +1,22 @@
+{
+  "cleanup": null,
+  "command": [
+    "bash",
+    "/home/jon/src/InauguralSystems/EigenScriptEcosystem/EigenMiniSat/benchmarks/run_native_oracle.sh",
+    "--aot",
+    "on",
+    "--rungs",
+    "3x3 4x4",
+    "--instances",
+    "/tmp/ems-gap-20260911/wall-production/preflight-inputs",
+    "--timeout",
+    "120"
+  ],
+  "cwd": "/home/jon/src/InauguralSystems/EigenScriptEcosystem/EigenMiniSat",
+  "directory": "/tmp/ems-gap-20260911/wall-production/preflight-process",
+  "interrupted_signal": null,
+  "returncode": 0,
+  "timed_out": false,
+  "timeout_seconds": 1795.14690036932,
+  "wall_ns": 36526280844
+}

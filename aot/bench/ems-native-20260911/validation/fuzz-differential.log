@@ -1,0 +1,3 @@
+instances=200  SAT=116  UNSAT=84  proofs_verified=84
+failures=0
+workdir=/tmp/eigfuzz-8wru6cbw

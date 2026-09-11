@@ -1,0 +1,6 @@
+# Preserve captured input/output bytes across checkouts. The original CNFs,
+# perf reports and patches include significant blank lines or trailing spaces.
+** -text
+oracle/** -whitespace
+profile/** -whitespace
+provenance/** -whitespace

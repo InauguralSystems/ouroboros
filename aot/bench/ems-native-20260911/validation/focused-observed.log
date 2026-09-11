@@ -1,0 +1,3 @@
+CHECK t342_slot_index_observed.eigs
+PASS t342_slot_index_observed.eigs emitted {'s': 0, 'i': 0, 'v': 0}
+FOCUSED_DONE matched=1 emission_checks=1

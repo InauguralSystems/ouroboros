@@ -1,0 +1,2 @@
+[ perf record: Woken up 58 times to write data ]
+[ perf record: Captured and wrote 14.436 MB /tmp/ems-gap-20260911/perf-production-user.data (1786 samples) ]

@@ -1,0 +1,19 @@
+{
+  "timing_source_files_copied_exactly": 268,
+  "intermediate_path_lists_converted_nul_to_newline": 2,
+  "measured_samples": 45,
+  "expected_groups": 9,
+  "samples_per_group": 5,
+  "sample_population_exact": true,
+  "input_hashes_verified": 3,
+  "ems_samples_equal_pinned_vm_after_timing_suffix_only": 30,
+  "native_unsat_status_and_conflict_checks": 15,
+  "timing_summaries_recomputed": 9,
+  "instruction_records": 20,
+  "instruction_summaries_recomputed": 4,
+  "focused_output_pairs_equal": 6,
+  "proof_old_new_bytes_equal": true,
+  "profile_output_equal_pinned_vm": true,
+  "ignored_artifacts": 0,
+  "all_retained_files_plain_text": true
+}

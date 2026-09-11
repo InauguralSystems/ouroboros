@@ -1,0 +1,12 @@
+[
+  {
+    "arm": "old-HEAD-emitter",
+    "returncode": 1,
+    "elapsed_s": 0.7180088586173952
+  },
+  {
+    "arm": "candidate-emitter",
+    "returncode": 0,
+    "elapsed_s": 2.3406191812828183
+  }
+]

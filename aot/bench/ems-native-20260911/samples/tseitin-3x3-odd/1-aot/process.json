@@ -1,0 +1,15 @@
+{
+  "cleanup": null,
+  "command": [
+    "/tmp/ems-native-20260910/ems-active-count",
+    "--cdcl",
+    "/tmp/ems-gap-20260911/wall-production/oracle/case.7gsvO2/input.cnf"
+  ],
+  "cwd": "/home/jon/src/InauguralSystems/EigenScriptEcosystem/EigenMiniSat",
+  "directory": "/tmp/ems-gap-20260911/wall-production/samples/tseitin-3x3-odd/1-aot",
+  "interrupted_signal": null,
+  "returncode": 0,
+  "timed_out": false,
+  "timeout_seconds": 120,
+  "wall_ns": 216587449
+}

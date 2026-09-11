@@ -1,0 +1,607 @@
+GATE ORACLE source=/home/jon/src/wt/ouro-ems-20260910/.devcontainer/Dockerfile ref=v0.43.0 resolved_commit=a6c50fba6a6250ea347a34500d6c9fa503a5c931 actual_commit=a6c50fba6a6250ea347a34500d6c9fa503a5c931 checkout=/home/jon/src/wt/es-v043
+GATE PATHS AOT_REPO=/home/jon/src/wt/ouro-ems-20260910 EIGS=/home/jon/src/wt/es-v043/src/eigenscript EIGS_DIR=/home/jon/src/wt/es-v043 EIGS_ROOT=/home/jon/src/wt/es-v043 LIB_DIR=/home/jon/src/wt/es-v043/lib DMG_DIR=/home/jon/src/InauguralSystems/EigenScriptEcosystem/DMG
+=== core check ===
+core_check: build.sh CORE matches upstream SOURCES minus CLI_ONLY (20 TUs)
+=== AOT suite ===
+test_annotated_tag_pin (__main__.GateTests.test_annotated_tag_pin) ... ok
+test_checkout_alias_and_dmg_sibling (__main__.GateTests.test_checkout_alias_and_dmg_sibling) ... ok
+test_clean_wrong_commit_is_refused (__main__.GateTests.test_clean_wrong_commit_is_refused) ... ok
+test_commit_pin (__main__.GateTests.test_commit_pin) ... ok
+test_directory_canary_baseline_is_refused (__main__.GateTests.test_directory_canary_baseline_is_refused) ... ok
+test_dirty_tracked_oracle_is_refused (__main__.GateTests.test_dirty_tracked_oracle_is_refused) ... ok
+test_dirty_untracked_oracle_is_refused (__main__.GateTests.test_dirty_untracked_oracle_is_refused) ... ok
+test_duplicate_pin_is_refused (__main__.GateTests.test_duplicate_pin_is_refused) ... ok
+test_empty_canary_baseline_is_refused (__main__.GateTests.test_empty_canary_baseline_is_refused) ... ok
+test_every_empty_tier_is_nonzero (__main__.GateTests.test_every_empty_tier_is_nonzero) ... ok
+test_every_missing_tier_is_nonzero (__main__.GateTests.test_every_missing_tier_is_nonzero) ... ok
+test_every_tier_failure_preserves_rc_and_later_tiers (__main__.GateTests.test_every_tier_failure_preserves_rc_and_later_tiers) ... ok
+test_logging_cannot_dirty_the_oracle (__main__.GateTests.test_logging_cannot_dirty_the_oracle) ... ok
+test_missing_binary_is_refused (__main__.GateTests.test_missing_binary_is_refused) ... ok
+test_missing_canary_baseline_is_refused (__main__.GateTests.test_missing_canary_baseline_is_refused) ... ok
+test_missing_pin_is_refused (__main__.GateTests.test_missing_pin_is_refused) ... ok
+test_quoted_pin_with_comment (__main__.GateTests.test_quoted_pin_with_comment) ... ok
+test_refusal_replaces_a_previous_success_log (__main__.GateTests.test_refusal_replaces_a_previous_success_log) ... ok
+test_tag_pin_paths_counts_and_order (__main__.GateTests.test_tag_pin_paths_counts_and_order) ... ok
+test_unresolvable_pin_is_refused (__main__.GateTests.test_unresolvable_pin_is_refused) ... ok
+
+----------------------------------------------------------------------
+Ran 20 tests in 4.648s
+
+OK
+test_empty_leak_population (__main__.Tests.test_empty_leak_population) ... ok
+test_missing_and_empty_inputs (__main__.Tests.test_missing_and_empty_inputs) ... ok
+test_planted_faults (__main__.Tests.test_planted_faults) ... ok
+test_positive_controls (__main__.Tests.test_positive_controls) ... ok
+test_sigterm_cleans_child (__main__.Tests.test_sigterm_cleans_child) ... ok
+
+----------------------------------------------------------------------
+Ran 5 tests in 12.082s
+
+OK
+PASS: slot index emission selftests cases=20
+PASS: slot index emission t337_slot_index_locals.eigs s=6 i=7 v=2
+PASS: slot index emission t338_slot_index_callbacks.eigs s=0 i=0 v=0
+PASS: slot index emission t339_slot_index_traced.eigs s=0 i=0 v=0
+PASS: slot index emission t340_slot_index_errors.eigs s=1 i=4 v=1
+PASS: slot index emission t341_slot_index_ownership.eigs s=1 i=4 v=0
+PASS: slot index emission t342_slot_index_observed.eigs s=0 i=0 v=0
+SLOT_INDEX_EMISSION_DONE fixtures=6 checks=6
+PASS: t1.eigs
+PASS: t100_module_accepted_shapes.eigs
+PASS: t101_toplevel_return.eigs
+PASS: t102_void_fn_value_context.eigs
+PASS: t103_pin_gen_param_no_second_round.eigs
+PASS: t104_transient_gen_evidence.eigs
+PASS: t105_grounded_via_pin_predicate.eigs
+PASS: t106_null_binding_is_boxed.eigs
+PASS: t107_observed_numeric_arg_to_boxed_param.eigs
+PASS: t108_genp_rebind_c_name.eigs
+PASS: t10_iota.eigs
+PASS: t110_capture_no_rebind.eigs
+PASS: t111_nested_local_shadow.eigs
+PASS: t112_module_dict_observed_and_poly.eigs
+PASS: t113_module_dict_traced.eigs
+PASS: t114_traced_unobserved_boxed.eigs
+PASS: t115_prev_unbound_die.eigs
+PASS: t116_forbinder_param_shadow.eigs
+PASS: t117_forbinder_module_global.eigs
+PASS: t118_boxed_param_numeric_body.eigs
+PASS: t119_interrogated_set_per_scope.eigs
+PASS: t11_div.eigs
+PASS: t120_crlf_source.eigs
+PASS: t121_demoted_global_outward_write.eigs
+PASS: t122_indirect_outward_write.eigs
+PASS: t123_fn_table_alias.eigs
+PASS: t125_forbody_looplocal.eigs
+PASS: t126_nested_writer_after_bind.eigs
+PASS: t127_obs_outward_writer.eigs
+PASS: t128_prev_undefined_fn_err.eigs
+PASS: t129_traced_fn_binder.eigs
+PASS: t12_func.eigs
+PASS: t130_prev_binder_after_loop_err.eigs
+PASS: t131_report_unbound_err.eigs
+PASS: t132_for_noniter_err.eigs
+PASS: t133_call_noncallable_err.eigs
+PASS: t134_div_zero_err.eigs
+PASS: t135_int_mod_zero_err.eigs
+PASS: t136_int_mul_bigbase.eigs
+PASS: t137_counter_growth.eigs
+PASS: t138_int_composition.eigs
+PASS: t139_mod_budget.eigs
+PASS: t13_stencil.eigs
+PASS: t140_vec_carried_dep.eigs
+PASS: t141_outvec_module.eigs
+PASS: t142_rowmap_module.eigs
+PASS: t143_simd_alias_scalar.eigs
+PASS: t144_eig_name_collision.eigs
+PASS: t145_matmul_module.eigs
+PASS: t146_outvec_selfread_scalar.eigs
+PASS: t147_rowmap_selfread_scalar.eigs
+PASS: t148_vec_bound_written.eigs
+PASS: t149_vec_bound_fracneg.eigs
+PASS: t14_binop_bound.eigs
+PASS: t150_vec_bound_huge_err.eigs
+PASS: t151_vec_ctr_frac_err.eigs
+PASS: t152_vec_inc_position.eigs
+PASS: t153_simd_counter_content.eigs
+PASS: t154_outvec_acc_liveout.eigs
+PASS: t155_outvec_oob_read_err.eigs
+PASS: t156_outvec_oob_write_err.eigs
+PASS: t157_rowmap_oob_err.eigs
+PASS: t158_outvec_zero_iter.eigs
+PASS: t159_outvec_triangular.eigs
+PASS: t15_buffunc.eigs
+PASS: t160_outvec_sbase_d_err.eigs
+PASS: t161_outvec_concave_err.eigs
+PASS: t162_outvec_self_obound.eigs
+PASS: t163_outvec_self_ibound_err.eigs
+PASS: t164_simd_alias_runtime.eigs
+PASS: t165_not_base.eigs
+PASS: t166_buf_predicate.eigs
+PASS: t167_setter_order.eigs
+PASS: t168_list_through_bt_vec.eigs
+PASS: t169_eval_order.eigs
+PASS: t16_bufret.eigs
+PASS: t170_cmpn_order.eigs
+PASS: t171_zeros_is_a_list.eigs
+PASS: t172_eval_order_more.eigs
+PASS: t173_ranged_poly.eigs
+PASS: t174_slice_bounds_err.eigs
+PASS: t175_zeros_2d_rows.eigs
+PASS: t176_slice_target_order.eigs
+PASS: t177_slice_target_kinds_err.eigs
+PASS: t178_buf_target_order.eigs
+PASS: t179_callee_order.eigs
+PASS: t17_globals.eigs
+PASS: t180_callee_undef_err.eigs
+PASS: t181_int_literal_width.eigs
+PASS: t182_callee_undef_arg_err.eigs
+PASS: t183_slice_bound_width_err.eigs
+PASS: t184_list_index_msg_err.eigs
+PASS: t185_fn_value_identity.eigs
+PASS: t186_fn_local_call.eigs
+PASS: t187_fn_as_argument.eigs
+PASS: t188_param_callee.eigs
+PASS: t189_numeric_param_call_err.eigs
+PASS: t18_mlp.eigs
+PASS: t190_param_callee_return.eigs
+PASS: t191_param_callee_local_hop.eigs
+PASS: t192_uncalled_fn_str_concat.eigs
+PASS: t193_builtin_return_class.eigs
+PASS: t194_user_fn_shadows_builtin.eigs
+PASS: t195_builtin_fastpath_unshadowed.eigs
+PASS: t196_module_forvar_scope.eigs
+PASS: t197_source_cr_tab.eigs
+PASS: t198_arena_index_store.eigs
+PASS: t199_traced_forvar_assigned.eigs
+PASS: t19_dot_tol.eigs
+PASS: t200_spawn_unobserved_control.eigs
+PASS: t201_spawn_module_observed_control.eigs
+PASS: t202_observed_module_fn_reads_global.eigs
+PASS: t203_observer_special_forms.eigs
+PASS: t204_report_value_unbound_err.eigs
+PASS: t205_trajectory_unbound_err.eigs
+PASS: t206_observed_buffer_binding.eigs
+PASS: t207_observed_outward_write.eigs
+PASS: t208_observed_gnm_writer.eigs
+PASS: t209_observed_module_forbinder_scoped.eigs
+PASS: t20_attention.eigs
+PASS: t210_index_read_return_class.eigs
+PASS: t211_bare_return.eigs
+PASS: t212_for_binder_shadows_global.eigs
+PASS: t213_generic_param_accumulate.eigs
+PASS: t214_load_file_calls_parent.eigs
+PASS: t215_loop_define_stable_capture.eigs
+PASS: t217_observe_unbound_err.eigs
+PASS: t218_interrogated_binder_kinds.eigs
+PASS: t219_boundness_mod_prev_err.eigs
+PASS: t21_range_tol.eigs
+PASS: t220_boundness_mod_forvar_err.eigs
+PASS: t221_boundness_fn_prev_err.eigs
+PASS: t222_boundness_fn_percall_err.eigs
+PASS: t223_boundness_controls.eigs
+PASS: t224_boundness_observed_prev_err.eigs
+PASS: t225_interrogated_local_binder_readonly.eigs
+PASS: t226_local_binder_postbind_err.eigs
+PASS: t227_local_binder_nottaken_err.eigs
+PASS: t228_local_binder_inbody_prev.eigs
+PASS: t229_underapplied_by_name.eigs
+PASS: t22_int_index.eigs
+PASS: t230_nested_define_sibling_arm.eigs
+PASS: t231_nested_define_reads_binder.eigs
+PASS: t232_fn_read_before_plain_bind_err.eigs
+PASS: t233_module_tensor_layer.eigs
+PASS: t234_tensor_call_return.eigs
+PASS: t235_tensor_call_return_traced.eigs
+PASS: t236_tensor_call_return_observed.eigs
+PASS: t237_slice_value.eigs
+PASS: t238_slice_value_num_err.eigs
+PASS: t239_zero_param_local_null.eigs
+PASS: t23_block_tol.eigs
+PASS: t240_same_named_private_helpers.eigs
+PASS: t241_return_prev_polymorphic.eigs
+PASS: t242_builtin_callback.eigs
+PASS: t243_param_shadows_function.eigs
+PASS: t244_param_binder_string_list.eigs
+PASS: t245_callback_into_module_slot.eigs
+PASS: t246_math_underflow_flag.eigs
+PASS: t247_loop_exit_bookkeeping.eigs
+PASS: t248_dict_string_subscript_param.eigs
+PASS: t249_index_argument_class.eigs
+PASS: t24_outvec.eigs
+PASS: t250_module_dict_hides_private.eigs
+PASS: t251_sqrt_exp_elementwise.eigs
+PASS: t252_labelled_dot_tol.eigs
+PASS: t253_buffer_param_string_elements.eigs
+PASS: t254_buffer_rebind_release.eigs
+PASS: t255_at_line_through_module_call.eigs
+PASS: t256_call_through_value_args.eigs
+PASS: t257_module_tensor_outward_write.eigs
+PASS: t258_fn_binder_over_demoted_global.eigs
+PASS: t259_condbound_outward_store_err.eigs
+PASS: t25_matmul_overflow.eigs
+PASS: t260_condbound_outward_store.eigs
+PASS: t263_arity1_recollect_pack.eigs
+PASS: t264_arity1_recollect_empty_pack.eigs
+PASS: t265_try_catch.eigs
+PASS: t266_try_error_in_catch_err.eigs
+PASS: t267_recursion_depth_boundary.eigs
+PASS: t268_recursion_cap_err.eigs
+PASS: t269_unbounded_recursion_err.eigs
+PASS: t26_rowmap.eigs
+PASS: t270_callback_recursion_cap_err.eigs
+PASS: t271_return_shapes_boxed.eigs
+PASS: t272_call_site_boxed_evidence.eigs
+PASS: t273_genp_callee_result_class.eigs
+PASS: t274_boxed_literal_wins_over_numeric_use.eigs
+PASS: t275_observe_fn_value.eigs
+PASS: t276_unassigned_local_reads_null.eigs
+PASS: t277_boxed_module_read_before_bind_err.eigs
+PASS: t278_observed_local_not_read_elsewhere.eigs
+PASS: t279_shadow_dispatch_table.eigs
+PASS: t27_observer.eigs
+PASS: t280_buf_field_reads_numeric.eigs
+PASS: t281_field_map_down_the_chain.eigs
+PASS: t282_field_class_from_assignment.eigs
+PASS: t283_ctx_list_element_maps.eigs
+PASS: t284_numeric_dispatch_and_element_store.eigs
+PASS: t285_borrowed_element_args.eigs
+PASS: t286_numeric_intrinsics.eigs
+PASS: t287_env_global_list_store.eigs
+PASS: t288_sign_extend_intrinsic.eigs
+PASS: t289_seq_numeric_index_store.eigs
+PASS: t28_observer_conv.eigs
+PASS: t290_field_read_numeric_local.eigs
+PASS: t291_write_only_buffer_param.eigs
+PASS: t292_for_binder_scoped_in_function.eigs
+PASS: t293_interrogated_local_binder_writes.eigs
+PASS: t294_inference_violation_catchable.eigs
+PASS: t295_nested_load_calls_parent.eigs
+PASS: t296_tensor_element_raw.eigs
+PASS: t297_obs_per_name_module.eigs
+PASS: t298_obs_per_name_function.eigs
+PASS: t299_obs_per_name_outward.eigs
+PASS: t29_break.eigs
+PASS: t2_if.eigs
+PASS: t300_param_defaults.eigs
+PASS: t301_param_defaults_values.eigs
+PASS: t302_param_defaults_former_refusal.eigs
+PASS: t303_interrogative_numeric.eigs
+PASS: t304_outward_fractional_write.eigs
+PASS: t305_observed_local_fresh_per_call.eigs
+PASS: t306_load_file_project_root.eigs
+PASS: t307_load_file_stdlib_from_child.eigs
+PASS: t308_eddy_callback_field.eigs
+PASS: t309_nested_call_arg_temps.eigs
+PASS: t30_observer_halt.eigs
+PASS: t310_interrogated_module_local.eigs
+PASS: t311_interrogated_local_read_before.eigs
+PASS: t312_interrogated_local_nested_block.eigs
+PASS: t313_interrogated_local_for_binder.eigs
+PASS: t314_interrogated_local_what_when_at.eigs
+PASS: t315_interrogated_local_modobserved.eigs
+PASS: t316_interrogated_local_condbound_err.eigs
+PASS: t317_module_private_read_err.eigs
+PASS: t318_import_transitive.eigs
+PASS: t319_module_nested_free_assign.eigs
+PASS: t31_observer_stall.eigs
+PASS: t320_import_chain_three.eigs
+PASS: t321_module_local_shadows_own_fn.eigs
+PASS: t322_module_free_read_crosses.eigs
+PASS: t323_module_free_write_before_read.eigs
+PASS: t324_obs_bare_predicate_all.eigs
+PASS: t325_obs_eval_all.eigs
+PASS: t326_obs_per_name_interrogatives.eigs
+PASS: t327_obs_report_of_param.eigs
+PASS: t328_obs_fn_called_from_unobserved.eigs
+PASS: t329_obs_per_name_fn_for_binder.eigs
+PASS: t32_report.eigs
+PASS: t330_obs_module_for_binder.eigs
+PASS: t331_obs_named_written_in_fn.eigs
+PASS: t332_obs_observe_and_trajectory.eigs
+PASS: t333_obs_param_for_binder.eigs
+PASS: t334_obs_local_for_binder.eigs
+PASS: t335_obs_prebound_for_binder.eigs
+PASS: t336_obs_param_leaks_after_call_err.eigs
+PASS: t337_slot_index_locals.eigs
+PASS: t338_slot_index_callbacks.eigs
+PASS: t339_slot_index_traced.eigs
+PASS: t33_temporal.eigs
+PASS: t340_slot_index_errors.eigs
+PASS: t341_slot_index_ownership.eigs
+PASS: t342_slot_index_observed.eigs
+PASS: t34_temporal_obs.eigs
+PASS: t35_who.eigs
+PASS: t36_prev_at.eigs
+PASS: t37_tensor_forward.eigs
+PASS: t38_buffer_tensor.eigs
+PASS: t39_logic.eigs
+PASS: t3_loop.eigs
+PASS: t40_list_value.eigs
+PASS: t41_unobserved.eigs
+PASS: t42_forloop.eigs
+PASS: t43_strings.eigs
+PASS: t44_c_keyword_names.eigs
+PASS: t44_observed_fn.eigs
+PASS: t45_of_precedence.eigs
+PASS: t46_sci_literals.eigs
+PASS: t47_numeric_local_for.eigs
+PASS: t48_mixed_buffer_return.eigs
+PASS: t49_soft_keyword_idents.eigs
+PASS: t4_mixed.eigs
+PASS: t50_soft_postfix.eigs
+PASS: t51_nullcall.eigs
+PASS: t52_forvar_numctx.eigs
+PASS: t53_bitops.eigs
+PASS: t54_generic_params.eigs
+PASS: t55_numeric_or_raise.eigs
+PASS: t56_forvar_unbox.eigs
+PASS: t57_dot_assign.eigs
+PASS: t58_param_widen.eigs
+PASS: t59_sited_errors.eigs
+PASS: t5_compounding.eigs
+PASS: t60_null_access_err.eigs
+PASS: t61_null_index_err.eigs
+PASS: t62_loop_check_continue.eigs
+PASS: t63_not_unary.eigs
+PASS: t64_strcmp.eigs
+PASS: t65_cmp_mixed_err.eigs
+PASS: t66_neg_str_err.eigs
+PASS: t67_fn_boxed_locals.eigs
+PASS: t68_local_leak_err.eigs
+PASS: t69_builtin_ret.eigs
+PASS: t6_fracstep.eigs
+PASS: t70_matmul_mismatch_err.eigs
+PASS: t71_tensor_add_min.eigs
+PASS: t72_dict_str_index_num.eigs
+PASS: t73_exit_code_err.eigs
+PASS: t74_throw_err.eigs
+PASS: t75_module_local_shadow.eigs
+PASS: t76_load_file_paths.eigs
+PASS: t77_boxed_shadow_dict.eigs
+PASS: t78_boxed_shadow_shapes.eigs
+PASS: t79_boxed_shadow_dynamic.eigs
+PASS: t7_buffer.eigs
+PASS: t80_forvar_boxed_param.eigs
+PASS: t81_elem_boxed_evidence.eigs
+PASS: t82_dict_passthru_param.eigs
+PASS: t83_observer_named.eigs
+PASS: t84_observer_unobserved_err.eigs
+PASS: t85_observer_named_unobserved_err.eigs
+PASS: t86_observer_named_undefined_err.eigs
+PASS: t87_observer_named_fn.eigs
+PASS: t88_dispatch.eigs
+PASS: t89_lowered_locals.eigs
+PASS: t8_vecmap.eigs
+PASS: t90_unbound_local_arg_err.eigs
+PASS: t91_lowered_local_num_die.eigs
+PASS: t92_field_fastpath_hot.eigs
+PASS: t93_dot_callee.eigs
+PASS: t94_match_boxed.eigs
+PASS: t95_import_module.eigs
+PASS: t96_import_scope_isolation.eigs
+PASS: t97_two_modules_same_name.eigs
+PASS: t98_import_name_kinds.eigs
+PASS: t99_module_binder_shadow.eigs
+PASS: t9_broadcast.eigs
+PASS: bench build activation_kernel.eigs
+PASS: bench build attention.eigs
+PASS: bench build checksum_generic.eigs
+PASS: bench build checksum_mono.eigs
+PASS: bench build dot_range.eigs
+PASS: bench build dot_reduction.eigs
+PASS: bench build matmul.eigs
+PASS: bench build obs_gate_a_unobserved.eigs
+PASS: bench build obs_gate_b_gate_only.eigs
+PASS: bench build obs_gate_c_full.eigs
+PASS: bench build transformer_block.eigs
+PASS: bench build transformer_forward.eigs
+--- bench tier: 12 program(s) build-checked ---
+PASS: load_file_shadow (A/B layout from the shadowing cwd + stdlib-from-child layout, 4 assertions)
+  3 record(s): 2 plain-C, 1 observed-env, 0 other kind(s) not checked
+PASS: dump-inference t297_obs_per_name_module.eigs
+  7 record(s): 5 plain-C, 1 observed-env, 1 other kind(s) not checked
+PASS: dump-inference t298_obs_per_name_function.eigs
+--- dump-inference gate: 2 fixture(s) joined against their own gen.c ---
+PASS: refuse alias_call_before_binding.eigs
+PASS: refuse backward_for_rebind_escape.eigs
+PASS: refuse backward_match_rebind.eigs
+PASS: refuse backward_sibling_rebind.eigs
+PASS: refuse break_inside_try.eigs
+PASS: refuse capture_rebind.eigs
+PASS: refuse condbind_modfor_binder.eigs
+PASS: refuse continue_inside_try.eigs
+PASS: refuse crossbranch_modfor_binder.eigs
+PASS: refuse deep_nested_modfor_binder.eigs
+PASS: refuse define_then_assign.eigs
+PASS: refuse duplicate_define.eigs
+PASS: refuse fn_name_numeric_context.eigs
+PASS: refuse fn_name_outward_assign.eigs
+PASS: refuse for_body_fresh_binding.eigs
+PASS: refuse forbody_read_before_binding.eigs
+PASS: refuse gnm_outward_write_before_binding.eigs
+PASS: refuse interrogated_module_write_boxed.eigs
+PASS: refuse interrogated_module_write_boxed_rhs.eigs
+PASS: refuse interrogated_module_write_nested_ref.eigs
+PASS: refuse interrogated_module_write_nonnum.eigs
+PASS: refuse interrogated_module_write_observed.eigs
+PASS: refuse lf147_nested_unresolved.eigs
+PASS: refuse load_file_computed_path.eigs
+PASS: refuse loadfile_toplevel_return.eigs
+PASS: refuse loop_exit_in_function.eigs
+PASS: refuse loopdef_referenced_after_loop.eigs
+PASS: refuse loopscoped_binder_nonnumeric.eigs
+PASS: refuse loopscoped_binder_nonnumeric_local.eigs
+PASS: refuse match_case_rebind.eigs
+PASS: refuse modfor_numeric_name_string_list.eigs
+PASS: refuse module_conditional_binding.eigs
+PASS: refuse module_free_read_before_write.eigs
+PASS: refuse module_free_read_in_loop_body.eigs
+PASS: refuse module_free_read_loop_write_first.eigs
+PASS: refuse module_free_read_no_write_in_fn.eigs
+PASS: refuse module_loop_define.eigs
+PASS: refuse module_toplevel_return.eigs
+PASS: refuse nested_conditional_local.eigs
+PASS: refuse nested_define_shadows_toplevel.eigs
+PASS: refuse nested_forbinder_plain_is.eigs
+PASS: refuse nested_local_after_read.eigs
+PASS: refuse nested_local_after_use.eigs
+PASS: refuse nested_local_for_binder.eigs
+PASS: refuse nested_local_self_reference.eigs
+PASS: refuse nested_modfor_binder_after_loop.eigs
+PASS: refuse nested_write_only.eigs
+PASS: refuse nested_writer_before_binding.eigs
+PASS: refuse observed_assign_then_define.eigs
+PASS: refuse observed_forbinder_reported_in_body.eigs
+PASS: refuse observed_kind_flip.eigs
+PASS: refuse observed_modfor_binder_after_loop.eigs
+PASS: refuse observed_traced_forbinder_interrogated.eigs
+PASS: refuse outward_write_before_binding.eigs
+PASS: refuse param_defaults_observed.eigs
+PASS: refuse rebind_rhs_modfor_binder.eigs
+PASS: refuse samestmt_bind_call.eigs
+PASS: refuse sibling_block_rebind.eigs
+PASS: refuse spawn_observed_helper.eigs
+PASS: refuse spawn_with_observed_fn.eigs
+PASS: refuse task_spawn_no_run_loop.eigs
+PASS: refuse toplevel_use_before_binding.eigs
+PASS: refuse underapplied_null_guarded.eigs
+PASS: refuse underapplied_typed_param.eigs
+--- refusal tier: 64 guard(s) exercised ---
+PASS: rtrefuse task_spawn_runtime_load
+--- runtime-refusal tier: 1 residual(s) exercised ---
+--- all AOT parity tests passed ---
+=== self-host suite ===
+--- behavioral parity (self-hosted vs C evaluator) ---
+PASS: arith.eigs
+PASS: bare_return.eigs
+PASS: bitwise_ops.eigs
+PASS: break_continue.eigs
+PASS: builtin_name_clobber_err.eigs
+PASS: builtin_name_write.eigs
+PASS: builtins.eigs
+PASS: call_convention.eigs
+PASS: catch_slot.eigs
+PASS: closures_over_module.eigs
+PASS: compare.eigs
+PASS: compound_index_dot.eigs
+PASS: compound_mod_assign.eigs
+PASS: comprehensions.eigs
+PASS: destructuring.eigs
+PASS: dict_fn.eigs
+PASS: dicts.eigs
+PASS: enclosing_scope.eigs
+PASS: fn_loops.eigs
+PASS: for_var_slot_collision.eigs
+PASS: forloop.eigs
+PASS: fstring_brace_in_string.eigs
+PASS: fstring_brace_ws.eigs
+PASS: functions.eigs
+PASS: hex_literals.eigs
+PASS: if_else.eigs
+PASS: indexing.eigs
+PASS: interrogate_fn_scope.eigs
+PASS: interrogative_expr_when.eigs
+PASS: interrogatives.eigs
+PASS: keyword_dot_keys.eigs
+PASS: lambda_capture.eigs
+PASS: lambda_soft_params.eigs
+PASS: listcomp_interr_boundary.eigs
+PASS: lists.eigs
+PASS: local_shadow.eigs
+PASS: locals.eigs
+PASS: logic.eigs
+PASS: match.eigs
+PASS: module_name_in_block.eigs
+PASS: nested.eigs
+PASS: not_unary.eigs
+PASS: observer.eigs
+PASS: observer_diverge.eigs
+PASS: observer_halt.eigs
+PASS: observer_interrogative_last.eigs
+PASS: observer_report_predicate.eigs
+PASS: param_defaults.eigs
+PASS: paren_no_spread.eigs
+PASS: prev_at.eigs
+PASS: recursion.eigs
+PASS: report_reserved_forms.eigs
+PASS: slices.eigs
+PASS: soft_keyword_binding.eigs
+PASS: soft_keyword_postfix.eigs
+PASS: strings.eigs
+PASS: temporal.eigs
+PASS: temporal_at.eigs
+PASS: temporal_obs.eigs
+PASS: true_false_are_identifiers.eigs
+PASS: trycatch.eigs
+PASS: vars.eigs
+PASS: while.eigs
+--- reject (front-end raises where the C parser/lexer raises) ---
+PASS: rejected [match 1:;	print of 1]
+PASS: rejected [if 1 == 1:;print of 3]
+PASS: rejected [if 1 == 1:;	if 1 == 1:;	print of 1]
+PASS: rejected [if 1 == 1:;	 	print of 1;         print of 2;print of 3]
+PASS: rejected [print of (3 @ 4)]
+PASS: rejected [print of (3 ` 4)]
+PASS: rejected [x is $5]
+PASS: rejected [x is 0x1p4]
+PASS: rejected [x is 0x.8]
+PASS: rejected [x is 0x]
+PASS: rejected [z is [10,20].x]
+PASS: rejected [z is "ab".foo]
+PASS: rejected [z is 5 .foo]
+PASS: rejected [x is 2 x is 3]
+PASS: rejected [d is {"k": 1};d.k is 2 3]
+PASS: rejected [l is [1];l[0] is 8 9]
+PASS: rejected [l is [1];l[0] += 1 4]
+PASS: rejected [define report(v) as:;    return "mine"]
+PASS: rejected [report is 5]
+PASS: rejected [report_value is 5]
+PASS: rejected [report += 1]
+PASS: rejected [local report is 1]
+PASS: rejected [print of report]
+PASS: rejected [define f(report) as:;    return 1]
+PASS: rejected [f is (report_value) => 1]
+PASS: rejected [for report in [1]:;    print of 1]
+PASS: rejected [try:;    x is 1;catch report:;    print of 1]
+PASS: rejected [[report, b] is [1, 2]]
+PASS: rejected [import report]
+PASS: rejected [x is 1;print of (report of (x + 0))]
+PASS: rejected [x is 1;print of (report_value of 5)]
+PASS: rejected [d is {"a": 1};print of (report of d.a)]
+PASS: rejected [print of (report of converged)]
+--- must_reject (both sides must die at run time) ---
+PASS: must_reject [print of undefined_var_xyz]
+PASS: must_reject [x is 1;what is x;print of x]
+PASS: must_reject [n is null;print of n.f]
+PASS: must_reject [x is "abc;print of 99]
+PASS: must_reject [x is f"abc {1};print of 99]
+PASS: must_reject [x is f"abc {1 + 2]
+PASS: must_reject [if 1:;        print of 1;    print of 2;print of 3]
+PASS: must_reject [print of (prev of 5)]
+PASS: must_reject [for x of [1, 2]:;    print of x]
+--- driver-input tier (missing/dir/empty vs the C oracle) ---
+PASS: driver-input tier (6 probes)
+--- bootstrap (full self-host: front-end + codegen, byte-exact fixed point) ---
+PASS: bootstrap fixed point (and the self-compiled program runs)
+---
+ALL PASSED (63 programs + bootstrap)
+=== DMG canary ===
+canary: byte-identical (15.913241281683714 MHz, 50000000 cycles)
+=== stdlib sweep ===
+sweep: 70 / 77 modules build; failures match the baseline
+=== corpus run-differential ===
+corpus_diff.sh: line 36: 3146347 Segmentation fault      ( cd "$EIGDIR" && timeout 60 $CDT.bin ) > $CDT.aot 2>&1
+corpus: 157 / 230 programs match the VM byte-for-byte; the rest match the ledger (2 NONDET excluded)
+=== leak tier ===
+PASS: leak l1_boxed_local_reassign (253 allocation(s), allowance 253)
+PASS: leak l2_boxed_slot_numeric_read (253 allocation(s), allowance 252)
+PASS: leak l3_genp_rebind (253 allocation(s), allowance 255)
+PASS: leak l4_genp_for_binder (253 allocation(s), allowance 255)
+PASS: leak l5_owned_arg_temp (252 allocation(s), allowance 253)
+--- leak tier: 5 fixture(s) ---
+slot index ownership: baseline witness=1 allocations=253 exit=1
+slot index ownership: candidate witness=1 allocations=253 exit=1
+PASS: slot index ownership arms=2 witnesses=2 baseline_allocations=253 candidate_allocations=253 (no slack)
+=== verdict aot=0 selfhost=0 canary=0 stdlib=0 corpus=0 leak=0 core=0 ===
+TIERS_DONE

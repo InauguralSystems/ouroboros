@@ -1,0 +1,26 @@
+# A call anywhere in an index, including a short-circuited arm, excludes the
+# borrowed slot path. Calls execute once and only on their selected arm.
+define change_first(values) as:
+    print of "callback"
+    values[0] is "changed"
+    return 0
+
+define with_callback(source, enabled) as:
+    local table is source
+    local item is table[(enabled and (change_first of table)) or 0]
+    print of item
+    print of table
+    return 0
+
+define call_target(values) as:
+    print of "target"
+    return values
+
+define with_called_target(source) as:
+    local item is (call_target of source)[0]
+    print of item
+    return 0
+
+with_callback of [["original", 8], 0]
+with_callback of [["original", 8], 1]
+with_called_target of (["result", 9])

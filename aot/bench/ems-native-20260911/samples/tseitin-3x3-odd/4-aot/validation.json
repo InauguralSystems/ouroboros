@@ -1,0 +1,22 @@
+{
+  "arm": "aot",
+  "binary_sha256": "d7c283e49f31bf7f915e7b0d05b7123475ed5a0c4eb68b576c2a4b0cd480043d",
+  "case": "tseitin-3x3-odd",
+  "cleanup": null,
+  "command": [
+    "/tmp/ems-native-20260910/ems-active-count",
+    "--cdcl",
+    "/tmp/ems-gap-20260911/wall-production/oracle/case.7gsvO2/input.cnf"
+  ],
+  "conflicts": 592,
+  "cwd": "/home/jon/src/InauguralSystems/EigenScriptEcosystem/EigenMiniSat",
+  "directory": "/tmp/ems-gap-20260911/wall-production/samples/tseitin-3x3-odd/4-aot",
+  "input_sha256": "fe1938d0377c2e32566cad276df525053397d0cb617981515e73884005cf83f2",
+  "interrupted_signal": null,
+  "repetition": 4,
+  "returncode": 0,
+  "timed_out": false,
+  "timeout_seconds": 120,
+  "validated": true,
+  "wall_ns": 208455090
+}

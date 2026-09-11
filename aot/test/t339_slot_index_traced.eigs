@@ -1,0 +1,15 @@
+# Temporal reads keep the locals in the existing trace-aware storage regime.
+# This function must have no aot_lv_index_* calls in its emitted body.
+define traced_reads(source) as:
+    local table is source
+    local item is "before"
+    item is table[0]
+    print of item
+    print of (prev of item)
+    item is table[1]
+    print of item
+    print of (prev of item)
+    return 0
+
+traced_reads of (["one", "two"])
+traced_reads of ([10, 20])

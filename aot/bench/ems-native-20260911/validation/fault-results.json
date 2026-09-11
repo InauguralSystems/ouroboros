@@ -1,0 +1,32 @@
+[
+  {
+    "fault": "missing_element_incref",
+    "rejected": true,
+    "evidence": "FAIL: slot index ownership: candidate: missing, incomplete or changed completion witness\nDiagnostics retained: /tmp/aot-slot-index-ownership-rbecqfkb"
+  },
+  {
+    "fault": "missing_destination_release",
+    "rejected": true,
+    "evidence": "FAIL: slot index ownership: candidate leaked 2353 allocations; baseline leaked 253\nDiagnostics retained: /tmp/aot-slot-index-ownership-qftfcoun"
+  },
+  {
+    "fault": "extra_heap_number_guard",
+    "rejected": true,
+    "evidence": "FAIL: slot index ownership: candidate: missing, incomplete or changed completion witness\nDiagnostics retained: /tmp/aot-slot-index-ownership-7v7va6nc"
+  },
+  {
+    "fault": "missing_buffer_guard",
+    "rejected": true,
+    "evidence": "FAIL: slot index ownership: candidate: missing, incomplete or changed completion witness\nDiagnostics retained: /tmp/aot-slot-index-ownership-wwgk9fc1"
+  },
+  {
+    "fault": "fractional_list_index",
+    "rejected": true,
+    "evidence": "t340 byte-exact VM comparison rejects changed fractional-index output"
+  },
+  {
+    "fault": "fractional_buffer_index",
+    "rejected": true,
+    "evidence": "t340 byte-exact VM comparison rejects changed fractional-index output"
+  }
+]

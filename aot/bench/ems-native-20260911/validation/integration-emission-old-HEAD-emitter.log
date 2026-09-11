@@ -1,0 +1,2 @@
+slot index emission: completed=0/6; diagnostics retained: /tmp/aot-slot-index-emission-icbi10hn
+FAIL: slot index emission: t337_slot_index_locals.eigs: expected all slot-index call paths, got {'s': 0, 'i': 0, 'v': 0}

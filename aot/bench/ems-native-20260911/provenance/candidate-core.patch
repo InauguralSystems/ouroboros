@@ -1,0 +1,138 @@
+diff --git a/aot/aot_rt.h b/aot/aot_rt.h
+index ee701df..b935ea2 100644
+--- a/aot/aot_rt.h
++++ b/aot/aot_rt.h
+@@ -2160,6 +2160,79 @@ static Value *aot_index_get(Value *target, Value *idx) {
+     return result ? result : make_null();
+ }
+ 
++/* Indexed assignment into a lowered frame local. The emitter borrows a
++ * call-local target only when neither operand contains a source call, and
++ * evaluates target then index before invoking these helpers. Runtime tags,
++ * not inferred element types, select the fast path. Negative, fractional,
++ * out-of-range and mixed-type indices keep the original index helpers.
++ * All wrappers borrow target; _s borrows index, _v adopts it. */
++static inline int aot_lv_index_fast(EigsSlot *dst, EigsSlot target, double d) {
++    if (!slot_is_ptr(target)) return 0;
++    Value *t = slot_as_ptr(target);
++    if (t && t->type == VAL_LIST && d >= 0.0 && d < t->data.list.count) {
++        /* Bound the double before casting: no C overflow on huge indices. */
++        int i = (int)d;
++        if ((double)i == d) {
++            Value *r = t->data.list.items[i];
++            if (r && r->type == VAL_NUM && !r->arena) {
++                /* Match slot_from_value's raw numeric copy, with no extra
++                 * num_guard/math flags. Copy before releasing dst: it can own
++                 * the target. Arena elements retain promotion below. */
++                EigsSlot result = slot_from_num(r->data.num);
++                slot_decref(*dst);
++                *dst = result;
++                return 1;
++            }
++            if (r) {
++                /* Own a pointer element before dropping dst, even when dst
++                 * is the target/index or an alias of the element itself.
++                 * aot_lv_set also preserves arena promotion and nulls. */
++                val_incref(r);
++                aot_lv_set(dst, r);
++                return 1;
++            }
++        }
++    } else if (t && t->type == VAL_BUFFER && d >= 0.0 && d < t->data.buffer.count) {
++        int i = (int)d;
++        if ((double)i == d) {
++            double n = t->data.buffer.data[i];
++            /* The old buffer read calls make_num: preserve its num_guard. */
++            aot_lv_set_num(dst, n);
++            return 1;
++        }
++    }
++    return 0;
++}
++
++static inline void aot_lv_index_i(EigsSlot *dst, EigsSlot target, double index) {
++    if (aot_lv_index_fast(dst, target, index)) return;
++    aot_lv_set(dst, aot_index_get_i(slot_to_value(target), index));
++}
++
++static inline void aot_lv_index_v(EigsSlot *dst, EigsSlot target, Value *index) {
++    if (index && index->type == VAL_NUM &&
++        aot_lv_index_fast(dst, target, index->data.num)) {
++        val_decref(index);
++        return;
++    }
++    aot_lv_set(dst, aot_index_get(slot_to_value(target), index));
++}
++
++static inline void aot_lv_index_s(EigsSlot *dst, EigsSlot target, EigsSlot index) {
++    double d;
++    int numeric = 1;
++    if (slot_is_num(index)) d = index.d;
++    else if (slot_is_bool(index)) d = slot_as_bool(index) ? 1.0 : 0.0;
++    else if (slot_is_ptr(index) && slot_as_ptr(index) &&
++             slot_as_ptr(index)->type == VAL_NUM)
++        d = slot_as_ptr(index)->data.num; /* aot_lv_getb can box a local */
++    else numeric = 0;
++    if (numeric && aot_lv_index_fast(dst, target, d)) return;
++    Value *t = slot_to_value(target);
++    Value *i = slot_to_value(index);
++    aot_lv_set(dst, aot_index_get(t, i));
++}
++
+ /* (#86) native argv -> the VM's args convention: builtin_args reads
+  * g_argv[2..] (slot 0 = runtime, 1 = script). The native binary's user
+  * args start at argv[1], so shift by one synthetic slot. */
+diff --git a/aot/compile.eigs b/aot/compile.eigs
+index c62117c..c574604 100644
+--- a/aot/compile.eigs
++++ b/aot/compile.eigs
+@@ -3387,6 +3387,19 @@ define emit_stmts(stmts, ind, nm, bt, minits, gf) as:
+ define bt_rebind(name, expr) as:
+     return "{ Value* _bold = " + (cn of name) + "; " + (cn of name) + " = " + expr + "; if (_bold) val_decref(_bold); }\n"
+ 
++# The ident must actually read an EigsSlot. These are emit_val's preceding
++# storage classes, not an inference that the local happens to hold a list.
++define lowered_slot_expr(node, nm, bt) as:
++    local n is unwrap of node
++    if n[0] != "ident":
++        return ""
++    local name is n[1]
++    if (g_lowerloc != 1) or (g_envloc[name] != 1) or (g_boxshadow[name] == 1):
++        return ""
++    if (nm[name] == 1) or (bt[name] == 1) or (g_dict[name] == 1) or (g_genp[name] == 1) or (g_tensor[name] == 1) or (g_funcs[name] != null):
++        return ""
++    return lv of name
++
+ define emit_stmt(node, ind, nm, bt, minits, gf) as:
+     local t is node[0]
+     if t == "_line":
+@@ -3589,6 +3602,29 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
+             # so g_lowerloc && g_traced is contradictory and the arm could never
+             # execute. A traced program's locals stay env-resident, and traced
+             # boxed stores go through the terminal arm below.
++            local si is unwrap of node[2]
++            if (si[0] == "index") and ((has_call_node of si) == 0):
++                local st is lowered_slot_expr of [si[1], nm, bt]
++                if st != "":
++                    # Borrow only a call-local target, with no source call in
++                    # either operand. Stage target then index once, before the
++                    # destination changes (which may alias either operand).
++                    local six is lowered_slot_expr of [si[2], nm, bt]
++                    local sip is "EigsSlot _sit = " + st + "; "
++                    local sif is ""
++                    if six != "":
++                        sip is sip + "EigsSlot _sii = " + six + "; "
++                        sif is "aot_lv_index_s"
++                    elif (is_num_expr of [si[2], nm, bt]) == 1:
++                        sip is sip + "double _sii = " + (emit_num of [si[2], nm, bt, 0]) + "; "
++                        sif is "aot_lv_index_i"
++                    else:
++                        # Keep an owned boxed index boxed: converting it to a
++                        # slot would alter the fallback's materialization and
++                        # ownership on a caught error.
++                        sip is sip + "Value* _sii = " + (emit_val of [si[2], nm, bt]) + "; "
++                        sif is "aot_lv_index_v"
++                    return ind + "{ " + sip + sif + "(&" + (lv of name) + ", _sit, _sii); }\n"
+             return ind + "aot_lv_set(&" + (lv of name) + ", " + (emit_val of [node[2], nm, bt]) + ");\n"
+         if ((obs_name of name) == 1) or (g_outward_obs[name] == 1):
+             # A BOXED assign in an observed program must still observe. This

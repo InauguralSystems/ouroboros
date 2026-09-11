@@ -1,0 +1,83 @@
+ems-4x4 1 baseline
+ems-4x4 1 candidate
+dmg-50m 1 baseline
+dmg-50m 1 candidate
+ems-4x4 2 candidate
+ems-4x4 2 baseline
+dmg-50m 2 candidate
+dmg-50m 2 baseline
+ems-4x4 3 baseline
+ems-4x4 3 candidate
+dmg-50m 3 baseline
+dmg-50m 3 candidate
+ems-4x4 4 candidate
+ems-4x4 4 baseline
+dmg-50m 4 candidate
+dmg-50m 4 baseline
+ems-4x4 5 baseline
+ems-4x4 5 candidate
+dmg-50m 5 baseline
+dmg-50m 5 candidate
+{
+  "ems-4x4": {
+    "baseline": {
+      "n": 5,
+      "instructions:u": {
+        "median": 17990521397,
+        "min": 17990372272,
+        "max": 17990621466
+      },
+      "cycles:u": {
+        "median": 21182298598,
+        "min": 20816708700,
+        "max": 21386923689
+      }
+    },
+    "candidate": {
+      "n": 5,
+      "instructions:u": {
+        "median": 16377520679,
+        "min": 16377425827,
+        "max": 16377627381
+      },
+      "cycles:u": {
+        "median": 18748796753,
+        "min": 18527807060,
+        "max": 18833584193
+      }
+    }
+  },
+  "dmg-50m": {
+    "baseline": {
+      "n": 5,
+      "instructions:u": {
+        "median": 12494625548,
+        "min": 12494621192,
+        "max": 12494631086
+      },
+      "cycles:u": {
+        "median": 6653637829,
+        "min": 6644054307,
+        "max": 6708090370
+      },
+      "emulated_cycles": 50000008,
+      "host_instructions_per_emulated_cycle": 249.89247097720465
+    },
+    "candidate": {
+      "n": 5,
+      "instructions:u": {
+        "median": 12496190964,
+        "min": 12496187211,
+        "max": 12496191411
+      },
+      "cycles:u": {
+        "median": 6856737672,
+        "min": 6845537169,
+        "max": 6869634090
+      },
+      "emulated_cycles": 50000008,
+      "host_instructions_per_emulated_cycle": 249.92377929219532
+    }
+  }
+}
+INSTRUCTIONS_DONE cases=2 arms=2 n=5 validated=20

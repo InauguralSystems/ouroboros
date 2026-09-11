@@ -3,6 +3,24 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 EIG="${EIGS:-../../EigenScript/src/eigenscript}"
+# Check orchestration/refusal/aggregate semantics with synthetic tiers before
+# any compiler builds. Missing Python, missing tests or a failed check is fatal.
+if ! PYTHONDONTWRITEBYTECODE=1 python3 test/test_gate_tiers.py; then
+  echo 'FAIL: seven-tier gate driver selftests' >&2
+  exit 1
+fi
+if ! PYTHONDONTWRITEBYTECODE=1 python3 test/test_slot_index_gate.py; then
+  echo 'FAIL: slot index ownership gate selftests' >&2
+  exit 1
+fi
+if ! PYTHONDONTWRITEBYTECODE=1 python3 test/slot_index_emission.py --selftest; then
+  echo 'FAIL: slot index emission selftests' >&2
+  exit 1
+fi
+if ! EIGS="$EIG" PYTHONDONTWRITEBYTECODE=1 python3 test/slot_index_emission.py; then
+  echo 'FAIL: slot index emission coverage' >&2
+  exit 1
+fi
 fail=0
 for prog in test/*.eigs; do
   name=$(basename "$prog")

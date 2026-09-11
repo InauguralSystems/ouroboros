@@ -1,5 +1,6 @@
 eigs
 *.out
+!aot/test/canary/dmg_cpu_instrs.out
 /tmp_out/
 __pycache__/
 aot/fuzz-findings/

@@ -1,0 +1,15 @@
+{
+  "cleanup": null,
+  "command": [
+    "/tmp/ems-gap-20260911/ems-production",
+    "--cdcl",
+    "/tmp/ems-gap-20260911/wall-production/oracle/case.8iC7i1/input.cnf"
+  ],
+  "cwd": "/home/jon/src/InauguralSystems/EigenScriptEcosystem/EigenMiniSat",
+  "directory": "/tmp/ems-gap-20260911/wall-production/samples/tseitin-4x4-odd/3-candidate",
+  "interrupted_signal": null,
+  "returncode": 0,
+  "timed_out": false,
+  "timeout_seconds": 120,
+  "wall_ns": 9294261177
+}

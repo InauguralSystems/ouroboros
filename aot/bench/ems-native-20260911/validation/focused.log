@@ -1,0 +1,11 @@
+CHECK t340_slot_index_errors.eigs
+PASS t340_slot_index_errors.eigs emitted {'s': 1, 'i': 4, 'v': 1}
+CHECK t341_slot_index_ownership.eigs
+PASS t341_slot_index_ownership.eigs emitted {'s': 1, 'i': 4, 'v': 0}
+CHECK t337_slot_index_locals.eigs
+PASS t337_slot_index_locals.eigs emitted {'s': 6, 'i': 7, 'v': 2}
+CHECK t338_slot_index_callbacks.eigs
+PASS t338_slot_index_callbacks.eigs emitted {'s': 0, 'i': 0, 'v': 0}
+CHECK t339_slot_index_traced.eigs
+PASS t339_slot_index_traced.eigs emitted {'s': 0, 'i': 0, 'v': 0}
+FOCUSED_DONE matched=5 emission_checks=5

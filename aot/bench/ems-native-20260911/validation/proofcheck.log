@@ -1,0 +1,12 @@
+ok   unit_unsat: refutation verified (1 proof lines)
+ok   multi_clause_line_unsat: refutation verified (1 proof lines)
+ok   xor_contradiction_unsat: refutation verified (2 proof lines)
+ok   pigeonhole_4_3: refutation verified (8 proof lines)
+ok   k4_3color_unsat: refutation verified (8 proof lines)
+ok   satlib_style_pigeonhole_5_4: refutation verified (32 proof lines)
+ok   satlib_style_k5_4color: refutation verified (32 proof lines)
+ok   tseitin_torus_3x3_odd: refutation verified (592 proof lines)
+ok   pigeonhole_6_5 under eager compaction: refutation verified
+ok   planted-fault: drat-trim rejected the truncated proof
+ok   simple_sat: SAT answer wrote no proof file
+proof-check: all refutations verified

@@ -1,0 +1,11 @@
+ROM loaded: CPU_INSTRS (65536 bytes, MBC1)
+
+Loop exited: cycles=50000008 halted=0 stopped=0 PC=49843
+IE=0 IF=1 IME=0 LY=67
+
+Cycles: 50000008
+Time: 3249.260735988617ms
+Speed: 15.38811811751606 MHz (GB is 4.19 MHz)
+Serial output: cpu_instrs
+
+01:ok  02:ok  03:ok  04:ok  05:ok  06

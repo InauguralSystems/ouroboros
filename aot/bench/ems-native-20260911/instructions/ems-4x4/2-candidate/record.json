@@ -1,0 +1,21 @@
+{
+  "case": "ems-4x4",
+  "repetition": 2,
+  "arm": "candidate",
+  "command": [
+    "perf",
+    "stat",
+    "-e",
+    "instructions:u,cycles:u",
+    "-x,",
+    "-o",
+    "/tmp/ems-gap-20260911/instructions/ems-4x4/2-candidate/counters.csv",
+    "/tmp/ems-gap-20260911/ems-production",
+    "--cdcl",
+    "/tmp/ems-gap-20260911/wall-production/oracle/case.8iC7i1/input.cnf"
+  ],
+  "binary_sha256": "0f1d97c9efd3425998951a259837177638d157c47ab665d6bdbab01aa1662bc4",
+  "validated": true,
+  "instructions:u": 16377485619,
+  "cycles:u": 18767203158
+}

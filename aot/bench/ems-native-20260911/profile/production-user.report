@@ -1,0 +1,88 @@
+# To display the perf.data header info, please use --header/--header-only options.
+#
+#
+# Total Lost Samples: 0
+#
+# Samples: 1K of event 'cycles:u'
+# Event count (approx.): 18664658520
+#
+# Children      Self  Command         Shared Object     Symbol                                      
+# ........  ........  ..............  ................  ............................................
+#
+    94.09%     0.00%  ems-production  ems-production    [.] _start
+    94.09%     0.00%  ems-production  ems-production    [.] main
+    94.09%     0.00%  ems-production  libc.so.6         [.] __libc_start_call_main
+    94.09%     0.00%  ems-production  libc.so.6         [.] __libc_start_main_impl (inlined)
+    94.02%     0.62%  ems-production  ems-production    [.] eig_solve_cnf_cdcl_with_options
+    52.29%    13.28%  ems-production  ems-production    [.] eig_run_watched_queue_cdcl.isra.0
+    17.84%     0.28%  ems-production  ems-production    [.] gc_collect_cycles
+    17.36%     5.04%  ems-production  ems-production    [.] aot_call_dispatch
+    16.72%    12.78%  ems-production  ems-production    [.] gc_collect_impl
+    11.23%     0.57%  ems-production  ems-production    [.] eig_lit_redundant
+    11.08%     0.35%  ems-production  ems-production    [.] eig_analyze_conflict_cdcl
+     9.71%     7.27%  ems-production  libc.so.6         [.] _int_malloc
+     9.62%     1.86%  ems-production  ems-production    [.] aot_index_get
+     9.26%     0.29%  ems-production  ems-production    [.] xcalloc
+     8.85%     0.79%  ems-production  ems-production    [.] eig_lit_value
+     8.82%     1.90%  ems-production  libc.so.6         [.] __libc_calloc
+     8.66%     5.64%  ems-production  ems-production    [.] make_num
+     7.60%     7.60%  ems-production  ems-production    [.] val_incref
+     6.79%     0.06%  ems-production  ems-production    [.] eig_add_cdcl_clause.constprop.0
+     6.51%     0.45%  ems-production  ems-production    [.] make_list
+     6.51%     4.86%  ems-production  ems-production    [.] free_value.part.0
+     6.05%     0.40%  ems-production  ems-production    [.] builtin_range
+     5.37%     0.00%  ems-production  libc.so.6         [.] __GI___libc_free (inlined)
+     5.26%     0.56%  ems-production  ems-production    [.] eig_clause_level_span
+     4.52%     1.05%  ems-production  ems-production    [.] vm_run_ex
+     4.47%     0.00%  ems-production  [unknown]         [.] 0xffffffffffffffff
+     4.35%     1.30%  ems-production  ems-production    [.] list_append
+     3.82%     0.39%  ems-production  ems-production    [.] eig_watch_add
+     3.53%     0.15%  ems-production  ems-production    [.] builtin_append
+     3.49%     2.87%  ems-production  libc.so.6         [.] malloc_consolidate
+     3.11%     0.05%  ems-production  ems-production    [.] xrealloc_array
+     3.05%     0.00%  ems-production  libc.so.6         [.] __GI___libc_realloc (inlined)
+     2.94%     0.05%  ems-production  libc.so.6         [.] _int_realloc
+     2.90%     0.00%  ems-production  ems-production    [.] eig_clause_store_clause
+     2.74%     0.22%  ems-production  ems-production    [.] eig_init_clause_metadata
+     2.35%     0.06%  ems-production  ems-production    [.] eig_clause_store_add_clause
+     2.31%     0.00%  ems-production  libc.so.6         [.] _int_free_maybe_consolidate
+     2.21%     2.21%  ems-production  ems-production    [.] val_decref
+     2.20%     0.56%  ems-production  ems-production    [.] eig_analyze_mark_store_clause
+     2.05%     0.34%  ems-production  ems-production    [.] eig_reduce_learnt_db
+     1.88%     1.88%  ems-production  libc.so.6         [.] unlink_chunk.isra.0
+     1.88%     0.00%  ems-production  libc.so.6         [.] unlink_chunk (inlined)
+     1.83%     0.40%  ems-production  ems-production    [.] aot_add
+     1.75%     1.40%  ems-production  ems-production    [.] eig_lit_abs
+     1.75%     0.22%  ems-production  ems-production    [.] eig_cdcl_cancel_until
+     1.66%     0.91%  ems-production  ems-production    [.] aot_lv_set
+     1.59%     1.59%  ems-production  libc.so.6         [.] _int_free
+     1.33%     1.33%  ems-production  ems-production    [.] aot_call_resolve
+     1.30%     1.30%  ems-production  libc.so.6         [.] cfree@GLIBC_2.2.5
+     1.24%     0.06%  ems-production  ems-production    [.] eig_order_pop_best
+     1.18%     1.18%  ems-production  ems-production    [.] slot_to_value
+     1.14%     0.46%  ems-production  ems-production    [.] eig_bump_clause_activity
+     1.06%     1.06%  ems-production  ems-production    [.] free_value
+     0.97%     0.05%  ems-production  ems-production    [.] eig_compact_deleted_clauses
+     0.94%     0.94%  ems-production  ems-production    [.] list_append_owned
+     0.93%     0.93%  ems-production  ems-production    [.] slot_from_value
+     0.92%     0.34%  ems-production  ems-production    [.] aot_index_set
+     0.86%     0.00%  ems-production  ems-production    [.] eig_bump_clause_db_activity
+     0.84%     0.28%  ems-production  ems-production    [.] eig_order_sift_down
+     0.79%     0.18%  ems-production  ems-production    [.] eig_max_clause_level_except
+     0.78%     0.00%  ems-production  ems-production    [.] eig_order_insert
+     0.78%     0.12%  ems-production  ems-production    [.] eig_append_active_watch_tail
+     0.76%     0.76%  ems-production  ems-production    [.] slot_decref
+     0.74%     0.74%  ems-production  ems-production    [.] aot_lv_index_s
+     0.73%     0.33%  ems-production  ems-production    [.] aot_eq_n_t.constprop.0
+     0.68%     0.68%  ems-production  ems-production    [.] is_truthy
+     0.67%     0.27%  ems-production  ems-production    [.] eig_lit_encode
+     0.60%     0.00%  ems-production  ems-production    [.] eig_clause_store_compact_by_mask_counted
+     0.55%     0.39%  ems-production  ems-production    [.] aot_ge
+     0.51%     0.06%  ems-production  ems-production    [.] eig_enqueue_cdcl
+     0.51%     0.00%  ems-production  ems-production    [.] call_eigs_fn
+     0.51%     0.12%  ems-production  ems-production    [.] eig_order_sift_up
+
+
+#
+# (Cannot load tips.txt file, please install perf!)
+#

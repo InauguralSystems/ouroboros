@@ -1,0 +1,30 @@
+# Run in parity and under ASan against the original helpers as an A/B.
+# No leak allowance is assumed here. A lost element incref must fail when the
+# outer list was its sole owner; skipped destination releases grow per loop.
+define generic_identity(v) as:
+    return v
+
+define index_churn(n) as:
+    local k is 0
+    local total is 0
+    local kept is ["initial", 0]
+    local index is "boxed"
+    loop while k < n:
+        local table is [[k, "element"], [k + 1, "sibling"]]
+        kept is table[0]
+        table is table[0]
+        index is 0
+        local boxed_copy is generic_identity of index
+        index is table[index]
+        total is total + index
+        # Overwrite a pointer destination with a number, and vice versa.
+        local item is ["discard"]
+        item is table[0]
+        item is kept[1]
+        if item != "element":
+            throw of "lost element"
+        k is k + 1
+    print of kept
+    return total
+
+print of (index_churn of 300)

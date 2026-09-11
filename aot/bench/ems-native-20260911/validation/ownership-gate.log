@@ -1,0 +1,3 @@
+slot index ownership: baseline witness=1 allocations=253 exit=1
+slot index ownership: candidate witness=1 allocations=253 exit=1
+PASS: slot index ownership arms=2 witnesses=2 baseline_allocations=253 candidate_allocations=253 (no slack)
