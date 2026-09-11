@@ -2160,6 +2160,79 @@ static Value *aot_index_get(Value *target, Value *idx) {
     return result ? result : make_null();
 }
 
+/* Indexed assignment into a lowered frame local. The emitter borrows a
+ * call-local target only when neither operand contains a source call, and
+ * evaluates target then index before invoking these helpers. Runtime tags,
+ * not inferred element types, select the fast path. Negative, fractional,
+ * out-of-range and mixed-type indices keep the original index helpers.
+ * All wrappers borrow target; _s borrows index, _v adopts it. */
+static inline int aot_lv_index_fast(EigsSlot *dst, EigsSlot target, double d) {
+    if (!slot_is_ptr(target)) return 0;
+    Value *t = slot_as_ptr(target);
+    if (t && t->type == VAL_LIST && d >= 0.0 && d < t->data.list.count) {
+        /* Bound the double before casting: no C overflow on huge indices. */
+        int i = (int)d;
+        if ((double)i == d) {
+            Value *r = t->data.list.items[i];
+            if (r && r->type == VAL_NUM && !r->arena) {
+                /* Match slot_from_value's raw numeric copy, with no extra
+                 * num_guard/math flags. Copy before releasing dst: it can own
+                 * the target. Arena elements retain promotion below. */
+                EigsSlot result = slot_from_num(r->data.num);
+                slot_decref(*dst);
+                *dst = result;
+                return 1;
+            }
+            if (r) {
+                /* Own a pointer element before dropping dst, even when dst
+                 * is the target/index or an alias of the element itself.
+                 * aot_lv_set also preserves arena promotion and nulls. */
+                val_incref(r);
+                aot_lv_set(dst, r);
+                return 1;
+            }
+        }
+    } else if (t && t->type == VAL_BUFFER && d >= 0.0 && d < t->data.buffer.count) {
+        int i = (int)d;
+        if ((double)i == d) {
+            double n = t->data.buffer.data[i];
+            /* The old buffer read calls make_num: preserve its num_guard. */
+            aot_lv_set_num(dst, n);
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static inline void aot_lv_index_i(EigsSlot *dst, EigsSlot target, double index) {
+    if (aot_lv_index_fast(dst, target, index)) return;
+    aot_lv_set(dst, aot_index_get_i(slot_to_value(target), index));
+}
+
+static inline void aot_lv_index_v(EigsSlot *dst, EigsSlot target, Value *index) {
+    if (index && index->type == VAL_NUM &&
+        aot_lv_index_fast(dst, target, index->data.num)) {
+        val_decref(index);
+        return;
+    }
+    aot_lv_set(dst, aot_index_get(slot_to_value(target), index));
+}
+
+static inline void aot_lv_index_s(EigsSlot *dst, EigsSlot target, EigsSlot index) {
+    double d;
+    int numeric = 1;
+    if (slot_is_num(index)) d = index.d;
+    else if (slot_is_bool(index)) d = slot_as_bool(index) ? 1.0 : 0.0;
+    else if (slot_is_ptr(index) && slot_as_ptr(index) &&
+             slot_as_ptr(index)->type == VAL_NUM)
+        d = slot_as_ptr(index)->data.num; /* aot_lv_getb can box a local */
+    else numeric = 0;
+    if (numeric && aot_lv_index_fast(dst, target, d)) return;
+    Value *t = slot_to_value(target);
+    Value *i = slot_to_value(index);
+    aot_lv_set(dst, aot_index_get(t, i));
+}
+
 /* (#86) native argv -> the VM's args convention: builtin_args reads
  * g_argv[2..] (slot 0 = runtime, 1 = script). The native binary's user
  * args start at argv[1], so shift by one synthetic slot. */

@@ -1,0 +1,4 @@
+instances=40 policies=6 solves=240  SAT=17 UNSAT=23 proofs_verified=138
+coverage (solves hitting path): reduce=60/240 compaction=33/240 watch_rebuild=33/240 compact_replay=33/240
+failures=0
+workdir=/tmp/eigpolfuzz-xpyw9n6s

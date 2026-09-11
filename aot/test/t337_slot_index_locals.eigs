@@ -1,0 +1,73 @@
+# Indexed writes to generic lowered locals. The target is copied from a
+# polymorphic parameter so list element inference cannot discharge the read.
+# Literal/computed numeric indices, immediate and reboxed local indices, and
+# a boxed addition cover the three helper entry points. Check emitted C too:
+# a fixture that merely prints the right values need not reach the new path.
+define keep_generic(v) as:
+    return v
+
+define read_local_table(source) as:
+    local table is source
+    local index is "boxed"
+    index is 1
+    local item is table[index]
+    print of item
+    # Passing a generic local to a generic parameter boxes its slot in place.
+    local copied is keep_generic of index
+    print of copied
+    item is table[index]
+    print of item
+    item is table[0]
+    print of item
+    item is table[1 + 1]
+    print of item
+    item is table[index + index]
+    print of item
+    item is table[-1]
+    print of item
+    index is -3
+    item is table[index]
+    print of item
+    return 0
+
+define read_dictionary(source, key) as:
+    local table is source
+    local index is key
+    local item is table[index]
+    print of item
+    index is table[index]
+    print of index
+    item is table["absent"]
+    print of item
+    return 0
+
+define alias_reads(n) as:
+    # The local is the only owner of its outer list when it is overwritten.
+    local table is [[n, "kept"], ["other"], null]
+    table is table[0]
+    print of table
+    local index is "boxed"
+    index is 0
+    index is table[index]
+    print of index
+    # Same alias shape with a nonnumeric result and a live destination value.
+    local nested is [["child", n], ["second"]]
+    local element is ["old destination"]
+    element is nested[0]
+    element is nested[0]
+    nested is nested[0]
+    print of element
+    print of nested
+    return 0
+
+read_local_table of ([10, 20, 30])
+read_local_table of ([null, "middle", [7, 8]])
+local numbers is buffer of 3
+numbers[0] is 1.25
+numbers[1] is 2.5
+numbers[2] is 3.75
+read_local_table of numbers
+read_local_table of "abc"
+read_dictionary of [{"present": [4, 5]}, "present"]
+read_dictionary of [{"present": 9}, "missing"]
+alias_reads of 17

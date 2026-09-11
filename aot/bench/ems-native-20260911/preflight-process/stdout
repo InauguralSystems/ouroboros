@@ -1,0 +1,26 @@
+Oracle: native MiniSat=/usr/bin/minisat; EMS-VM=/home/jon/src/wt/es-v043/src/eigenscript; policy=CDCL current defaults (regime C)
+AOT: ENABLED (explicit prebuilt binary=/tmp/ems-native-20260910/ems-active-count; VM remains byte-exact reference)
+Selection: files=1 requested-rungs=2 preflight-added=0 per-solver-cap=120s
+4x5: SKIPPED (budget; not selected in RUNGS)
+4x6: SKIPPED (budget; not selected in RUNGS)
+5x5: SKIPPED (budget; not selected in RUNGS)
+5x6: SKIPPED (budget; not selected in RUNGS)
+6x6: SKIPPED (budget; not selected in RUNGS)
+IDENTITY 3x3: PASS (header, every ordered literal and clause, odd charge)
+IDENTITY 3x3: PASS (banked repository fixture, ordered DIMACS tokens)
+RUN tseitin-3x3-odd
+PREFLIGHT 3x3: PASS (regime C, byte-exact EMS-VM output excluding ms)
+PASS tseitin-3x3-odd                                       UNSATISFIABLE native=VM AOT=PASS
+IDENTITY 4x4: PASS (header, every ordered literal and clause, odd charge)
+IDENTITY 4x4: PASS (banked repository fixture, ordered DIMACS tokens)
+RUN tseitin-4x4-odd
+PREFLIGHT 4x4: PASS (regime C, byte-exact EMS-VM output excluding ms)
+PASS tseitin-4x4-odd                                       UNSATISFIABLE native=VM AOT=PASS
+RUN /tmp/ems-gap-20260911/wall-production/preflight-inputs/pigeonhole_6_5.cnf
+PASS /tmp/ems-gap-20260911/wall-production/preflight-inputs/pigeonhole_6_5.cnf UNSATISFIABLE native=VM AOT=PASS
+SEARCH GAP (measurement only; native conflicts / EMS conflicts, not a speed ratio)
+rung      EMS_conflicts native_conflicts   native_CPU_s         native/EMS
+3x3                 592            731       0.003832             1.235x
+4x4                9986          84150       0.234015             8.427x
+SUMMARY PASS selected=3 passed=3 native=3 VM=3 AOT=3
+Artifacts: /tmp/ems-native-oracle.aKaxa8

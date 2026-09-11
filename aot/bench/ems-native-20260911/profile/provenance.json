@@ -1,0 +1,11 @@
+{
+  "original_data_path": "/tmp/ems-gap-20260911/perf-production-user.data",
+  "data_sha256": "a73665356f8cb4f196a2787c95d6b1d579efc72297ff4f05b9179c89c354c613",
+  "data_bytes": 15145120,
+  "record_command": "perf record -e cycles:u -F 199 --call-graph dwarf -o /tmp/ems-gap-20260911/perf-production-user.data /tmp/ems-gap-20260911/ems-production --cdcl /tmp/ems-gap-20260911/wall-production/oracle/case.8iC7i1/input.cnf",
+  "samples": 1786,
+  "lost_samples": 0,
+  "unknown_children_percent": 4.47,
+  "scope": "single production profile, user-mode cycles only; percentages are inclusive where labeled Children and must not be summed",
+  "report_reproduction_command": "perf report --stdio -i /tmp/ems-gap-20260911/perf-production-user.data"
+}

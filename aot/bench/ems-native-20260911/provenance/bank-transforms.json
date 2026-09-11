@@ -1,0 +1,14 @@
+[
+  {
+    "original_relative_path": "oracle/discovered",
+    "original_sha256": "69f62d6dd9290c0e63041d87112ec8c7a1401aecaa0643835f7300a5486f948a",
+    "bank_relative_path": "oracle/discovered.txt",
+    "transformation": "replace NUL path delimiters with newline; original contains one path and no newline"
+  },
+  {
+    "original_relative_path": "oracle/sorted",
+    "original_sha256": "69f62d6dd9290c0e63041d87112ec8c7a1401aecaa0643835f7300a5486f948a",
+    "bank_relative_path": "oracle/sorted.txt",
+    "transformation": "replace NUL path delimiters with newline; original contains one path and no newline"
+  }
+]

@@ -1,0 +1,2 @@
+# Bank raw oracle/validation stdout despite the repository-wide *.out rule.
+!**/*.out

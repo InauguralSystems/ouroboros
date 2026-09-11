@@ -1,0 +1,42 @@
+{
+  "baseline_compiler_head": "368603bf96a74382b16819d7bcb406d246343d89",
+  "build_and_oracle_artifacts": {
+    "/home/jon/src/wt/ouro-ems-20260910/aot/build/libeigsrt.a": {
+      "bytes": 1630638,
+      "sha256": "5db0ea14d1ce3476b03643622fea11359172075b21cdc6343d80a9e591bd6eca"
+    },
+    "/tmp/ems-gap-20260911/compile_c.sh": {
+      "bytes": 474,
+      "sha256": "0889e152a4a10e59b1eef79578f1999ba63baf8d80a99193c9916ffecfdb5188"
+    },
+    "/tmp/ems-gap-20260911/ems-production.c": {
+      "bytes": 1377971,
+      "sha256": "ddec94a97948a7f178f924c9b2578b07c0804eed69e7a00b5629c26a0c5c53b2"
+    },
+    "/tmp/ems-native-20260910/drat-trim": {
+      "bytes": 51256,
+      "sha256": "3b2f43765b738cdc5210d874dafc0a0d9921f816156003c6b6fe3f762041c930"
+    },
+    "/tmp/ems-native-20260910/ems-active-count.c": {
+      "bytes": 1377668,
+      "sha256": "a7d244ed34f4d8f9e6ac6e6b74dd95f3ce478d1794d63bd392a188a0ff352240"
+    }
+  },
+  "candidate_core_patch_sha256": "2ea58ddccb70f344fbc617169dc434865230af0ca240dbe73d4367488a396b2f",
+  "candidate_files": {
+    "aot/aot_rt.h": "7a2a091ef0e2117c801b32dfc7853e41130e10f82bf96658afca4b1a9b64e38f",
+    "aot/compile.eigs": "1a2e7bba929879c4a3616cc7c7aeed4266b4ac09895d0f657bcff5f5125256e1",
+    "aot/test/slot_index_ownership.c": "1e0e124b6329625218dcbf81c7a965899d82c15454a653dcba0d572e9cdab81b",
+    "aot/test/slot_index_ownership.sh": "259738a2cb35bfeb8b518fd209b94436c27080d35835a1da18aee8d43177c2f1",
+    "aot/test/t337_slot_index_locals.eigs": "e4bdb4d8aecddc9c14cd88e68f0356ed49a6b2590fd12a47a3ef47f13b019461",
+    "aot/test/t338_slot_index_callbacks.eigs": "b4a715da52c43aed7f0789c80fbeff2635b1a4cc95264210108ca045748ddca4",
+    "aot/test/t339_slot_index_traced.eigs": "07dbc57bc0f18b12d9041611e31c2fecae4218a48f1b2f8afe49669941b18143",
+    "aot/test/t340_slot_index_errors.eigs": "713230c8d7ea7d4be47e9ca5be5d05267147835117cc16302926f56dcab2bf88",
+    "aot/test/t341_slot_index_ownership.eigs": "bb11758faafcbc631733acb290a04d72c14a4099738bc3e0e04bfe0981ddff3a",
+    "aot/test/t342_slot_index_observed.eigs": "72f16971e4679117608fc51dffb290cf3c03c0b8c0874d1c7862c57d0b60db3b"
+  },
+  "candidate_worktree": "/home/jon/src/wt/ouro-ems-20260910",
+  "compiler_version": "gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0",
+  "omitted_generated_c": "provenance/candidate-source.c (1,377,971 bytes); exact SHA256 retained in manifest.json and here",
+  "validation_evidence_note": "ASan full repetitive shutdown allocation traces omitted; original file hashes, summary lines, witnesses, and successful A/B checker log retained."
+}

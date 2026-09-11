@@ -1,0 +1,48 @@
+4
+{"kind": "index_range", "message": "index -3 out of range (list length 2)", "line": 8}
+unchanged
+{"kind": "index_range", "message": "index 2 out of range (list length 2)", "line": 8}
+unchanged
+5
+{"kind": "value", "message": "index must be an integer, got 1e+100", "line": 8}
+unchanged
+{"kind": "value", "message": "index must be an integer, got -1e+100", "line": 8}
+unchanged
+{"kind": "type_mismatch", "message": "cannot index list", "line": 8}
+unchanged
+{"kind": "type_mismatch", "message": "cannot index list", "line": 8}
+unchanged
+{"kind": "type_mismatch", "message": "cannot index list", "line": 8}
+unchanged
+value
+{"kind": "type_mismatch", "message": "cannot index dict", "line": 8}
+unchanged
+{"kind": "index_range", "message": "string index -3 out of range (length 2)", "line": 8}
+unchanged
+{"kind": "type_mismatch", "message": "cannot index null", "line": 8}
+unchanged
+{"kind": "type_mismatch", "message": "cannot index num", "line": 8}
+unchanged
+9
+{"kind": "index_range", "message": "buffer index 2 out of range (length 2)", "line": 8}
+unchanged
+{"kind": "value", "message": "index must be an integer, got 0.5", "line": 8}
+unchanged
+{"kind": "value", "message": "index must be an integer, got 2.14748e+09", "line": 23}
+{"kind": "value", "message": "index must be an integer, got -2.14748e+09", "line": 27}
+5
+{"kind": "value", "message": "index must be an integer, got 1.5", "line": 19}
+{"kind": "value", "message": "index must be an integer, got 2.14748e+09", "line": 23}
+{"kind": "value", "message": "index must be an integer, got -2.14748e+09", "line": 27}
+9
+{"kind": "value", "message": "index must be an integer, got 1.5", "line": 19}
+{"kind": "value", "message": "index must be an integer, got 2.14748e+09", "line": 23}
+{"kind": "value", "message": "index must be an integer, got -2.14748e+09", "line": 27}
+b
+4
+5
+{"kind": "value", "message": "index must be an integer, got 1e+100", "line": 41}
+unchanged
+value
+{"kind": "type_mismatch", "message": "cannot index list", "line": 41}
+unchanged

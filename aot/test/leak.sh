@@ -46,5 +46,10 @@ for prog in test/leak/*.eigs; do
 done
 rm -f "/tmp/aot_leak_$$_build.log"
 echo "--- leak tier: $n fixture(s) ---"
+if [ "$n" -eq 0 ]; then
+  echo "FAIL: leak tier has no test/leak/*.eigs fixtures"; fail=1
+elif ! bash test/slot_index_ownership.sh; then
+  fail=1
+fi
 [ "$fail" -eq 0 ] || exit 1
 exit 0

@@ -1,0 +1,26 @@
+[
+  {
+    "aot_conflicts": 140,
+    "cnf": "/tmp/ems-gap-20260911/wall-production/oracle/case.dEZcX2/input.cnf",
+    "name": "pigeonhole-6-5",
+    "native_conflicts": 138,
+    "sha256": "5b884b97debd41c9d89378c4414fb1b7b03365725e09992ba0709c23a3cebb7e",
+    "verdict": "UNSATISFIABLE"
+  },
+  {
+    "aot_conflicts": 592,
+    "cnf": "/tmp/ems-gap-20260911/wall-production/oracle/case.7gsvO2/input.cnf",
+    "name": "tseitin-3x3-odd",
+    "native_conflicts": 731,
+    "sha256": "fe1938d0377c2e32566cad276df525053397d0cb617981515e73884005cf83f2",
+    "verdict": "UNSATISFIABLE"
+  },
+  {
+    "aot_conflicts": 9986,
+    "cnf": "/tmp/ems-gap-20260911/wall-production/oracle/case.8iC7i1/input.cnf",
+    "name": "tseitin-4x4-odd",
+    "native_conflicts": 84150,
+    "sha256": "f0148e8b4ce9692de61347005af8179e8d8d38134283b6fb0c35a8b9efd32b71",
+    "verdict": "UNSATISFIABLE"
+  }
+]

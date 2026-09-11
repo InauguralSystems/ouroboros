@@ -1,0 +1,23 @@
+{
+  "case": "dmg-50m",
+  "repetition": 3,
+  "arm": "candidate",
+  "command": [
+    "perf",
+    "stat",
+    "-e",
+    "instructions:u,cycles:u",
+    "-x,",
+    "-o",
+    "/tmp/ems-gap-20260911/instructions/dmg-50m/3-candidate/counters.csv",
+    "/tmp/ems-gap-20260911/dmg-production",
+    "roms/cpu_instrs.gb",
+    "--cycles",
+    "50000000"
+  ],
+  "binary_sha256": "f3033eb52036573c57d51a5f71f2a86c67e3de8df35eb1422413be58fa3361dc",
+  "validated": true,
+  "instructions:u": 12496187211,
+  "cycles:u": 6856737672,
+  "emulated_cycles": 50000008
+}

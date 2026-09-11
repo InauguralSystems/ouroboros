@@ -3387,6 +3387,19 @@ define emit_stmts(stmts, ind, nm, bt, minits, gf) as:
 define bt_rebind(name, expr) as:
     return "{ Value* _bold = " + (cn of name) + "; " + (cn of name) + " = " + expr + "; if (_bold) val_decref(_bold); }\n"
 
+# The ident must actually read an EigsSlot. These are emit_val's preceding
+# storage classes, not an inference that the local happens to hold a list.
+define lowered_slot_expr(node, nm, bt) as:
+    local n is unwrap of node
+    if n[0] != "ident":
+        return ""
+    local name is n[1]
+    if (g_lowerloc != 1) or (g_envloc[name] != 1) or (g_boxshadow[name] == 1):
+        return ""
+    if (nm[name] == 1) or (bt[name] == 1) or (g_dict[name] == 1) or (g_genp[name] == 1) or (g_tensor[name] == 1) or (g_funcs[name] != null):
+        return ""
+    return lv of name
+
 define emit_stmt(node, ind, nm, bt, minits, gf) as:
     local t is node[0]
     if t == "_line":
@@ -3589,6 +3602,29 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
             # so g_lowerloc && g_traced is contradictory and the arm could never
             # execute. A traced program's locals stay env-resident, and traced
             # boxed stores go through the terminal arm below.
+            local si is unwrap of node[2]
+            if (si[0] == "index") and ((has_call_node of si) == 0):
+                local st is lowered_slot_expr of [si[1], nm, bt]
+                if st != "":
+                    # Borrow only a call-local target, with no source call in
+                    # either operand. Stage target then index once, before the
+                    # destination changes (which may alias either operand).
+                    local six is lowered_slot_expr of [si[2], nm, bt]
+                    local sip is "EigsSlot _sit = " + st + "; "
+                    local sif is ""
+                    if six != "":
+                        sip is sip + "EigsSlot _sii = " + six + "; "
+                        sif is "aot_lv_index_s"
+                    elif (is_num_expr of [si[2], nm, bt]) == 1:
+                        sip is sip + "double _sii = " + (emit_num of [si[2], nm, bt, 0]) + "; "
+                        sif is "aot_lv_index_i"
+                    else:
+                        # Keep an owned boxed index boxed: converting it to a
+                        # slot would alter the fallback's materialization and
+                        # ownership on a caught error.
+                        sip is sip + "Value* _sii = " + (emit_val of [si[2], nm, bt]) + "; "
+                        sif is "aot_lv_index_v"
+                    return ind + "{ " + sip + sif + "(&" + (lv of name) + ", _sit, _sii); }\n"
             return ind + "aot_lv_set(&" + (lv of name) + ", " + (emit_val of [node[2], nm, bt]) + ");\n"
         if ((obs_name of name) == 1) or (g_outward_obs[name] == 1):
             # A BOXED assign in an observed program must still observe. This

@@ -1,0 +1,7 @@
+direct-old rc 1 leak_allocations 253 witness slot index: 300 alias cycles; heap/buffer/arena boundaries OK
+direct-new rc 1 leak_allocations 253 witness slot index: 300 alias cycles; heap/buffer/arena boundaries OK
+t341-old rc 1 leak_allocations 253 witness [299, "element"]
+44850
+t341-new rc 1 leak_allocations 252 witness [299, "element"]
+44850
+ASAN_AB_DONE direct_and_eigs=2 no_new_leaks=2

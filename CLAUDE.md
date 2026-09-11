@@ -55,6 +55,22 @@ cd aot && bash build.sh P.eigs out  # one program; diff <(eigenscript P.eigs) <(
 python3 aot/fuzzdiff.py             # differential fuzzing
 ```
 
+Run all seven tiers against a clean runtime worktree at the Dockerfile pin:
+
+```bash
+AOT_REPO="$PWD" \
+EIGS_CO=/path/to/pinned-EigenScript \
+DMG_DIR=/path/to/DMG \
+GATE_LOG=/tmp/ouroboros-seven-tiers.log bash aot/gate_tiers.sh
+```
+
+The driver resolves the pin to its commit and exports all runtime tier paths.
+It requires the tracked DMG canary reference to be nonempty before any tier runs.
+Exit 0 requires every tier to succeed; completed attempts end with the seven
+exit codes and `TIERS_DONE`. Setup refusals exit 2 without that completion marker.
+The AOT suite first runs `python3 aot/test/test_gate_tiers.py`'s lightweight
+stub checks; the same command runs those checks alone from the repository root.
+
 ## Hard-won rules
 
 - **Run differential tools against the PINNED VM, not local main.** Build

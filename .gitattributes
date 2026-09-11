@@ -2,3 +2,5 @@
 # autocrlf normalizes it to LF on the next checkout and the fixture silently
 # tests nothing (git warned exactly that at the commit that added it).
 aot/test/t120_crlf_source.eigs -text
+# The independently verified canary reference is compared byte-for-byte.
+aot/test/canary/dmg_cpu_instrs.out -text

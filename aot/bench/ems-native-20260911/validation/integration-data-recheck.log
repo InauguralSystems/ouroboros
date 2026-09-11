@@ -1,0 +1,17 @@
+Solver output matched after removing exactly one ms= field: tseitin-3x3-odd; baseline=5 candidate=6 (one warmup).
+Solver output matched after removing exactly one ms= field: pigeonhole-6-5; baseline=5 candidate=6 (one warmup).
+Solver output matched after removing exactly one ms= field: tseitin-4x4-odd; baseline=5 candidate=6 (one warmup).
+Instruction/cycle aggregates match all five raw perf CSVs: ems-4x4 baseline.
+Instruction/cycle aggregates match all five raw perf CSVs: ems-4x4 candidate.
+Instruction/cycle aggregates match all five raw perf CSVs: dmg-50m baseline.
+Instruction/cycle aggregates match all five raw perf CSVs: dmg-50m candidate.
+Candidate compiler/header content hashes match reviewed core.
+Wall aggregate verified: pigeonhole-6-5 aot; n=5 median=0.076632498
+Wall aggregate verified: pigeonhole-6-5 candidate; n=5 median=0.082294423
+Wall aggregate verified: pigeonhole-6-5 native; n=5 median=0.007588336
+Wall aggregate verified: tseitin-3x3-odd aot; n=5 median=0.210572074
+Wall aggregate verified: tseitin-3x3-odd candidate; n=5 median=0.196882462
+Wall aggregate verified: tseitin-3x3-odd native; n=5 median=0.008961682
+Wall aggregate verified: tseitin-4x4-odd aot; n=5 median=10.230163098
+Wall aggregate verified: tseitin-4x4-odd candidate; n=5 median=9.197103458
+Wall aggregate verified: tseitin-4x4-odd native; n=5 median=0.264683674

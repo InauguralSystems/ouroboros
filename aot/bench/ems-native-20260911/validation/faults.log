@@ -1,0 +1,17 @@
+PLANT missing_element_incref
+REJECTED missing_element_incref FAIL: slot index ownership: candidate: missing, incomplete or changed completion witness
+Diagnostics retained: /tmp/aot-slot-index-ownership-rbecqfkb
+PLANT missing_destination_release
+REJECTED missing_destination_release FAIL: slot index ownership: candidate leaked 2353 allocations; baseline leaked 253
+Diagnostics retained: /tmp/aot-slot-index-ownership-qftfcoun
+PLANT extra_heap_number_guard
+REJECTED extra_heap_number_guard FAIL: slot index ownership: candidate: missing, incomplete or changed completion witness
+Diagnostics retained: /tmp/aot-slot-index-ownership-7v7va6nc
+PLANT missing_buffer_guard
+REJECTED missing_buffer_guard FAIL: slot index ownership: candidate: missing, incomplete or changed completion witness
+Diagnostics retained: /tmp/aot-slot-index-ownership-wwgk9fc1
+PLANT fractional_list_index
+REJECTED fractional_list_index t340 byte-exact VM comparison rejects changed fractional-index output
+PLANT fractional_buffer_index
+REJECTED fractional_buffer_index t340 byte-exact VM comparison rejects changed fractional-index output
+FAULTS_DONE planted=6 rejected=6

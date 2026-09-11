@@ -1,0 +1,27 @@
+{
+  "dmg_head": "ff29549873f625f99d78dd2e2c3cc884bc17d01a",
+  "dmg_status": "",
+  "artifacts": {
+    "/home/jon/src/InauguralSystems/EigenScriptEcosystem/DMG/dmg.eigs": {
+      "sha256": "d5f0ac642326489b582511fabe9d4086fbea2afbed62cf1cee2fcd3c382f5893",
+      "bytes": 30497
+    },
+    "/home/jon/src/InauguralSystems/EigenScriptEcosystem/DMG/roms/cpu_instrs.gb": {
+      "sha256": "8c5e12f41e0ba5bbca796944f92ffe6de28809198682c4332e38d1b3cf56fcf2",
+      "bytes": 65536
+    },
+    "/home/jon/src/wt/ouro-ems-20260910/aot/test/canary/dmg_cpu_instrs.out": {
+      "sha256": "2d82872a5de46c278306e8368a1f85971b6c6265868df098d316301572f45938",
+      "bytes": 206
+    },
+    "/tmp/ems-gap-20260911/dmg-baseline": {
+      "sha256": "30ec2b6b4824eeef11d93b88dfd662095aaea2f7813a03efaf05901d0ef71df8",
+      "bytes": 1459888
+    },
+    "/tmp/ems-gap-20260911/dmg-production": {
+      "sha256": "f3033eb52036573c57d51a5f71f2a86c67e3de8df35eb1422413be58fa3361dc",
+      "bytes": 1459928
+    }
+  },
+  "note": "Original absolute command paths retained in each record and measure_instructions.py; binary hashes are also repeated in each measured record."
+}

@@ -1,0 +1,21 @@
+{
+  "case": "ems-4x4",
+  "repetition": 5,
+  "arm": "baseline",
+  "command": [
+    "perf",
+    "stat",
+    "-e",
+    "instructions:u,cycles:u",
+    "-x,",
+    "-o",
+    "/tmp/ems-gap-20260911/instructions/ems-4x4/5-baseline/counters.csv",
+    "/tmp/ems-native-20260910/ems-active-count",
+    "--cdcl",
+    "/tmp/ems-gap-20260911/wall-production/oracle/case.8iC7i1/input.cnf"
+  ],
+  "binary_sha256": "d7c283e49f31bf7f915e7b0d05b7123475ed5a0c4eb68b576c2a4b0cd480043d",
+  "validated": true,
+  "instructions:u": 17990521397,
+  "cycles:u": 21386923689
+}

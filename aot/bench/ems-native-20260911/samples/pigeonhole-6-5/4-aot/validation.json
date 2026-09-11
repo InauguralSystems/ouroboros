@@ -1,0 +1,22 @@
+{
+  "arm": "aot",
+  "binary_sha256": "d7c283e49f31bf7f915e7b0d05b7123475ed5a0c4eb68b576c2a4b0cd480043d",
+  "case": "pigeonhole-6-5",
+  "cleanup": null,
+  "command": [
+    "/tmp/ems-native-20260910/ems-active-count",
+    "--cdcl",
+    "/tmp/ems-gap-20260911/wall-production/oracle/case.dEZcX2/input.cnf"
+  ],
+  "conflicts": 140,
+  "cwd": "/home/jon/src/InauguralSystems/EigenScriptEcosystem/EigenMiniSat",
+  "directory": "/tmp/ems-gap-20260911/wall-production/samples/pigeonhole-6-5/4-aot",
+  "input_sha256": "5b884b97debd41c9d89378c4414fb1b7b03365725e09992ba0709c23a3cebb7e",
+  "interrupted_signal": null,
+  "repetition": 4,
+  "returncode": 0,
+  "timed_out": false,
+  "timeout_seconds": 120,
+  "validated": true,
+  "wall_ns": 69181209
+}

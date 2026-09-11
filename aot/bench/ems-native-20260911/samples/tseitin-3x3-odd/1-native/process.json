@@ -1,0 +1,15 @@
+{
+  "cleanup": null,
+  "command": [
+    "/usr/bin/minisat",
+    "/tmp/ems-gap-20260911/wall-production/oracle/case.7gsvO2/input.cnf",
+    "/tmp/ems-gap-20260911/wall-production/samples/tseitin-3x3-odd/1-native/native.result"
+  ],
+  "cwd": "/home/jon/src/InauguralSystems/EigenScriptEcosystem/EigenMiniSat",
+  "directory": "/tmp/ems-gap-20260911/wall-production/samples/tseitin-3x3-odd/1-native",
+  "interrupted_signal": null,
+  "returncode": 20,
+  "timed_out": false,
+  "timeout_seconds": 120,
+  "wall_ns": 9058667
+}

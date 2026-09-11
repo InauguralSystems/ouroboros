@@ -1,0 +1,23 @@
+{
+  "case": "dmg-50m",
+  "repetition": 1,
+  "arm": "baseline",
+  "command": [
+    "perf",
+    "stat",
+    "-e",
+    "instructions:u,cycles:u",
+    "-x,",
+    "-o",
+    "/tmp/ems-gap-20260911/instructions/dmg-50m/1-baseline/counters.csv",
+    "/tmp/ems-gap-20260911/dmg-baseline",
+    "roms/cpu_instrs.gb",
+    "--cycles",
+    "50000000"
+  ],
+  "binary_sha256": "30ec2b6b4824eeef11d93b88dfd662095aaea2f7813a03efaf05901d0ef71df8",
+  "validated": true,
+  "instructions:u": 12494625548,
+  "cycles:u": 6687154364,
+  "emulated_cycles": 50000008
+}

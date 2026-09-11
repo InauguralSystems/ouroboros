@@ -1,0 +1,30 @@
+# ========
+# captured on    : Fri Sep 11 01:32:18 2026
+# header version : 1
+# data offset    : 272
+# data size      : 15136704
+# feat offset    : 15136976
+# hostname : jon-X540NA
+# os release : 6.8.0-137-generic
+# perf version : 6.8.12
+# arch : x86_64
+# nrcpus online : 2
+# nrcpus avail : 2
+# cpudesc : Intel(R) Celeron(R) CPU N3350 @ 1.10GHz
+# cpuid : GenuineIntel,6,92,9
+# total memory : 3870480 kB
+# cmdline : /usr/lib/linux-tools-6.8.0-137/perf record -e cycles:u -F 199 --call-graph dwarf -o /tmp/ems-gap-20260911/perf-production-user.data /tmp/ems-gap-20260911/ems-production --cdcl /tmp/ems-gap-20260911/wall-production/oracle/case.8iC7i1/input.cnf 
+# event : name = cycles:u, , id = { 554, 555 }, type = 0 (PERF_TYPE_HARDWARE), size = 136, config = 0 (PERF_COUNT_HW_CPU_CYCLES), { sample_period, sample_freq } = 199, sample_type = IP|TID|TIME|ADDR|CALLCHAIN|PERIOD|REGS_USER|STACK_USER|DATA_SRC, read_format = ID|LOST, disabled = 1, inherit = 1, exclude_kernel = 1, exclude_hv = 1, mmap = 1, comm = 1, freq = 1, enable_on_exec = 1, task = 1, mmap_data = 1, sample_id_all = 1, exclude_guest = 1, exclude_callchain_user = 1, mmap2 = 1, comm_exec = 1, ksymbol = 1, bpf_event = 1, sample_regs_user = 0xff0fff, sample_stack_user = 8192
+# CPU_TOPOLOGY info available, use -I to display
+# NUMA_TOPOLOGY info available, use -I to display
+# pmu mappings: cpu = 4, breakpoint = 5, cstate_core = 13, cstate_pkg = 14, i915 = 16, intel_bts = 10, intel_pt = 11, kprobe = 8, msr = 12, power = 15, software = 1, tracepoint = 2, uprobe = 9
+# CACHE info available, use -I to display
+# time of first sample : 2739474.897654
+# time of last sample : 2739484.758832
+# sample duration :   9861.178 ms
+# MEM_TOPOLOGY info available, use -I to display
+# cpu pmu capabilities: branches=32, max_precise=3, pmu_name=goldmont
+# intel_pt pmu capabilities: topa_multiple_entries=1, psb_cyc=1, single_range_output=1, mtc_periods=249, ip_filtering=1, output_subsys=0, cr3_filtering=1, psb_periods=3f, event_trace=0, cycle_thresholds=ffff, power_event_trace=0, mtc=1, payloads_lip=1, ptwrite=0, num_address_ranges=2, max_subleaf=1, topa_output=1, tnt_disable=0
+# missing features: TRACING_DATA BRANCH_STACK GROUP_DESC AUXTRACE STAT CLOCKID DIR_FORMAT COMPRESSED CLOCK_DATA HYBRID_TOPOLOGY 
+# ========
+#
