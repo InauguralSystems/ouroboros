@@ -1,0 +1,23 @@
+{
+  "arm": "candidate",
+  "binary_sha256": "e9503d1b95cf9c9c214f2d56abce9a49af7f923a6dac3e316d86e852fffca09a",
+  "case": "simple-sat",
+  "cleanup": null,
+  "command": [
+    "/tmp/ems-close-20260911/stdlib-probe/ems-int-vector-only",
+    "--cdcl",
+    "/tmp/ems-close-20260911/wall-stdlib-only/oracle/case.0NYOSe/input.cnf"
+  ],
+  "conflicts": 0,
+  "cwd": "/home/jon/src/wt/ems-cert-20260911",
+  "directory": "/tmp/ems-close-20260911/wall-stdlib-only/samples/simple-sat/0-candidate",
+  "input_sha256": "144d0deff0c2a9ac20a740de4e12c5de9b2ef19a6f489cd8e765919e33556841",
+  "interrupted_signal": null,
+  "repetition": 0,
+  "returncode": 0,
+  "timed_out": false,
+  "timeout_seconds": 7200,
+  "validated": true,
+  "validation": "vm-differential+certificate",
+  "wall_ns": 4832646
+}

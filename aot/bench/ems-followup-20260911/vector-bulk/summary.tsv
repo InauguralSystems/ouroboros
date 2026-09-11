@@ -1,0 +1,13 @@
+case	validation	arm	policy	n	median_wall_s	min_wall_s	max_wall_s	conflicts	descriptive_conflicts_per_wall_second
+pigeonhole-6-5	vm-differential+certificate	aot	CDCL current defaults (regime C); --cdcl; no policy overrides	5	0.068077871	0.064978076	0.093465093	140	2056.469
+pigeonhole-6-5	vm-differential+certificate	candidate	CDCL current defaults (regime C); --cdcl; no policy overrides; candidate=timing-only existing buf_fill in interpreted int_vector	5	0.065421072	0.061167559	0.091280757	140	2139.983
+pigeonhole-6-5	vm-differential+certificate	native	native MiniSat executable defaults; no policy overrides	5	0.008106259	0.007153468	0.008427178	138	17023.882
+simple-sat	vm-differential+certificate	aot	CDCL current defaults (regime C); --cdcl; no policy overrides	5	0.005744089	0.005088801	0.007250877	0	0.000
+simple-sat	vm-differential+certificate	candidate	CDCL current defaults (regime C); --cdcl; no policy overrides; candidate=timing-only existing buf_fill in interpreted int_vector	5	0.005296196	0.005248999	0.013147914	0	0.000
+simple-sat	vm-differential+certificate	native	native MiniSat executable defaults; no policy overrides	5	0.007534597	0.007128207	0.010530235	0	0.000
+tseitin-3x3-odd	vm-differential+certificate	aot	CDCL current defaults (regime C); --cdcl; no policy overrides	5	0.204026112	0.190851979	0.215584483	592	2901.589
+tseitin-3x3-odd	vm-differential+certificate	candidate	CDCL current defaults (regime C); --cdcl; no policy overrides; candidate=timing-only existing buf_fill in interpreted int_vector	5	0.175389351	0.164717990	0.340792882	592	3375.347
+tseitin-3x3-odd	vm-differential+certificate	native	native MiniSat executable defaults; no policy overrides	5	0.008760493	0.008219411	0.011622408	731	83442.793
+tseitin-4x4-odd	vm-differential+certificate	aot	CDCL current defaults (regime C); --cdcl; no policy overrides	5	9.404535399	8.871026963	9.954748181	9986	1061.828
+tseitin-4x4-odd	vm-differential+certificate	candidate	CDCL current defaults (regime C); --cdcl; no policy overrides; candidate=timing-only existing buf_fill in interpreted int_vector	5	8.942638653	8.676719489	9.309050589	9986	1116.673
+tseitin-4x4-odd	vm-differential+certificate	native	native MiniSat executable defaults; no policy overrides	5	0.266434010	0.259408731	0.281669922	84150	315838.057

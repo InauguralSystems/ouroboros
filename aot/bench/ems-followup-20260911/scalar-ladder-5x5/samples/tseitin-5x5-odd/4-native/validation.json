@@ -1,0 +1,23 @@
+{
+  "arm": "native",
+  "binary_sha256": "d880e77e8f0f5a462a55c866aec9dd3325e582a83b94a3416a2debd7c9bac4b7",
+  "case": "tseitin-5x5-odd",
+  "cleanup": null,
+  "command": [
+    "/usr/bin/minisat",
+    "/tmp/ems-close-20260911/scalar-ladder-5x5/certificate-inputs/5x5/input.cnf",
+    "/tmp/ems-close-20260911/scalar-ladder-5x5/samples/tseitin-5x5-odd/4-native/native.result"
+  ],
+  "conflicts": 2236075,
+  "cwd": "/home/jon/src/wt/ems-cert-20260911",
+  "directory": "/tmp/ems-close-20260911/scalar-ladder-5x5/samples/tseitin-5x5-odd/4-native",
+  "input_sha256": "caf2deec8e01e595b91eb3deb7933584a7fd8b2305c8a5edd2c3b1a896b8fe98",
+  "interrupted_signal": null,
+  "repetition": 4,
+  "returncode": 20,
+  "timed_out": false,
+  "timeout_seconds": 7200,
+  "validated": true,
+  "validation": "certificate",
+  "wall_ns": 9495678075
+}

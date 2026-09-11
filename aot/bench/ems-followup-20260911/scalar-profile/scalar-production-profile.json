@@ -1,0 +1,13 @@
+{
+  "inputs": {
+    "/home/jon/src/wt/ouro-gap-20260911/aot/compile.eigs": "b334ba546f770f8697f6a5381a049f0ba438b91a7022a9ae0a8ef32df99e5e59",
+    "/home/jon/src/wt/ouro-gap-20260911/aot/aot_rt.h": "ab7c944b18fed52ec1dc0f9d280dab73c296051feb60a6db44bc2dce09d6c4a1",
+    "/tmp/ems-close-20260911/ems-scalar-production.c": "a2d149ba8997c665db5144f1a1c5e1874658e0195df2cbc0aafc257c53106df1",
+    "/tmp/ems-close-20260911/ems-scalar-production": "3dce2fd61d0c3edccbca5edd7ab00b30b56398e03199a11edfc63c0a026a89d2",
+    "/tmp/ems-close-20260911/wall-range-only/oracle/case.HTu63l/input.cnf": "f0148e8b4ce9692de61347005af8179e8d8d38134283b6fb0c35a8b9efd32b71",
+    "/tmp/ems-close-20260911/wall-range-only/oracle/case.HTu63l/vm.out.normalized": "1b2ddec1e64577a29a754f60cd1f9e8820531ee7692fc5512481302405126bde"
+  },
+  "data_sha256": "ea6fc52792fe46df6660261fd097d35c04f8728a4b905710d206350a0eb682f0",
+  "report_sha256": "daff58670b1238b8678550576909cb63120da6559d6bec94c54ddddb9e12f9bc",
+  "scope": "sampled cycles:u, 199Hz, dwarf stacks; diagnostic only; stdout matches VM"
+}

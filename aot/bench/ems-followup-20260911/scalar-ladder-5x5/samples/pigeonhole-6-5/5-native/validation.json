@@ -1,0 +1,23 @@
+{
+  "arm": "native",
+  "binary_sha256": "d880e77e8f0f5a462a55c866aec9dd3325e582a83b94a3416a2debd7c9bac4b7",
+  "case": "pigeonhole-6-5",
+  "cleanup": null,
+  "command": [
+    "/usr/bin/minisat",
+    "/tmp/ems-close-20260911/scalar-ladder-5x5/oracle/case.34fKYc/input.cnf",
+    "/tmp/ems-close-20260911/scalar-ladder-5x5/samples/pigeonhole-6-5/5-native/native.result"
+  ],
+  "conflicts": 138,
+  "cwd": "/home/jon/src/wt/ems-cert-20260911",
+  "directory": "/tmp/ems-close-20260911/scalar-ladder-5x5/samples/pigeonhole-6-5/5-native",
+  "input_sha256": "5b884b97debd41c9d89378c4414fb1b7b03365725e09992ba0709c23a3cebb7e",
+  "interrupted_signal": null,
+  "repetition": 5,
+  "returncode": 20,
+  "timed_out": false,
+  "timeout_seconds": 7200,
+  "validated": true,
+  "validation": "vm-differential+certificate",
+  "wall_ns": 7244349
+}

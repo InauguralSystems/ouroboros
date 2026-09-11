@@ -1,0 +1,26 @@
+{
+  "cleanup": null,
+  "command": [
+    "perf",
+    "record",
+    "-e",
+    "cycles:u",
+    "-F",
+    "199",
+    "--call-graph",
+    "dwarf",
+    "-o",
+    "/tmp/ems-close-20260911/scalar-production.perf.data",
+    "--",
+    "/tmp/ems-close-20260911/ems-scalar-production",
+    "--cdcl",
+    "/tmp/ems-close-20260911/wall-range-only/oracle/case.HTu63l/input.cnf"
+  ],
+  "cwd": "/home/jon/src/InauguralSystems/EigenScriptEcosystem/EigenMiniSat",
+  "directory": "/tmp/ems-close-20260911/next-processes/profile-scalar-production",
+  "interrupted_signal": null,
+  "returncode": 0,
+  "timed_out": false,
+  "timeout_seconds": 120,
+  "wall_ns": 9232723166
+}
