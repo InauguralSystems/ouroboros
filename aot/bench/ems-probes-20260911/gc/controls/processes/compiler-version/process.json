@@ -1,0 +1,14 @@
+{
+  "cleanup": null,
+  "command": [
+    "gcc",
+    "--version"
+  ],
+  "cwd": "/home/jon/src/InauguralSystems/EigenScriptEcosystem/EigenMiniSat",
+  "directory": "/tmp/ems-close-20260911/gc-controls/processes/compiler-version",
+  "interrupted_signal": null,
+  "returncode": 0,
+  "timed_out": false,
+  "timeout_seconds": 15,
+  "wall_ns": 5850506
+}

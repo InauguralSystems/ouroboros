@@ -1,0 +1,5 @@
+Traceback (most recent call last):
+  File "/tmp/ems-close-20260911/len-preflight-z_4nkmdz/runner.py", line 26, in <module>
+    assert sha(PROBE/'PREP-HASHES.json')==PREP_SHA256
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError

@@ -1,0 +1,4 @@
+tseitin-3x3-odd	UNSATISFIABLE	731	0.003942	592
+tseitin-4x4-odd	UNSATISFIABLE	84150	0.23049	9986
+/tmp/ems-close-20260911/scalar-ladder-6x6/preflight-inputs/pigeonhole_6_5.cnf	UNSATISFIABLE	138	0.001893	140
+/tmp/ems-close-20260911/scalar-ladder-6x6/preflight-inputs/simple_sat.cnf	SATISFIABLE	0	0.00114	0

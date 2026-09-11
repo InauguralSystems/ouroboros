@@ -1,0 +1,16 @@
+{
+  "cleanup": null,
+  "command": [
+    "python3",
+    "-B",
+    "/tmp/ems-close-20260911/len-probe/validate_counts.py",
+    "/tmp/ems-close-20260911/len-probe/processes/ems-diagnostic/stderr"
+  ],
+  "cwd": "/home/jon/src/wt/ems-cert-20260911",
+  "directory": "/tmp/ems-close-20260911/len-probe/processes/validate-ems-diagnostic",
+  "interrupted_signal": null,
+  "returncode": 0,
+  "timed_out": false,
+  "timeout_seconds": 10,
+  "wall_ns": 115098514
+}

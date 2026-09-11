@@ -1,0 +1,15 @@
+{
+  "cleanup": null,
+  "command": [
+    "/tmp/ems-close-20260911/len-probe/baseline-timing",
+    "--cdcl",
+    "/tmp/ems-close-20260911/wall-len-only-4x5/oracle/case.4gY3Eq/input.cnf"
+  ],
+  "cwd": "/home/jon/src/wt/ems-cert-20260911",
+  "directory": "/tmp/ems-close-20260911/wall-len-only-4x5/samples/pigeonhole-6-5/5-aot",
+  "interrupted_signal": null,
+  "returncode": 0,
+  "timed_out": false,
+  "timeout_seconds": 7200,
+  "wall_ns": 60342850
+}

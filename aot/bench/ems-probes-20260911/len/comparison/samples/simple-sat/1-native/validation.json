@@ -1,0 +1,23 @@
+{
+  "arm": "native",
+  "binary_sha256": "d880e77e8f0f5a462a55c866aec9dd3325e582a83b94a3416a2debd7c9bac4b7",
+  "case": "simple-sat",
+  "cleanup": null,
+  "command": [
+    "/usr/bin/minisat",
+    "/tmp/ems-close-20260911/wall-len-only-4x5/oracle/case.O2ke6A/input.cnf",
+    "/tmp/ems-close-20260911/wall-len-only-4x5/samples/simple-sat/1-native/native.result"
+  ],
+  "conflicts": 0,
+  "cwd": "/home/jon/src/wt/ems-cert-20260911",
+  "directory": "/tmp/ems-close-20260911/wall-len-only-4x5/samples/simple-sat/1-native",
+  "input_sha256": "144d0deff0c2a9ac20a740de4e12c5de9b2ef19a6f489cd8e765919e33556841",
+  "interrupted_signal": null,
+  "repetition": 1,
+  "returncode": 10,
+  "timed_out": false,
+  "timeout_seconds": 7200,
+  "validated": true,
+  "validation": "vm-differential+certificate",
+  "wall_ns": 7322330
+}

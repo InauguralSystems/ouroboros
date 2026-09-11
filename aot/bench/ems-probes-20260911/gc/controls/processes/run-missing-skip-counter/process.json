@@ -1,0 +1,13 @@
+{
+  "cleanup": null,
+  "command": [
+    "/tmp/ems-close-20260911/gc-controls/missing-skip-counter"
+  ],
+  "cwd": "/home/jon/src/InauguralSystems/EigenScriptEcosystem/EigenMiniSat",
+  "directory": "/tmp/ems-close-20260911/gc-controls/processes/run-missing-skip-counter",
+  "interrupted_signal": null,
+  "returncode": 0,
+  "timed_out": false,
+  "timeout_seconds": 30,
+  "wall_ns": 3066880
+}

@@ -1,0 +1,169 @@
+START slot_index_emission.py-selftest
+DONE slot_index_emission.py-selftest 0
+START slot_index_emission.py-real
+DONE slot_index_emission.py-real 0
+START slot_scalar_emission.py-selftest
+DONE slot_scalar_emission.py-selftest 0
+START slot_scalar_emission.py-real
+DONE slot_scalar_emission.py-real 0
+START ownership-gate-selftest
+DONE ownership-gate-selftest 0
+START t337_slot_index_locals-vm
+DONE t337_slot_index_locals-vm 0
+START t337_slot_index_locals-transpile
+DONE t337_slot_index_locals-transpile 0
+START t337_slot_index_locals-build
+DONE t337_slot_index_locals-build 0
+START t337_slot_index_locals-native
+DONE t337_slot_index_locals-native 0
+PAIR_PASS t337_slot_index_locals
+START t338_slot_index_callbacks-vm
+DONE t338_slot_index_callbacks-vm 0
+START t338_slot_index_callbacks-transpile
+DONE t338_slot_index_callbacks-transpile 0
+START t338_slot_index_callbacks-build
+DONE t338_slot_index_callbacks-build 0
+START t338_slot_index_callbacks-native
+DONE t338_slot_index_callbacks-native 0
+PAIR_PASS t338_slot_index_callbacks
+START t339_slot_index_traced-vm
+DONE t339_slot_index_traced-vm 0
+START t339_slot_index_traced-transpile
+DONE t339_slot_index_traced-transpile 0
+START t339_slot_index_traced-build
+DONE t339_slot_index_traced-build 0
+START t339_slot_index_traced-native
+DONE t339_slot_index_traced-native 0
+PAIR_PASS t339_slot_index_traced
+START t340_slot_index_errors-vm
+DONE t340_slot_index_errors-vm 0
+START t340_slot_index_errors-transpile
+DONE t340_slot_index_errors-transpile 0
+START t340_slot_index_errors-build
+DONE t340_slot_index_errors-build 0
+START t340_slot_index_errors-native
+DONE t340_slot_index_errors-native 0
+PAIR_PASS t340_slot_index_errors
+START t341_slot_index_ownership-vm
+DONE t341_slot_index_ownership-vm 0
+START t341_slot_index_ownership-transpile
+DONE t341_slot_index_ownership-transpile 0
+START t341_slot_index_ownership-build
+DONE t341_slot_index_ownership-build 0
+START t341_slot_index_ownership-native
+DONE t341_slot_index_ownership-native 0
+PAIR_PASS t341_slot_index_ownership
+START t342_slot_index_observed-vm
+DONE t342_slot_index_observed-vm 0
+START t342_slot_index_observed-transpile
+DONE t342_slot_index_observed-transpile 0
+START t342_slot_index_observed-build
+DONE t342_slot_index_observed-build 0
+START t342_slot_index_observed-native
+DONE t342_slot_index_observed-native 0
+PAIR_PASS t342_slot_index_observed
+START t343_slot_scalar_conditions-vm
+DONE t343_slot_scalar_conditions-vm 0
+START t343_slot_scalar_conditions-transpile
+DONE t343_slot_scalar_conditions-transpile 0
+START t343_slot_scalar_conditions-build
+DONE t343_slot_scalar_conditions-build 0
+START t343_slot_scalar_conditions-native
+DONE t343_slot_scalar_conditions-native 0
+PAIR_PASS t343_slot_scalar_conditions
+START t344_slot_scalar_errors-vm
+DONE t344_slot_scalar_errors-vm 0
+START t344_slot_scalar_errors-transpile
+DONE t344_slot_scalar_errors-transpile 0
+START t344_slot_scalar_errors-build
+DONE t344_slot_scalar_errors-build 0
+START t344_slot_scalar_errors-native
+DONE t344_slot_scalar_errors-native 0
+PAIR_PASS t344_slot_scalar_errors
+START t345_slot_scalar_callbacks-vm
+DONE t345_slot_scalar_callbacks-vm 0
+START t345_slot_scalar_callbacks-transpile
+DONE t345_slot_scalar_callbacks-transpile 0
+START t345_slot_scalar_callbacks-build
+DONE t345_slot_scalar_callbacks-build 0
+START t345_slot_scalar_callbacks-native
+DONE t345_slot_scalar_callbacks-native 0
+PAIR_PASS t345_slot_scalar_callbacks
+START t346_slot_scalar_traced-vm
+DONE t346_slot_scalar_traced-vm 0
+START t346_slot_scalar_traced-transpile
+DONE t346_slot_scalar_traced-transpile 0
+START t346_slot_scalar_traced-build
+DONE t346_slot_scalar_traced-build 0
+START t346_slot_scalar_traced-native
+DONE t346_slot_scalar_traced-native 0
+PAIR_PASS t346_slot_scalar_traced
+START t347_slot_scalar_observed-vm
+DONE t347_slot_scalar_observed-vm 0
+START t347_slot_scalar_observed-transpile
+DONE t347_slot_scalar_observed-transpile 0
+START t347_slot_scalar_observed-build
+DONE t347_slot_scalar_observed-build 0
+START t347_slot_scalar_observed-native
+DONE t347_slot_scalar_observed-native 0
+PAIR_PASS t347_slot_scalar_observed
+START t348_slot_scalar_rhs_excluded-vm
+DONE t348_slot_scalar_rhs_excluded-vm 0
+START t348_slot_scalar_rhs_excluded-transpile
+DONE t348_slot_scalar_rhs_excluded-transpile 0
+START t348_slot_scalar_rhs_excluded-build
+DONE t348_slot_scalar_rhs_excluded-build 0
+START t348_slot_scalar_rhs_excluded-native
+DONE t348_slot_scalar_rhs_excluded-native 0
+PAIR_PASS t348_slot_scalar_rhs_excluded
+FOCUSED_PAIRS_DONE 12
+START ems-transpile
+DONE ems-transpile 0
+START ems-build
+DONE ems-build 0
+{
+  "focused_pairs": [
+    "t337_slot_index_locals",
+    "t338_slot_index_callbacks",
+    "t339_slot_index_traced",
+    "t340_slot_index_errors",
+    "t341_slot_index_ownership",
+    "t342_slot_index_observed",
+    "t343_slot_scalar_conditions",
+    "t344_slot_scalar_errors",
+    "t345_slot_scalar_callbacks",
+    "t346_slot_scalar_traced",
+    "t347_slot_scalar_observed",
+    "t348_slot_scalar_rhs_excluded"
+  ],
+  "archive_sha256": "5db0ea14d1ce3476b03643622fea11359172075b21cdc6343d80a9e591bd6eca",
+  "hashes": {
+    "/home/jon/src/wt/ouro-gap-20260911/aot/compile.eigs": "b334ba546f770f8697f6a5381a049f0ba438b91a7022a9ae0a8ef32df99e5e59",
+    "/home/jon/src/wt/ouro-gap-20260911/aot/aot_rt.h": "ab7c944b18fed52ec1dc0f9d280dab73c296051feb60a6db44bc2dce09d6c4a1",
+    "/tmp/ems-close-20260911/ems-scalar-production.c": "a2d149ba8997c665db5144f1a1c5e1874658e0195df2cbc0aafc257c53106df1",
+    "/tmp/ems-close-20260911/ems-scalar-production": "3dce2fd61d0c3edccbca5edd7ab00b30b56398e03199a11edfc63c0a026a89d2"
+  },
+  "ems_build_command": [
+    "gcc",
+    "-O3",
+    "-ffp-contract=off",
+    "-falign-functions=64",
+    "-falign-jumps=32",
+    "-falign-loops=32",
+    "-march=native",
+    "-DEIGENSCRIPT_EXT_HTTP=0",
+    "-DEIGENSCRIPT_EXT_MODEL=0",
+    "-DEIGENSCRIPT_EXT_DB=0",
+    "-DEIGENSCRIPT_VERSION=\"aot\"",
+    "-DAOT_SCRIPT_DIR=\"/home/jon/src/InauguralSystems/EigenScriptEcosystem/EigenMiniSat\"",
+    "-DAOT_EXE_DIR=\"/home/jon/src/wt/es-v043/src\"",
+    "-I/home/jon/src/wt/ouro-gap-20260911/aot",
+    "-I/home/jon/src/wt/es-v043/src",
+    "/tmp/ems-close-20260911/ems-scalar-production.c",
+    "/home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a",
+    "-lm",
+    "-lpthread",
+    "-o",
+    "/tmp/ems-close-20260911/ems-scalar-production"
+  ]
+}

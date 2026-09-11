@@ -1,0 +1,23 @@
+{
+  "arm": "candidate",
+  "binary_sha256": "87b369cf5512a807a74c51876efb6a0b5438037348f3ae219fb6a0e2bfa0c3e2",
+  "case": "simple-sat",
+  "cleanup": null,
+  "command": [
+    "/tmp/ems-close-20260911/gc-timing-build/candidate",
+    "--cdcl",
+    "/tmp/ems-close-20260911/wall-gc-traversal-4x5/oracle/case.6L49tn/input.cnf"
+  ],
+  "conflicts": 0,
+  "cwd": "/home/jon/src/InauguralSystems/EigenScriptEcosystem/EigenMiniSat",
+  "directory": "/tmp/ems-close-20260911/wall-gc-traversal-4x5/samples/simple-sat/0-candidate",
+  "input_sha256": "144d0deff0c2a9ac20a740de4e12c5de9b2ef19a6f489cd8e765919e33556841",
+  "interrupted_signal": null,
+  "repetition": 0,
+  "returncode": 0,
+  "timed_out": false,
+  "timeout_seconds": 7200,
+  "validated": true,
+  "validation": "vm-differential+certificate",
+  "wall_ns": 5286409
+}

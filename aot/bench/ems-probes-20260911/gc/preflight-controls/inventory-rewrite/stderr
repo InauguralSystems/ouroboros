@@ -1,0 +1,8 @@
+Traceback (most recent call last):
+  File "/tmp/ems-close-20260911/gc-preflight-controls/inventory-rewrite/run_prepared.py", line 114, in <module>
+    if __name__=='__main__': main()
+                             ^^^^^^
+  File "/tmp/ems-close-20260911/gc-preflight-controls/inventory-rewrite/run_prepared.py", line 27, in main
+    assert hashlib.sha256(raw).hexdigest()==a.prep_sha256,'inventory fingerprint mismatch'
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: inventory fingerprint mismatch

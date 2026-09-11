@@ -1,0 +1,136 @@
+{
+  "wrapper_sha256": "1f9ca43881532b70035eb942b9e81f311136337deb0df00c1d8fc1fd2f0641c4",
+  "controls": 10,
+  "results": [
+    {
+      "case": "piped-success",
+      "status": "driver-returned-success",
+      "sets": [
+        [
+          1,
+          -1
+        ],
+        [
+          0,
+          -1
+        ]
+      ],
+      "exception": null
+    },
+    {
+      "case": "ordinary-success",
+      "status": "driver-returned-success",
+      "sets": [
+        [
+          0,
+          -1
+        ],
+        [
+          0,
+          -1
+        ]
+      ],
+      "exception": null
+    },
+    {
+      "case": "bounded-hard-success",
+      "status": "driver-returned-success",
+      "sets": [
+        [
+          1,
+          7
+        ],
+        [
+          0,
+          7
+        ]
+      ],
+      "exception": null
+    },
+    {
+      "case": "driver-failed",
+      "status": "ended-with-exception",
+      "sets": [
+        [
+          1,
+          -1
+        ],
+        [
+          0,
+          -1
+        ]
+      ],
+      "exception": "RuntimeError"
+    },
+    {
+      "case": "interrupted",
+      "status": "ended-with-exception",
+      "sets": [
+        [
+          1,
+          -1
+        ],
+        [
+          0,
+          -1
+        ]
+      ],
+      "exception": "KeyboardInterrupt"
+    },
+    {
+      "case": "set-failed",
+      "status": "ended-with-exception",
+      "sets": [
+        [
+          1,
+          -1
+        ],
+        [
+          0,
+          -1
+        ]
+      ],
+      "exception": "OSError"
+    },
+    {
+      "case": "restore-failed",
+      "status": "core-limit-restore-failed",
+      "sets": [
+        [
+          1,
+          -1
+        ],
+        [
+          0,
+          -1
+        ]
+      ],
+      "exception": "OSError"
+    },
+    {
+      "case": "driver-drift",
+      "status": "driver-identity-failed",
+      "sets": [
+        [
+          1,
+          -1
+        ],
+        [
+          0,
+          -1
+        ]
+      ],
+      "exception": "RuntimeError"
+    },
+    {
+      "case": "existing",
+      "result": "rejected before limits/driver"
+    },
+    {
+      "case": "hard-refusal",
+      "result": "rejected before limits/driver"
+    }
+  ],
+  "actual_driver_calls": 0,
+  "actual_resource_changes": 0
+}

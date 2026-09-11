@@ -1,0 +1,16 @@
+{
+  "cleanup": null,
+  "command": [
+    "python3",
+    "/tmp/ems-close-20260911/gc-traversal-probe/validate.py",
+    "/tmp/ems-close-20260911/gc-controls/processes/run-baseline/stderr",
+    "/tmp/ems-close-20260911/gc-controls/processes/run-candidate/stderr"
+  ],
+  "cwd": "/home/jon/src/InauguralSystems/EigenScriptEcosystem/EigenMiniSat",
+  "directory": "/tmp/ems-close-20260911/gc-controls/processes/validate-positive",
+  "interrupted_signal": null,
+  "returncode": 0,
+  "timed_out": false,
+  "timeout_seconds": 15,
+  "wall_ns": 122321989
+}

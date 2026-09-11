@@ -1,0 +1,11 @@
+Traceback (most recent call last):
+  File "/tmp/ems-close-20260911/gc-preflight-controls/candidate-source/run_prepared.py", line 114, in <module>
+    if __name__=='__main__': main()
+                             ^^^^^^
+  File "/tmp/ems-close-20260911/gc-preflight-controls/candidate-source/run_prepared.py", line 39, in main
+    verify_inputs()  # before imports, source parsing or build-argument construction
+    ^^^^^^^^^^^^^^^
+  File "/tmp/ems-close-20260911/gc-preflight-controls/candidate-source/run_prepared.py", line 32, in verify_inputs
+    assert sha(ROOT/name)==digest,f'prepared artifact changed: {name}'
+           ^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: prepared artifact changed: eigenscript-probe.c

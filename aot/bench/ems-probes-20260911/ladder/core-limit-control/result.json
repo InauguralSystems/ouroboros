@@ -1,0 +1,13 @@
+{
+  "argv": [
+    "python3",
+    "-B",
+    "-c",
+    "import os,resource; resource.setrlimit(resource.RLIMIT_CORE,(1,resource.getrlimit(resource.RLIMIT_CORE)[1])); print(resource.getrlimit(resource.RLIMIT_CORE),flush=True); os.abort()"
+  ],
+  "returncode": -6,
+  "wall_seconds": 0.068596753757447,
+  "stdout": "(1, -1)\n",
+  "stderr": "",
+  "core_pattern": "|/usr/share/apport/apport -p%p -s%s -c%c -d%d -P%P -u%u -g%g -F%F -- %E"
+}

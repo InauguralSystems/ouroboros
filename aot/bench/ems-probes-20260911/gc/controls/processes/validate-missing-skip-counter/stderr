@@ -1,0 +1,8 @@
+Traceback (most recent call last):
+  File "/tmp/ems-close-20260911/gc-traversal-probe/validate.py", line 50, in <module>
+    if __name__=='__main__': main()
+                             ^^^^^^
+  File "/tmp/ems-close-20260911/gc-traversal-probe/validate.py", line 40, in main
+    assert b['nochild_skips']==0 and c['nochild_skips']>0,'no-child skip path not evidenced'
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: no-child skip path not evidenced

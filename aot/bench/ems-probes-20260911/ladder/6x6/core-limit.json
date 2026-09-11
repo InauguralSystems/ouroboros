@@ -1,0 +1,16 @@
+{
+  "driver": "/tmp/ems-close-20260911/run_larger_ladder.py",
+  "driver_sha256": "35cd85287a1bc7bcaaf4122f4106b598cc4e55dcf2608995074d0ca1a6e23667",
+  "core_pattern": "|/usr/share/apport/apport -p%p -s%s -c%c -d%d -P%P -u%u -g%g -F%F -- %E",
+  "original_core_limits": [
+    0,
+    -1
+  ],
+  "effective_core_limit_bytes": 1,
+  "scope": "same-process wrapper and all solver/checker children",
+  "status": "ended-with-exception",
+  "exception_type": "SystemExit",
+  "exception": "1",
+  "core_limits_restored": true,
+  "driver_unchanged": true
+}

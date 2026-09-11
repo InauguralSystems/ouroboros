@@ -1,0 +1,40 @@
+{
+  "arms": [
+    "aot",
+    "candidate"
+  ],
+  "files": {
+    "/tmp/ems-close-20260911/gc-timing-build/baseline": "f3548d69ec54b936e050a31f38d9db74cd805038acc111fbed4853e132dd6957",
+    "/tmp/ems-close-20260911/gc-timing-build/candidate": "87b369cf5512a807a74c51876efb6a0b5438037348f3ae219fb6a0e2bfa0c3e2",
+    "/tmp/ems-close-20260911/wall-gc-traversal-4x5/certificate-inputs/4x5/emitter/process.json": "5ed1631f35ca74ac80a6a04ecb93a298d1b3d8065da14ef89598a880c620ca59",
+    "/tmp/ems-close-20260911/wall-gc-traversal-4x5/certificate-inputs/4x5/emitter/stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "/tmp/ems-close-20260911/wall-gc-traversal-4x5/certificate-inputs/4x5/emitter/stdout": "37132e372ca93b7a74ecf4d8f05965125e5e5226260927b95092f50f014540a5",
+    "/tmp/ems-close-20260911/wall-gc-traversal-4x5/certificate-inputs/4x5/identity/process.json": "578e480f3d516705807177b0cda40ae49b1e5053fa364378130bb0492e13ecfc",
+    "/tmp/ems-close-20260911/wall-gc-traversal-4x5/certificate-inputs/4x5/identity/stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "/tmp/ems-close-20260911/wall-gc-traversal-4x5/certificate-inputs/4x5/identity/stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "/tmp/ems-close-20260911/wall-gc-traversal-4x5/certificate-inputs/4x5/input.cnf": "37132e372ca93b7a74ecf4d8f05965125e5e5226260927b95092f50f014540a5",
+    "/tmp/ems-close-20260911/wall-gc-traversal-4x5/certificate-inputs/4x5/normalize/process.json": "6caf42ed48687aab769d1e10bbf9608c03c09cbc2434dd4a9f2646901bc54075",
+    "/tmp/ems-close-20260911/wall-gc-traversal-4x5/certificate-inputs/4x5/normalize/stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "/tmp/ems-close-20260911/wall-gc-traversal-4x5/certificate-inputs/4x5/normalize/stdout": "37132e372ca93b7a74ecf4d8f05965125e5e5226260927b95092f50f014540a5",
+    "/tmp/ems-close-20260911/wall-gc-traversal-4x5/certificates/tseitin-4x5-odd/aot-checker/process.json": "4d2ff71948ce7c3b3699383337008423a0d761982b6b3bc7f44f6f60fcf3dc35",
+    "/tmp/ems-close-20260911/wall-gc-traversal-4x5/certificates/tseitin-4x5-odd/aot-checker/stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "/tmp/ems-close-20260911/wall-gc-traversal-4x5/certificates/tseitin-4x5-odd/aot-checker/stdout": "72d4e2aaa27b2ce754cb083ac3aaf5c06068d53c37b5f7023d5f057fc49a479a",
+    "/tmp/ems-close-20260911/wall-gc-traversal-4x5/certificates/tseitin-4x5-odd/aot.drat": "d1aacc19360d2d55633b7488ba3f57bec87bb1e58db0d50fa8a01ca264c71f02",
+    "/tmp/ems-close-20260911/wall-gc-traversal-4x5/certificates/tseitin-4x5-odd/aot/process.json": "9c2efaf41e9aa0b5b6b72a2c2a0678316fda5e142e0c2fdb8449d5a75987f368",
+    "/tmp/ems-close-20260911/wall-gc-traversal-4x5/certificates/tseitin-4x5-odd/aot/stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "/tmp/ems-close-20260911/wall-gc-traversal-4x5/certificates/tseitin-4x5-odd/aot/stdout": "deaea5372dd04531a965328bf2e2d018c259046a0ff962e79246228d724f5261",
+    "/tmp/ems-close-20260911/wall-gc-traversal-4x5/certificates/tseitin-4x5-odd/candidate-checker/process.json": "d0e913f30a77892b789c2b803fd272649512ee1304d8b9971908a4883e17f72f",
+    "/tmp/ems-close-20260911/wall-gc-traversal-4x5/certificates/tseitin-4x5-odd/candidate-checker/stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "/tmp/ems-close-20260911/wall-gc-traversal-4x5/certificates/tseitin-4x5-odd/candidate-checker/stdout": "663e28a885d1b4c30b2a7d7d133bb4407ba991ca3aabfbb4e48df6d20840e3f0",
+    "/tmp/ems-close-20260911/wall-gc-traversal-4x5/certificates/tseitin-4x5-odd/candidate.drat": "d1aacc19360d2d55633b7488ba3f57bec87bb1e58db0d50fa8a01ca264c71f02",
+    "/tmp/ems-close-20260911/wall-gc-traversal-4x5/certificates/tseitin-4x5-odd/candidate/process.json": "0be847b3416ce20653fe07890c3e3fdddf9dedacf1be21462adcbf656359f521",
+    "/tmp/ems-close-20260911/wall-gc-traversal-4x5/certificates/tseitin-4x5-odd/candidate/stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "/tmp/ems-close-20260911/wall-gc-traversal-4x5/certificates/tseitin-4x5-odd/candidate/stdout": "d36feb8461ee79877bebc5eeb6c899261f84b66decb3310ffa753ab732ca880d",
+    "/tmp/ems-close-20260911/wall-gc-traversal-4x5/certificates/tseitin-4x5-odd/native/native.result": "8e47e39240b5b347f444074f97e7ab4b4c11d3f534469b5cb23f4b6d2f7390df",
+    "/tmp/ems-close-20260911/wall-gc-traversal-4x5/certificates/tseitin-4x5-odd/native/process.json": "a30ae489fb9803a79cf5d94d02e3897e2b41af6a9e5d945bd4dac1c68e554559",
+    "/tmp/ems-close-20260911/wall-gc-traversal-4x5/certificates/tseitin-4x5-odd/native/stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "/tmp/ems-close-20260911/wall-gc-traversal-4x5/certificates/tseitin-4x5-odd/native/stdout": "654897857bd58b52ee5ed4ee52ec21ab0039081ef8880febd71d40611e559565",
+    "/tmp/ems-native-20260910/drat-trim": "3b2f43765b738cdc5210d874dafc0a0d9921f816156003c6b6fe3f762041c930",
+    "/usr/bin/minisat": "d880e77e8f0f5a462a55c866aec9dd3325e582a83b94a3416a2debd7c9bac4b7"
+  }
+}

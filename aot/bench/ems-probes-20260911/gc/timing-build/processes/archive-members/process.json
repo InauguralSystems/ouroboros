@@ -1,0 +1,15 @@
+{
+  "cleanup": null,
+  "command": [
+    "ar",
+    "t",
+    "/home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a"
+  ],
+  "cwd": "/home/jon/src/InauguralSystems/EigenScriptEcosystem/EigenMiniSat",
+  "directory": "/tmp/ems-close-20260911/gc-timing-build/processes/archive-members",
+  "interrupted_signal": null,
+  "returncode": 0,
+  "timed_out": false,
+  "timeout_seconds": 15,
+  "wall_ns": 5991695
+}

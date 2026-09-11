@@ -1,0 +1,33 @@
+{
+  "cleanup": null,
+  "command": [
+    "gcc",
+    "-O3",
+    "-ffp-contract=off",
+    "-falign-functions=64",
+    "-falign-jumps=32",
+    "-falign-loops=32",
+    "-march=native",
+    "-DEIGENSCRIPT_EXT_HTTP=0",
+    "-DEIGENSCRIPT_EXT_MODEL=0",
+    "-DEIGENSCRIPT_EXT_DB=0",
+    "-DEIGENSCRIPT_VERSION=\"aot\"",
+    "-DAOT_SCRIPT_DIR=\"/home/jon/src/InauguralSystems/EigenScriptEcosystem/EigenMiniSat\"",
+    "-DAOT_EXE_DIR=\"/home/jon/src/wt/es-v043/src\"",
+    "-I/tmp/ems-close-20260911/gc-traversal-probe",
+    "-I/home/jon/src/wt/es-v043/src",
+    "-DGC_PROBE_DIAGNOSTICS",
+    "-DGC_TRAVERSAL_REUSE",
+    "-c",
+    "/tmp/ems-close-20260911/gc-traversal-probe/eigenscript-probe.c",
+    "-o",
+    "/tmp/ems-close-20260911/gc-controls/candidate.o"
+  ],
+  "cwd": "/home/jon/src/InauguralSystems/EigenScriptEcosystem/EigenMiniSat",
+  "directory": "/tmp/ems-close-20260911/gc-controls/processes/compile-candidate",
+  "interrupted_signal": null,
+  "returncode": 0,
+  "timed_out": false,
+  "timeout_seconds": 240,
+  "wall_ns": 7373367098
+}

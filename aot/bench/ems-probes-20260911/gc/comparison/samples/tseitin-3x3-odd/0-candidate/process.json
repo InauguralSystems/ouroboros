@@ -1,0 +1,15 @@
+{
+  "cleanup": null,
+  "command": [
+    "/tmp/ems-close-20260911/gc-timing-build/candidate",
+    "--cdcl",
+    "/tmp/ems-close-20260911/wall-gc-traversal-4x5/oracle/case.5Vm45t/input.cnf"
+  ],
+  "cwd": "/home/jon/src/InauguralSystems/EigenScriptEcosystem/EigenMiniSat",
+  "directory": "/tmp/ems-close-20260911/wall-gc-traversal-4x5/samples/tseitin-3x3-odd/0-candidate",
+  "interrupted_signal": null,
+  "returncode": 0,
+  "timed_out": false,
+  "timeout_seconds": 7200,
+  "wall_ns": 198457283
+}

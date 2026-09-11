@@ -1,0 +1,48 @@
+{
+  "files": {
+    "control.c": "2d54f730afa8e2aae265a061336db37568a54d17f98ecbecfb38d4097fc3f2cf",
+    "source-pin.json": "f73a96e299877d220324a74fa3a881e524e99a9239f3f28839436d5cabe35634",
+    "metrics_impl.inc": "be7a78ca2b6f1d007579f71c91440759186f30e7a86536adfed8baa9dd8c08de",
+    "eigenscript-original.c": "7a98f3d2e9100030174c5cb4268384ecdf584bb552b7fec524a06065302da408",
+    "run_prepared.py": "c16997c659aa4f24e7e0a4e09055672ea94c8bfcf3fce53d8633910db9d52b9e",
+    "preflight_controls.py": "6fff6729eac3e1d6066882b9139740796d9142e39b73766d448ec7882fc328d2",
+    "eigenscript-probe.c": "46fc616e71db0716d503cb38b0025797a5aeac07ce2b8a625c1fc64f37015e53",
+    "scalar.c": "a2d149ba8997c665db5144f1a1c5e1874658e0195df2cbc0aafc257c53106df1",
+    "README.md": "36cc09d0771913c490a61bf704255bd4103f22446304c770aa0ef4f53ddd97cb",
+    "aot_rt.h": "ab7c944b18fed52ec1dc0f9d280dab73c296051feb60a6db44bc2dce09d6c4a1",
+    "validate.py": "ad080e236b5e407d6fe9b7b0c8dd9e1539a958e5785798461e33ef3a3a48cfda",
+    "replacement-ledger.json": "1f7ca80cc56484e269f47a20c6f7da3232e170f7989a4234695fa1e83cff4f64",
+    "prepare.py": "e61cd3cb13f24c85f95d95a4397bc6fc0b0629766149ecdf0119699c05512fc4",
+    "scalar-production-build.json": "e7b069825facaec18e95ae6cfaf782e1af428635dc91d17d3ac69be9f6ae324b",
+    "gc_probe_metrics.h": "dfd2a5d3ae1f8fd0a521612e66136ddc4beaff748a4130784d19746fb5feed92",
+    "manifest.json": "346b2a92508b4ca8ea642b2d40ed058488cf53a946f976ff06b79ce8a820925d"
+  },
+  "runtime_archive": "/home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a",
+  "runtime_archive_sha256": "5db0ea14d1ce3476b03643622fea11359172075b21cdc6343d80a9e591bd6eca",
+  "runtime_headers": {
+    "/home/jon/src/wt/es-v043/src/ext_store_internal.h": "f05973aa019ab78ddeff2c2f0f91e39bedc467430c2467bfa35ec42a4240b47d",
+    "/home/jon/src/wt/es-v043/src/lint_internal.h": "59861f3a958d4fcde59de9fbd44abd611d9026dde8d1cd03752b860f45d7bbfb",
+    "/home/jon/src/wt/es-v043/src/state.h": "2f81e60d1e2b28d5d7af032742fcc14f4bd9d52a29b3c210d9ef04585f622e1b",
+    "/home/jon/src/wt/es-v043/src/vm.h": "e428c43c078d9693355e7717b7892a58997e1230ef3611c8f66f39f04b64242b",
+    "/home/jon/src/wt/es-v043/src/jit.h": "bca7d1266b975b9a0ceeeff65cceb1c415860e2f9951817b774d5a888fa3ef4d",
+    "/home/jon/src/wt/es-v043/src/ext_db_internal.h": "4bd73d3ff2fe5fdf95b132dad0a791a06f53a3b027db538b667c7e4e07037343",
+    "/home/jon/src/wt/es-v043/src/ext_names.h": "ce6d18e4f6fa58470b9c56ce9b6894a0c4783c32844d661f6d2b0310b30e2391",
+    "/home/jon/src/wt/es-v043/src/tape_read.h": "42bec50e9c3300a9e8bc50e3e60489ad9e1c260c63c08ae6be25ba0505c26d0a",
+    "/home/jon/src/wt/es-v043/src/trace.h": "b8a3078f4774dc3db7993d015d4f5d91cd673d73de8efb223adffa07592b246b",
+    "/home/jon/src/wt/es-v043/src/value_slot.h": "cebb69feb92d4483c7ff1ef86b5dfb6d0f6faf5864f6aa0d6191edc2403653e2",
+    "/home/jon/src/wt/es-v043/src/env_flag.h": "1b4b5e025e5ce6ecd30c9fbd1b9cc76da730c7129e46cd76efdebae4199a3223",
+    "/home/jon/src/wt/es-v043/src/eigenscript.h": "fc0449eff199c245303403f2a40a958fc339f2ec2a4a476e78e735b733ee311f",
+    "/home/jon/src/wt/es-v043/src/ext_net_internal.h": "f0025a36c4d0f9aac24ab872410b09961e7e855716cdc39f1a960bf3303aca73",
+    "/home/jon/src/wt/es-v043/src/eigs_embed.h": "fa2ed5a490b421b38562e075bb77555a31b837480cef06955090087b02773a00",
+    "/home/jon/src/wt/es-v043/src/model_internal.h": "183894a402aae58ef21f2df62ba442ec5a694c4d39758ce9ecfec42d1438fd8e",
+    "/home/jon/src/wt/es-v043/src/builtins_internal.h": "6d80753b390b493e50f5ea9194e1748c65d93e5152965bab2f868a39448e429e",
+    "/home/jon/src/wt/es-v043/src/repl.h": "826c6a14fb9556e7d81e99a4728ecb935dba1748c598d3ad95fbebfeee10633c",
+    "/home/jon/src/wt/es-v043/src/lsp_builtin_index.h": "f6c2e3bdaa340fadb9d61f7bd0b24803b6b99714081afa8041130bff65419b94",
+    "/home/jon/src/wt/es-v043/src/ext_http_internal.h": "f9c60d52c3bd1ba380adcbfba18063f73541865776c67d8eeaee9b6bd21fb6fa",
+    "/home/jon/src/wt/es-v043/src/freestanding/mini_libc.h": "ad262ee10108391ac0d2786cbeac46023cc8ba3450640dee79a31494b5f64cf5"
+  },
+  "external_sources": {
+    "/home/jon/src/wt/es-v043/src/eigenscript.c": "7a98f3d2e9100030174c5cb4268384ecdf584bb552b7fec524a06065302da408",
+    "/home/jon/src/InauguralSystems/EigenScriptEcosystem/EigenMiniSat/benchmarks/compare_native.py": "ccd0449f58597f7ebe604d0acbbee5530868b729c9e010c865bb417fa43b4a1d"
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "stdout": "VM byte-exact after timing normalization",
+  "counts": {
+    "eligible": 2875964,
+    "entry": 2877875,
+    "fallback": 1911
+  },
+  "process_directory": "/tmp/ems-close-20260911/len-probe/processes/ems-diagnostic",
+  "prepared_sha256": "a56415277e58ec8febd416a056a50b78d81cc3ea63467d6b139e98f664bbfca6"
+}

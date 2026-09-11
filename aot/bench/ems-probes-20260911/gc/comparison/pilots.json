@@ -1,0 +1,59 @@
+[
+  {
+    "arm": "aot",
+    "case": "tseitin-4x5-odd",
+    "cleanup": null,
+    "command": [
+      "/tmp/ems-close-20260911/gc-timing-build/baseline",
+      "--cdcl",
+      "/tmp/ems-close-20260911/wall-gc-traversal-4x5/certificate-inputs/4x5/input.cnf"
+    ],
+    "cwd": "/home/jon/src/InauguralSystems/EigenScriptEcosystem/EigenMiniSat",
+    "directory": "/tmp/ems-close-20260911/wall-gc-traversal-4x5/pilots/tseitin-4x5-odd/aot",
+    "interrupted_signal": null,
+    "returncode": 0,
+    "timed_out": false,
+    "timeout_seconds": 7200,
+    "validated": true,
+    "validation": "certificate",
+    "wall_ns": 13541915553
+  },
+  {
+    "arm": "candidate",
+    "case": "tseitin-4x5-odd",
+    "cleanup": null,
+    "command": [
+      "/tmp/ems-close-20260911/gc-timing-build/candidate",
+      "--cdcl",
+      "/tmp/ems-close-20260911/wall-gc-traversal-4x5/certificate-inputs/4x5/input.cnf"
+    ],
+    "cwd": "/home/jon/src/InauguralSystems/EigenScriptEcosystem/EigenMiniSat",
+    "directory": "/tmp/ems-close-20260911/wall-gc-traversal-4x5/pilots/tseitin-4x5-odd/candidate",
+    "interrupted_signal": null,
+    "returncode": 0,
+    "timed_out": false,
+    "timeout_seconds": 7200,
+    "validated": true,
+    "validation": "certificate",
+    "wall_ns": 12482938843
+  },
+  {
+    "arm": "native",
+    "case": "tseitin-4x5-odd",
+    "cleanup": null,
+    "command": [
+      "/usr/bin/minisat",
+      "/tmp/ems-close-20260911/wall-gc-traversal-4x5/certificate-inputs/4x5/input.cnf",
+      "/tmp/ems-close-20260911/wall-gc-traversal-4x5/pilots/tseitin-4x5-odd/native/native.result"
+    ],
+    "cwd": "/home/jon/src/InauguralSystems/EigenScriptEcosystem/EigenMiniSat",
+    "directory": "/tmp/ems-close-20260911/wall-gc-traversal-4x5/pilots/tseitin-4x5-odd/native",
+    "interrupted_signal": null,
+    "returncode": 20,
+    "timed_out": false,
+    "timeout_seconds": 7200,
+    "validated": true,
+    "validation": "certificate",
+    "wall_ns": 2170617364
+  }
+]

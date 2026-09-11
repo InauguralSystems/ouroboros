@@ -1,0 +1,16 @@
+{
+  "cleanup": null,
+  "command": [
+    "python3",
+    "/tmp/ems-close-20260911/gc-traversal-probe/validate.py",
+    "/tmp/ems-close-20260911/gc-controls/processes/run-baseline/stderr",
+    "/tmp/ems-close-20260911/gc-controls/processes/run-missing-skip-counter/stderr"
+  ],
+  "cwd": "/home/jon/src/InauguralSystems/EigenScriptEcosystem/EigenMiniSat",
+  "directory": "/tmp/ems-close-20260911/gc-controls/processes/validate-missing-skip-counter",
+  "interrupted_signal": null,
+  "returncode": 1,
+  "timed_out": false,
+  "timeout_seconds": 15,
+  "wall_ns": 406153423
+}

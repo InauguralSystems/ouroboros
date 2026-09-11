@@ -1,0 +1,23 @@
+{
+  "arm": "native",
+  "binary_sha256": "d880e77e8f0f5a462a55c866aec9dd3325e582a83b94a3416a2debd7c9bac4b7",
+  "case": "tseitin-4x5-odd",
+  "cleanup": null,
+  "command": [
+    "/usr/bin/minisat",
+    "/tmp/ems-close-20260911/wall-gc-traversal-4x5/certificate-inputs/4x5/input.cnf",
+    "/tmp/ems-close-20260911/wall-gc-traversal-4x5/samples/tseitin-4x5-odd/4-native/native.result"
+  ],
+  "conflicts": 505975,
+  "cwd": "/home/jon/src/InauguralSystems/EigenScriptEcosystem/EigenMiniSat",
+  "directory": "/tmp/ems-close-20260911/wall-gc-traversal-4x5/samples/tseitin-4x5-odd/4-native",
+  "input_sha256": "37132e372ca93b7a74ecf4d8f05965125e5e5226260927b95092f50f014540a5",
+  "interrupted_signal": null,
+  "repetition": 4,
+  "returncode": 20,
+  "timed_out": false,
+  "timeout_seconds": 7200,
+  "validated": true,
+  "validation": "certificate",
+  "wall_ns": 1796471320
+}

@@ -1,0 +1,16 @@
+case	validation	arm	policy	n	median_wall_s	min_wall_s	max_wall_s	conflicts	descriptive_conflicts_per_wall_second
+pigeonhole-6-5	vm-differential+certificate	aot	CDCL current defaults (regime C); --cdcl; no policy overrides	5	0.070749010	0.060886870	0.077949453	140	1978.826
+pigeonhole-6-5	vm-differential+certificate	candidate	CDCL current defaults (regime C); --cdcl; no policy overrides; candidate=timing-only GC traversal reuse runtime overlay; same scalar C	5	0.070962278	0.058224378	0.099189507	140	1972.879
+pigeonhole-6-5	vm-differential+certificate	native	native MiniSat executable defaults; no policy overrides	5	0.007638282	0.006983130	0.011286642	138	18066.890
+simple-sat	vm-differential+certificate	aot	CDCL current defaults (regime C); --cdcl; no policy overrides	5	0.006030980	0.004900471	0.006935015	0	0.000
+simple-sat	vm-differential+certificate	candidate	CDCL current defaults (regime C); --cdcl; no policy overrides; candidate=timing-only GC traversal reuse runtime overlay; same scalar C	5	0.006847775	0.004989341	0.007733257	0	0.000
+simple-sat	vm-differential+certificate	native	native MiniSat executable defaults; no policy overrides	5	0.007831905	0.006312997	0.017594391	0	0.000
+tseitin-3x3-odd	vm-differential+certificate	aot	CDCL current defaults (regime C); --cdcl; no policy overrides	5	0.189931952	0.175364858	0.194327513	592	3116.906
+tseitin-3x3-odd	vm-differential+certificate	candidate	CDCL current defaults (regime C); --cdcl; no policy overrides; candidate=timing-only GC traversal reuse runtime overlay; same scalar C	5	0.189425164	0.171644363	0.200888263	592	3125.245
+tseitin-3x3-odd	vm-differential+certificate	native	native MiniSat executable defaults; no policy overrides	5	0.009496409	0.008773537	0.010455993	731	76976.466
+tseitin-4x4-odd	vm-differential+certificate	aot	CDCL current defaults (regime C); --cdcl; no policy overrides	5	8.482075260	7.953684552	8.673857098	9986	1177.306
+tseitin-4x4-odd	vm-differential+certificate	candidate	CDCL current defaults (regime C); --cdcl; no policy overrides; candidate=timing-only GC traversal reuse runtime overlay; same scalar C	5	7.864493253	7.653334272	10.020375746	9986	1269.758
+tseitin-4x4-odd	vm-differential+certificate	native	native MiniSat executable defaults; no policy overrides	5	0.262030830	0.249527651	0.280652161	84150	321145.416
+tseitin-4x5-odd	certificate	aot	CDCL current defaults (regime C); --cdcl; no policy overrides	5	12.225581144	11.984296826	13.610265954	12787	1045.922
+tseitin-4x5-odd	certificate	candidate	CDCL current defaults (regime C); --cdcl; no policy overrides; candidate=timing-only GC traversal reuse runtime overlay; same scalar C	5	11.731891912	11.627065209	11.856998533	12787	1089.935
+tseitin-4x5-odd	certificate	native	native MiniSat executable defaults; no policy overrides	5	1.792830440	1.730712575	1.875355252	505975	282221.335
