@@ -80,7 +80,7 @@ def run(command, label, directory, env):
             raise Cancelled(f"interrupted by signal {pending_signal}")
 
 
-WITNESS = b"slot index: 300 alias cycles; heap/buffer/arena boundaries OK\n"
+WITNESS = b"slot index: 300 alias cycles; heap/buffer/arena boundaries OK; scalar consumers OK\n"
 HEADER = re.compile(r"==[0-9]+==ERROR: LeakSanitizer: detected memory leaks")
 BLOCK = re.compile(r"(?:Direct|Indirect) leak of ([1-9][0-9]*) byte\(s\) in ([1-9][0-9]*) object\(s\) allocated from:")
 FRAME = re.compile(r"\s+#[0-9]+\s+0x[0-9a-fA-F]+\b.*")

@@ -1,0 +1,16 @@
+{
+  "cleanup": null,
+  "command": [
+    "awk",
+    "-f",
+    "/home/jon/src/wt/ems-cert-20260911/benchmarks/normalize_cnf.awk",
+    "/tmp/ems-close-20260911/scalar-wall-certificate-4x5/certificate-inputs/4x5/emitter/stdout"
+  ],
+  "cwd": "/home/jon/src/wt/ems-cert-20260911",
+  "directory": "/tmp/ems-close-20260911/scalar-wall-certificate-4x5/certificate-inputs/4x5/normalize",
+  "interrupted_signal": null,
+  "returncode": 0,
+  "timed_out": false,
+  "timeout_seconds": 7200,
+  "wall_ns": 2983301
+}

@@ -1,0 +1,8 @@
+PASS: actual old emitter rejected by scalar emission gate
+{
+  "base": "328e7692be660b0f56ff73f752207fb25474101c",
+  "old_compiler_sha256": "affa999d5ffd581789197193fe6d753fdd2bd4d4e658cff5c701bc47d8d82e07",
+  "fixture_sha256": "137c32e6fe91d5bdfc219528c237526559b5d725c59a998c2b0a19190405b0ae",
+  "emitted_sha256": "3c68f457c0ba6404098529ec522fd731674cc6d7341dcf1cbb283f1d16e06e1a",
+  "actual_gate_rejection": "t343_slot_scalar_conditions.eigs: expected ['aot_lv_index_add_slots', 'aot_scalar_add_slots', 'aot_scalar_equal', 'aot_scalar_index', 'aot_scalar_slot'], got []"
+}

@@ -1,0 +1,17 @@
+define replace_first(source) as:
+    source[0] is 99
+    print of "callback"
+    return 99
+
+define callback_condition(source, selector) as:
+    local table is source
+    local index is selector
+    if table[index] == (replace_first of table):
+        print of "equal"
+    else:
+        print of "old left value"
+    if (index == 0) and ((replace_first of table) == 99):
+        print of "called right"
+    return 0
+
+callback_condition of [[1, 2], 0]

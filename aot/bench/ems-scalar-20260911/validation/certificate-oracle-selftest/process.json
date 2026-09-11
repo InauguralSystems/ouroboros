@@ -1,0 +1,19 @@
+{
+  "cleanup": null,
+  "command": [
+    "bash",
+    "benchmarks/run_native_oracle.sh",
+    "--selftest",
+    "--aot",
+    "on",
+    "--timeout",
+    "7200"
+  ],
+  "cwd": "/home/jon/src/wt/ems-cert-20260911",
+  "directory": "/tmp/ems-close-20260911/processes/certificate-oracle-selftest",
+  "interrupted_signal": null,
+  "returncode": 1,
+  "timed_out": false,
+  "timeout_seconds": 7200,
+  "wall_ns": 275439976600
+}

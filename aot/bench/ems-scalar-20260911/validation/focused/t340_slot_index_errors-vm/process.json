@@ -1,0 +1,14 @@
+{
+  "cleanup": null,
+  "command": [
+    "/home/jon/src/wt/es-v043/src/eigenscript",
+    "/home/jon/src/wt/ouro-gap-20260911/aot/test/t340_slot_index_errors.eigs"
+  ],
+  "cwd": "/home/jon/src/wt/ouro-gap-20260911",
+  "directory": "/tmp/ems-close-20260911/scalar-focused/t340_slot_index_errors-vm",
+  "interrupted_signal": null,
+  "returncode": 0,
+  "timed_out": false,
+  "timeout_seconds": 60,
+  "wall_ns": 4886364
+}

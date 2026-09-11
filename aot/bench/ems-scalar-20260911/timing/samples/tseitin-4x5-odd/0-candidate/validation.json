@@ -1,0 +1,23 @@
+{
+  "arm": "candidate",
+  "binary_sha256": "3dce2fd61d0c3edccbca5edd7ab00b30b56398e03199a11edfc63c0a026a89d2",
+  "case": "tseitin-4x5-odd",
+  "cleanup": null,
+  "command": [
+    "/tmp/ems-close-20260911/ems-scalar-production",
+    "--cdcl",
+    "/tmp/ems-close-20260911/scalar-wall-certificate-4x5/certificate-inputs/4x5/input.cnf"
+  ],
+  "conflicts": 12787,
+  "cwd": "/home/jon/src/wt/ems-cert-20260911",
+  "directory": "/tmp/ems-close-20260911/scalar-wall-certificate-4x5/samples/tseitin-4x5-odd/0-candidate",
+  "input_sha256": "37132e372ca93b7a74ecf4d8f05965125e5e5226260927b95092f50f014540a5",
+  "interrupted_signal": null,
+  "repetition": 0,
+  "returncode": 0,
+  "timed_out": false,
+  "timeout_seconds": 7200,
+  "validated": true,
+  "validation": "certificate",
+  "wall_ns": 12769801036
+}

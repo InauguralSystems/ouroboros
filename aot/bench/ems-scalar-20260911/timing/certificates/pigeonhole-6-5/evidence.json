@@ -1,0 +1,41 @@
+{
+  "arms": [
+    "aot",
+    "candidate"
+  ],
+  "files": {
+    "/tmp/ems-close-20260911/ems-baseline": "166191eb92aaa95da0fc54ff8c8932b38ceedcc01c7f3c3e0e7a7fde7ae7e62f",
+    "/tmp/ems-close-20260911/ems-scalar-production": "3dce2fd61d0c3edccbca5edd7ab00b30b56398e03199a11edfc63c0a026a89d2",
+    "/tmp/ems-close-20260911/scalar-wall-certificate-4x5/certificates/pigeonhole-6-5/aot-checker/process.json": "d0d77ca1584c779d6cc9fb46493a6b7cd454281c60b6b2e8daacb0ead6836c0e",
+    "/tmp/ems-close-20260911/scalar-wall-certificate-4x5/certificates/pigeonhole-6-5/aot-checker/stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "/tmp/ems-close-20260911/scalar-wall-certificate-4x5/certificates/pigeonhole-6-5/aot-checker/stdout": "8a6141a3d1b317f6274bfc3968cbc3acf100d81ad8e24973fed70b58834b9d70",
+    "/tmp/ems-close-20260911/scalar-wall-certificate-4x5/certificates/pigeonhole-6-5/aot.drat": "ee2c6ae4e56bfbcd1060861da675de898c97eb91791d3736431cd31bf19c5c9e",
+    "/tmp/ems-close-20260911/scalar-wall-certificate-4x5/certificates/pigeonhole-6-5/aot/process.json": "cf74313ce6ecfe871c478c123ea42c5042faebb161da9948ede3efb33cfec1a1",
+    "/tmp/ems-close-20260911/scalar-wall-certificate-4x5/certificates/pigeonhole-6-5/aot/stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "/tmp/ems-close-20260911/scalar-wall-certificate-4x5/certificates/pigeonhole-6-5/aot/stdout": "ce1c61a02c288b385b0774dc1ffb46a6ab2b4c9cfee8fde8c8ddac04c10e1a55",
+    "/tmp/ems-close-20260911/scalar-wall-certificate-4x5/certificates/pigeonhole-6-5/candidate-checker/process.json": "a32acca85678c8c5493853d0ab5542a67397e344eec0ea035bdb63695a966b90",
+    "/tmp/ems-close-20260911/scalar-wall-certificate-4x5/certificates/pigeonhole-6-5/candidate-checker/stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "/tmp/ems-close-20260911/scalar-wall-certificate-4x5/certificates/pigeonhole-6-5/candidate-checker/stdout": "d15b3b8814d1389964029837442326762b48aaf730b886eb6a25db74a59377bf",
+    "/tmp/ems-close-20260911/scalar-wall-certificate-4x5/certificates/pigeonhole-6-5/candidate.drat": "ee2c6ae4e56bfbcd1060861da675de898c97eb91791d3736431cd31bf19c5c9e",
+    "/tmp/ems-close-20260911/scalar-wall-certificate-4x5/certificates/pigeonhole-6-5/candidate/process.json": "97415e458bc62f9d6e863a3b6afd0da655f51ad121e15dbe8455fb1313da2bc3",
+    "/tmp/ems-close-20260911/scalar-wall-certificate-4x5/certificates/pigeonhole-6-5/candidate/stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "/tmp/ems-close-20260911/scalar-wall-certificate-4x5/certificates/pigeonhole-6-5/candidate/stdout": "661382621bcfe58ef5f56344e53e544744919f200e1cd43668dc1fe91cc96e77",
+    "/tmp/ems-close-20260911/scalar-wall-certificate-4x5/certificates/pigeonhole-6-5/native/native.result": "8e47e39240b5b347f444074f97e7ab4b4c11d3f534469b5cb23f4b6d2f7390df",
+    "/tmp/ems-close-20260911/scalar-wall-certificate-4x5/certificates/pigeonhole-6-5/native/process.json": "c633ede9478bd779dac115c70f20c528444d3d6f97620508cac8cd63bac14404",
+    "/tmp/ems-close-20260911/scalar-wall-certificate-4x5/certificates/pigeonhole-6-5/native/stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "/tmp/ems-close-20260911/scalar-wall-certificate-4x5/certificates/pigeonhole-6-5/native/stdout": "16235c1201e241898451d9362c55367968b19d4911b7aca34140b60e4e13505f",
+    "/tmp/ems-close-20260911/scalar-wall-certificate-4x5/oracle/case.o4JJbk/aot.err": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "/tmp/ems-close-20260911/scalar-wall-certificate-4x5/oracle/case.o4JJbk/aot.out": "c9bcec7c7e81d5d6d82015aa2520d9176a3b8f4682637a33985c5172014ed053",
+    "/tmp/ems-close-20260911/scalar-wall-certificate-4x5/oracle/case.o4JJbk/aot.out.normalized": "f2d9b5c933fef4633ce8a922097460fe4aaa7a05eb89afbb1975d72f0ab6d3db",
+    "/tmp/ems-close-20260911/scalar-wall-certificate-4x5/oracle/case.o4JJbk/input.cnf": "5b884b97debd41c9d89378c4414fb1b7b03365725e09992ba0709c23a3cebb7e",
+    "/tmp/ems-close-20260911/scalar-wall-certificate-4x5/oracle/case.o4JJbk/name": "25c41b95aaadacbec748e33e66f1c208d9d22c5a23108c3e15e4da046935eebf",
+    "/tmp/ems-close-20260911/scalar-wall-certificate-4x5/oracle/case.o4JJbk/native.err": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "/tmp/ems-close-20260911/scalar-wall-certificate-4x5/oracle/case.o4JJbk/native.out": "b2f39bb4d4d4158f91f99cec0ef09dcee016ece578b6b557604187d08312ec27",
+    "/tmp/ems-close-20260911/scalar-wall-certificate-4x5/oracle/case.o4JJbk/native.result": "8e47e39240b5b347f444074f97e7ab4b4c11d3f534469b5cb23f4b6d2f7390df",
+    "/tmp/ems-close-20260911/scalar-wall-certificate-4x5/oracle/case.o4JJbk/vm.err": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "/tmp/ems-close-20260911/scalar-wall-certificate-4x5/oracle/case.o4JJbk/vm.out": "2f4c96d4adcde48ad8c75dc99fba306127633f42c9a9979a2421da2c6aec84cf",
+    "/tmp/ems-close-20260911/scalar-wall-certificate-4x5/oracle/case.o4JJbk/vm.out.normalized": "f2d9b5c933fef4633ce8a922097460fe4aaa7a05eb89afbb1975d72f0ab6d3db",
+    "/tmp/ems-native-20260910/drat-trim": "3b2f43765b738cdc5210d874dafc0a0d9921f816156003c6b6fe3f762041c930",
+    "/usr/bin/minisat": "d880e77e8f0f5a462a55c866aec9dd3325e582a83b94a3416a2debd7c9bac4b7"
+  }
+}

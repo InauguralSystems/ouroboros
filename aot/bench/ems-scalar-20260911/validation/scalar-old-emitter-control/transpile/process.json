@@ -1,0 +1,16 @@
+{
+  "cleanup": null,
+  "command": [
+    "/home/jon/src/wt/es-v043/src/eigenscript",
+    "/tmp/ems-close-20260911/scalar-old-emitter-control/compile.eigs",
+    "/home/jon/src/wt/ouro-gap-20260911/aot/test/t343_slot_scalar_conditions.eigs",
+    "/home/jon/src/wt/es-v043"
+  ],
+  "cwd": "/home/jon/src/wt/ouro-gap-20260911",
+  "directory": "/tmp/ems-close-20260911/scalar-old-emitter-control/transpile",
+  "interrupted_signal": null,
+  "returncode": 0,
+  "timed_out": false,
+  "timeout_seconds": 90,
+  "wall_ns": 449205842
+}

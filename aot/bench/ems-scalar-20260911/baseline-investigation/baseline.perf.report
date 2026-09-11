@@ -1,0 +1,1968 @@
+# To display the perf.data header info, please use --header/--header-only options.
+#
+#
+# Total Lost Samples: 0
+#
+# Samples: 1K of event 'cycles:u'
+# Event count (approx.): 18257398470
+#
+# Children      Self  Command       Shared Object      Symbol                                      
+# ........  ........  ............  .................  ............................................
+#
+    94.25%     0.00%  ems-baseline  ems-baseline       [.] _start
+            |
+            ---_start
+               __libc_start_main_impl (inlined)
+               __libc_start_call_main
+               main
+               |          
+                --94.17%--eig_solve_cnf_cdcl_with_options
+                          |          
+                          |--50.59%--eig_run_watched_queue_cdcl.isra.0
+                          |          |          
+                          |          |--8.01%--eig_lit_value
+                          |          |          |          
+                          |          |          |--1.67%--aot_call_dispatch
+                          |          |          |          
+                          |          |          |--1.24%--aot_lv_set
+                          |          |          |          
+                          |          |          |--0.93%--make_num
+                          |          |          |          
+                          |          |          |--0.82%--aot_ge
+                          |          |          |          
+                          |          |          |--0.70%--aot_index_get
+                          |          |          |          
+                          |          |           --0.53%--aot_call_resolve
+                          |          |          
+                          |          |--5.97%--aot_index_get
+                          |          |          |          
+                          |          |           --4.38%--val_incref
+                          |          |          
+                          |          |--4.88%--aot_call_dispatch
+                          |          |          |          
+                          |          |          |--2.54%--builtin_range
+                          |          |          |          |          
+                          |          |          |          |--1.08%--make_num
+                          |          |          |          |          |          
+                          |          |          |          |           --0.72%--xcalloc
+                          |          |          |          |                     __libc_calloc
+                          |          |          |          |                     |          
+                          |          |          |          |                      --0.60%--_int_malloc
+                          |          |          |          |          
+                          |          |          |           --1.05%--make_list
+                          |          |          |                     |          
+                          |          |          |                      --0.99%--xcalloc
+                          |          |          |                                __libc_calloc
+                          |          |          |                                |          
+                          |          |          |                                 --0.87%--_int_malloc
+                          |          |          |          
+                          |          |           --1.23%--builtin_append
+                          |          |                     list_append
+                          |          |                     |          
+                          |          |                      --1.06%--xrealloc_array
+                          |          |                                __GI___libc_realloc (inlined)
+                          |          |                                _int_realloc
+                          |          |                                _int_malloc
+                          |          |                                |          
+                          |          |                                 --0.53%--malloc_consolidate
+                          |          |          
+                          |          |--3.18%--eig_watch_add
+                          |          |          |          
+                          |          |          |--1.66%--aot_call_dispatch
+                          |          |          |          |          
+                          |          |          |           --1.24%--builtin_append
+                          |          |          |                     list_append
+                          |          |          |                     |          
+                          |          |          |                      --1.06%--xrealloc_array
+                          |          |          |                                __GI___libc_realloc (inlined)
+                          |          |          |                                |          
+                          |          |          |                                 --0.88%--_int_realloc
+                          |          |          |                                           |          
+                          |          |          |                                            --0.83%--_int_malloc
+                          |          |          |                                                      |          
+                          |          |          |                                                       --0.54%--malloc_consolidate
+                          |          |          |          
+                          |          |           --0.90%--make_list
+                          |          |                     |          
+                          |          |                      --0.84%--xcalloc
+                          |          |                                |          
+                          |          |                                 --0.78%--__libc_calloc
+                          |          |          
+                          |          |--2.27%--gc_collect_cycles
+                          |          |          |          
+                          |          |           --2.10%--gc_collect_impl
+                          |          |          
+                          |          |--2.20%--make_num
+                          |          |          
+                          |          |--1.74%--free_value.part.0
+                          |          |          
+                          |          |--1.72%--make_list
+                          |          |          xcalloc
+                          |          |          |          
+                          |          |           --1.65%--__libc_calloc
+                          |          |                     |          
+                          |          |                      --1.14%--_int_malloc
+                          |          |          
+                          |          |--1.23%--aot_add
+                          |          |          |          
+                          |          |           --0.71%--make_num
+                          |          |          
+                          |          |--0.77%--slot_to_value
+                          |          |          
+                          |          |--0.76%--aot_lv_index_s
+                          |          |          
+                          |           --0.65%--eig_append_active_watch_tail
+                          |          
+                          |--12.50%--eig_analyze_conflict_cdcl
+                          |          |          
+                          |          |--2.89%--eig_clause_store_clause
+                          |          |          |          
+                          |          |           --1.48%--gc_collect_cycles
+                          |          |                     |          
+                          |          |                      --1.37%--gc_collect_impl
+                          |          |          
+                          |          |--2.82%--eig_clause_level_span
+                          |          |          |          
+                          |          |           --1.21%--gc_collect_cycles
+                          |          |                     |          
+                          |          |                      --1.16%--gc_collect_impl
+                          |          |          
+                          |          |--2.29%--eig_analyze_mark_store_clause
+                          |          |          
+                          |          |--1.25%--aot_call_dispatch
+                          |          |          |          
+                          |          |           --0.55%--call_eigs_fn
+                          |          |          
+                          |           --1.08%--gc_collect_cycles
+                          |                     |          
+                          |                      --0.97%--gc_collect_impl
+                          |          
+                          |--11.50%--eig_lit_redundant
+                          |          |          
+                          |          |--7.62%--gc_collect_cycles
+                          |          |          |          
+                          |          |           --7.15%--gc_collect_impl
+                          |          |                     |          
+                          |          |                      --1.06%--__GI___libc_free (inlined)
+                          |          |                                |          
+                          |          |                                 --0.94%--_int_free_maybe_consolidate
+                          |          |                                           malloc_consolidate
+                          |          |          
+                          |          |--1.06%--aot_call_dispatch
+                          |          |          |          
+                          |          |           --0.76%--builtin_range
+                          |          |          
+                          |           --0.78%--make_list
+                          |                     |          
+                          |                      --0.66%--xcalloc
+                          |                                __libc_calloc
+                          |                                |          
+                          |                                 --0.54%--_int_malloc
+                          |          
+                          |--6.99%--eig_add_cdcl_clause.constprop.0
+                          |          |          
+                          |          |--2.94%--eig_clause_store_add_clause
+                          |          |          |          
+                          |          |           --2.47%--aot_call_dispatch
+                          |          |          
+                          |          |--2.37%--eig_init_clause_metadata
+                          |          |          |          
+                          |          |           --2.07%--eig_clause_level_span
+                          |          |                     |          
+                          |          |                      --1.27%--gc_collect_cycles
+                          |          |                                |          
+                          |          |                                 --1.21%--gc_collect_impl
+                          |          |          
+                          |           --1.35%--eig_clause_level_span
+                          |                     |          
+                          |                      --0.75%--gc_collect_cycles
+                          |                                |          
+                          |                                 --0.58%--gc_collect_impl
+                          |          
+                          |--2.05%--eig_reduce_learnt_db
+                          |          
+                          |--1.60%--eig_cdcl_cancel_until
+                          |          |          
+                          |           --0.95%--eig_order_insert
+                          |                     |          
+                          |                      --0.77%--eig_order_sift_up
+                          |          
+                          |--1.29%--eig_order_pop_best
+                          |          |          
+                          |           --0.90%--eig_order_sift_down
+                          |          
+                          |--1.15%--gc_collect_cycles
+                          |          |          
+                          |           --1.10%--gc_collect_impl
+                          |          
+                          |--1.12%--eig_bump_clause_activity
+                          |          
+                          |--0.97%--eig_compact_deleted_clauses
+                          |          |          
+                          |           --0.51%--eig_clause_store_compact_by_mask_counted
+                          |          
+                          |--0.88%--eig_bump_clause_db_activity
+                          |          
+                          |--0.72%--aot_call_dispatch
+                          |          
+                           --0.63%--eig_enqueue_cdcl
+
+    94.25%     0.00%  ems-baseline  libc.so.6          [.] __libc_start_main_impl (inlined)
+            |
+            ---__libc_start_main_impl (inlined)
+               __libc_start_call_main
+               main
+               |          
+                --94.17%--eig_solve_cnf_cdcl_with_options
+                          |          
+                          |--50.59%--eig_run_watched_queue_cdcl.isra.0
+                          |          |          
+                          |          |--8.01%--eig_lit_value
+                          |          |          |          
+                          |          |          |--1.67%--aot_call_dispatch
+                          |          |          |          
+                          |          |          |--1.24%--aot_lv_set
+                          |          |          |          
+                          |          |          |--0.93%--make_num
+                          |          |          |          
+                          |          |          |--0.82%--aot_ge
+                          |          |          |          
+                          |          |          |--0.70%--aot_index_get
+                          |          |          |          
+                          |          |           --0.53%--aot_call_resolve
+                          |          |          
+                          |          |--5.97%--aot_index_get
+                          |          |          |          
+                          |          |           --4.38%--val_incref
+                          |          |          
+                          |          |--4.88%--aot_call_dispatch
+                          |          |          |          
+                          |          |          |--2.54%--builtin_range
+                          |          |          |          |          
+                          |          |          |          |--1.08%--make_num
+                          |          |          |          |          |          
+                          |          |          |          |           --0.72%--xcalloc
+                          |          |          |          |                     __libc_calloc
+                          |          |          |          |                     |          
+                          |          |          |          |                      --0.60%--_int_malloc
+                          |          |          |          |          
+                          |          |          |           --1.05%--make_list
+                          |          |          |                     |          
+                          |          |          |                      --0.99%--xcalloc
+                          |          |          |                                __libc_calloc
+                          |          |          |                                |          
+                          |          |          |                                 --0.87%--_int_malloc
+                          |          |          |          
+                          |          |           --1.23%--builtin_append
+                          |          |                     list_append
+                          |          |                     |          
+                          |          |                      --1.06%--xrealloc_array
+                          |          |                                __GI___libc_realloc (inlined)
+                          |          |                                _int_realloc
+                          |          |                                _int_malloc
+                          |          |                                |          
+                          |          |                                 --0.53%--malloc_consolidate
+                          |          |          
+                          |          |--3.18%--eig_watch_add
+                          |          |          |          
+                          |          |          |--1.66%--aot_call_dispatch
+                          |          |          |          |          
+                          |          |          |           --1.24%--builtin_append
+                          |          |          |                     list_append
+                          |          |          |                     |          
+                          |          |          |                      --1.06%--xrealloc_array
+                          |          |          |                                __GI___libc_realloc (inlined)
+                          |          |          |                                |          
+                          |          |          |                                 --0.88%--_int_realloc
+                          |          |          |                                           |          
+                          |          |          |                                            --0.83%--_int_malloc
+                          |          |          |                                                      |          
+                          |          |          |                                                       --0.54%--malloc_consolidate
+                          |          |          |          
+                          |          |           --0.90%--make_list
+                          |          |                     |          
+                          |          |                      --0.84%--xcalloc
+                          |          |                                |          
+                          |          |                                 --0.78%--__libc_calloc
+                          |          |          
+                          |          |--2.27%--gc_collect_cycles
+                          |          |          |          
+                          |          |           --2.10%--gc_collect_impl
+                          |          |          
+                          |          |--2.20%--make_num
+                          |          |          
+                          |          |--1.74%--free_value.part.0
+                          |          |          
+                          |          |--1.72%--make_list
+                          |          |          xcalloc
+                          |          |          |          
+                          |          |           --1.65%--__libc_calloc
+                          |          |                     |          
+                          |          |                      --1.14%--_int_malloc
+                          |          |          
+                          |          |--1.23%--aot_add
+                          |          |          |          
+                          |          |           --0.71%--make_num
+                          |          |          
+                          |          |--0.77%--slot_to_value
+                          |          |          
+                          |          |--0.76%--aot_lv_index_s
+                          |          |          
+                          |           --0.65%--eig_append_active_watch_tail
+                          |          
+                          |--12.50%--eig_analyze_conflict_cdcl
+                          |          |          
+                          |          |--2.89%--eig_clause_store_clause
+                          |          |          |          
+                          |          |           --1.48%--gc_collect_cycles
+                          |          |                     |          
+                          |          |                      --1.37%--gc_collect_impl
+                          |          |          
+                          |          |--2.82%--eig_clause_level_span
+                          |          |          |          
+                          |          |           --1.21%--gc_collect_cycles
+                          |          |                     |          
+                          |          |                      --1.16%--gc_collect_impl
+                          |          |          
+                          |          |--2.29%--eig_analyze_mark_store_clause
+                          |          |          
+                          |          |--1.25%--aot_call_dispatch
+                          |          |          |          
+                          |          |           --0.55%--call_eigs_fn
+                          |          |          
+                          |           --1.08%--gc_collect_cycles
+                          |                     |          
+                          |                      --0.97%--gc_collect_impl
+                          |          
+                          |--11.50%--eig_lit_redundant
+                          |          |          
+                          |          |--7.62%--gc_collect_cycles
+                          |          |          |          
+                          |          |           --7.15%--gc_collect_impl
+                          |          |                     |          
+                          |          |                      --1.06%--__GI___libc_free (inlined)
+                          |          |                                |          
+                          |          |                                 --0.94%--_int_free_maybe_consolidate
+                          |          |                                           malloc_consolidate
+                          |          |          
+                          |          |--1.06%--aot_call_dispatch
+                          |          |          |          
+                          |          |           --0.76%--builtin_range
+                          |          |          
+                          |           --0.78%--make_list
+                          |                     |          
+                          |                      --0.66%--xcalloc
+                          |                                __libc_calloc
+                          |                                |          
+                          |                                 --0.54%--_int_malloc
+                          |          
+                          |--6.99%--eig_add_cdcl_clause.constprop.0
+                          |          |          
+                          |          |--2.94%--eig_clause_store_add_clause
+                          |          |          |          
+                          |          |           --2.47%--aot_call_dispatch
+                          |          |          
+                          |          |--2.37%--eig_init_clause_metadata
+                          |          |          |          
+                          |          |           --2.07%--eig_clause_level_span
+                          |          |                     |          
+                          |          |                      --1.27%--gc_collect_cycles
+                          |          |                                |          
+                          |          |                                 --1.21%--gc_collect_impl
+                          |          |          
+                          |           --1.35%--eig_clause_level_span
+                          |                     |          
+                          |                      --0.75%--gc_collect_cycles
+                          |                                |          
+                          |                                 --0.58%--gc_collect_impl
+                          |          
+                          |--2.05%--eig_reduce_learnt_db
+                          |          
+                          |--1.60%--eig_cdcl_cancel_until
+                          |          |          
+                          |           --0.95%--eig_order_insert
+                          |                     |          
+                          |                      --0.77%--eig_order_sift_up
+                          |          
+                          |--1.29%--eig_order_pop_best
+                          |          |          
+                          |           --0.90%--eig_order_sift_down
+                          |          
+                          |--1.15%--gc_collect_cycles
+                          |          |          
+                          |           --1.10%--gc_collect_impl
+                          |          
+                          |--1.12%--eig_bump_clause_activity
+                          |          
+                          |--0.97%--eig_compact_deleted_clauses
+                          |          |          
+                          |           --0.51%--eig_clause_store_compact_by_mask_counted
+                          |          
+                          |--0.88%--eig_bump_clause_db_activity
+                          |          
+                          |--0.72%--aot_call_dispatch
+                          |          
+                           --0.63%--eig_enqueue_cdcl
+
+    94.25%     0.00%  ems-baseline  libc.so.6          [.] __libc_start_call_main
+            |
+            ---__libc_start_call_main
+               |          
+                --94.17%--main
+                          eig_solve_cnf_cdcl_with_options
+                          |          
+                          |--50.59%--eig_run_watched_queue_cdcl.isra.0
+                          |          |          
+                          |          |--8.01%--eig_lit_value
+                          |          |          |          
+                          |          |          |--1.67%--aot_call_dispatch
+                          |          |          |          
+                          |          |          |--1.24%--aot_lv_set
+                          |          |          |          
+                          |          |          |--0.93%--make_num
+                          |          |          |          
+                          |          |          |--0.82%--aot_ge
+                          |          |          |          
+                          |          |          |--0.70%--aot_index_get
+                          |          |          |          
+                          |          |           --0.53%--aot_call_resolve
+                          |          |          
+                          |          |--5.97%--aot_index_get
+                          |          |          |          
+                          |          |           --4.38%--val_incref
+                          |          |          
+                          |          |--4.88%--aot_call_dispatch
+                          |          |          |          
+                          |          |          |--2.54%--builtin_range
+                          |          |          |          |          
+                          |          |          |          |--1.08%--make_num
+                          |          |          |          |          |          
+                          |          |          |          |           --0.72%--xcalloc
+                          |          |          |          |                     __libc_calloc
+                          |          |          |          |                     |          
+                          |          |          |          |                      --0.60%--_int_malloc
+                          |          |          |          |          
+                          |          |          |           --1.05%--make_list
+                          |          |          |                     |          
+                          |          |          |                      --0.99%--xcalloc
+                          |          |          |                                __libc_calloc
+                          |          |          |                                |          
+                          |          |          |                                 --0.87%--_int_malloc
+                          |          |          |          
+                          |          |           --1.23%--builtin_append
+                          |          |                     list_append
+                          |          |                     |          
+                          |          |                      --1.06%--xrealloc_array
+                          |          |                                __GI___libc_realloc (inlined)
+                          |          |                                _int_realloc
+                          |          |                                _int_malloc
+                          |          |                                |          
+                          |          |                                 --0.53%--malloc_consolidate
+                          |          |          
+                          |          |--3.18%--eig_watch_add
+                          |          |          |          
+                          |          |          |--1.66%--aot_call_dispatch
+                          |          |          |          |          
+                          |          |          |           --1.24%--builtin_append
+                          |          |          |                     list_append
+                          |          |          |                     |          
+                          |          |          |                      --1.06%--xrealloc_array
+                          |          |          |                                __GI___libc_realloc (inlined)
+                          |          |          |                                |          
+                          |          |          |                                 --0.88%--_int_realloc
+                          |          |          |                                           |          
+                          |          |          |                                            --0.83%--_int_malloc
+                          |          |          |                                                      |          
+                          |          |          |                                                       --0.54%--malloc_consolidate
+                          |          |          |          
+                          |          |           --0.90%--make_list
+                          |          |                     |          
+                          |          |                      --0.84%--xcalloc
+                          |          |                                |          
+                          |          |                                 --0.78%--__libc_calloc
+                          |          |          
+                          |          |--2.27%--gc_collect_cycles
+                          |          |          |          
+                          |          |           --2.10%--gc_collect_impl
+                          |          |          
+                          |          |--2.20%--make_num
+                          |          |          
+                          |          |--1.74%--free_value.part.0
+                          |          |          
+                          |          |--1.72%--make_list
+                          |          |          xcalloc
+                          |          |          |          
+                          |          |           --1.65%--__libc_calloc
+                          |          |                     |          
+                          |          |                      --1.14%--_int_malloc
+                          |          |          
+                          |          |--1.23%--aot_add
+                          |          |          |          
+                          |          |           --0.71%--make_num
+                          |          |          
+                          |          |--0.77%--slot_to_value
+                          |          |          
+                          |          |--0.76%--aot_lv_index_s
+                          |          |          
+                          |           --0.65%--eig_append_active_watch_tail
+                          |          
+                          |--12.50%--eig_analyze_conflict_cdcl
+                          |          |          
+                          |          |--2.89%--eig_clause_store_clause
+                          |          |          |          
+                          |          |           --1.48%--gc_collect_cycles
+                          |          |                     |          
+                          |          |                      --1.37%--gc_collect_impl
+                          |          |          
+                          |          |--2.82%--eig_clause_level_span
+                          |          |          |          
+                          |          |           --1.21%--gc_collect_cycles
+                          |          |                     |          
+                          |          |                      --1.16%--gc_collect_impl
+                          |          |          
+                          |          |--2.29%--eig_analyze_mark_store_clause
+                          |          |          
+                          |          |--1.25%--aot_call_dispatch
+                          |          |          |          
+                          |          |           --0.55%--call_eigs_fn
+                          |          |          
+                          |           --1.08%--gc_collect_cycles
+                          |                     |          
+                          |                      --0.97%--gc_collect_impl
+                          |          
+                          |--11.50%--eig_lit_redundant
+                          |          |          
+                          |          |--7.62%--gc_collect_cycles
+                          |          |          |          
+                          |          |           --7.15%--gc_collect_impl
+                          |          |                     |          
+                          |          |                      --1.06%--__GI___libc_free (inlined)
+                          |          |                                |          
+                          |          |                                 --0.94%--_int_free_maybe_consolidate
+                          |          |                                           malloc_consolidate
+                          |          |          
+                          |          |--1.06%--aot_call_dispatch
+                          |          |          |          
+                          |          |           --0.76%--builtin_range
+                          |          |          
+                          |           --0.78%--make_list
+                          |                     |          
+                          |                      --0.66%--xcalloc
+                          |                                __libc_calloc
+                          |                                |          
+                          |                                 --0.54%--_int_malloc
+                          |          
+                          |--6.99%--eig_add_cdcl_clause.constprop.0
+                          |          |          
+                          |          |--2.94%--eig_clause_store_add_clause
+                          |          |          |          
+                          |          |           --2.47%--aot_call_dispatch
+                          |          |          
+                          |          |--2.37%--eig_init_clause_metadata
+                          |          |          |          
+                          |          |           --2.07%--eig_clause_level_span
+                          |          |                     |          
+                          |          |                      --1.27%--gc_collect_cycles
+                          |          |                                |          
+                          |          |                                 --1.21%--gc_collect_impl
+                          |          |          
+                          |           --1.35%--eig_clause_level_span
+                          |                     |          
+                          |                      --0.75%--gc_collect_cycles
+                          |                                |          
+                          |                                 --0.58%--gc_collect_impl
+                          |          
+                          |--2.05%--eig_reduce_learnt_db
+                          |          
+                          |--1.60%--eig_cdcl_cancel_until
+                          |          |          
+                          |           --0.95%--eig_order_insert
+                          |                     |          
+                          |                      --0.77%--eig_order_sift_up
+                          |          
+                          |--1.29%--eig_order_pop_best
+                          |          |          
+                          |           --0.90%--eig_order_sift_down
+                          |          
+                          |--1.15%--gc_collect_cycles
+                          |          |          
+                          |           --1.10%--gc_collect_impl
+                          |          
+                          |--1.12%--eig_bump_clause_activity
+                          |          
+                          |--0.97%--eig_compact_deleted_clauses
+                          |          |          
+                          |           --0.51%--eig_clause_store_compact_by_mask_counted
+                          |          
+                          |--0.88%--eig_bump_clause_db_activity
+                          |          
+                          |--0.72%--aot_call_dispatch
+                          |          
+                           --0.63%--eig_enqueue_cdcl
+
+    94.25%     0.00%  ems-baseline  ems-baseline       [.] main
+            |
+            ---main
+               |          
+                --94.17%--eig_solve_cnf_cdcl_with_options
+                          |          
+                          |--50.59%--eig_run_watched_queue_cdcl.isra.0
+                          |          |          
+                          |          |--8.01%--eig_lit_value
+                          |          |          |          
+                          |          |          |--1.67%--aot_call_dispatch
+                          |          |          |          
+                          |          |          |--1.24%--aot_lv_set
+                          |          |          |          
+                          |          |          |--0.93%--make_num
+                          |          |          |          
+                          |          |          |--0.82%--aot_ge
+                          |          |          |          
+                          |          |          |--0.70%--aot_index_get
+                          |          |          |          
+                          |          |           --0.53%--aot_call_resolve
+                          |          |          
+                          |          |--5.97%--aot_index_get
+                          |          |          |          
+                          |          |           --4.38%--val_incref
+                          |          |          
+                          |          |--4.88%--aot_call_dispatch
+                          |          |          |          
+                          |          |          |--2.54%--builtin_range
+                          |          |          |          |          
+                          |          |          |          |--1.08%--make_num
+                          |          |          |          |          |          
+                          |          |          |          |           --0.72%--xcalloc
+                          |          |          |          |                     __libc_calloc
+                          |          |          |          |                     |          
+                          |          |          |          |                      --0.60%--_int_malloc
+                          |          |          |          |          
+                          |          |          |           --1.05%--make_list
+                          |          |          |                     |          
+                          |          |          |                      --0.99%--xcalloc
+                          |          |          |                                __libc_calloc
+                          |          |          |                                |          
+                          |          |          |                                 --0.87%--_int_malloc
+                          |          |          |          
+                          |          |           --1.23%--builtin_append
+                          |          |                     list_append
+                          |          |                     |          
+                          |          |                      --1.06%--xrealloc_array
+                          |          |                                __GI___libc_realloc (inlined)
+                          |          |                                _int_realloc
+                          |          |                                _int_malloc
+                          |          |                                |          
+                          |          |                                 --0.53%--malloc_consolidate
+                          |          |          
+                          |          |--3.18%--eig_watch_add
+                          |          |          |          
+                          |          |          |--1.66%--aot_call_dispatch
+                          |          |          |          |          
+                          |          |          |           --1.24%--builtin_append
+                          |          |          |                     list_append
+                          |          |          |                     |          
+                          |          |          |                      --1.06%--xrealloc_array
+                          |          |          |                                __GI___libc_realloc (inlined)
+                          |          |          |                                |          
+                          |          |          |                                 --0.88%--_int_realloc
+                          |          |          |                                           |          
+                          |          |          |                                            --0.83%--_int_malloc
+                          |          |          |                                                      |          
+                          |          |          |                                                       --0.54%--malloc_consolidate
+                          |          |          |          
+                          |          |           --0.90%--make_list
+                          |          |                     |          
+                          |          |                      --0.84%--xcalloc
+                          |          |                                |          
+                          |          |                                 --0.78%--__libc_calloc
+                          |          |          
+                          |          |--2.27%--gc_collect_cycles
+                          |          |          |          
+                          |          |           --2.10%--gc_collect_impl
+                          |          |          
+                          |          |--2.20%--make_num
+                          |          |          
+                          |          |--1.74%--free_value.part.0
+                          |          |          
+                          |          |--1.72%--make_list
+                          |          |          xcalloc
+                          |          |          |          
+                          |          |           --1.65%--__libc_calloc
+                          |          |                     |          
+                          |          |                      --1.14%--_int_malloc
+                          |          |          
+                          |          |--1.23%--aot_add
+                          |          |          |          
+                          |          |           --0.71%--make_num
+                          |          |          
+                          |          |--0.77%--slot_to_value
+                          |          |          
+                          |          |--0.76%--aot_lv_index_s
+                          |          |          
+                          |           --0.65%--eig_append_active_watch_tail
+                          |          
+                          |--12.50%--eig_analyze_conflict_cdcl
+                          |          |          
+                          |          |--2.89%--eig_clause_store_clause
+                          |          |          |          
+                          |          |           --1.48%--gc_collect_cycles
+                          |          |                     |          
+                          |          |                      --1.37%--gc_collect_impl
+                          |          |          
+                          |          |--2.82%--eig_clause_level_span
+                          |          |          |          
+                          |          |           --1.21%--gc_collect_cycles
+                          |          |                     |          
+                          |          |                      --1.16%--gc_collect_impl
+                          |          |          
+                          |          |--2.29%--eig_analyze_mark_store_clause
+                          |          |          
+                          |          |--1.25%--aot_call_dispatch
+                          |          |          |          
+                          |          |           --0.55%--call_eigs_fn
+                          |          |          
+                          |           --1.08%--gc_collect_cycles
+                          |                     |          
+                          |                      --0.97%--gc_collect_impl
+                          |          
+                          |--11.50%--eig_lit_redundant
+                          |          |          
+                          |          |--7.62%--gc_collect_cycles
+                          |          |          |          
+                          |          |           --7.15%--gc_collect_impl
+                          |          |                     |          
+                          |          |                      --1.06%--__GI___libc_free (inlined)
+                          |          |                                |          
+                          |          |                                 --0.94%--_int_free_maybe_consolidate
+                          |          |                                           malloc_consolidate
+                          |          |          
+                          |          |--1.06%--aot_call_dispatch
+                          |          |          |          
+                          |          |           --0.76%--builtin_range
+                          |          |          
+                          |           --0.78%--make_list
+                          |                     |          
+                          |                      --0.66%--xcalloc
+                          |                                __libc_calloc
+                          |                                |          
+                          |                                 --0.54%--_int_malloc
+                          |          
+                          |--6.99%--eig_add_cdcl_clause.constprop.0
+                          |          |          
+                          |          |--2.94%--eig_clause_store_add_clause
+                          |          |          |          
+                          |          |           --2.47%--aot_call_dispatch
+                          |          |          
+                          |          |--2.37%--eig_init_clause_metadata
+                          |          |          |          
+                          |          |           --2.07%--eig_clause_level_span
+                          |          |                     |          
+                          |          |                      --1.27%--gc_collect_cycles
+                          |          |                                |          
+                          |          |                                 --1.21%--gc_collect_impl
+                          |          |          
+                          |           --1.35%--eig_clause_level_span
+                          |                     |          
+                          |                      --0.75%--gc_collect_cycles
+                          |                                |          
+                          |                                 --0.58%--gc_collect_impl
+                          |          
+                          |--2.05%--eig_reduce_learnt_db
+                          |          
+                          |--1.60%--eig_cdcl_cancel_until
+                          |          |          
+                          |           --0.95%--eig_order_insert
+                          |                     |          
+                          |                      --0.77%--eig_order_sift_up
+                          |          
+                          |--1.29%--eig_order_pop_best
+                          |          |          
+                          |           --0.90%--eig_order_sift_down
+                          |          
+                          |--1.15%--gc_collect_cycles
+                          |          |          
+                          |           --1.10%--gc_collect_impl
+                          |          
+                          |--1.12%--eig_bump_clause_activity
+                          |          
+                          |--0.97%--eig_compact_deleted_clauses
+                          |          |          
+                          |           --0.51%--eig_clause_store_compact_by_mask_counted
+                          |          
+                          |--0.88%--eig_bump_clause_db_activity
+                          |          
+                          |--0.72%--aot_call_dispatch
+                          |          
+                           --0.63%--eig_enqueue_cdcl
+
+    94.17%     0.35%  ems-baseline  ems-baseline       [.] eig_solve_cnf_cdcl_with_options
+            |          
+             --93.83%--eig_solve_cnf_cdcl_with_options
+                       |          
+                       |--50.59%--eig_run_watched_queue_cdcl.isra.0
+                       |          |          
+                       |          |--8.01%--eig_lit_value
+                       |          |          |          
+                       |          |          |--1.67%--aot_call_dispatch
+                       |          |          |          
+                       |          |          |--1.24%--aot_lv_set
+                       |          |          |          
+                       |          |          |--0.93%--make_num
+                       |          |          |          
+                       |          |          |--0.82%--aot_ge
+                       |          |          |          
+                       |          |          |--0.70%--aot_index_get
+                       |          |          |          
+                       |          |           --0.53%--aot_call_resolve
+                       |          |          
+                       |          |--5.97%--aot_index_get
+                       |          |          |          
+                       |          |           --4.38%--val_incref
+                       |          |          
+                       |          |--4.88%--aot_call_dispatch
+                       |          |          |          
+                       |          |          |--2.54%--builtin_range
+                       |          |          |          |          
+                       |          |          |          |--1.08%--make_num
+                       |          |          |          |          |          
+                       |          |          |          |           --0.72%--xcalloc
+                       |          |          |          |                     __libc_calloc
+                       |          |          |          |                     |          
+                       |          |          |          |                      --0.60%--_int_malloc
+                       |          |          |          |          
+                       |          |          |           --1.05%--make_list
+                       |          |          |                     |          
+                       |          |          |                      --0.99%--xcalloc
+                       |          |          |                                __libc_calloc
+                       |          |          |                                |          
+                       |          |          |                                 --0.87%--_int_malloc
+                       |          |          |          
+                       |          |           --1.23%--builtin_append
+                       |          |                     list_append
+                       |          |                     |          
+                       |          |                      --1.06%--xrealloc_array
+                       |          |                                __GI___libc_realloc (inlined)
+                       |          |                                _int_realloc
+                       |          |                                _int_malloc
+                       |          |                                |          
+                       |          |                                 --0.53%--malloc_consolidate
+                       |          |          
+                       |          |--3.18%--eig_watch_add
+                       |          |          |          
+                       |          |          |--1.66%--aot_call_dispatch
+                       |          |          |          |          
+                       |          |          |           --1.24%--builtin_append
+                       |          |          |                     list_append
+                       |          |          |                     |          
+                       |          |          |                      --1.06%--xrealloc_array
+                       |          |          |                                __GI___libc_realloc (inlined)
+                       |          |          |                                |          
+                       |          |          |                                 --0.88%--_int_realloc
+                       |          |          |                                           |          
+                       |          |          |                                            --0.83%--_int_malloc
+                       |          |          |                                                      |          
+                       |          |          |                                                       --0.54%--malloc_consolidate
+                       |          |          |          
+                       |          |           --0.90%--make_list
+                       |          |                     |          
+                       |          |                      --0.84%--xcalloc
+                       |          |                                |          
+                       |          |                                 --0.78%--__libc_calloc
+                       |          |          
+                       |          |--2.27%--gc_collect_cycles
+                       |          |          |          
+                       |          |           --2.10%--gc_collect_impl
+                       |          |          
+                       |          |--2.20%--make_num
+                       |          |          
+                       |          |--1.74%--free_value.part.0
+                       |          |          
+                       |          |--1.72%--make_list
+                       |          |          xcalloc
+                       |          |          |          
+                       |          |           --1.65%--__libc_calloc
+                       |          |                     |          
+                       |          |                      --1.14%--_int_malloc
+                       |          |          
+                       |          |--1.23%--aot_add
+                       |          |          |          
+                       |          |           --0.71%--make_num
+                       |          |          
+                       |          |--0.77%--slot_to_value
+                       |          |          
+                       |          |--0.76%--aot_lv_index_s
+                       |          |          
+                       |           --0.65%--eig_append_active_watch_tail
+                       |          
+                       |--12.50%--eig_analyze_conflict_cdcl
+                       |          |          
+                       |          |--2.89%--eig_clause_store_clause
+                       |          |          |          
+                       |          |           --1.48%--gc_collect_cycles
+                       |          |                     |          
+                       |          |                      --1.37%--gc_collect_impl
+                       |          |          
+                       |          |--2.82%--eig_clause_level_span
+                       |          |          |          
+                       |          |           --1.21%--gc_collect_cycles
+                       |          |                     |          
+                       |          |                      --1.16%--gc_collect_impl
+                       |          |          
+                       |          |--2.29%--eig_analyze_mark_store_clause
+                       |          |          
+                       |          |--1.25%--aot_call_dispatch
+                       |          |          |          
+                       |          |           --0.55%--call_eigs_fn
+                       |          |          
+                       |           --1.08%--gc_collect_cycles
+                       |                     |          
+                       |                      --0.97%--gc_collect_impl
+                       |          
+                       |--11.50%--eig_lit_redundant
+                       |          |          
+                       |          |--7.62%--gc_collect_cycles
+                       |          |          |          
+                       |          |           --7.15%--gc_collect_impl
+                       |          |                     |          
+                       |          |                      --1.06%--__GI___libc_free (inlined)
+                       |          |                                |          
+                       |          |                                 --0.94%--_int_free_maybe_consolidate
+                       |          |                                           malloc_consolidate
+                       |          |          
+                       |          |--1.06%--aot_call_dispatch
+                       |          |          |          
+                       |          |           --0.76%--builtin_range
+                       |          |          
+                       |           --0.78%--make_list
+                       |                     |          
+                       |                      --0.66%--xcalloc
+                       |                                __libc_calloc
+                       |                                |          
+                       |                                 --0.54%--_int_malloc
+                       |          
+                       |--6.99%--eig_add_cdcl_clause.constprop.0
+                       |          |          
+                       |          |--2.94%--eig_clause_store_add_clause
+                       |          |          |          
+                       |          |           --2.47%--aot_call_dispatch
+                       |          |          
+                       |          |--2.37%--eig_init_clause_metadata
+                       |          |          |          
+                       |          |           --2.07%--eig_clause_level_span
+                       |          |                     |          
+                       |          |                      --1.27%--gc_collect_cycles
+                       |          |                                |          
+                       |          |                                 --1.21%--gc_collect_impl
+                       |          |          
+                       |           --1.35%--eig_clause_level_span
+                       |                     |          
+                       |                      --0.75%--gc_collect_cycles
+                       |                                |          
+                       |                                 --0.58%--gc_collect_impl
+                       |          
+                       |--2.05%--eig_reduce_learnt_db
+                       |          
+                       |--1.60%--eig_cdcl_cancel_until
+                       |          |          
+                       |           --0.95%--eig_order_insert
+                       |                     |          
+                       |                      --0.77%--eig_order_sift_up
+                       |          
+                       |--1.29%--eig_order_pop_best
+                       |          |          
+                       |           --0.90%--eig_order_sift_down
+                       |          
+                       |--1.15%--gc_collect_cycles
+                       |          |          
+                       |           --1.10%--gc_collect_impl
+                       |          
+                       |--1.12%--eig_bump_clause_activity
+                       |          
+                       |--0.97%--eig_compact_deleted_clauses
+                       |          |          
+                       |           --0.51%--eig_clause_store_compact_by_mask_counted
+                       |          
+                       |--0.88%--eig_bump_clause_db_activity
+                       |          
+                       |--0.72%--aot_call_dispatch
+                       |          
+                        --0.63%--eig_enqueue_cdcl
+
+    50.59%    13.60%  ems-baseline  ems-baseline       [.] eig_run_watched_queue_cdcl.isra.0
+            |          
+            |--36.99%--eig_run_watched_queue_cdcl.isra.0
+            |          |          
+            |          |--8.01%--eig_lit_value
+            |          |          |          
+            |          |          |--1.67%--aot_call_dispatch
+            |          |          |          
+            |          |          |--1.24%--aot_lv_set
+            |          |          |          
+            |          |          |--0.93%--make_num
+            |          |          |          
+            |          |          |--0.82%--aot_ge
+            |          |          |          
+            |          |          |--0.70%--aot_index_get
+            |          |          |          
+            |          |           --0.53%--aot_call_resolve
+            |          |          
+            |          |--5.97%--aot_index_get
+            |          |          |          
+            |          |           --4.38%--val_incref
+            |          |          
+            |          |--4.88%--aot_call_dispatch
+            |          |          |          
+            |          |          |--2.54%--builtin_range
+            |          |          |          |          
+            |          |          |          |--1.08%--make_num
+            |          |          |          |          |          
+            |          |          |          |           --0.72%--xcalloc
+            |          |          |          |                     __libc_calloc
+            |          |          |          |                     |          
+            |          |          |          |                      --0.60%--_int_malloc
+            |          |          |          |          
+            |          |          |           --1.05%--make_list
+            |          |          |                     |          
+            |          |          |                      --0.99%--xcalloc
+            |          |          |                                __libc_calloc
+            |          |          |                                |          
+            |          |          |                                 --0.87%--_int_malloc
+            |          |          |          
+            |          |           --1.23%--builtin_append
+            |          |                     list_append
+            |          |                     |          
+            |          |                      --1.06%--xrealloc_array
+            |          |                                __GI___libc_realloc (inlined)
+            |          |                                _int_realloc
+            |          |                                _int_malloc
+            |          |                                |          
+            |          |                                 --0.53%--malloc_consolidate
+            |          |          
+            |          |--3.18%--eig_watch_add
+            |          |          |          
+            |          |          |--1.66%--aot_call_dispatch
+            |          |          |          |          
+            |          |          |           --1.24%--builtin_append
+            |          |          |                     list_append
+            |          |          |                     |          
+            |          |          |                      --1.06%--xrealloc_array
+            |          |          |                                __GI___libc_realloc (inlined)
+            |          |          |                                |          
+            |          |          |                                 --0.88%--_int_realloc
+            |          |          |                                           |          
+            |          |          |                                            --0.83%--_int_malloc
+            |          |          |                                                      |          
+            |          |          |                                                       --0.54%--malloc_consolidate
+            |          |          |          
+            |          |           --0.90%--make_list
+            |          |                     |          
+            |          |                      --0.84%--xcalloc
+            |          |                                |          
+            |          |                                 --0.78%--__libc_calloc
+            |          |          
+            |          |--2.27%--gc_collect_cycles
+            |          |          |          
+            |          |           --2.10%--gc_collect_impl
+            |          |          
+            |          |--2.20%--make_num
+            |          |          
+            |          |--1.74%--free_value.part.0
+            |          |          
+            |          |--1.72%--make_list
+            |          |          xcalloc
+            |          |          |          
+            |          |           --1.65%--__libc_calloc
+            |          |                     |          
+            |          |                      --1.14%--_int_malloc
+            |          |          
+            |          |--1.23%--aot_add
+            |          |          |          
+            |          |           --0.71%--make_num
+            |          |          
+            |          |--0.77%--slot_to_value
+            |          |          
+            |          |--0.76%--aot_lv_index_s
+            |          |          
+            |           --0.65%--eig_append_active_watch_tail
+            |          
+             --13.60%--_start
+                       __libc_start_main_impl (inlined)
+                       __libc_start_call_main
+                       main
+                       eig_solve_cnf_cdcl_with_options
+                       eig_run_watched_queue_cdcl.isra.0
+
+    18.34%     0.12%  ems-baseline  ems-baseline       [.] gc_collect_cycles
+            |          
+             --18.22%--gc_collect_cycles
+                       |          
+                       |--17.01%--gc_collect_impl
+                       |          |          
+                       |          |--2.68%--__GI___libc_free (inlined)
+                       |          |          |          
+                       |          |           --2.45%--_int_free_maybe_consolidate
+                       |          |                     malloc_consolidate
+                       |          |          
+                       |           --0.58%--free_value.part.0
+                       |          
+                        --1.03%--free_value.part.0
+                                  |          
+                                   --0.98%--__GI___libc_free (inlined)
+
+    17.01%    13.64%  ems-baseline  ems-baseline       [.] gc_collect_impl
+            |          
+            |--12.77%--_start
+            |          __libc_start_main_impl (inlined)
+            |          __libc_start_call_main
+            |          main
+            |          eig_solve_cnf_cdcl_with_options
+            |          |          
+            |          |--5.69%--eig_lit_redundant
+            |          |          gc_collect_cycles
+            |          |          gc_collect_impl
+            |          |          
+            |          |--2.69%--eig_analyze_conflict_cdcl
+            |          |          |          
+            |          |          |--1.04%--eig_clause_level_span
+            |          |          |          gc_collect_cycles
+            |          |          |          gc_collect_impl
+            |          |          |          
+            |          |          |--0.90%--eig_clause_store_clause
+            |          |          |          gc_collect_cycles
+            |          |          |          gc_collect_impl
+            |          |          |          
+            |          |           --0.74%--gc_collect_cycles
+            |          |                     gc_collect_impl
+            |          |          
+            |          |--2.03%--eig_run_watched_queue_cdcl.isra.0
+            |          |          |          
+            |          |           --1.92%--gc_collect_cycles
+            |          |                     gc_collect_impl
+            |          |          
+            |          |--1.44%--eig_add_cdcl_clause.constprop.0
+            |          |          |          
+            |          |           --1.05%--eig_init_clause_metadata
+            |          |                     eig_clause_level_span
+            |          |                     gc_collect_cycles
+            |          |                     gc_collect_impl
+            |          |          
+            |           --0.92%--gc_collect_cycles
+            |                     gc_collect_impl
+            |          
+            |--3.38%--gc_collect_impl
+            |          |          
+            |          |--2.68%--__GI___libc_free (inlined)
+            |          |          |          
+            |          |           --2.45%--_int_free_maybe_consolidate
+            |          |                     malloc_consolidate
+            |          |          
+            |           --0.58%--free_value.part.0
+            |          
+             --0.86%--0xffffffffffffffff
+                       vm_run_ex
+                       gc_collect_cycles
+                       gc_collect_impl
+
+    16.62%     4.89%  ems-baseline  ems-baseline       [.] aot_call_dispatch
+            |          
+            |--11.73%--aot_call_dispatch
+            |          |          
+            |          |--4.35%--builtin_range
+            |          |          |          
+            |          |          |--2.09%--make_num
+            |          |          |          |          
+            |          |          |           --1.26%--xcalloc
+            |          |          |                     |          
+            |          |          |                      --1.20%--__libc_calloc
+            |          |          |                                |          
+            |          |          |                                 --0.97%--_int_malloc
+            |          |          |          
+            |          |           --1.56%--make_list
+            |          |                     |          
+            |          |                      --1.45%--xcalloc
+            |          |                                |          
+            |          |                                 --1.39%--__libc_calloc
+            |          |                                           |          
+            |          |                                            --1.22%--_int_malloc
+            |          |          
+            |          |--2.99%--builtin_append
+            |          |          |          
+            |          |           --2.94%--list_append
+            |          |                     |          
+            |          |                      --2.41%--xrealloc_array
+            |          |                                __GI___libc_realloc (inlined)
+            |          |                                |          
+            |          |                                 --2.24%--_int_realloc
+            |          |                                           |          
+            |          |                                            --2.18%--_int_malloc
+            |          |                                                      |          
+            |          |                                                       --1.18%--malloc_consolidate
+            |          |          
+            |          |--1.10%--free_value.part.0
+            |          |          |          
+            |          |           --0.74%--__GI___libc_free (inlined)
+            |          |                     |          
+            |          |                      --0.54%--_int_free
+            |          |          
+            |          |--0.84%--call_eigs_fn
+            |          |          
+            |          |--0.77%--val_decref
+            |          |          
+            |           --0.57%--__GI___libc_free (inlined)
+            |          
+             --4.89%--_start
+                       __libc_start_main_impl (inlined)
+                       __libc_start_call_main
+                       main
+                       eig_solve_cnf_cdcl_with_options
+                       |          
+                       |--2.24%--eig_add_cdcl_clause.constprop.0
+                       |          eig_clause_store_add_clause
+                       |          aot_call_dispatch
+                       |          
+                       |--1.30%--eig_run_watched_queue_cdcl.isra.0
+                       |          |          
+                       |           --1.07%--eig_lit_value
+                       |                     aot_call_dispatch
+                       |          
+                        --0.69%--eig_analyze_conflict_cdcl
+                                  |          
+                                   --0.58%--aot_call_dispatch
+
+    12.50%     0.35%  ems-baseline  ems-baseline       [.] eig_analyze_conflict_cdcl
+            |          
+             --12.16%--eig_analyze_conflict_cdcl
+                       |          
+                       |--2.89%--eig_clause_store_clause
+                       |          |          
+                       |           --1.48%--gc_collect_cycles
+                       |                     |          
+                       |                      --1.37%--gc_collect_impl
+                       |          
+                       |--2.82%--eig_clause_level_span
+                       |          |          
+                       |           --1.21%--gc_collect_cycles
+                       |                     |          
+                       |                      --1.16%--gc_collect_impl
+                       |          
+                       |--2.29%--eig_analyze_mark_store_clause
+                       |          
+                       |--1.25%--aot_call_dispatch
+                       |          |          
+                       |           --0.55%--call_eigs_fn
+                       |          
+                        --1.08%--gc_collect_cycles
+                                  |          
+                                   --0.97%--gc_collect_impl
+
+    11.50%     1.00%  ems-baseline  ems-baseline       [.] eig_lit_redundant
+            |          
+            |--10.50%--eig_lit_redundant
+            |          |          
+            |          |--7.62%--gc_collect_cycles
+            |          |          |          
+            |          |           --7.15%--gc_collect_impl
+            |          |                     |          
+            |          |                      --1.06%--__GI___libc_free (inlined)
+            |          |                                |          
+            |          |                                 --0.94%--_int_free_maybe_consolidate
+            |          |                                           malloc_consolidate
+            |          |          
+            |          |--1.06%--aot_call_dispatch
+            |          |          |          
+            |          |           --0.76%--builtin_range
+            |          |          
+            |           --0.78%--make_list
+            |                     |          
+            |                      --0.66%--xcalloc
+            |                                __libc_calloc
+            |                                |          
+            |                                 --0.54%--_int_malloc
+            |          
+             --1.00%--_start
+                       __libc_start_main_impl (inlined)
+                       __libc_start_call_main
+                       main
+                       eig_solve_cnf_cdcl_with_options
+                       eig_lit_redundant
+
+     9.59%     0.42%  ems-baseline  ems-baseline       [.] xcalloc
+            |          
+             --9.17%--xcalloc
+                       |          
+                        --9.11%--__libc_calloc
+                                  |          
+                                   --6.59%--_int_malloc
+                                             |          
+                                              --0.79%--unlink_chunk (inlined)
+
+     9.54%     6.56%  ems-baseline  ems-baseline       [.] make_num
+            |          
+            |--6.26%--_start
+            |          __libc_start_main_impl (inlined)
+            |          __libc_start_call_main
+            |          main
+            |          eig_solve_cnf_cdcl_with_options
+            |          |          
+            |          |--4.26%--eig_run_watched_queue_cdcl.isra.0
+            |          |          |          
+            |          |          |--2.14%--make_num
+            |          |          |          
+            |          |           --1.05%--eig_lit_value
+            |          |                     |          
+            |          |                      --0.93%--make_num
+            |          |          
+            |           --0.65%--eig_analyze_conflict_cdcl
+            |          
+             --2.98%--make_num
+                       xcalloc
+                       |          
+                        --2.74%--__libc_calloc
+                                  |          
+                                   --2.21%--_int_malloc
+
+     9.17%     2.52%  ems-baseline  libc.so.6          [.] __libc_calloc
+            |          
+            |--6.65%--__libc_calloc
+            |          _int_malloc
+            |          |          
+            |           --0.79%--unlink_chunk (inlined)
+            |          
+             --2.40%--_start
+                       __libc_start_main_impl (inlined)
+                       __libc_start_call_main
+                       main
+                       eig_solve_cnf_cdcl_with_options
+                       |          
+                        --1.36%--eig_run_watched_queue_cdcl.isra.0
+                                  |          
+                                   --0.52%--make_list
+                                             xcalloc
+                                             __libc_calloc
+
+     8.83%     6.57%  ems-baseline  libc.so.6          [.] _int_malloc
+            |          
+            |--5.70%--_start
+            |          __libc_start_main_impl (inlined)
+            |          __libc_start_call_main
+            |          main
+            |          eig_solve_cnf_cdcl_with_options
+            |          |          
+            |          |--3.43%--eig_run_watched_queue_cdcl.isra.0
+            |          |          |          
+            |          |          |--1.59%--aot_call_dispatch
+            |          |          |          |          
+            |          |          |           --1.18%--builtin_range
+            |          |          |                     |          
+            |          |          |                      --0.75%--make_list
+            |          |          |                                xcalloc
+            |          |          |                                __libc_calloc
+            |          |          |                                _int_malloc
+            |          |          |          
+            |          |          |--0.95%--make_list
+            |          |          |          xcalloc
+            |          |          |          __libc_calloc
+            |          |          |          _int_malloc
+            |          |          |          
+            |          |           --0.60%--eig_watch_add
+            |          |          
+            |          |--0.90%--eig_lit_redundant
+            |          |          
+            |           --0.78%--eig_analyze_conflict_cdcl
+            |          
+            |--2.26%--_int_malloc
+            |          |          
+            |          |--1.30%--malloc_consolidate
+            |          |          
+            |           --0.96%--unlink_chunk (inlined)
+            |          
+             --0.81%--0xffffffffffffffff
+                       vm_run_ex
+                       |          
+                        --0.75%--builtin_range
+
+     8.07%     1.96%  ems-baseline  ems-baseline       [.] aot_index_get
+            |          
+            |--6.12%--aot_index_get
+            |          |          
+            |          |--4.71%--val_incref
+            |          |          
+            |           --0.77%--val_decref
+            |          
+             --1.96%--_start
+                       __libc_start_main_impl (inlined)
+                       __libc_start_call_main
+                       main
+                       eig_solve_cnf_cdcl_with_options
+                       |          
+                        --1.42%--eig_run_watched_queue_cdcl.isra.0
+                                  |          
+                                   --1.18%--aot_index_get
+
+     8.01%     0.65%  ems-baseline  ems-baseline       [.] eig_lit_value
+            |          
+            |--7.36%--eig_lit_value
+            |          |          
+            |          |--1.67%--aot_call_dispatch
+            |          |          
+            |          |--1.24%--aot_lv_set
+            |          |          
+            |          |--0.93%--make_num
+            |          |          
+            |          |--0.82%--aot_ge
+            |          |          
+            |          |--0.70%--aot_index_get
+            |          |          
+            |           --0.53%--aot_call_resolve
+            |          
+             --0.65%--_start
+                       __libc_start_main_impl (inlined)
+                       __libc_start_call_main
+                       main
+                       eig_solve_cnf_cdcl_with_options
+                       eig_run_watched_queue_cdcl.isra.0
+                       eig_lit_value
+
+     7.25%     0.65%  ems-baseline  ems-baseline       [.] make_list
+            |          
+            |--6.60%--make_list
+            |          |          
+            |           --6.42%--xcalloc
+            |                     |          
+            |                      --6.25%--__libc_calloc
+            |                                |          
+            |                                 --4.31%--_int_malloc
+            |          
+             --0.65%--_start
+                       __libc_start_main_impl (inlined)
+                       __libc_start_call_main
+                       main
+                       eig_solve_cnf_cdcl_with_options
+
+     6.99%     0.00%  ems-baseline  ems-baseline       [.] eig_add_cdcl_clause.constprop.0
+            |
+            ---eig_add_cdcl_clause.constprop.0
+               |          
+               |--2.94%--eig_clause_store_add_clause
+               |          |          
+               |           --2.47%--aot_call_dispatch
+               |          
+               |--2.37%--eig_init_clause_metadata
+               |          |          
+               |           --2.07%--eig_clause_level_span
+               |                     |          
+               |                      --1.27%--gc_collect_cycles
+               |                                |          
+               |                                 --1.21%--gc_collect_impl
+               |          
+                --1.35%--eig_clause_level_span
+                          |          
+                           --0.75%--gc_collect_cycles
+                                     |          
+                                      --0.58%--gc_collect_impl
+
+     6.79%     4.89%  ems-baseline  ems-baseline       [.] free_value.part.0
+            |          
+            |--4.89%--_start
+            |          __libc_start_main_impl (inlined)
+            |          __libc_start_call_main
+            |          main
+            |          eig_solve_cnf_cdcl_with_options
+            |          |          
+            |          |--3.37%--eig_run_watched_queue_cdcl.isra.0
+            |          |          |          
+            |          |          |--1.62%--free_value.part.0
+            |          |          |          
+            |          |           --1.05%--eig_lit_value
+            |          |          
+            |           --0.52%--eig_lit_redundant
+            |          
+             --1.90%--free_value.part.0
+                       __GI___libc_free (inlined)
+                       |          
+                        --0.83%--_int_free
+
+     6.24%     0.89%  ems-baseline  ems-baseline       [.] eig_clause_level_span
+            |          
+            |--5.34%--eig_clause_level_span
+            |          |          
+            |           --3.23%--gc_collect_cycles
+            |                     |          
+            |                      --2.95%--gc_collect_impl
+            |          
+             --0.89%--_start
+                       __libc_start_main_impl (inlined)
+                       __libc_start_call_main
+                       main
+                       eig_solve_cnf_cdcl_with_options
+                       |          
+                        --0.72%--eig_analyze_conflict_cdcl
+                                  eig_clause_level_span
+
+     5.82%     5.82%  ems-baseline  ems-baseline       [.] val_incref
+            |
+            ---_start
+               __libc_start_main_impl (inlined)
+               __libc_start_call_main
+               main
+               eig_solve_cnf_cdcl_with_options
+               |          
+                --5.02%--eig_run_watched_queue_cdcl.isra.0
+                          |          
+                           --4.38%--aot_index_get
+                                     val_incref
+
+     5.82%     0.41%  ems-baseline  ems-baseline       [.] builtin_range
+            |          
+             --5.41%--builtin_range
+                       |          
+                       |--3.10%--make_num
+                       |          |          
+                       |           --1.97%--xcalloc
+                       |                     |          
+                       |                      --1.85%--__libc_calloc
+                       |                                |          
+                       |                                 --1.56%--_int_malloc
+                       |          
+                        --1.91%--make_list
+                                  |          
+                                   --1.79%--xcalloc
+                                             |          
+                                              --1.74%--__libc_calloc
+                                                        |          
+                                                         --1.50%--_int_malloc
+
+     5.49%     0.00%  ems-baseline  libc.so.6          [.] __GI___libc_free (inlined)
+            |
+            ---__GI___libc_free (inlined)
+               |          
+               |--2.45%--_int_free_maybe_consolidate
+               |          malloc_consolidate
+               |          
+                --1.34%--_int_free
+
+     4.82%     1.25%  ems-baseline  ems-baseline       [.] vm_run_ex
+            |          
+            |--3.57%--vm_run_ex
+            |          |          
+            |          |--1.47%--builtin_range
+            |          |          |          
+            |          |           --1.01%--make_num
+            |          |                     |          
+            |          |                      --0.71%--xcalloc
+            |          |                                |          
+            |          |                                 --0.64%--__libc_calloc
+            |          |                                           |          
+            |          |                                            --0.59%--_int_malloc
+            |          |          
+            |           --1.27%--gc_collect_cycles
+            |                     |          
+            |                      --1.15%--gc_collect_impl
+            |          
+             --1.07%--0xffffffffffffffff
+                       vm_run_ex
+
+     4.64%     0.00%  ems-baseline  [unknown]          [.] 0xffffffffffffffff
+            |
+            ---0xffffffffffffffff
+               vm_run_ex
+               |          
+               |--1.47%--builtin_range
+               |          |          
+               |           --1.01%--make_num
+               |                     |          
+               |                      --0.71%--xcalloc
+               |                                |          
+               |                                 --0.64%--__libc_calloc
+               |                                           |          
+               |                                            --0.59%--_int_malloc
+               |          
+                --1.27%--gc_collect_cycles
+                          |          
+                           --1.15%--gc_collect_impl
+
+     3.74%     3.21%  ems-baseline  libc.so.6          [.] malloc_consolidate
+            |          
+            |--2.93%--_start
+            |          __libc_start_main_impl (inlined)
+            |          __libc_start_call_main
+            |          main
+            |          eig_solve_cnf_cdcl_with_options
+            |          |          
+            |          |--1.24%--eig_run_watched_queue_cdcl.isra.0
+            |          |          |          
+            |          |           --0.53%--aot_call_dispatch
+            |          |          
+            |           --0.76%--eig_lit_redundant
+            |                     gc_collect_cycles
+            |                     gc_collect_impl
+            |                     __GI___libc_free (inlined)
+            |                     _int_free_maybe_consolidate
+            |                     malloc_consolidate
+            |          
+             --0.53%--malloc_consolidate
+                       unlink_chunk (inlined)
+
+     3.42%     0.29%  ems-baseline  ems-baseline       [.] eig_watch_add
+            |          
+             --3.12%--eig_watch_add
+                       |          
+                       |--1.72%--aot_call_dispatch
+                       |          |          
+                       |           --1.30%--builtin_append
+                       |                     list_append
+                       |                     |          
+                       |                      --1.12%--xrealloc_array
+                       |                                __GI___libc_realloc (inlined)
+                       |                                |          
+                       |                                 --0.94%--_int_realloc
+                       |                                           |          
+                       |                                            --0.89%--_int_malloc
+                       |                                                      |          
+                       |                                                       --0.54%--malloc_consolidate
+                       |          
+                        --0.90%--make_list
+                                  |          
+                                   --0.84%--xcalloc
+                                             |          
+                                              --0.78%--__libc_calloc
+
+     3.40%     0.99%  ems-baseline  ems-baseline       [.] list_append
+            |          
+            |--2.41%--list_append
+            |          xrealloc_array
+            |          __GI___libc_realloc (inlined)
+            |          |          
+            |           --2.24%--_int_realloc
+            |                     |          
+            |                      --2.18%--_int_malloc
+            |                                |          
+            |                                 --1.18%--malloc_consolidate
+            |          
+             --0.81%--_start
+                       __libc_start_main_impl (inlined)
+                       __libc_start_call_main
+                       main
+                       eig_solve_cnf_cdcl_with_options
+                       |          
+                        --0.53%--eig_run_watched_queue_cdcl.isra.0
+
+     3.02%     3.02%  ems-baseline  ems-baseline       [.] val_decref
+            |
+            ---_start
+               __libc_start_main_impl (inlined)
+               __libc_start_call_main
+               main
+               eig_solve_cnf_cdcl_with_options
+               |          
+                --2.02%--eig_run_watched_queue_cdcl.isra.0
+                          |          
+                           --0.83%--eig_lit_value
+
+     2.99%     0.05%  ems-baseline  ems-baseline       [.] builtin_append
+            |          
+             --2.94%--builtin_append
+                       list_append
+                       |          
+                        --2.41%--xrealloc_array
+                                  __GI___libc_realloc (inlined)
+                                  |          
+                                   --2.24%--_int_realloc
+                                             |          
+                                              --2.18%--_int_malloc
+                                                        |          
+                                                         --1.18%--malloc_consolidate
+
+     2.94%     0.00%  ems-baseline  ems-baseline       [.] eig_clause_store_add_clause
+            |
+            ---eig_clause_store_add_clause
+               |          
+                --2.47%--aot_call_dispatch
+
+     2.89%     0.24%  ems-baseline  ems-baseline       [.] eig_clause_store_clause
+            |          
+             --2.65%--eig_clause_store_clause
+                       |          
+                        --1.48%--gc_collect_cycles
+                                  |          
+                                   --1.37%--gc_collect_impl
+
+     2.45%     0.00%  ems-baseline  libc.so.6          [.] _int_free_maybe_consolidate
+            |
+            ---_int_free_maybe_consolidate
+               malloc_consolidate
+
+     2.41%     0.00%  ems-baseline  ems-baseline       [.] xrealloc_array
+            |
+            ---xrealloc_array
+               __GI___libc_realloc (inlined)
+               |          
+                --2.24%--_int_realloc
+                          |          
+                           --2.18%--_int_malloc
+                                     |          
+                                      --1.18%--malloc_consolidate
+
+     2.41%     0.00%  ems-baseline  libc.so.6          [.] __GI___libc_realloc (inlined)
+            |
+            ---__GI___libc_realloc (inlined)
+               |          
+                --2.24%--_int_realloc
+                          |          
+                           --2.18%--_int_malloc
+                                     |          
+                                      --1.18%--malloc_consolidate
+
+     2.37%     0.06%  ems-baseline  ems-baseline       [.] eig_init_clause_metadata
+            |          
+             --2.31%--eig_init_clause_metadata
+                       |          
+                        --2.07%--eig_clause_level_span
+                                  |          
+                                   --1.27%--gc_collect_cycles
+                                             |          
+                                              --1.21%--gc_collect_impl
+
+     2.35%     1.05%  ems-baseline  ems-baseline       [.] aot_lv_set
+            |          
+            |--1.30%--aot_lv_set
+            |          |          
+            |           --0.71%--slot_from_value
+            |          
+             --1.05%--_start
+                       __libc_start_main_impl (inlined)
+                       __libc_start_call_main
+                       main
+                       eig_solve_cnf_cdcl_with_options
+
+     2.29%     0.58%  ems-baseline  ems-baseline       [.] eig_analyze_mark_store_clause
+            |          
+            |--1.72%--eig_analyze_mark_store_clause
+            |          
+             --0.58%--_start
+                       __libc_start_main_impl (inlined)
+                       __libc_start_call_main
+                       main
+                       eig_solve_cnf_cdcl_with_options
+                       eig_analyze_conflict_cdcl
+                       eig_analyze_mark_store_clause
+
+     2.24%     0.00%  ems-baseline  libc.so.6          [.] _int_realloc
+            |
+            ---_int_realloc
+               |          
+                --2.18%--_int_malloc
+                          |          
+                           --1.18%--malloc_consolidate
+
+     2.05%     0.05%  ems-baseline  ems-baseline       [.] eig_reduce_learnt_db
+            |          
+             --1.99%--eig_reduce_learnt_db
+
+     1.92%     1.92%  ems-baseline  ems-baseline       [.] aot_call_resolve
+            |
+            ---_start
+               __libc_start_main_impl (inlined)
+               __libc_start_call_main
+               main
+               eig_solve_cnf_cdcl_with_options
+               |          
+                --0.95%--eig_run_watched_queue_cdcl.isra.0
+                          |          
+                           --0.53%--eig_lit_value
+                                     aot_call_resolve
+
+     1.66%     1.66%  ems-baseline  libc.so.6          [.] unlink_chunk.isra.0
+            |          
+             --1.54%--_start
+                       __libc_start_main_impl (inlined)
+                       __libc_start_call_main
+                       main
+                       eig_solve_cnf_cdcl_with_options
+                       |          
+                        --0.77%--eig_run_watched_queue_cdcl.isra.0
+
+     1.66%     0.00%  ems-baseline  libc.so.6          [.] unlink_chunk (inlined)
+            |
+            ---unlink_chunk (inlined)
+
+     1.65%     0.18%  ems-baseline  ems-baseline       [.] aot_add
+            |          
+             --1.47%--aot_add
+                       |          
+                        --0.95%--make_num
+
+     1.60%     0.36%  ems-baseline  ems-baseline       [.] eig_cdcl_cancel_until
+            |          
+             --1.24%--eig_cdcl_cancel_until
+                       |          
+                        --0.95%--eig_order_insert
+                                  |          
+                                   --0.77%--eig_order_sift_up
+
+     1.40%     1.40%  ems-baseline  libc.so.6          [.] _int_free
+            |          
+             --1.34%--_start
+                       __libc_start_main_impl (inlined)
+                       __libc_start_call_main
+                       main
+                       eig_solve_cnf_cdcl_with_options
+                       |          
+                        --0.82%--eig_run_watched_queue_cdcl.isra.0
+
+     1.31%     1.31%  ems-baseline  libc.so.6          [.] cfree@GLIBC_2.2.5
+            |
+            ---_start
+               __libc_start_main_impl (inlined)
+               __libc_start_call_main
+               main
+               |          
+                --1.29%--eig_solve_cnf_cdcl_with_options
+                          |          
+                           --0.53%--eig_run_watched_queue_cdcl.isra.0
+
+     1.29%     0.11%  ems-baseline  ems-baseline       [.] eig_order_pop_best
+            |          
+             --1.18%--eig_order_pop_best
+                       |          
+                        --0.90%--eig_order_sift_down
+
+     1.19%     1.19%  ems-baseline  ems-baseline       [.] slot_from_value
+            |
+            ---_start
+               __libc_start_main_impl (inlined)
+               __libc_start_call_main
+               main
+               eig_solve_cnf_cdcl_with_options
+               |          
+                --0.66%--eig_run_watched_queue_cdcl.isra.0
+
+     1.12%     0.29%  ems-baseline  ems-baseline       [.] eig_bump_clause_activity
+            |          
+             --0.83%--eig_bump_clause_activity
+
+     1.11%     1.11%  ems-baseline  ems-baseline       [.] slot_to_value
+            |
+            ---_start
+               __libc_start_main_impl (inlined)
+               __libc_start_call_main
+               main
+               eig_solve_cnf_cdcl_with_options
+               |          
+                --0.83%--eig_run_watched_queue_cdcl.isra.0
+                          |          
+                           --0.77%--slot_to_value
+
+     1.02%     0.06%  ems-baseline  ems-baseline       [.] call_eigs_fn
+            |          
+             --0.96%--call_eigs_fn
+
+     0.97%     0.06%  ems-baseline  ems-baseline       [.] eig_compact_deleted_clauses
+            |          
+             --0.91%--eig_compact_deleted_clauses
+                       |          
+                        --0.51%--eig_clause_store_compact_by_mask_counted
+
+     0.95%     0.00%  ems-baseline  ems-baseline       [.] eig_order_insert
+            |
+            ---eig_order_insert
+               |          
+                --0.77%--eig_order_sift_up
+
+     0.94%     0.94%  ems-baseline  ems-baseline       [.] aot_lv_index_s
+            |
+            ---_start
+               __libc_start_main_impl (inlined)
+               __libc_start_call_main
+               main
+               eig_solve_cnf_cdcl_with_options
+               |          
+                --0.76%--eig_run_watched_queue_cdcl.isra.0
+                          aot_lv_index_s
+
+     0.90%     0.12%  ems-baseline  ems-baseline       [.] eig_order_sift_down
+            |          
+             --0.78%--eig_order_sift_down
+
+     0.89%     0.89%  ems-baseline  ems-baseline       [.] list_append_owned
+            |
+            ---_start
+               __libc_start_main_impl (inlined)
+               __libc_start_call_main
+               main
+               eig_solve_cnf_cdcl_with_options
+
+     0.88%     0.00%  ems-baseline  ems-baseline       [.] eig_bump_clause_db_activity
+            |
+            ---eig_bump_clause_db_activity
+
+     0.82%     0.53%  ems-baseline  ems-baseline       [.] aot_ge
+            |          
+             --0.53%--_start
+                       __libc_start_main_impl (inlined)
+                       __libc_start_call_main
+                       main
+                       eig_solve_cnf_cdcl_with_options
+                       eig_run_watched_queue_cdcl.isra.0
+                       eig_lit_value
+                       aot_ge
+
+     0.81%     0.11%  ems-baseline  ems-baseline       [.] eig_enqueue_cdcl
+            |          
+             --0.70%--eig_enqueue_cdcl
+
+     0.77%     0.77%  ems-baseline  ems-baseline       [.] free_value
+            |
+            ---_start
+               __libc_start_main_impl (inlined)
+               __libc_start_call_main
+               main
+               eig_solve_cnf_cdcl_with_options
+
+     0.77%     0.24%  ems-baseline  ems-baseline       [.] eig_order_sift_up
+            |          
+             --0.53%--eig_order_sift_up
+
+     0.72%     0.06%  ems-baseline  ems-baseline       [.] eig_max_clause_level_except
+            |          
+             --0.66%--eig_max_clause_level_except
+
+     0.66%     0.06%  ems-baseline  ems-baseline       [.] eig_order_swap
+            |          
+             --0.60%--eig_order_swap
+
+     0.65%     0.12%  ems-baseline  ems-baseline       [.] eig_append_active_watch_tail
+            |          
+             --0.53%--eig_append_active_watch_tail
+
+     0.59%     0.06%  ems-baseline  ems-baseline       [.] eig_order_better
+            |          
+             --0.52%--eig_order_better
+
+     0.58%     0.58%  ems-baseline  ems-baseline       [.] promote_if_arena
+            |
+            ---_start
+               __libc_start_main_impl (inlined)
+               __libc_start_call_main
+               main
+               eig_solve_cnf_cdcl_with_options
+
+     0.57%     0.57%  ems-baseline  ems-baseline       [.] jit_helper_index_set
+     0.57%     0.51%  ems-baseline  ems-baseline       [.] eig_lit_abs
+            |          
+             --0.51%--_start
+                       __libc_start_main_impl (inlined)
+                       __libc_start_call_main
+                       main
+                       eig_solve_cnf_cdcl_with_options
+
+     0.53%     0.23%  ems-baseline  ems-baseline       [.] aot_index_set
+     0.51%     0.00%  ems-baseline  ems-baseline       [.] eig_clause_store_compact_by_mask_counted
+            |
+            ---eig_clause_store_compact_by_mask_counted
+
+
+
+#
+# (Cannot load tips.txt file, please install perf!)
+#

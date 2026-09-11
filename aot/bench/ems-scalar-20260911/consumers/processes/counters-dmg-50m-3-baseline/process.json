@@ -1,0 +1,30 @@
+{
+  "cleanup": null,
+  "command": [
+    "/usr/bin/time",
+    "-f",
+    "%M",
+    "-o",
+    "/tmp/ems-close-20260911/counters-dmg-50m-3-baseline.rss",
+    "perf",
+    "stat",
+    "-x",
+    ",",
+    "-e",
+    "instructions:u,cycles:u",
+    "-o",
+    "/tmp/ems-close-20260911/counters-dmg-50m-3-baseline.csv",
+    "--",
+    "/tmp/ems-close-20260911/dmg-baseline",
+    "roms/cpu_instrs.gb",
+    "--cycles",
+    "50000000"
+  ],
+  "cwd": "/home/jon/src/InauguralSystems/EigenScriptEcosystem/DMG",
+  "directory": "/tmp/ems-close-20260911/consumer-processes/counters-dmg-50m-3-baseline",
+  "interrupted_signal": null,
+  "returncode": 0,
+  "timed_out": false,
+  "timeout_seconds": 180,
+  "wall_ns": 3197830871
+}

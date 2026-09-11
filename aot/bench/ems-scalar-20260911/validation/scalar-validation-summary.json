@@ -1,0 +1,101 @@
+{
+  "original_full_driver": {
+    "log": "/tmp/ems-close-20260911/seven-tier-gate.log",
+    "exit": 1,
+    "verdict": "=== verdict aot=0 selfhost=0 canary=0 stdlib=0 corpus=0 leak=1 core=0 ===",
+    "completed": true,
+    "leak_failure_cause": "sandbox LeakSanitizer fatal: does not work under ptrace",
+    "invalid_legacy_zero_leak_rows": true,
+    "strict_red_artifacts": "/tmp/aot-slot-index-ownership-__khuc4n"
+  },
+  "affected_tier_retry": {
+    "log": "/tmp/ems-close-20260911/leak-escalated.log",
+    "outside_sandbox": true,
+    "exit": 0,
+    "fixture_allocations": [
+      253,
+      253,
+      253,
+      253,
+      252
+    ],
+    "strict_ownership_allocations": [
+      253,
+      253
+    ]
+  },
+  "populations": {
+    "aot_fixtures": 344,
+    "bench_builds": 12,
+    "compile_refusals": 64,
+    "runtime_refusals": 1,
+    "core_tus": 20,
+    "selfhost_programs": 63,
+    "bootstrap": true,
+    "dmg_byte_exact": true,
+    "stdlib": [
+      70,
+      77
+    ],
+    "corpus": [
+      157,
+      230
+    ],
+    "nondeterministic_exclusions": 2,
+    "corpus_process_crashes": 1
+  },
+  "helper_faults": [
+    {
+      "name": "buffer_read_guard",
+      "lane": "/tmp/aot-slot-scalar-faults-6f5ghnvp/buffer_read_guard",
+      "gate_exit": 1,
+      "gate_stderr": "FAIL: slot index ownership: candidate: missing, incomplete or changed completion witness\nDiagnostics retained: /tmp/aot-slot-index-ownership-so05_ue5\n",
+      "ownership_artifacts": "/tmp/aot-slot-index-ownership-so05_ue5"
+    },
+    {
+      "name": "heap_nan_identity",
+      "lane": "/tmp/aot-slot-scalar-faults-6f5ghnvp/heap_nan_identity",
+      "gate_exit": 1,
+      "gate_stderr": "FAIL: slot index ownership: candidate: missing, incomplete or changed completion witness\nDiagnostics retained: /tmp/aot-slot-index-ownership-eu54yd2_\n",
+      "ownership_artifacts": "/tmp/aot-slot-index-ownership-eu54yd2_"
+    },
+    {
+      "name": "left_value_release",
+      "lane": "/tmp/aot-slot-scalar-faults-6f5ghnvp/left_value_release",
+      "gate_exit": 1,
+      "gate_stderr": "FAIL: slot index ownership: candidate leaked 254 allocations; baseline leaked 253\nDiagnostics retained: /tmp/aot-slot-index-ownership-vdj5q3g4\n",
+      "ownership_artifacts": "/tmp/aot-slot-index-ownership-vdj5q3g4"
+    },
+    {
+      "name": "list_read_clamp",
+      "lane": "/tmp/aot-slot-scalar-faults-6f5ghnvp/list_read_clamp",
+      "gate_exit": 1,
+      "gate_stderr": "FAIL: slot index ownership: candidate: missing, incomplete or changed completion witness\nDiagnostics retained: /tmp/aot-slot-index-ownership-m0759ti5\n",
+      "ownership_artifacts": "/tmp/aot-slot-index-ownership-m0759ti5"
+    },
+    {
+      "name": "right_value_release",
+      "lane": "/tmp/aot-slot-scalar-faults-6f5ghnvp/right_value_release",
+      "gate_exit": 1,
+      "gate_stderr": "FAIL: slot index ownership: candidate leaked 254 allocations; baseline leaked 253\nDiagnostics retained: /tmp/aot-slot-index-ownership-pb80qxe4\n",
+      "ownership_artifacts": "/tmp/aot-slot-index-ownership-pb80qxe4"
+    },
+    {
+      "name": "slot_materialization_guard",
+      "lane": "/tmp/aot-slot-scalar-faults-6f5ghnvp/slot_materialization_guard",
+      "gate_exit": 1,
+      "gate_stderr": "FAIL: slot index ownership: candidate: missing, incomplete or changed completion witness\nDiagnostics retained: /tmp/aot-slot-index-ownership-szipfqoe\n",
+      "ownership_artifacts": "/tmp/aot-slot-index-ownership-szipfqoe"
+    },
+    {
+      "name": "sum_materialization_guard",
+      "lane": "/tmp/aot-slot-scalar-faults-6f5ghnvp/sum_materialization_guard",
+      "gate_exit": 1,
+      "gate_stderr": "FAIL: slot index ownership: candidate: missing, incomplete or changed completion witness\nDiagnostics retained: /tmp/aot-slot-index-ownership-t2umn44u\n",
+      "ownership_artifacts": "/tmp/aot-slot-index-ownership-t2umn44u"
+    }
+  ],
+  "old_emitter_comparator_manifest": "/tmp/ems-close-20260911/scalar-old-emitter-control/manifest.json",
+  "old_emitter_real_cli_manifest": "/tmp/ems-close-20260911/scalar-old-emitter-cli/manifest.json",
+  "oracle_status": ""
+}

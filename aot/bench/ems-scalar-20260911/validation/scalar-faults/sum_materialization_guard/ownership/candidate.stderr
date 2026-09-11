@@ -1,0 +1,1 @@
+candidate: /tmp/aot-slot-scalar-faults-6f5ghnvp/sum_materialization_guard/test/slot_index_ownership.c:171: check_scalar_consumers: Assertion `scalar_sum_eq_num(slot_from_num(EIGS_NUM_MAX), slot_from_num(EIGS_NUM_MAX), EIGS_NUM_MAX)' failed.

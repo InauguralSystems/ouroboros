@@ -1,0 +1,10 @@
+define traced_condition(source, selector) as:
+    local table is source
+    local index is selector
+    index is selector + 1
+    print of (prev of index)
+    if table[index] == 7:
+        print of "seven"
+    return 0
+
+traced_condition of [[3, 7], 0]

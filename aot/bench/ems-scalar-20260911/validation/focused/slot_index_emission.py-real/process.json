@@ -1,0 +1,14 @@
+{
+  "cleanup": null,
+  "command": [
+    "python3",
+    "/home/jon/src/wt/ouro-gap-20260911/aot/test/slot_index_emission.py"
+  ],
+  "cwd": "/home/jon/src/wt/ouro-gap-20260911",
+  "directory": "/tmp/ems-close-20260911/scalar-focused/slot_index_emission.py-real",
+  "interrupted_signal": null,
+  "returncode": 0,
+  "timed_out": false,
+  "timeout_seconds": 240,
+  "wall_ns": 2230335965
+}

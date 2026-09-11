@@ -2233,6 +2233,93 @@ static inline void aot_lv_index_s(EigsSlot *dst, EigsSlot target, EigsSlot index
     aot_lv_set(dst, aot_index_get(t, i));
 }
 
+/* Call-free scalar consumers of lowered frame slots. Unlike assignment into
+ * an EigsSlot, reading a heap numeric list element MUST NOT clamp it. A slot
+ * immediate crosses slot_to_value/make_num and a buffer read crosses make_num;
+ * those two boundaries DO clamp. Keep the original owned Value on uncommon
+ * paths so equality and index diagnostics still use the existing helpers.
+ * A null `value` means `number` is available without an owned heap object.
+ * These temporaries never escape a call-free condition/index assignment. */
+typedef struct { double number; Value *value; } AotScalarRead;
+
+static inline AotScalarRead aot_scalar_number(double number) {
+    AotScalarRead result = {number, NULL};
+    return result;
+}
+static inline AotScalarRead aot_scalar_owned(Value *value) {
+    AotScalarRead result = {0, value};
+    return result;
+}
+static inline AotScalarRead aot_scalar_slot(EigsSlot slot) {
+    if (slot_is_num(slot)) return aot_scalar_number(num_guard(slot.d));
+    if (slot_is_bool(slot)) return aot_scalar_number(slot_as_bool(slot) ? 1 : 0);
+    if (slot_is_ptr(slot)) {
+        Value *value = slot_as_ptr(slot);
+        /* Structural equality first checks pointer identity: the same heap
+         * NaN equals itself there even though NaN == NaN is false. */
+        if (value && value->type == VAL_NUM && !isnan(value->data.num))
+            return aot_scalar_number(value->data.num);
+    }
+    return aot_scalar_owned(slot_to_value(slot));
+}
+static inline Value *aot_scalar_view(AotScalarRead scalar, Value *scratch) {
+    if (scalar.value) return scalar.value;
+    memset(scratch, 0, sizeof(*scratch));
+    scratch->type = VAL_NUM;
+    scratch->data.num = scalar.number;
+    scratch->arena = 1; /* Existing consuming helpers may release this view. */
+    return scratch;
+}
+static inline AotScalarRead aot_scalar_add_slots(EigsSlot left, EigsSlot right) {
+    AotScalarRead l = aot_scalar_slot(left);
+    AotScalarRead r = aot_scalar_slot(right);
+    if (!l.value && !r.value)
+        return aot_scalar_number(num_guard(l.number + r.number));
+    Value lv, rv;
+    return aot_scalar_owned(aot_add(aot_scalar_view(l, &lv), aot_scalar_view(r, &rv)));
+}
+static inline AotScalarRead aot_scalar_index(EigsSlot target, AotScalarRead index) {
+    double number = index.number;
+    int numeric = !index.value;
+    if (index.value && index.value->type == VAL_NUM) {
+        number = index.value->data.num;
+        numeric = 1;
+    }
+    if (numeric && slot_is_ptr(target)) {
+        Value *container = slot_as_ptr(target);
+        if (container && container->type == VAL_LIST && number >= 0 &&
+            number < container->data.list.count && (double)(int)number == number) {
+            Value *element = container->data.list.items[(int)number];
+            if (element && element->type == VAL_NUM && !isnan(element->data.num)) {
+                double result = element->data.num; /* raw even for arena nums */
+                val_decref(index.value);
+                return aot_scalar_number(result);
+            }
+        } else if (container && container->type == VAL_BUFFER && number >= 0 &&
+                   number < container->data.buffer.count && (double)(int)number == number) {
+            double result = num_guard(container->data.buffer.data[(int)number]);
+            val_decref(index.value);
+            return aot_scalar_number(result);
+        }
+    }
+    Value scratch;
+    return aot_scalar_owned(aot_index_get(slot_to_value(target), aot_scalar_view(index, &scratch)));
+}
+static inline int aot_scalar_equal(AotScalarRead left, AotScalarRead right) {
+    if (!left.value && !right.value) return left.number == right.number;
+    Value lv, rv;
+    int equal = values_equal(aot_scalar_view(left, &lv), aot_scalar_view(right, &rv));
+    val_decref(left.value);
+    val_decref(right.value);
+    return equal;
+}
+static inline void aot_lv_index_add_slots(EigsSlot *dst, EigsSlot target,
+                                         EigsSlot left, EigsSlot right) {
+    AotScalarRead index = aot_scalar_add_slots(left, right);
+    if (!index.value) aot_lv_index_i(dst, target, index.number);
+    else aot_lv_index_v(dst, target, index.value);
+}
+
 /* (#86) native argv -> the VM's args convention: builtin_args reads
  * g_argv[2..] (slot 0 = runtime, 1 = script). The native binary's user
  * args start at argv[1], so shift by one synthetic slot. */

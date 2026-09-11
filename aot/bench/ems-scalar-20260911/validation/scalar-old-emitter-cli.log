@@ -1,0 +1,8 @@
+PASS: actual production emission CLI rejects pristine compiler, exit1
+{
+  "exit": 1,
+  "actual_cli_stderr": "FAIL: slot scalar emission: t343_slot_scalar_conditions.eigs: expected ['aot_lv_index_add_slots', 'aot_scalar_add_slots', 'aot_scalar_equal', 'aot_scalar_index', 'aot_scalar_slot'], got []\n",
+  "gate_sha256": "b87c5ab0f6a729486748e6d5f009b88a0fd70fbd9d05076bd88767078d130e90",
+  "compiler_sha256": "affa999d5ffd581789197193fe6d753fdd2bd4d4e658cff5c701bc47d8d82e07",
+  "fixture_count": 6
+}

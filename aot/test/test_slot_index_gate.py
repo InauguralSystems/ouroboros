@@ -9,7 +9,7 @@ import time
 import unittest
 
 DRIVER = Path(__file__).resolve().with_name('slot_index_ownership.sh')
-WITNESS = 'slot index: 300 alias cycles; heap/buffer/arena boundaries OK\n'
+WITNESS = 'slot index: 300 alias cycles; heap/buffer/arena boundaries OK; scalar consumers OK\n'
 LSAN = '\n=================================================================\n==123==ERROR: LeakSanitizer: detected memory leaks\n\nDirect leak of {bytes} byte(s) in {count} object(s) allocated from:\n    #0 0x1234 in malloc /runtime/asan.c:12\n    #1 0x5678 in main /fixture.c:1\n\nSUMMARY: AddressSanitizer: {bytes} byte(s) leaked in {count} allocation(s).\n'
 FAKE_GCC = '''#!/usr/bin/env python3
 import os

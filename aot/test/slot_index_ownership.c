@@ -129,12 +129,118 @@ static void check_arena_elements(void) {
     slot_decref(result);
 }
 
+static int scalar_index_eq(EigsSlot table, EigsSlot index, EigsSlot rhs) {
+#ifdef SLOT_INDEX_BASELINE
+    Value *left = aot_index_get(slot_to_value(table), slot_to_value(index));
+    Value *right = slot_to_value(rhs);
+    return aot_truthy(aot_eq(left, right));
+#else
+    AotScalarRead left = aot_scalar_index(table, aot_scalar_slot(index));
+    AotScalarRead right = aot_scalar_slot(rhs);
+    return aot_scalar_equal(left, right);
+#endif
+}
+static int scalar_index_eq_num(EigsSlot table, EigsSlot index, double rhs) {
+#ifdef SLOT_INDEX_BASELINE
+    return aot_eq_n_t(aot_index_get(slot_to_value(table), slot_to_value(index)), rhs);
+#else
+    AotScalarRead left = aot_scalar_index(table, aot_scalar_slot(index));
+    return aot_scalar_equal(left, aot_scalar_number(rhs));
+#endif
+}
+static void scalar_sum_store(EigsSlot *dst, EigsSlot table, EigsSlot left, EigsSlot right) {
+#ifdef SLOT_INDEX_BASELINE
+    Value *l = slot_to_value(left);
+    Value *r = slot_to_value(right);
+    aot_lv_index_v(dst, table, aot_add(l, r));
+#else
+    aot_lv_index_add_slots(dst, table, left, right);
+#endif
+}
+static int scalar_sum_eq_num(EigsSlot left, EigsSlot right, double expected) {
+#ifdef SLOT_INDEX_BASELINE
+    Value *l = slot_to_value(left);
+    Value *r = slot_to_value(right);
+    return aot_eq_n_t(aot_add(l, r), expected);
+#else
+    return aot_scalar_equal(aot_scalar_add_slots(left, right), aot_scalar_number(expected));
+#endif
+}
+static void check_scalar_consumers(void) {
+    g_math_flags = 0;
+    assert(scalar_sum_eq_num(slot_from_num(EIGS_NUM_MAX), slot_from_num(EIGS_NUM_MAX), EIGS_NUM_MAX));
+    assert(g_math_flags == EIGS_MATH_OVERFLOW);
+    g_math_flags = 0;
+    assert(scalar_sum_eq_num(slot_from_num(-EIGS_NUM_MAX), slot_from_num(-EIGS_NUM_MAX), -EIGS_NUM_MAX));
+    assert(g_math_flags == EIGS_MATH_OVERFLOW);
+    EigsSlot numbers = one_item(make_num(0));
+    Value *number = slot_as_ptr(numbers)->data.list.items[0];
+    number->data.num = INFINITY;
+    g_math_flags = 0;
+    assert(scalar_index_eq_num(numbers, slot_from_num(0), INFINITY));
+    assert(g_math_flags == 0); /* heap list read is raw, not stored in a slot */
+    number->data.num = NAN;
+    val_incref(number);
+    EigsSlot same = slot_from_heap(number);
+    g_math_flags = 0;
+    assert(scalar_index_eq(numbers, slot_from_num(0), same));
+    assert(!scalar_index_eq_num(numbers, slot_from_num(0), 0));
+    assert(g_math_flags == 0); /* heap NaN identity must survive */
+    slot_decref(same);
+    number->data.num = 17;
+    g_math_flags = 0;
+    assert(scalar_index_eq_num(numbers, slot_from_num(NAN), 17));
+    assert(g_math_flags == EIGS_MATH_INVALID); /* immediate index materializes */
+    assert(scalar_index_eq_num(numbers, slot_from_num(-1), 17));
+    slot_decref(numbers);
+
+    Value *buffer = xcalloc(1, sizeof(Value));
+    buffer->type = VAL_BUFFER;
+    buffer->refcount = 1;
+    buffer->data.buffer.count = 1;
+    buffer->data.buffer.data = xcalloc(1, sizeof(double));
+    EigsSlot values = slot_from_value(buffer);
+    buffer->data.buffer.data[0] = INFINITY;
+    g_math_flags = 0;
+    assert(scalar_index_eq_num(values, slot_from_num(0), EIGS_NUM_MAX));
+    assert(g_math_flags == EIGS_MATH_OVERFLOW);
+    buffer->data.buffer.data[0] = NAN;
+    g_math_flags = 0;
+    assert(scalar_index_eq_num(values, slot_from_num(0), 0));
+    assert(g_math_flags == EIGS_MATH_INVALID);
+    slot_decref(values);
+
+    Value *arena_list = make_list(1);
+    arena_list->data.list.count = 1;
+    EigsSlot arena_target = slot_from_value(arena_list);
+    arena_mark_pos();
+    arena_list->data.list.items[0] = make_num(0);
+    arena_list->data.list.items[0]->data.num = INFINITY;
+    g_math_flags = 0;
+    assert(scalar_index_eq_num(arena_target, slot_from_num(0), INFINITY));
+    assert(g_math_flags == 0); /* read does not promote an arena number */
+    slot_decref(arena_target);
+    arena_reset_to_mark();
+
+    for (int k = 0; k < 300; ++k) {
+        EigsSlot child = one_item(make_str("scalar retained"));
+        EigsSlot parent = one_item(slot_as_ptr(child));
+        EigsSlot right = one_item(make_str("scalar retained"));
+        assert(scalar_index_eq(parent, slot_from_num(0), right));
+        slot_decref(right);
+        scalar_sum_store(&parent, parent, slot_from_num(0), slot_from_num(0));
+        assert(strcmp(slot_as_ptr(parent)->data.list.items[0]->data.str, "scalar retained") == 0);
+        slot_decref(parent);
+    }
+}
+
 int main(void) {
     Env *env = aot_boot();
     check_aliases();
     check_number_boundaries();
     check_arena_elements();
-    puts("slot index: 300 alias cycles; heap/buffer/arena boundaries OK");
+    check_scalar_consumers();
+    puts("slot index: 300 alias cycles; heap/buffer/arena boundaries OK; scalar consumers OK");
     /* LSan's nonzero exit can bypass the normal stdio flush. */
     fflush(stdout);
     aot_shutdown(env);

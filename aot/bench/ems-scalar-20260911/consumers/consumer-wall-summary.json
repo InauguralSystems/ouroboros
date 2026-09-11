@@ -1,0 +1,54 @@
+{
+  "dmg-50m": {
+    "baseline": {
+      "peak_process_tree_rss_kib": {
+        "max": 6728,
+        "median": 6600,
+        "min": 6468
+      },
+      "wall_ns": {
+        "max": 3419581627,
+        "median": 3238766409,
+        "min": 3164917033
+      }
+    },
+    "candidate": {
+      "peak_process_tree_rss_kib": {
+        "max": 6660,
+        "median": 6600,
+        "min": 6468
+      },
+      "wall_ns": {
+        "max": 3539585021,
+        "median": 3070671622,
+        "min": 3040704566
+      }
+    }
+  },
+  "ems-4x4": {
+    "baseline": {
+      "peak_process_tree_rss_kib": {
+        "max": 86400,
+        "median": 86400,
+        "min": 86272
+      },
+      "wall_ns": {
+        "max": 9419787147,
+        "median": 9281391310,
+        "min": 9025475055
+      }
+    },
+    "candidate": {
+      "peak_process_tree_rss_kib": {
+        "max": 86528,
+        "median": 86400,
+        "min": 86272
+      },
+      "wall_ns": {
+        "max": 8271735944,
+        "median": 8160491169,
+        "min": 8099940635
+      }
+    }
+  }
+}

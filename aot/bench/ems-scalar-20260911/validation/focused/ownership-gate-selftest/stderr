@@ -1,0 +1,10 @@
+test_empty_leak_population (__main__.Tests.test_empty_leak_population) ... ok
+test_missing_and_empty_inputs (__main__.Tests.test_missing_and_empty_inputs) ... ok
+test_planted_faults (__main__.Tests.test_planted_faults) ... ok
+test_positive_controls (__main__.Tests.test_positive_controls) ... ok
+test_sigterm_cleans_child (__main__.Tests.test_sigterm_cleans_child) ... ok
+
+----------------------------------------------------------------------
+Ran 5 tests in 12.363s
+
+OK

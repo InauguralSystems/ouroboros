@@ -1,0 +1,9 @@
+scalar fault artifacts: /tmp/aot-slot-scalar-faults-6f5ghnvp
+PASS: rejected scalar helper fault sum_materialization_guard
+PASS: rejected scalar helper fault heap_nan_identity
+PASS: rejected scalar helper fault list_read_clamp
+PASS: rejected scalar helper fault buffer_read_guard
+PASS: rejected scalar helper fault slot_materialization_guard
+PASS: rejected scalar helper fault left_value_release
+PASS: rejected scalar helper fault right_value_release
+SLOT_SCALAR_FAULTS_DONE planted=7 rejected=7

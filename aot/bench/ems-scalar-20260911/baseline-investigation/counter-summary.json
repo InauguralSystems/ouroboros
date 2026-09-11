@@ -1,0 +1,17 @@
+{
+  "baseline": {
+    "instructions:u": 16377678149,
+    "cycles:u": 18612007862,
+    "peak_process_tree_rss_kib": 86400
+  },
+  "range-only": {
+    "instructions:u": 15483093395,
+    "cycles:u": 17728678658,
+    "peak_process_tree_rss_kib": 68608
+  },
+  "slot-expressions-only": {
+    "instructions:u": 14693955399,
+    "cycles:u": 16949899617,
+    "peak_process_tree_rss_kib": 86400
+  }
+}

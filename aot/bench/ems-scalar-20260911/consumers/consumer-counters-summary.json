@@ -1,0 +1,76 @@
+{
+  "dmg-50m": {
+    "baseline": {
+      "cycles:u": {
+        "max": 6879188002,
+        "median": 6830420048,
+        "min": 6800385322
+      },
+      "host_instructions_per_emulated_cycle": 249.92373365220263,
+      "instructions:u": {
+        "max": 12496192657,
+        "median": 12496188682,
+        "min": 12496184015
+      },
+      "peak_process_tree_rss_kib": {
+        "max": 12032,
+        "median": 11904,
+        "min": 11648
+      }
+    },
+    "candidate": {
+      "cycles:u": {
+        "max": 6610508650,
+        "median": 6602124645,
+        "min": 6580859919
+      },
+      "host_instructions_per_emulated_cycle": 249.92078897267376,
+      "instructions:u": {
+        "max": 12496046036,
+        "median": 12496041448,
+        "min": 12496037355
+      },
+      "peak_process_tree_rss_kib": {
+        "max": 12032,
+        "median": 11904,
+        "min": 11776
+      }
+    }
+  },
+  "ems-4x4": {
+    "baseline": {
+      "cycles:u": {
+        "max": 18586056235,
+        "median": 18454422864,
+        "min": 18307029121
+      },
+      "instructions:u": {
+        "max": 16377772882,
+        "median": 16377664462,
+        "min": 16377491300
+      },
+      "peak_process_tree_rss_kib": {
+        "max": 86400,
+        "median": 86400,
+        "min": 86272
+      }
+    },
+    "candidate": {
+      "cycles:u": {
+        "max": 16804487891,
+        "median": 16708900836,
+        "min": 16646780903
+      },
+      "instructions:u": {
+        "max": 14315424359,
+        "median": 14314999223,
+        "min": 14314923107
+      },
+      "peak_process_tree_rss_kib": {
+        "max": 86528,
+        "median": 86400,
+        "min": 86272
+      }
+    }
+  }
+}

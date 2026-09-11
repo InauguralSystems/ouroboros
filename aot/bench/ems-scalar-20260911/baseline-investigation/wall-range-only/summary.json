@@ -1,0 +1,100 @@
+{
+  "interpretation": "AOT/native wall ratios and conflicts/sec are descriptive across different solver policies",
+  "rows": [
+    {
+      "aot": {
+        "conflicts": 140,
+        "max_wall_s": 0.171494236,
+        "median_conflicts_per_wall_second_descriptive": 2054.4889504961643,
+        "median_wall_s": 0.068143467,
+        "min_wall_s": 0.063911289
+      },
+      "aot_over_native_wall_ratio_policy_confounded": 8.807991546619617,
+      "aot_policy": "CDCL current defaults (regime C); --cdcl; no policy overrides",
+      "baseline_over_candidate_wall_ratio_same_policy": 1.025792614795392,
+      "candidate": {
+        "conflicts": 140,
+        "max_wall_s": 0.091907708,
+        "median_conflicts_per_wall_second_descriptive": 2107.479592597701,
+        "median_wall_s": 0.066430062,
+        "min_wall_s": 0.064687888
+      },
+      "candidate_policy": "CDCL current defaults (regime C); --cdcl; no policy overrides; candidate=timing-only range-only",
+      "case": "pigeonhole-6-5",
+      "input_sha256": "5b884b97debd41c9d89378c4414fb1b7b03365725e09992ba0709c23a3cebb7e",
+      "n": 5,
+      "native": {
+        "conflicts": 138,
+        "max_wall_s": 0.011665938,
+        "median_conflicts_per_wall_second_descriptive": 17837.408147042286,
+        "median_wall_s": 0.00773655,
+        "min_wall_s": 0.007258707
+      },
+      "native_policy": "native MiniSat executable defaults; no policy overrides"
+    },
+    {
+      "aot": {
+        "conflicts": 592,
+        "max_wall_s": 0.22778583,
+        "median_conflicts_per_wall_second_descriptive": 2819.3867509968104,
+        "median_wall_s": 0.20997474,
+        "min_wall_s": 0.194950911
+      },
+      "aot_over_native_wall_ratio_policy_confounded": 17.307696397365252,
+      "aot_policy": "CDCL current defaults (regime C); --cdcl; no policy overrides",
+      "baseline_over_candidate_wall_ratio_same_policy": 1.0455149794162628,
+      "candidate": {
+        "conflicts": 592,
+        "max_wall_s": 0.217301026,
+        "median_conflicts_per_wall_second_descriptive": 2947.7110809349147,
+        "median_wall_s": 0.200833794,
+        "min_wall_s": 0.1907727
+      },
+      "candidate_policy": "CDCL current defaults (regime C); --cdcl; no policy overrides; candidate=timing-only range-only",
+      "case": "tseitin-3x3-odd",
+      "input_sha256": "fe1938d0377c2e32566cad276df525053397d0cb617981515e73884005cf83f2",
+      "n": 5,
+      "native": {
+        "conflicts": 731,
+        "max_wall_s": 0.013067168,
+        "median_conflicts_per_wall_second_descriptive": 60254.51474055403,
+        "median_wall_s": 0.012131871,
+        "min_wall_s": 0.008358039
+      },
+      "native_policy": "native MiniSat executable defaults; no policy overrides"
+    },
+    {
+      "aot": {
+        "conflicts": 9986,
+        "max_wall_s": 11.200357078,
+        "median_conflicts_per_wall_second_descriptive": 1010.2595388946947,
+        "median_wall_s": 9.884588678,
+        "min_wall_s": 9.140923726
+      },
+      "aot_over_native_wall_ratio_policy_confounded": 37.62454834865057,
+      "aot_policy": "CDCL current defaults (regime C); --cdcl; no policy overrides",
+      "baseline_over_candidate_wall_ratio_same_policy": 1.1056447289983857,
+      "candidate": {
+        "conflicts": 9986,
+        "max_wall_s": 10.100856831,
+        "median_conflicts_per_wall_second_descriptive": 1116.988134099259,
+        "median_wall_s": 8.940112876,
+        "min_wall_s": 8.641650689
+      },
+      "candidate_policy": "CDCL current defaults (regime C); --cdcl; no policy overrides; candidate=timing-only range-only",
+      "case": "tseitin-4x4-odd",
+      "input_sha256": "f0148e8b4ce9692de61347005af8179e8d8d38134283b6fb0c35a8b9efd32b71",
+      "n": 5,
+      "native": {
+        "conflicts": 84150,
+        "max_wall_s": 0.27157954,
+        "median_conflicts_per_wall_second_descriptive": 320307.2830522231,
+        "median_wall_s": 0.262716474,
+        "min_wall_s": 0.258591288
+      },
+      "native_policy": "native MiniSat executable defaults; no policy overrides"
+    }
+  ],
+  "status": "complete",
+  "timing_scope": "perf_counter_ns before process launch through blocking waitpid return; includes launch, input parsing, solving, output and process exit; excludes preflight and sample validation"
+}

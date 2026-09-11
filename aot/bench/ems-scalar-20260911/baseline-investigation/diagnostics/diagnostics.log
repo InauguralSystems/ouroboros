@@ -1,0 +1,25 @@
+START generate
+DONE generate 0.203479225
+START archive-members
+DONE archive-members 0.005034619
+START compile-runtime-diagnostic
+DONE compile-runtime-diagnostic 7.527814344
+START link-controls
+DONE link-controls 1.730517554
+START controls-positive
+DONE controls-positive 0.004726335
+START compile-runtime-fault
+DONE compile-runtime-fault 8.29971699
+START link-controls-missing-reuse
+DONE link-controls-missing-reuse 1.66871342
+START controls-fault
+DONE controls-fault 0.004444253
+START link-ems-diagnostics
+DONE link-ems-diagnostics 57.443903046
+START ems-counts
+DONE ems-counts 10.127664663
+{
+  "positive_controls": "pass",
+  "planted_missing_reuse": "rejected",
+  "out": "/tmp/ems-close-20260911/diagnostics-run"
+}

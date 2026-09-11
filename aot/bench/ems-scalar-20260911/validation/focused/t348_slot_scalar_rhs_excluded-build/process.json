@@ -1,0 +1,33 @@
+{
+  "cleanup": null,
+  "command": [
+    "gcc",
+    "-O3",
+    "-ffp-contract=off",
+    "-falign-functions=64",
+    "-falign-jumps=32",
+    "-falign-loops=32",
+    "-march=native",
+    "-DEIGENSCRIPT_EXT_HTTP=0",
+    "-DEIGENSCRIPT_EXT_MODEL=0",
+    "-DEIGENSCRIPT_EXT_DB=0",
+    "-DEIGENSCRIPT_VERSION=\"aot\"",
+    "-DAOT_SCRIPT_DIR=\"/home/jon/src/InauguralSystems/EigenScriptEcosystem/EigenMiniSat\"",
+    "-DAOT_EXE_DIR=\"/home/jon/src/wt/es-v043/src\"",
+    "-I/home/jon/src/wt/ouro-gap-20260911/aot",
+    "-I/home/jon/src/wt/es-v043/src",
+    "/tmp/ems-close-20260911/scalar-focused/t348_slot_scalar_rhs_excluded.c",
+    "/home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a",
+    "-lm",
+    "-lpthread",
+    "-o",
+    "/tmp/ems-close-20260911/scalar-focused/t348_slot_scalar_rhs_excluded"
+  ],
+  "cwd": "/home/jon/src/wt/ouro-gap-20260911",
+  "directory": "/tmp/ems-close-20260911/scalar-focused/t348_slot_scalar_rhs_excluded-build",
+  "interrupted_signal": null,
+  "returncode": 0,
+  "timed_out": false,
+  "timeout_seconds": 120,
+  "wall_ns": 1885484230
+}

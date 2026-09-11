@@ -1,0 +1,26 @@
+{
+  "arm": "candidate",
+  "binary_sha256": "3dce2fd61d0c3edccbca5edd7ab00b30b56398e03199a11edfc63c0a026a89d2",
+  "case": "ems-4x4",
+  "cleanup": null,
+  "command": [
+    "/usr/bin/time",
+    "-f",
+    "%M",
+    "-o",
+    "/tmp/ems-close-20260911/wall-ems-4x4-4-candidate.rss",
+    "/tmp/ems-close-20260911/ems-scalar-production",
+    "--cdcl",
+    "/tmp/ems-close-20260911/wall-range-only/oracle/case.HTu63l/input.cnf"
+  ],
+  "cwd": "/home/jon/src/InauguralSystems/EigenScriptEcosystem/EigenMiniSat",
+  "directory": "/tmp/ems-close-20260911/consumer-processes/wall-ems-4x4-4-candidate",
+  "interrupted_signal": null,
+  "peak_process_tree_rss_kib": 86528,
+  "repetition": 4,
+  "returncode": 0,
+  "timed_out": false,
+  "timeout_seconds": 180,
+  "validated": true,
+  "wall_ns": 8271735944
+}

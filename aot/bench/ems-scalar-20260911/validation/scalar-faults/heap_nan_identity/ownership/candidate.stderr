@@ -1,0 +1,1 @@
+candidate: /tmp/aot-slot-scalar-faults-6f5ghnvp/heap_nan_identity/test/slot_index_ownership.c:186: check_scalar_consumers: Assertion `scalar_index_eq(numbers, slot_from_num(0), same)' failed.

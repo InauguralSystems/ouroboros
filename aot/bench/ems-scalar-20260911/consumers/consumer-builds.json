@@ -1,0 +1,283 @@
+{
+  "archive_sha256": "5db0ea14d1ce3476b03643622fea11359172075b21cdc6343d80a9e591bd6eca",
+  "dmg": {
+    "path": "/home/jon/src/InauguralSystems/EigenScriptEcosystem/DMG",
+    "head": "ff29549873f625f99d78dd2e2c3cc884bc17d01a",
+    "status": "",
+    "files": {
+      ".devcontainer/Dockerfile": {
+        "sha256": "88dc219deb1e346a466d5c7bb7c49a6667aaa14a427fb784b4b18febccbd6818"
+      },
+      ".devcontainer/devcontainer.json": {
+        "sha256": "e6ff2d6e30adbe6080af3054a1d83fe4f44ab0711609e8ced77e306d26ca4094"
+      },
+      ".github/ISSUE_TEMPLATE/bug_report.md": {
+        "sha256": "46c40e4cb18634ee510e3e4bbe7996be09d98d842f6e1554779f355bc62e85d0"
+      },
+      ".github/ISSUE_TEMPLATE/config.yml": {
+        "sha256": "9675bc060dc0bd0e116c1557f1fee4ee7309d6fdb25bda9c25106a96d605ba5b"
+      },
+      ".github/ISSUE_TEMPLATE/feature_request.md": {
+        "sha256": "0477475c163b71ad802c23a39a9eed8df5df19b2adc4193bd60ee12185de8017"
+      },
+      ".github/PULL_REQUEST_TEMPLATE.md": {
+        "sha256": "5b1c472003fd4493f285ea16352946f7691306a16bc7e59719afb0de6f011587"
+      },
+      ".github/dependabot.yml": {
+        "sha256": "d457f809f72ec6eb74f487b1eb1de0bc61e68ab506ad08b8ffa52e978b3f4301"
+      },
+      ".github/workflows/ci.yml": {
+        "sha256": "40035c958e065e35b028e251d7581a5704fd3d2da0bfe476ed917fe1a3e80e09"
+      },
+      ".github/workflows/scorecard.yml": {
+        "sha256": "cb3620f2c1b102ceb5f0d9dd3f65e64b008cf28caed83f1bf024e499370a2576"
+      },
+      ".gitignore": {
+        "sha256": "8cb17ed952c78129c92bbb7b8987453b38362b011340bdb5c109547805262e35"
+      },
+      "BASELINE.md": {
+        "sha256": "b3d0d832a38ab9cdf836958e8d5dd04790b66b7174908c0812574e966142722b"
+      },
+      "CHANGELOG.md": {
+        "sha256": "00b158f409b484e172a6ddbd5edd2e81156d6ef24822cbe70de81932c7c12019"
+      },
+      "CLAUDE.md": {
+        "sha256": "a0e24055f74c1dc29c43de9e1ad299af9e239038ef7e2e9b5ccbcb958c77b6a9"
+      },
+      "CODE_OF_CONDUCT.md": {
+        "sha256": "1cecd005cfff1a33d8072e6f46123717f43df037e615f34817d345d848a9d2da"
+      },
+      "CONTRIBUTING.md": {
+        "sha256": "fe61833f0ba3bafc0b1b71641f3594f6ffbb6e4c61034fcbe162b7ce598d073b"
+      },
+      "GAPS.md": {
+        "sha256": "836a0824de24ae4f4b693cbbcab672563fe6a9e8915534f50d0c83ea5538578d"
+      },
+      "LICENSE": {
+        "sha256": "58ca7bf9eb9469dbae470806411d30879c83e8e52b218503f6d6d339bbd06de1"
+      },
+      "README.md": {
+        "sha256": "464d7f8d70e56d925eeedb60dbec542b9b18a4c5f4730f00561928ad786e9a57"
+      },
+      "SECURITY.md": {
+        "sha256": "37fe459d096d5f6597b0e1aa9cffd884463995411cd65d0c44a595c4ded89d8d"
+      },
+      "debugger.eigs": {
+        "sha256": "69f31e957b9f1b926bf21f3cdee3aacdd692cde234e633d5c062b4eddcf1d1fc"
+      },
+      "dmg.eigs": {
+        "sha256": "d5f0ac642326489b582511fabe9d4086fbea2afbed62cf1cee2fcd3c382f5893"
+      },
+      "eigs.json": {
+        "sha256": "650ce95a9f80ed474e1a25f9381481280f16859228eb51d43afccce4d033e39e"
+      },
+      "roms/README.md": {
+        "sha256": "bf0bfe8376c6cbb1c905728fdb0504fe3631f94ac0ddee09734da4e76b7ab5d0"
+      },
+      "roms/cpu_instrs.gb": {
+        "sha256": "8c5e12f41e0ba5bbca796944f92ffe6de28809198682c4332e38d1b3cf56fcf2"
+      },
+      "roms/individual/01.gb": {
+        "sha256": "fe61349cbaee10cc384b50f356e541c90d1bc380185716706b5d8c465a03cf89"
+      },
+      "roms/individual/02.gb": {
+        "sha256": "fb90b0d2b9501910c49709abda1d8e70f757dc12020ebf8409a7779bbfd12229"
+      },
+      "roms/individual/03.gb": {
+        "sha256": "ca553e606d9b9c86fbd318f1b916c6f0b9df0cf1774825d4361a3fdff2e5a136"
+      },
+      "roms/individual/04.gb": {
+        "sha256": "7686aa7a39ef3d2520ec1037371b5f94dc283fbbfd0f5051d1f64d987bdd6671"
+      },
+      "roms/individual/05.gb": {
+        "sha256": "d504adfa0a4c4793436a154f14492f044d38b3c6db9efc44138f3c9ad138b775"
+      },
+      "roms/individual/06.gb": {
+        "sha256": "17ada54b0b9c1a33cd5429fce5b765e42392189ca36da96312222ffe309e7ed1"
+      },
+      "roms/individual/07.gb": {
+        "sha256": "ab31d3daaaa3a98bdbd9395b64f48c1bdaa889aba5b19dd5aaff4ec2a7d228a3"
+      },
+      "roms/individual/08.gb": {
+        "sha256": "974a71fe4c67f70f5cc6e98d4dc8c096057ff8a028b7bfa9f7a4330038cf8b7e"
+      },
+      "roms/individual/09.gb": {
+        "sha256": "b28e1be5cd95f22bd1ecacdd33c6f03e607d68870e31a47b15a0229033d5ba2a"
+      },
+      "roms/individual/10.gb": {
+        "sha256": "7f5b8e488c6988b5aaba8c2a74529b7c180c55a58449d5ee89d606a07c53514a"
+      },
+      "roms/individual/11.gb": {
+        "sha256": "0ec0cf9fda3f00becaefa476df6fb526c434abd9d4a4beac237c2c2692dac5d3"
+      },
+      "roms/instr_timing.gb": {
+        "sha256": "646067b3d6c79fda810e9c3f1cb7c0efd5abb0a7ac06437c54e65720c15d9925"
+      },
+      "roms/interrupt_time/interrupt_time.gb": {
+        "sha256": "1a8f8f3bc609a92a5838214c00906c81e7cc77b3b9a63be5a1ec6d513f234929"
+      },
+      "roms/mem_timing-2/mem_timing.gb": {
+        "sha256": "ab9daf4c51f417c468ad0a61dab66872cf8b5a50e6eb08d989b581d15f3cf461"
+      },
+      "roms/mem_timing-2/rom_singles/01-read_timing.gb": {
+        "sha256": "d9c6e86b7008fdaec2d4345c59192af4cea98b812e9b7b07239d16ad6770b576"
+      },
+      "roms/mem_timing-2/rom_singles/02-write_timing.gb": {
+        "sha256": "9188e5d9cf9dfc9e25f7b7c5d67e5c8e36e1b25e5ef4be0089dad1ddb526706a"
+      },
+      "roms/mem_timing-2/rom_singles/03-modify_timing.gb": {
+        "sha256": "818256ab477bb8fbb0709d28e3ec932a55c0ecd044292e760838efbb2b7fc09b"
+      },
+      "roms/mem_timing.gb": {
+        "sha256": "791cb418fd054b482a6ada5017e2405b96c2373a0f3914c6b23afeee76fa98ce"
+      },
+      "roms/mem_timing_individual/01-read_timing.gb": {
+        "sha256": "52724532c5709e38e947eb429337c124c38bc68f373874435a7460548098b617"
+      },
+      "roms/mem_timing_individual/02-write_timing.gb": {
+        "sha256": "eea92d3f4e95aab5910e0f7080916a3c42a2b8deae1ee5d45d1e3751d648f3f6"
+      },
+      "roms/mem_timing_individual/03-modify_timing.gb": {
+        "sha256": "2e9067c670ff8b45916bf321677ad04a6896d06a057dbcb82ae9f208a1ae9c34"
+      },
+      "src/cpu.eigs": {
+        "sha256": "ee5711d97602f5dac12d2259cd7b532fb9f416e282352d81d4ee9474d97b2623"
+      },
+      "src/debug.eigs": {
+        "sha256": "873b87e864aa9847d95906018a85f1dd1244c2667ad74b1e34f868f34fb29085"
+      },
+      "src/disasm.eigs": {
+        "sha256": "6ee4fddd824ac6f025da53b998c826da2a04d7e8b83a5b882a4a685fef61771b"
+      },
+      "src/joypad.eigs": {
+        "sha256": "d1e6d5cc06707613a3b9a49cc79861e9eadf3e8db0b3ef430cac499eb7f12d9c"
+      },
+      "src/lcd.eigs": {
+        "sha256": "6e94b7dd77b5ecd48053bebf0fa451cac6f54930e893903d366f28ed4bf1438c"
+      },
+      "src/memory.eigs": {
+        "sha256": "4a58d201d671604aa491dd5625caffe8f403ec85da08d59e572e2cf255e4f9cb"
+      },
+      "src/opcodes.eigs": {
+        "sha256": "4f571a301a68cf08c9bc75991edd74ccc709bc9e59ebd0c595631fab972c9924"
+      },
+      "src/ppu.eigs": {
+        "sha256": "3c7d70c4b64037353853081b5c38c4651a39e5780be01bd0871499840a3af050"
+      },
+      "tests/__pycache__/ui_debug_oracle.cpython-312.pyc": {
+        "sha256": "aebebe6c85e33397bae26578b97e4cf9d4ccff1e64e9dc631accd4c9c6a33ac7"
+      },
+      "tests/atlas_app.eigs": {
+        "sha256": "37d4f49f366490019c8a903f8e7d543e74707fcc430faec7939aa69b7bb7ade1"
+      },
+      "tests/check_twins.sh": {
+        "sha256": "ba1763026374d1616cac0e1bc6c85702cc6ff44213564bae27acf39c350fc80e"
+      },
+      "tests/disasm_golden.txt": {
+        "sha256": "55c0ddc23e7ae95ea23ea088968af517838e261785301907881f739bfcfd7554"
+      },
+      "tests/probe_debug_ui.eigs": {
+        "sha256": "dececfc291dfaff4f8cb38430ca6d514cb9257299e5f580f590455252933fafc"
+      },
+      "tests/run_blargg_cpu_instrs_suite.sh": {
+        "sha256": "e9b9f910560552b19db8132877e461a59132fd2a98337e0f7e31f1e207d048f3"
+      },
+      "tests/run_blargg_timing_suite.sh": {
+        "sha256": "67d0fedeca57b7e3566cbb2cd0aa10f31acc1a6f6ed6a32e6d4b76c223675da9"
+      },
+      "tests/run_debug_equivalence.sh": {
+        "sha256": "7379b35312e1a9eeb2f6f72e9840be5c2765d395028dde71417bb2d6bac77b6f"
+      },
+      "tests/run_debug_ui_oracle.sh": {
+        "sha256": "7c932fd5359693ed467acec280f5aad95e03c5f6cc584af47e19a1660242bae5"
+      },
+      "tests/run_gfx_smoke.sh": {
+        "sha256": "349d8f4a50eb9845febbf7e57be572c12bf3b608803812ad0e379eb62431e043"
+      },
+      "tests/run_input_script_smoke.sh": {
+        "sha256": "bd93b59030136344dab3d8c2351d587d07b09b9ffade6d1cf4d0553182b6dd72"
+      },
+      "tests/run_pokemon_red_smoke.sh": {
+        "sha256": "e9011ae930631a44e0d27c11102df037a12d4bcf68ecba1cab7494792f39c9c3"
+      },
+      "tests/test_cpu.eigs": {
+        "sha256": "b3eaad68194222c6415175fcd1785bc89ddda4d7eb2218a68d102ec6066befbd"
+      },
+      "tests/test_joypad.eigs": {
+        "sha256": "67f7d61c85eaccbf5775ac926873c44755a448ba4383fafa7a2e1bf5e054bd90"
+      },
+      "tests/test_lcd.eigs": {
+        "sha256": "4972177b89221e98e0d811e3fe0bc5c5af4522240e26e19985ea5215af0229bf"
+      },
+      "tests/test_memory.eigs": {
+        "sha256": "867be46a12d73799951984806fc1b9574cefad43664c820ec5d6e65391c38d63"
+      },
+      "tests/test_ppu.eigs": {
+        "sha256": "01ead961f8ad7e1d3217e2573239c21bed043ac3d1bbc77c98ab5c18c61678d2"
+      },
+      "tests/ui_debug_oracle.py": {
+        "sha256": "c989ad7272910dcfc566919c7a5e8dd95067094eb8d18f0c558bf5e4744c2ff4"
+      }
+    }
+  },
+  "arms": {
+    "baseline": {
+      "generated_sha256": "31fb423cba2f193dfd06e8c3f240f0aa712eacae6bf8f2e219d0ad1ee2c32f2f",
+      "binary_sha256": "14bb9fc3357647e5f67f6d867c21b131d6be4b70ed701d7fdfeecb634dbad0c2",
+      "command": [
+        "gcc",
+        "-O3",
+        "-ffp-contract=off",
+        "-falign-functions=64",
+        "-falign-jumps=32",
+        "-falign-loops=32",
+        "-march=native",
+        "-DEIGENSCRIPT_EXT_HTTP=0",
+        "-DEIGENSCRIPT_EXT_MODEL=0",
+        "-DEIGENSCRIPT_EXT_DB=0",
+        "-DEIGENSCRIPT_VERSION=\"aot\"",
+        "-DAOT_SCRIPT_DIR=\"/home/jon/src/InauguralSystems/EigenScriptEcosystem/DMG\"",
+        "-DAOT_EXE_DIR=\"/home/jon/src/wt/es-v043/src\"",
+        "-I/home/jon/src/InauguralSystems/EigenScriptEcosystem/ouroboros/aot",
+        "-I/home/jon/src/wt/es-v043/src",
+        "/tmp/ems-close-20260911/dmg-baseline.c",
+        "/home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a",
+        "-lm",
+        "-lpthread",
+        "-o",
+        "/tmp/ems-close-20260911/dmg-baseline"
+      ],
+      "compiler_sha256": "1a2e7bba929879c4a3616cc7c7aeed4266b4ac09895d0f657bcff5f5125256e1",
+      "header_sha256": "7a2a091ef0e2117c801b32dfc7853e41130e10f82bf96658afca4b1a9b64e38f"
+    },
+    "candidate": {
+      "generated_sha256": "a12b79f307bfd50507aa35ae06dd3be097569cf772730f2f275fe4dbc5d3be47",
+      "binary_sha256": "7aae3de086129948ab803b34eef2c7e2bbecf49bb944418e1a2941c9cb020d18",
+      "command": [
+        "gcc",
+        "-O3",
+        "-ffp-contract=off",
+        "-falign-functions=64",
+        "-falign-jumps=32",
+        "-falign-loops=32",
+        "-march=native",
+        "-DEIGENSCRIPT_EXT_HTTP=0",
+        "-DEIGENSCRIPT_EXT_MODEL=0",
+        "-DEIGENSCRIPT_EXT_DB=0",
+        "-DEIGENSCRIPT_VERSION=\"aot\"",
+        "-DAOT_SCRIPT_DIR=\"/home/jon/src/InauguralSystems/EigenScriptEcosystem/DMG\"",
+        "-DAOT_EXE_DIR=\"/home/jon/src/wt/es-v043/src\"",
+        "-I/home/jon/src/wt/ouro-gap-20260911/aot",
+        "-I/home/jon/src/wt/es-v043/src",
+        "/tmp/ems-close-20260911/dmg-candidate.c",
+        "/home/jon/src/wt/ouro-gap-20260911/aot/build/libeigsrt.a",
+        "-lm",
+        "-lpthread",
+        "-o",
+        "/tmp/ems-close-20260911/dmg-candidate"
+      ],
+      "compiler_sha256": "b334ba546f770f8697f6a5381a049f0ba438b91a7022a9ae0a8ef32df99e5e59",
+      "header_sha256": "ab7c944b18fed52ec1dc0f9d280dab73c296051feb60a6db44bc2dce09d6c4a1"
+    }
+  }
+}
