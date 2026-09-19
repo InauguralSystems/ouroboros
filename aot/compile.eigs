@@ -1697,6 +1697,25 @@ define collect_assigns_stmt(node, acc) as:
     if t == "unobserved":
         collect_assigns of [node[1], acc]
         return null
+    if t == "try":
+        # ["try", try_body, err_name, catch_body]. This arm was ABSENT, and
+        # the comment justifying its absence -- "moot only because emit_stmt
+        # refuses `try` loudly" -- went stale at round 153, which emits
+        # try/catch in function bodies (only MODULE-scope try still refuses,
+        # compile.eigs:1880). So every assignment inside a try or catch body
+        # has been invisible to collect_assigns since then.
+        #
+        # Two consumers were reading a short answer:
+        #   - the capture-rebind refusal, whose whole job is to notice a name
+        #     a nested define captured and the body later rebound;
+        #   - (#233 tier 1a) single_binding_names, which must poison a static
+        #     field index for any name bound more than once.
+        # Not reachable as a wrong number TODAY only because both reach it
+        # through a parameter rebind, and #236 means those do not take effect
+        # at all. Fixing #236 would expose it.
+        collect_assigns of [node[1], acc]
+        collect_assigns of [node[3], acc]
+        return null
     if t == "match":
         # A `match` case body assigns like any other block. Its absence made a
         # rebind inside a case invisible to the capture-rebind refusal:
