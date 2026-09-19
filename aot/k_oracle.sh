@@ -139,7 +139,17 @@ if [ "${1:-}" = "--selftest" ]; then
         printf '  ---- P9 (real-binary plant) not run; set K_SELFTEST_SLOW=1.\n'
         printf '       Without it this suite proves the COMPARISON only, not the measurement.\n'
     fi
+    # PIN THE POPULATION. "all plants passed" is satisfied by zero plants,
+    # and a suite that quietly stops running a case looks exactly like a
+    # suite whose cases all pass (section 121). The count is expected to
+    # move when a plant is added -- editing this number is the deliberate
+    # act that makes the addition reviewable.
+    want=10; [ "${K_SELFTEST_SLOW:-0}" = 1 ] && want=11
     echo "== selftest $total run, $pass passed, $((total-pass)) failed =="
+    if [ "$total" != "$want" ]; then
+        echo "k_oracle: selftest ran $total plant(s), expected $want -- a case stopped running, which reads identically to a case that passed" >&2
+        exit 2
+    fi
     [ "$pass" = "$total" ]; exit $?
 fi
 DMG="${DMG_DIR:-$HERE/../../DMG}"
@@ -148,11 +158,20 @@ ROM="${K_ROM:-$DMG/roms/cpu_instrs.gb}"
 WORK="$(mktemp -d)"; trap 'rm -rf "$WORK"' EXIT
 
 refuse() { echo "k_oracle: REFUSE: $*" >&2; exit 2; }
-command -v perf >/dev/null 2>&1 || refuse "no perf(1); K needs retired-instruction counts, and there is no substitute that is not a guess"
-perf stat -e instructions -x, /bin/true >/dev/null 2>&1 || refuse "perf cannot count instructions here (perf_event_paranoid=$(cat /proc/sys/kernel/perf_event_paranoid 2>/dev/null))"
+# The preconditions for MEASURING are demanded only when measuring. With
+# injected points nothing is executed, so requiring perf, a DMG checkout
+# and a ROM would make the plants unrunnable anywhere those are absent --
+# which is to say, in CI, which is the one place the plants most need to
+# run. (An oracle nobody dispatches is not a gate; the plants are the half
+# of this file that CAN be dispatched everywhere, and they are what prove
+# it is still able to go red.)
+if [ -z "${K_FAKE_POINTS:-}" ]; then
+    command -v perf >/dev/null 2>&1 || refuse "no perf(1); K needs retired-instruction counts, and there is no substitute that is not a guess"
+    perf stat -e instructions -x, /bin/true >/dev/null 2>&1 || refuse "perf cannot count instructions here (perf_event_paranoid=$(cat /proc/sys/kernel/perf_event_paranoid 2>/dev/null))"
+    [ -f "$DMG/dmg.eigs" ] || refuse "no DMG checkout at $DMG (set DMG_DIR)"
+    [ -f "$ROM" ]      || refuse "no ROM at $ROM (set K_ROM)"
+fi
 [ -f "$BUDGET" ]   || refuse "no declared budget at $BUDGET -- there is nothing to diff against, and measuring K with nothing to compare it to is a number, not an oracle"
-[ -f "$DMG/dmg.eigs" ] || refuse "no DMG checkout at $DMG (set DMG_DIR)"
-[ -f "$ROM" ]      || refuse "no ROM at $ROM (set K_ROM)"
 
 WINDOW=$(awk '$1=="WINDOW"{print $2}' "$BUDGET")
 BASEW=$(awk '$1=="BASELINE"{print $2}' "$BUDGET")
