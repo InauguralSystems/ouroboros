@@ -1,0 +1,3 @@
+define shrink(d) as:
+    dict_remove of [d, "a"]
+    return d

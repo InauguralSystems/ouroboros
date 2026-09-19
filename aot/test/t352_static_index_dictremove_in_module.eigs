@@ -1,0 +1,20 @@
+# ouroboros#233 tier 1a: the static-field-index proof rests on ONE
+# whole-program fact -- that nothing ever calls `dict_remove`, because that
+# is the only runtime operation which MOVES an existing key (it shifts the
+# tail down; dict_set only updates in place or appends).
+#
+# The scan therefore has to see into loaded modules, not just the main
+# file. Here the only mention of dict_remove is in the child.
+#
+# Shaped so a STALE index is a wrong VALUE, not a harmless miss: removing
+# "a" leaves b@0 c@1 d@2, so reading c at its original index 2 returns d.
+# A three-key version would land on a NULL inside the allocated capacity
+# and be rescued by the cold path, and would pass either way.
+load_file of "data/t352_dictremove_child.eigs"
+define mk() as:
+    return {"a": 1, "b": 2, "c": 3, "d": 4}
+define rd_c(r) as:
+    return r.c
+local s is shrink of (mk of null)
+print of (rd_c of s)
+print of (rd_c of (mk of null))
