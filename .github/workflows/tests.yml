@@ -25,4 +25,10 @@ jobs:
       - name: Build devcontainer and run suites (self-host parity + AOT)
         uses: devcontainers/ci@v0.3
         with:
-          runCmd: bash aot/core_check.sh && EIGS=eigenscript bash test/run.sh && EIGS=eigenscript bash aot/test/run.sh && EIGS=eigenscript bash aot/test/leak.sh
+          # k_oracle --selftest is dispatched here deliberately. CI cannot
+          # TAKE the K measurement -- a container has no perf access -- but
+          # the plants inject recorded points and execute nothing, so the
+          # half that proves the oracle can still go red runs everywhere.
+          # An oracle that nothing dispatches is not a gate, and that was
+          # the exact residual this repo shipped once already.
+          runCmd: bash aot/core_check.sh && bash aot/k_oracle.sh --selftest && EIGS=eigenscript bash test/run.sh && EIGS=eigenscript bash aot/test/run.sh && EIGS=eigenscript bash aot/test/leak.sh

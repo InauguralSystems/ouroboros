@@ -42,6 +42,8 @@ write the upstream issue instead of only the guard.
 | `aot/build.sh` | `eigenscript compile.eigs PROG > gen.c && gcc gen.c libeigsrt.a` (`EIGS_DIR` defaults to `../../EigenScript`) |
 | `test/run.sh` | Self-host suite: `test/programs/*.eigs` parity (`*_err.eigs` = both sides must die) + `reject_one` (both parsers reject) + `must_reject` (C rejects at runtime, ouroboros must too) + the **byte-exact bootstrap fixed point, which also EXECUTES the self-compiled program** and diffs its stdout vs the C evaluator (#102) |
 | `aot/test/run.sh` | AOT parity suite: every `tN_*.eigs` diffed byte-for-byte vs the VM (`*_tol` = FP tolerance; `*_err` = both die, normalized message, **equal death codes**). Exit codes are part of every class's contract |
+| `aot/k_oracle.sh` | **The speed oracle.** Measures K (host instructions retired per emulated cycle) for DMG at a pinned window and diffs it against the DECLARED budget in `aot/k_budget.txt`. `--origins` adds exact per-symbol attribution via callgrind; `--selftest` runs its plants |
+| `aot/k_budget.txt` | What the AOT *declares* DMG should cost, per origin, each row with a written basis. Hand-declared, never regenerated |
 | `aot/fuzzdiff.py` | Differential fuzzer across the edge classes (`--count`, `--seed`); VM-rejected programs are error-class cases (AOT must refuse or die matching), never skipped |
 | `FINDINGS.md` | The F-OURO-NN ledger — BUG/GAP/CONSTRAINT/BY-DESIGN conventions; read before re-investigating anything |
 | `.devcontainer/Dockerfile` | `ARG EIGS_REF=vX.Y.Z` — **the pin**; CI builds this runtime and runs both suites against it |
@@ -53,6 +55,10 @@ bash test/run.sh                    # self-host parity + rejects + bootstrap
 bash aot/test/run.sh                # AOT byte-exact parity
 cd aot && bash build.sh P.eigs out  # one program; diff <(eigenscript P.eigs) <(./out)
 python3 aot/fuzzdiff.py             # differential fuzzing
+bash aot/k_oracle.sh                # DMG: measured K vs the declared budget
+bash aot/k_oracle.sh --origins      # ... split by origin, exact (callgrind, ~30x)
+K_SELFTEST_SLOW=1 \
+  bash aot/k_oracle.sh --selftest   # the 11 plants that prove it can go red
 ```
 
 Run all seven tiers against a clean runtime worktree at the Dockerfile pin:
@@ -130,6 +136,20 @@ stub checks; the same command runs those checks alone from the repository root.
   diff `src/vm.h`'s enum comments for operand-width changes, and treat an
   emitter change as landing WITH the `EIGS_REF` bump (the deferred-mirror
   pattern above), never before it.
+- **A performance oracle declares a VALUE and diffs it; a threshold is
+  satisfied forever once crossed.** The bar for DMG used to be "at least as
+  fast as a real Game Boy", and DMG passed it long ago at 17.3 MHz against
+  hardware's 4.19 — after which the oracle could not distinguish 4× from
+  25×, and in fact the binary sits at ~18% of what this box can run. The
+  replacement declares K, per origin, in `aot/k_budget.txt`, and fails a row
+  that moves. Declare in **K, not MHz**: K is machine-independent for a
+  given binary (perf on a Goldmont gave 254, cachegrind on a Xeon 255.9),
+  MHz is not, so MHz cannot be declared once and checked anywhere. Quote K
+  only with its window — the same binary reads 255.9 at 200k cycles and
+  219.4 at 2M as startup amortizes. And note what is NOT an independent
+  check: predicted MHz is `(dIr/dt)/K_declared` while observed is
+  `dcycles/dt`, so their ratio is exactly `K_measured/K_declared`. The MHz
+  line is the K line in wall units, not a second witness agreeing with it.
 - **Deep procedure lives in the `aot-differential` skill** (and the
   eigenscript-aot-compiler-engineer skill); this file is the orientation.
 
