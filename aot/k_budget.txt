@@ -35,10 +35,63 @@ BASELINE 0
 # survives a new instrument is the outcome this file is built for.
 #
 # row        declared  tol%   basis
-K_TOTAL      194.4     8     tier 1a LANDED 2026-09-19. Was 219.4. A/B on ONE runtime, arms asserted different (symbol present/absent, binaries not byte-identical), emulated output identical: baseline 219.6 -> 194.4 perf, 219.2 -> 194.0 callgrind. 21.41 -> 23.52 MHz here
-EIG          80.3      12    DMG's own compiled code (eig_*). Was 86.3; tier 1a moved it WITHOUT touching DMG, because the call sites stopped materialising two static addresses per field read and that cost is attributed to the caller. A tight C DMG core is ~40, so the rest is DMG's structure
-AOT_IC       91.5      12    inline-cache helpers (aot_*). Was 111.1. Tier 1a converted the numeric field READ only: aot_dot_num_tb_ic 39.18 -> aot_dot_num_tb_si 18.90 Ir/cycle
+K_TOTAL      182.1     8     tier 1a read+WRITE paths LANDED 2026-09-19. 219.4 -> 194.4 (read) -> 182.1 (write). Each an A/B on one runtime with the arms asserted different and emulated output identical. 21.41 -> 24.59 MHz here, +14.9% over the day
+EIG          81.0      12    DMG's own compiled code (eig_*). 86.3 -> 80.3 (read path moved it by removing per-call static-address setup at the call sites) -> 81.0 (the write helper INLINED, which moves some of its cost into the caller's attribution)
+AOT_IC       78.6      12    inline-cache helpers (aot_*). 111.1 -> 91.5 (read) -> 78.6 (write). aot_dot_set_num_tb_ic 28.04 -> aot_dot_set_num_tb_si 15.58
 OTHER        22.1      20    guard / box / truthy / refcount. Unmoved by tier 1a, as intended
+#
+# PRE-REGISTERED: TIER 1a WRITE PATH, written before the measurement.
+#
+# aot_dot_set_num_tb_ic, 28.04 Ir/cycle, the second largest aot_* item.
+# Same guard chain as the read, so a constant index deletes the same 9
+# instructions: the *ic load, the bounds check, the key compare. It keeps
+# MORE than the read does -- the VAL_DICT test, the vals[idx] load, an
+# old->type check, a refcount==1 test and num_guard -- so the deletable
+# fraction is smaller, roughly 9 of ~26 rather than 9 of ~21.
+#
+#   PREDICT_WRITE_K_TOTAL  184      (194.4 - ~10)
+#   PREDICT_WRITE_AOT_IC    81.5    (91.5 - ~10)
+#
+# One reason it may beat that, noted BEFORE the number rather than after:
+# with its cold path out of line from the start, the write helper is not
+# merely a leaf -- gcc INLINES it entirely (no symbol in nm), where the
+# read helper remained a real call. That removes per-call overhead the
+# estimate above does not credit. If the result lands well under 184, this
+# is the first place to look, and it argues for revisiting the read path's
+# inlining too.
+#
+# Conversion measured before running: 201 write sites converted against 47
+# surviving ICs.
+#
+# ============= WRITE PATH OUTCOME, 2026-09-19 =============
+#
+# Pre-registered: K_TOTAL 184, AOT_IC 81.5.  Measured: 182.1 and 78.6.
+# Both beaten, as the read path's were -- the instruction-level model has
+# now predicted two conversions in a row and been slightly conservative
+# each time.
+#
+#   read only     K 194.4   23.15 MHz
+#   read + write  K 182.1   24.59 MHz    -6.3%
+#   aot_dot_set_num_tb_ic 28.04 -> aot_dot_set_num_tb_si 15.58
+#
+# The reason it beat the estimate was flagged BEFORE the run and held: with
+# its cold path out of line from the start, gcc INLINED the write helper
+# completely (no symbol in nm), where the read helper remained a real call.
+# That is also why EIG ticks UP 80.3 -> 81.0 while the total falls: an
+# inlined helper's instructions are attributed to its caller. A per-origin
+# row moving the "wrong" way is not automatically a regression -- check
+# whether a symbol disappeared into the caller first.
+#
+# THE READ PATH IS NOW THE OUTLIER and should be revisited: it is still a
+# real call (aot_dot_num_tb_si is a `t` symbol) while the write path is
+# not. Whatever keeps it out of line is worth ~2-4 Ir/cycle of call
+# overhead at 1.9 calls per emulated cycle.
+#
+# Remaining in the family: aot_getb_named_ic 13.02, aot_dot_borrow_ic
+# 10.38. Same guard chain, same rule -- keep the helper a leaf, and prefer
+# a shape small enough to inline.
+#
+# ==========================================================
 #
 # ===================== TIER 1a OUTCOME, 2026-09-19 =====================
 #
