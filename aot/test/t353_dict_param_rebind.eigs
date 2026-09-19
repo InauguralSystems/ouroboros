@@ -1,0 +1,35 @@
+# ouroboros#236: assigning to a DICT-valued parameter.
+#
+# The "gen" parameter arm checks genp_rebound_in and gives a rebound
+# parameter round 162's ownership flag; the "dict" arm did not. So a
+# rebound dict parameter had its assignment emitted as
+# aot_set_ic(__eigs_g, "r", ...) -- a write to the GLOBAL env -- while
+# every read still used the C parameter. The rebind was silently lost and
+# a stray global was created:  VM 8, AOT 1, both rc 0.
+#
+# The STRING cases below are the control: they were always correct,
+# because the "gen" arm has the check. That asymmetry is why no existing
+# fixture caught this -- the corpus rebinds string parameters in several
+# places (t108, t213) and dict parameters nowhere.
+define rebind_dict(r) as:
+    r is {"x": 8, "y": 9}
+    return r.x + r.y
+define rebind_dict_via_local(r) as:
+    local q is {"x": 40}
+    r is q
+    return r.x
+define rebind_then_read_whole(r) as:
+    r is {"x": 5}
+    local whole is r
+    return whole["x"]
+define rebind_string(s) as:
+    s is "after"
+    return s
+define rebind_string_from_self(s) as:
+    s is s + "!"
+    return s
+print of (rebind_dict of {"x": 1, "y": 2})
+print of (rebind_dict_via_local of {"x": 1})
+print of (rebind_then_read_whole of {"x": 1})
+print of (rebind_string of "before")
+print of (rebind_string_from_self of "hi")

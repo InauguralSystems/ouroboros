@@ -9393,9 +9393,37 @@ define emit_function(fn, finfo, gnm, gbt) as:
             fbt[params[k]] is 1
             fnm[params[k]] is 0
         elif (ptypes[k]) == "dict":
-            g_dict[params[k]] is 1
-            fbt[params[k]] is 0
-            fnm[params[k]] is 0
+            # (#236) A REBOUND dict parameter must take the GENERIC
+            # ownership-tracked path, exactly as a rebound "gen" parameter
+            # does one arm below. Without this the round-162 treatment is
+            # never applied to it, the assignment is emitted as
+            # aot_set_ic(__eigs_g, "<name>", ...) -- a write to the GLOBAL
+            # env -- and every read still uses the C parameter, so the
+            # rebind is silently lost and a stray global is created:
+            #
+            #     define g(r) as:
+            #         r is {"x": 8}
+            #         return r.x
+            #     print of (g of {"x": 1})     VM 8    AOT 1
+            #
+            # A string parameter of the same shape was always correct,
+            # which is why no fixture caught it: the "gen" arm has the
+            # check and the "dict" arm did not.
+            #
+            # Routing it to gen also costs it the dict-specific treatment
+            # (field maps, and #233's static field index), which is the
+            # right answer rather than a regret: a rebound name has more
+            # than one binding source, so single_binding_names poisons its
+            # index anyway.
+            if (genp_rebound_in of [body, params[k]]) == 1:
+                g_genp[params[k]] is 1
+                g_cur_genp_rebound[params[k]] is 1
+                fbt[params[k]] is 0
+                fnm[params[k]] is 0
+            else:
+                g_dict[params[k]] is 1
+                fbt[params[k]] is 0
+                fnm[params[k]] is 0
         elif (ptypes[k]) == "gen":
             g_genp[params[k]] is 1
             fbt[params[k]] is 0
