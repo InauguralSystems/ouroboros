@@ -2,8 +2,12 @@
 # AOT: compile an EigenScript program to a native binary.
 #   build.sh program.eigs [out_binary]
 # Transpiles via compile.eigs, then links the generated C against a cached
-# static lib of the EigenScript runtime (SOURCES minus main.c — same set
-# embed-smoke/lsp use). The lib is rebuilt only when a runtime .c changes, so
+# static lib of the EigenScript runtime (upstream SOURCES minus CLI_ONLY --
+# main, repl, step, tape_read, bundle: 23 TUs, the same set LSP_SOURCES and
+# DAP_SOURCES take. This line used to say "minus main.c", which is 27, and
+# it is the line a future reader patches CORE from -- the fourth drift of
+# this list was pre-loaded in a comment. aot/core_check.sh is the authority
+# and derives both sets from `make -pqRr`). The lib is rebuilt only when a runtime .c changes, so
 # repeated builds are ~1s instead of recompiling the whole runtime each time.
 # Runtime checkout is ../../EigenScript (override with EIGS_DIR=).
 set -euo pipefail
@@ -62,8 +66,15 @@ LIB="$BDIR/libeigsrt.a"
 # which eigs_embed.c calls — into their own TU at v0.35.0). The symptom is a
 # link error at pin-bump time, which is loud but burns a sweep: re-diff this
 # list against the Makefile at every EIGS_REF bump.
-CORE="eigenscript lexer parser builtins builtins_host builtins_tensor hash arena state strbuf lint_host \
-      ext_store fmt lint chunk compiler vm jit trace eigs_embed"
+# ouroboros#232: builtins_buf, fsutil and task were missing -- the third
+# drift of this list, and the first two are named in the comment above. The
+# symptom this time was `undefined reference to read_file_util` /
+# `eigs_file_directory` (fsutil.c) when linking DMG, i.e. the AOT could not
+# build the widest real program it has. Derived, not guessed: the Makefile's
+# SOURCES minus CLI_ONLY (main repl step tape_read bundle) is exactly this
+# list. core_check.sh is the gate that says so and was already red.
+CORE="eigenscript lexer parser builtins builtins_buf builtins_host builtins_tensor hash arena \
+      state strbuf lint_host ext_store fmt lint chunk compiler vm jit trace task fsutil eigs_embed"
 
 # (Re)build the runtime static lib if missing, or if the runtime it was built
 # FROM has changed at all.

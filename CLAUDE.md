@@ -153,9 +153,15 @@ Y."* Stop there and ask whether Y is a **law** — language semantics, a
 physical constant, an external contract — or a **decision**. If it is a
 decision, price the alternative before designing around it.
 
-Bought 2026-08-28 (ouroboros#127 / DMG). The AOT compiles the main file to
-C but emits `load_file` as a runtime call, so loaded modules are parsed and
-interpreted by the linked VM. A real bug lived in that seam and was found,
+Bought 2026-08-28 (ouroboros#127 / DMG). **The specific situation below has
+since been FIXED — static loads are resolved and DMG now compiles whole.
+Measured 2026-09-19: a `perf record` of the AOT DMG binary contains no
+`vm_run`/`vm_execute`/interpreter frames at all, and the binary runs
+cpu_instrs at 17.3 MHz on the dev box against 3.0 MHz for the VM. The
+paragraph is kept because the REASONING is the lesson, not the state — but
+do not cite its numbers as current.** At the time: the AOT compiled the main
+file to C but emitted `load_file` as a runtime call, so loaded modules were
+parsed and interpreted by the linked VM. A real bug lived in that seam and was found,
 minimised, fixed and verified. It was also reported as "unlocking the AOT
 multiplier for DMG" — until the design itself was questioned. Measured:
 DMG is 3,288 lines, of which 818 are compiled and 2,470 interpreted,
