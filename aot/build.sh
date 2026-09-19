@@ -2,8 +2,12 @@
 # AOT: compile an EigenScript program to a native binary.
 #   build.sh program.eigs [out_binary]
 # Transpiles via compile.eigs, then links the generated C against a cached
-# static lib of the EigenScript runtime (SOURCES minus main.c — same set
-# embed-smoke/lsp use). The lib is rebuilt only when a runtime .c changes, so
+# static lib of the EigenScript runtime (upstream SOURCES minus CLI_ONLY --
+# main, repl, step, tape_read, bundle: 23 TUs, the same set LSP_SOURCES and
+# DAP_SOURCES take. This line used to say "minus main.c", which is 27, and
+# it is the line a future reader patches CORE from -- the fourth drift of
+# this list was pre-loaded in a comment. aot/core_check.sh is the authority
+# and derives both sets from `make -pqRr`). The lib is rebuilt only when a runtime .c changes, so
 # repeated builds are ~1s instead of recompiling the whole runtime each time.
 # Runtime checkout is ../../EigenScript (override with EIGS_DIR=).
 set -euo pipefail
@@ -56,14 +60,48 @@ if [ "${AOT_SAN:-}" = "asan" ]; then
     BDIR="build/asan"
 fi
 LIB="$BDIR/libeigsrt.a"
-# CORE must stay exactly upstream's `SOURCES` minus `CLI_ONLY` (Makefile). It
-# has now drifted twice (ext_http.c after a VM refactor; builtins_host.c when
-# upstream #741/#812 split the host-only builtins — including read_file_util,
-# which eigs_embed.c calls — into their own TU at v0.35.0). The symptom is a
-# link error at pin-bump time, which is loud but burns a sweep: re-diff this
-# list against the Makefile at every EIGS_REF bump.
-CORE="eigenscript lexer parser builtins builtins_host builtins_tensor hash arena state strbuf lint_host \
-      ext_store fmt lint chunk compiler vm jit trace eigs_embed"
+# CORE IS DERIVED FROM THE RUNTIME WE ARE ACTUALLY LINKING AGAINST, never
+# hand-listed (ouroboros#232).
+#
+# It was a literal list and it drifted FOUR times: ext_http.c after a VM
+# refactor; builtins_host.c when upstream #741/#812 split the host-only
+# builtins out at v0.35.0; builtins_buf/fsutil/task after v0.43.0 (the
+# symptom being `undefined reference to read_file_util` when linking DMG,
+# i.e. the AOT could not build the widest real program it has); and a fourth
+# pre-loaded in this very comment, which used to say the set was "SOURCES
+# minus main.c" -- 27 TUs -- while the list below it was 23.
+#
+# The repeated advice was "re-diff this list at every EIGS_REF bump". That
+# is advice, it failed every time, and the mechanical answer is to have no
+# list: SOURCES minus CLI_ONLY, read from $EIGS_DIR/Makefile at build time.
+#
+# This also fixes a subtler error. A hand list can only be right for ONE
+# runtime, and there are two in play: CI links the PIN (v0.43.0, no
+# builtins_buf/fsutil/task) while a developer's sibling checkout is main
+# (which has them). Deriving is correct for both, and a pin bump needs no
+# edit here at all.
+#
+# `make -pqRr` gives the post-expansion database, so continuations, variable
+# indirection and += are all handled. No fallback parse: if the authority
+# cannot be read, refuse to build rather than link a guessed set.
+# `make -q` EXITS 1 when a target is out of date, which is its normal answer
+# and not an error -- under this file's `set -euo pipefail` that silently
+# killed the build with an empty log. Capture first, then parse, and use awk
+# rather than `head -1` so no stage can take a SIGPIPE either.
+mk_tus() {  # $1 = Makefile variable -> TU basenames, one per line
+    local db line
+    db=$(make -C "$EIGS_DIR" -pqRr 2>/dev/null || true)
+    line=$(printf '%s\n' "$db" | awk -v v="$1" '$1==v && ($2==":=" || $2=="=") {print; exit}')
+    printf '%s\n' "$line" | tr ' ' '\n' |
+        sed -nE 's#^(\$\(SRC_DIR\)|[a-z_0-9]+)/([a-z_0-9]+)\.c$#\2#p' | sort -u
+}
+CORE_SOURCES="$(mk_tus SOURCES)"
+CORE_CLI="$(mk_tus CLI_ONLY)"
+[ "$(printf '%s\n' "$CORE_SOURCES" | grep -c .)" -ge 20 ] ||
+    { echo "build.sh: read $(printf '%s\n' "$CORE_SOURCES" | grep -c .) TU(s) from $EIGS_DIR/Makefile SOURCES -- cannot derive CORE, refusing to link a guess" >&2; exit 1; }
+[ "$(printf '%s\n' "$CORE_CLI" | grep -c .)" -eq 5 ] ||
+    { echo "build.sh: CLI_ONLY has $(printf '%s\n' "$CORE_CLI" | grep -c .) TU(s), expected 5 -- upstream changed the CLI split; confirm before linking" >&2; exit 1; }
+CORE="$(comm -23 <(printf '%s\n' "$CORE_SOURCES") <(printf '%s\n' "$CORE_CLI") | tr '\n' ' ')"
 
 # (Re)build the runtime static lib if missing, or if the runtime it was built
 # FROM has changed at all.
