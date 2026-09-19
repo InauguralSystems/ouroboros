@@ -63,6 +63,42 @@ OTHER        22.1      20    guard / box / truthy / refcount. Unmoved by tier 1a
 # Conversion measured before running: 201 write sites converted against 47
 # surviving ICs.
 #
+# ===== NEGATIVE RESULT, 2026-09-19: always_inline on the READ helper =====
+#
+# NOT LANDED. Recorded so it is not retried blind.
+#
+# aot_dot_num_tb_si is still a real call (a `t` symbol) while the write
+# helper inlines, so forcing it looked like free money -- and there is
+# precedent: round 184 forced num_guard inline for exactly this reason and
+# measured a win.
+#
+#   write path        K 182.1 / 182.2   binary 1,494,912
+#   + always_inline   K 179.0 / 179.1   binary 1,511,304   (+16 KB)
+#
+# K improves 1.7% and is rock stable across runs. Wall and IPC are NOT:
+#
+#   run 1   rw IPC 1.89 speed 24.59   |   inl IPC 1.85 speed 24.46
+#   run 2   rw IPC 1.86 speed 23.63   |   inl IPC 1.88 speed 22.48
+#
+# The IPC comparison FLIPS SIGN between runs, and the unchanged binary's
+# own wall moved 24.59 -> 23.63. So this box cannot resolve a ~2% wall
+# difference, and the first run's "IPC regression" was noise read as
+# signal.
+#
+# Declined on the grounds that survive the noise: a <=2% instruction gain,
+# bought with +16 KB of code at 240 call sites, on a box whose profile is
+# L1i-sensitive, with no demonstrable wall benefit. That is the
+# micro-optimisation cliff, and code growth at hundreds of sites is not
+# the place to spend against an unmeasurable return.
+#
+# THE LIMIT OF K, STATED PLAINLY. K measures work EMITTED, not how well
+# the machine executes it. For a change that trades instruction count
+# against code SIZE, K alone cannot adjudicate -- and the companion
+# signals that could (IPC, wall) are too noisy here to do it. Revisit only
+# on a box that can resolve 2% wall, or with an I-cache-miss counter.
+#
+# =======================================================================
+#
 # ============= WRITE PATH OUTCOME, 2026-09-19 =============
 #
 # Pre-registered: K_TOTAL 184, AOT_IC 81.5.  Measured: 182.1 and 78.6.
