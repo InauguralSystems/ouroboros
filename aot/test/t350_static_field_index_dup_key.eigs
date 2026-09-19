@@ -1,0 +1,19 @@
+# ouroboros#233 tier 1a: a REPEATED key in a dict literal does not append --
+# dict_set finds it and updates in place -- so the field index is the
+# DISTINCT-key position, not the literal position.
+#
+#   literal positions: x=0, x=1, y=2, z=3
+#   runtime indices:   x=0,      y=1, z=2   (count 3)
+#
+# Reading y at literal position 2 lands on z. The fourth key matters: with
+# only three, the bad index hits a NULL slot inside the allocated capacity
+# and the cold path re-derives by name, so the test would pass either way.
+define mk() as:
+    return {"x": 1, "x": 2, "y": 3, "z": 4}
+define rd_y(r) as:
+    return r.y
+define rd_z(r) as:
+    return r.z
+local m is mk of null
+print of (rd_y of m)
+print of (rd_z of m)

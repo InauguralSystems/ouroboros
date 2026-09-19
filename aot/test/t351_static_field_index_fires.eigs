@@ -1,0 +1,18 @@
+# ouroboros#233 tier 1a POSITIVE CONTROL. The two siblings (t349, t350)
+# both assert that a static field index is REFUSED, and a change that
+# disabled the optimisation outright would pass them both. This one asserts
+# it still happens and is still right: one literal shape, one binding
+# source per name, field writes (which are not rebinds) in the mix.
+define mk() as:
+    return {"x": 1, "y": 2, "z": 3}
+define sum3(r) as:
+    return r.x + r.y + r.z
+define bump(r) as:
+    r.y is r.y + 1
+    return r.y
+local a is mk of null
+local b is mk of null
+print of (sum3 of a)
+print of (bump of b)
+print of (sum3 of b)
+print of (sum3 of a)

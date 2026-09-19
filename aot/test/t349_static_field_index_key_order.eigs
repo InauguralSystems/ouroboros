@@ -1,0 +1,22 @@
+# ouroboros#233 tier 1a: a record reached from two literals whose KEY ORDER
+# differs has no single static field index, and the parameter field map's
+# meet (round 177's pf_merge) must drop it rather than pick one.
+#
+#   mk_a: x=0 y=1 z=2      mk_b: y=0 x=1 z=2
+#
+# A class survives this -- both say "num" -- and an INDEX does not. That is
+# the whole difference between what the index map records and what the
+# class map records, and it is why the index rides in the same map: the
+# meet already keeps a key only when both sides are equal.
+define mk_a() as:
+    return {"x": 1, "y": 2, "z": 3}
+define mk_b() as:
+    return {"y": 20, "x": 10, "z": 30}
+define read_x(r) as:
+    return r.x
+define read_y(r) as:
+    return r.y
+print of (read_x of (mk_a of null))
+print of (read_x of (mk_b of null))
+print of (read_y of (mk_a of null))
+print of (read_y of (mk_b of null))

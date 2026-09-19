@@ -150,6 +150,24 @@ stub checks; the same command runs those checks alone from the repository root.
   check: predicted MHz is `(dIr/dt)/K_declared` while observed is
   `dcycles/dt`, so their ratio is exactly `K_measured/K_declared`. The MHz
   line is the K line in wall units, not a second witness agreeing with it.
+- **`aot/build.sh` is NOT safe to run twice concurrently — the build dir is
+  shared and the stamp makes it thrash.** `BDIR` is the fixed path
+  `aot/build` (only `AOT_SAN=asan` moves it), and the `.libsrc` stamp is the
+  runtime's IDENTITY — resolved source path, flags, and a content hash over
+  every runtime `.c` and `.h`. That is exactly right for sequential use: it
+  is what stops a lib built from an old tag being silently reused (#96/#101).
+  Run two builders with DIFFERENT `EIGS_DIR` at once and each sees the
+  other's stamp, so each rebuilds the whole lib, for every program, forever
+  — and they race on `ar rcs` into the same archive.
+  Measured 2026-09-19: an `aot/test/run.sh` against the v0.43.0 pin and a DMG
+  build against local `main`, started together. Symptoms were not obviously
+  a race — the parity suite crawled, and `t50_soft_postfix` failed with
+  "dumped core" although that program contains **no dict literals at all**,
+  while an unrelated hand-link died on `undefined reference to
+  handle_lookup_slot` out of `task.o`. Both were half-written archives.
+  One builder at a time; if two are genuinely needed, give one its own
+  checkout. A green from a run that shared the build dir with another
+  builder is not evidence.
 - **Deep procedure lives in the `aot-differential` skill** (and the
   eigenscript-aot-compiler-engineer skill); this file is the orientation.
 

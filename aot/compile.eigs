@@ -662,6 +662,86 @@ G_IC_N is [0]
 # access site gets its own `static` pair — declared inline at the site (a GNU
 # statement-expression for reads, a plain block for writes) so no separate
 # declaration pass is needed. Returns [declaration, "&ic, &ick"].
+# (#233 tier 1a) The diagnostic site string alone. ic_new also MINTS a
+# static cache pair, and a static-index site needs the label without the
+# cache -- emitting the pair anyway would leave an unused static at every
+# converted site and defeat the point.
+define ic_site(field) as:
+    return "\"" + (c_escape of (G_CUR_FN[0])) + ": ." + (c_escape of field) + "\""
+
+# (#233 tier 1a) Names with exactly ONE binding source in this function.
+#
+# BOUGHT BY A SILENT WRONG NUMBER in the first version of this change. The
+# local gen map is flow-INSENSITIVE and last-write-wins, so a name bound
+# twice keeps only the last literal's key order -- and a static index taken
+# from it is then applied to reads that happen BEFORE the rebind:
+#
+#     define g(r) as:
+#         local before is r.x        # caller's literal: x at 0
+#         r is {"y": 9, "x": 8}      # rebind, different key ORDER
+#         local after is r.x         # x at 1
+#     print of (g of {"x": 1, "y": 2})
+#     VM [1, 8]   AOT [2, 2]   both build, both rc 0
+#
+# Both reads were emitted with index 1. The classes were identical ("num"
+# either way), which is why the existing class machinery was happy: a class
+# survives rebinding and an INDEX does not. That is the whole difference
+# between what this map records and what round 177's records.
+#
+# A field WRITE (`r.y is 5`) is not a rebind and does not appear here --
+# collect_assigns only collects `["assign", name, ...]` -- which matters
+# because DMG writes fields constantly and must keep the optimisation.
+#
+# Conservative by construction: a for-binder is neither a parameter nor an
+# assignment, so it is absent and therefore poisoned. That loses some
+# optimisation and cannot lose correctness.
+g_idx_single is {}
+define single_binding_names(fn) as:
+    local out is {}
+    local asg is collect_assigns of [fn[3], {}]
+    local prm is fn[2]
+    for pi in range of (len of prm):
+        local pn is prm[pi]
+        # a parameter's one source is the caller (its pfields map, already a
+        # meet over every call site); ANY assignment adds a second.
+        if (asg[pn]) == null:
+            out[pn] is 1
+    local ak is keys of asg
+    for ai in range of (len of ak):
+        local an is ak[ai]
+        local isp is 0
+        for pj in range of (len of prm):
+            if (prm[pj]) == an:
+                isp is 1
+        if (isp == 0) and ((len of (asg[an])) == 1):
+            out[an] is 1
+    return out
+
+# (#233 tier 1a) The statically known index of `node.field`, or null.
+#
+# Requires ALL of: the program never mentions dict_remove; the target is a
+# plain ident (a chain like a.b.c has no map for the intermediate); and the
+# current field map carries an index for that field, which it does only
+# when every call site that could bind the name agreed -- pf_merge's meet
+# keeps a key only when both sides are equal, so a record reached from two
+# literals with different key ORDER poisons itself here for free.
+define static_field_index(node, field) as:
+    if g_uses_dict_remove == 1:
+        return null
+    local sfd is unwrap of node
+    if sfd[0] != "ident":
+        return null
+    # one binding source only -- see single_binding_names for the wrong
+    # number this prevents.
+    if (g_idx_single[(sfd[1])]) != 1:
+        return null
+    local sfl is g_cur_fmap[(sfd[1]) + ".#fields"]
+    if sfl == null:
+        return null
+    if (sfl["#unknown"]) == 1:
+        return null
+    return sfl["#i:" + field]
+
 define ic_new(field) as:
     local sn is str of (G_IC_N[0])
     G_IC_N[0] is (G_IC_N[0]) + 1
@@ -1617,6 +1697,25 @@ define collect_assigns_stmt(node, acc) as:
     if t == "unobserved":
         collect_assigns of [node[1], acc]
         return null
+    if t == "try":
+        # ["try", try_body, err_name, catch_body]. This arm was ABSENT, and
+        # the comment justifying its absence -- "moot only because emit_stmt
+        # refuses `try` loudly" -- went stale at round 153, which emits
+        # try/catch in function bodies (only MODULE-scope try still refuses,
+        # compile.eigs:1880). So every assignment inside a try or catch body
+        # has been invisible to collect_assigns since then.
+        #
+        # Two consumers were reading a short answer:
+        #   - the capture-rebind refusal, whose whole job is to notice a name
+        #     a nested define captured and the body later rebound;
+        #   - (#233 tier 1a) single_binding_names, which must poison a static
+        #     field index for any name bound more than once.
+        # Not reachable as a wrong number TODAY only because both reach it
+        # through a parameter rebind, and #236 means those do not take effect
+        # at all. Fixing #236 would expose it.
+        collect_assigns of [node[1], acc]
+        collect_assigns of [node[3], acc]
+        return null
     if t == "match":
         # A `match` case body assigns like any other block. Its absence made a
         # rebind inside a case invisible to the capture-rebind refusal:
@@ -2355,8 +2454,17 @@ define emit_num(node, nm, bt, raw) as:
         # Per-SITE monomorphic inline cache (#130). The statics are declared
         # inside the expression via a GNU statement-expression so no separate
         # declaration pass is needed; each textual site gets its own pair.
-        local ic is ic_new of node[2]
         local ncv is borrowable_cvar of [node[1], nm, bt]
+        if ncv != "":
+            # (#233 tier 1a) 39.24 Ir per emulated cycle goes through this
+            # one site in DMG -- the single largest aot_* line item. With
+            # the index known there is no cache to consult and no key to
+            # re-compare; see aot_dot_num_tb_si for why the bounds check
+            # goes too.
+            local sfi is static_field_index of [node[1], node[2]]
+            if sfi != null:
+                return "aot_dot_num_tb_si(" + ncv + ", \"" + (c_escape of node[2]) + "\", " + (str of sfi) + ", " + (ic_site of node[2]) + ")"
+        local ic is ic_new of node[2]
         if ncv != "":
             return "({ " + ic[0] + "aot_dot_num_tb_ic(" + ncv + ", \"" + (c_escape of node[2]) + "\", " + ic[1] + ", " + ic[2] + "); })"
         return "({ " + ic[0] + "aot_dot_num_ic(" + (emit_val of [node[1], nm, bt]) + ", \"" + (c_escape of node[2]) + "\", " + ic[1] + ", " + ic[2] + "); })"
@@ -7427,12 +7535,24 @@ define local_gen_map_seeded(body, seed) as:
             if (len of r2) > 0:
                 if r2[0] == "dict":
                     local fmap is {}
+                    local nidx is 0
                     local prs is r2[1]
                     for pk in range of (len of prs):
                         local pr is prs[pk]
                         local kn is pr[0]
                         if (type of kn) == "list":
                             kn is kn[1]
+                        # (#233 tier 1a) DISTINCT-key position, not literal position. A
+                        # repeated key does not append -- dict_set finds it and updates in
+                        # place -- so `{"x":1, "x":2, "y":3}` puts y at runtime index 1
+                        # while its literal position is 2. Emitting 2 read PAST count, and
+                        # tier 1a has no bounds check by design, so the only reason it did
+                        # not return garbage was that vals[2] happened to be NULL inside
+                        # the allocated capacity and the cold path re-derived by name.
+                        # That is luck, not a guard.
+                        if (fmap["#i:" + kn]) == null:
+                            fmap["#i:" + kn] is nidx
+                            nidx is nidx + 1
                         local pv is unwrap of (pr[1])
                         if (len of pv) > 0:
                             if (pv[0] == "str") or (pv[0] == "list") or (pv[0] == "dict") or (pv[0] == "null"):
@@ -7652,12 +7772,31 @@ define widen_scan(node, caller_pt, caller_params, caller_locals, caller_fn) as:
 # caller's `cfg is parse_args of null` inherits the field types.
 define dict_literal_fields(dictnode, lm) as:
     local fmap is {}
+    local nidx is 0
     local prs is dictnode[1]
     for pk in range of (len of prs):
         local pr is prs[pk]
         local kn is pr[0]
         if (type of kn) == "list":
             kn is kn[1]
+        # (#233 tier 1a) The field's INDEX. dict_set appends at count and
+        # updates in place, so the only thing that can MOVE a key is
+        # dict_remove -- which the emitter refuses to use a static index in
+        # the presence of at all. Recorded under a "#i:" prefix in the same
+        # map so pf_merge's meet already poisons it when two call sites
+        # disagree: that arm keeps a key only when both sides are equal,
+        # which is exactly the rule an index needs.
+        # (#233 tier 1a) DISTINCT-key position, not literal position. A
+        # repeated key does not append -- dict_set finds it and updates in
+        # place -- so `{"x":1, "x":2, "y":3}` puts y at runtime index 1
+        # while its literal position is 2. Emitting 2 read PAST count, and
+        # tier 1a has no bounds check by design, so the only reason it did
+        # not return garbage was that vals[2] happened to be NULL inside
+        # the allocated capacity and the cold path re-derived by name.
+        # That is luck, not a guard.
+        if (fmap["#i:" + kn]) == null:
+            fmap["#i:" + kn] is nidx
+            nidx is nidx + 1
         local pv is unwrap of (pr[1])
         if (len of pv) > 0:
             if (pv[0] == "str") or (pv[0] == "list") or (pv[0] == "dict") or (pv[0] == "null"):
@@ -8996,6 +9135,7 @@ define emit_function(fn, finfo, gnm, gbt) as:
     for _bp in range of (len of (fn[2])):
         _bs0[((fn[2])[_bp])] is 1
     g_cur_fmap is fmap_for_fn of fn
+    g_idx_single is single_binding_names of fn
     local params is fn[2]
     local body is fn[3]
     # Per-function observation: a function is observed/traced by ITS OWN body, so
@@ -10697,6 +10837,37 @@ define sh_after_stmt(st, ind, nm, bt) as:
 # DMG's fetch8 / mem_read return `mem.data[addr]`, which was never
 # positively numeric, so the byte readers returned Value* and every
 # caller's `val` parameter widened to boxed (26 functions).
+# (#233 tier 1a) WHOLE-PROGRAM: does this program reference `dict_remove`?
+#
+# A static field index is sound because dict_set UPDATES an existing key in
+# place and APPENDS a new one at count++, so nothing reorders -- the single
+# exception being dict_remove, which shifts the tail down and invalidates
+# every index from the removed key on. dict_remove has exactly one caller
+# in the whole runtime (the builtin of the same name), so one predicate
+# discharges the entire obligation.
+#
+# This is the part a JIT structurally cannot do. "No dict_remove anywhere"
+# is a whole-program fact; a tier that compiles one function at a time can
+# only ever observe that it has not seen one YET, which is why the IC
+# caches the observation and re-proves it 1.9 times per emulated cycle.
+#
+# Deliberately conservative in the safe direction: any `dict_remove` ident
+# anywhere -- called, passed as a value, shadowed by a user define -- turns
+# the optimisation off for the whole program. Costing a correct program its
+# speedup is recoverable; a stale index reads the WRONG FIELD and returns a
+# plausible number, which is the outcome this repo ranks below a crash.
+g_uses_dict_remove is 0
+define scan_dict_remove(node) as:
+    if (type of node) != "list":
+        return null
+    if (len of node) > 1:
+        if (node[0] == "ident") and ((node[1]) == "dict_remove"):
+            g_uses_dict_remove is 1
+            return null
+    for sdi in range of (len of node):
+        scan_dict_remove of (node[sdi])
+    return null
+
 g_cur_fmap is {}
 g_ret_fmap is {}
 define fmap_for_fn(fn) as:
@@ -11299,6 +11470,13 @@ define emit_program(ast) as:
     g_lifted_names is {}
     for k in range of (len of funcs):
         g_func_names[(funcs[k])[1]] is 1
+    # (#233 tier 1a) One whole-program scan, over EVERY function body and
+    # every top-level statement, before any emission decides anything.
+    g_uses_dict_remove is 0
+    for k in range of (len of funcs):
+        scan_dict_remove of (funcs[k])
+    for k in range of (len of rest):
+        scan_dict_remove of (rest[k])
     # (#86) lift nested defines into ordinary top-level fns BEFORE the
     # ptypes build (the loop below re-reads len(funcs) after appends).
     for k in range of (len of funcs):

@@ -433,6 +433,69 @@ static inline Value *aot_dot_get_tb_ic(Value *target, const char *key,
     }
     return aot_dot_get_tb_slow(target, key, ic, ick);
 }
+/* ouroboros#233 tier 1a, cold path -- DELIBERATELY A SEPARATE noinline
+ * FUNCTION, and this is a measured requirement rather than tidiness.
+ *
+ * The first cut wrote these two locals inline in aot_dot_num_tb_si and
+ * passed &ic/&ick to the slow path. Taking the address of a local forces
+ * it into a stack slot, a stack slot brings a frame, and a frame brings
+ * the -fstack-protector-strong canary that build.sh compiles the runtime
+ * with. All of that lands on the HOT path, which never executes any of it:
+ *
+ *   aot_dot_num_tb_ic   leaf, no frame, 0 canary refs   21 insn hot path
+ *   aot_dot_num_tb_si   0x28 frame, 2 canary refs       22 insn hot path
+ *
+ * So the version that deleted NINE guard instructions came out one
+ * instruction LONGER, and measured -1.0 Ir/cycle against a predicted -17.
+ * The win that did show up (-6.04) was entirely in the CALLER, which no
+ * longer materialises &__icN and &__ickN per call.
+ *
+ * Keeping the cold path out of line restores the leaf property. Re-deriving
+ * by NAME here is also load-bearing: a record that is somehow not the shape
+ * the emitter proved still produces the right answer and the right error,
+ * rather than a wrong number. */
+static __attribute__((noinline)) double aot_dot_num_si_cold(Value *target, const char *key,
+                                                            const char *site) {
+    int ic = -1; const char *ick = 0;
+    return aot_dot_num_tb_slow(target, key, &ic, &ick, site);
+}
+
+/* ouroboros#233 tier 1a -- STATIC FIELD INDEX.
+ *
+ * The IC below caches an index and then re-proves it on every read: bounds
+ * check plus a key-pointer compare, 1.9 times per emulated DMG cycle at
+ * ~20.6 instructions a go. When the compiler knows the index at the call
+ * site, all of that is deletable, and the deletion is sound on a property
+ * of the runtime rather than of any one program:
+ *
+ *   dict_set_hashed_raw UPDATES an existing key in place at its index and
+ *   APPENDS a new one at count++. Nothing reorders. The ONLY operation
+ *   that moves an existing key is dict_remove (it shifts the tail down),
+ *   and dict_remove has exactly one caller in the whole runtime -- the
+ *   builtin of the same name.
+ *
+ * So for a program that never calls `dict_remove`, a key at position i in
+ * the constructing dict literal stays at position i forever, and because
+ * count only ever grows from the literal's key count, i < count holds for
+ * the life of the program. That is why there is no bounds check here: it
+ * is not omitted, it is discharged by the same whole-program predicate the
+ * emitter checks before it may emit this call at all.
+ *
+ * The VAL_DICT test stays. The field maps say which FIELDS a record has,
+ * not that a binding always holds a record, so the type is still a runtime
+ * question -- that is tier 1b, and it is the other ~5 instructions.
+ *
+ * `key` and `site` are carried for the slow path's error message only, so a
+ * miss reports the same diagnostic the IC would have. */
+static inline double aot_dot_num_tb_si(Value *target, const char *key,
+                                       int idx, const char *site) {
+    if (__builtin_expect(target != NULL && target->type == VAL_DICT, 1)) {
+        Value *v = target->data.dict.vals[idx];
+        if (__builtin_expect(v != NULL && v->type == VAL_NUM, 1)) return v->data.num;
+    }
+    return aot_dot_num_si_cold(target, key, site);
+}
+
 static inline double aot_dot_num_tb_ic(Value *target, const char *key,
                                        int *ic, const char **ick, const char *site) {
     if (__builtin_expect(target != NULL && target->type == VAL_DICT, 1)) {
