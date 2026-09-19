@@ -35,10 +35,53 @@ BASELINE 0
 # survives a new instrument is the outcome this file is built for.
 #
 # row        declared  tol%   basis
-K_TOTAL      219.4     8     measured 2026-09-19 two boxes/two tools, 2M window; this row is the STATE OF TODAY, and is the one tier 1 must move
-EIG          86.3      12    DMG's own compiled code (eig_*). Not compiler scaffolding; a tight C DMG core is ~40, so this half is DMG's structure and tier 1 must NOT move it
-AOT_IC       111.1     12    inline-cache helpers (aot_*). THE TIER 1 TARGET
-OTHER        22.1      20    guard / box / truthy / refcount
+K_TOTAL      194.4     8     tier 1a LANDED 2026-09-19. Was 219.4. A/B on ONE runtime, arms asserted different (symbol present/absent, binaries not byte-identical), emulated output identical: baseline 219.6 -> 194.4 perf, 219.2 -> 194.0 callgrind. 21.41 -> 23.52 MHz here
+EIG          80.3      12    DMG's own compiled code (eig_*). Was 86.3; tier 1a moved it WITHOUT touching DMG, because the call sites stopped materialising two static addresses per field read and that cost is attributed to the caller. A tight C DMG core is ~40, so the rest is DMG's structure
+AOT_IC       91.5      12    inline-cache helpers (aot_*). Was 111.1. Tier 1a converted the numeric field READ only: aot_dot_num_tb_ic 39.18 -> aot_dot_num_tb_si 18.90 Ir/cycle
+OTHER        22.1      20    guard / box / truthy / refcount. Unmoved by tier 1a, as intended
+#
+# ===================== TIER 1a OUTCOME, 2026-09-19 =====================
+#
+# Pre-registered: K_TOTAL 202, AOT_IC 94 (the read-path-only figures below).
+# Measured:       K_TOTAL 194.4, AOT_IC 91.5.  Both BEATEN.
+#
+# It did not look like that on the first measurement, and the way it was
+# wrong is the part worth keeping.
+#
+# Run 1 gave K 211.9 -- a third of the predicted saving. The TOTAL read as
+# "the model overpredicts by 2x", which would have been filed as a partial
+# win. The per-origin table said otherwise: the helper moved -1.0 while its
+# CALLER moved -6.04, i.e. two effects of different origin rather than one
+# attenuated effect, and the intended win had been cancelled inside the
+# callee.
+#
+# Cause: the cold path declared `int ic = -1; const char *ick = 0;` and
+# passed their ADDRESSES to the slow path. An addressed local needs a stack
+# slot, a stack slot needs a frame, and a frame with an addressed local
+# trips -fstack-protector-strong, which build.sh compiles the runtime with.
+# All of it lands in the prologue/epilogue, so the fast path paid for cold
+# code it never runs:
+#
+#   aot_dot_num_tb_ic   leaf, no frame, 0 canary refs   21 insn hot path
+#   aot_dot_num_tb_si   0x28 frame, 2 canary refs       22 insn hot path
+#
+# The version with NINE guard instructions deleted was one instruction
+# LONGER. Moving the cold path into its own noinline function restored the
+# leaf property and the predicted saving appeared in full.
+#
+# So the instruction-level model was sound and the implementation gave the
+# savings back. Only per-symbol attribution separates those two, and a
+# totals-only oracle would have concluded the model was wrong.
+#
+# NEXT, by the same arithmetic, now that the model is validated:
+#   aot_dot_set_num_tb_ic  28.04 Ir/cycle  the write path, same guard chain
+#   aot_getb_named_ic      13.02
+#   aot_dot_borrow_ic      10.38
+# Converting the write path should be worth ~10 more (its deletable
+# fraction is smaller -- it keeps a refcount check and num_guard), which
+# would put K near 184. Each conversion must keep the helper a LEAF.
+#
+# =======================================================================
 #
 # PRE-REGISTERED PREDICTION FOR ouroboros#233 TIER 1 (static field index).
 # Not yet in force -- these are the numbers tier 1 will be judged against, and
