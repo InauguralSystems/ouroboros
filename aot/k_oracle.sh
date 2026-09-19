@@ -144,7 +144,29 @@ if [ "${1:-}" = "--selftest" ]; then
     # suite whose cases all pass (section 121). The count is expected to
     # move when a plant is added -- editing this number is the deliberate
     # act that makes the addition reviewable.
-    want=10; [ "${K_SELFTEST_SLOW:-0}" = 1 ] && want=11
+    want=10; [ "${K_SELFTEST_SLOW:-0}" = 1 ] && want=12
+    # P10 covers --origins, which K_FAKE_POINTS does not reach at all: that
+    # mode takes its own measurement via callgrind, so every fast plant
+    # above would still pass with the whole origins path broken -- and it
+    # WAS broken, silently, in exactly that way: a mangled awk format
+    # string made every row read OUT, and before that the mode fell all the
+    # way through into the other one and printed PASS.
+    if [ "${K_SELFTEST_SLOW:-0}" = 1 ]; then
+        if [ -x "${K_BIN:-/nonexistent}" ] || [ -f "$DMG_SELF/dmg.eigs" ]; then
+            printf 'WINDOW 2000000\nBASELINE 0\nK_TOTAL 219.4 8 d\nEIG 999 5 d\nAOT_IC 111.1 12 d\nOTHER 22.1 20 d\n' > "$SD/orig.txt"
+            total=$((total+1))
+            out=$(K_BUDGET="$SD/orig.txt" bash "$HERE/k_oracle.sh" --origins 2>&1); rc=$?
+            if [ "$rc" = 1 ] && [ "${out#*EIG*OUTSIDE}" != "$out" ]; then
+                printf '  ok   %-46s (rc=1, and only that row)\n' "P10 --origins reds the row that is wrong"
+                pass=$((pass+1))
+            else
+                printf '  MISS %-46s rc=%s\n' "P10 --origins reds the row that is wrong" "$rc"
+                printf '%s\n' "$out" | tail -6 | sed 's/^/        /'
+            fi
+        else
+            printf '  SKIP %-46s (no DMG)\n' "P10 --origins plant"
+        fi
+    fi
     echo "== selftest $total run, $pass passed, $((total-pass)) failed =="
     if [ "$total" != "$want" ]; then
         echo "k_oracle: selftest ran $total plant(s), expected $want -- a case stopped running, which reads identically to a case that passed" >&2
@@ -228,6 +250,127 @@ point() {
     echo "$insn $cyc $wall $emu"
 }
 
+# ---------------------------------------------------------------- origins
+# Per-origin attribution, exact rather than sampled. callgrind counts every
+# instruction and attributes it to a symbol, so the buckets are arithmetic,
+# not statistics -- which matters because the rows differ by less than
+# sampling noise would. It costs ~30x wall (a 2M window is ~60s a point),
+# which is why it is a separate mode and not part of every run.
+#
+# The SAME two-point subtraction applies per bucket. At a 100k window the
+# libc allocator alone is 20% of instructions, nearly all of it startup;
+# attributing that to emulation would be a straightforward lie.
+if [ "${1:-}" = "--origins" ]; then
+    command -v valgrind >/dev/null 2>&1 || refuse "no valgrind; --origins needs exact per-symbol counts"
+    command -v callgrind_annotate >/dev/null 2>&1 || refuse "no callgrind_annotate"
+    [ -x "$BIN" ] || refuse "no runnable DMG binary at $BIN"
+    cg_point() {  # $1 cycles, $2 tag -> writes "$WORK/$2.bucket" as: BUCKET Ir
+        local n="$1" tag="$2"
+        ( cd "$DMG" && valgrind --tool=callgrind --callgrind-out-file="$WORK/$tag.cg"             "$BIN" "$ROM" --cycles "$n" ) >"$WORK/$tag.out" 2>"$WORK/$tag.vg" || return 1
+        local emu
+        emu=$(grep -oE '^Cycles: [0-9]+' "$WORK/$tag.out" | head -1 | awk '{print $2}')
+        [ -n "$emu" ] || { echo "k_oracle: no cycle count from the $tag run" >&2; return 1; }
+        # Bucket by symbol. The buckets are exhaustive by construction --
+        # everything that is not eig_* or aot_* is OTHER -- and the sum is
+        # asserted against the reported total below, so a parse that drops
+        # lines cannot quietly shrink a bucket (a conserved quantity).
+        callgrind_annotate --threshold=100 "$WORK/$tag.cg" 2>/dev/null |
+          awk -v out="$WORK/$tag.bucket" -v emuf="$WORK/$tag.emu" -v emu="$emu" '
+            /PROGRAM TOTALS/ { gsub(/,/,"",$1); total=$1; next }
+            /:/ {
+              line=$0
+              if (match(line, /^[ ]*[0-9,]+/)) {
+                v=substr(line, RSTART, RLENGTH); gsub(/[ ,]/,"",v)
+                if (v=="") next
+                fn=line; sub(/^[^)]*\)[ ]*/, "", fn); sub(/^.*:/, "", fn); sub(/ \[.*$/, "", fn)
+                if (fn ~ /^eig_/)      eig += v
+                else if (fn ~ /^aot_/) aot += v
+                else                   oth += v
+              }
+            }
+            END {
+              printf "EIG %d\nAOT_IC %d\nOTHER %d\nTOTAL %d\n", eig, aot, oth, total > out
+              printf "%d\n", emu > emuf
+            }'
+        # A helper that returns 0 having produced nothing is how --origins
+        # first "ran": its awk died on a malformed format string, cg_point
+        # returned success anyway, and with no `set -e` the caller carried on
+        # and fell through into the OTHER mode, which then printed PASS. A
+        # step now proves it produced what it claims to have produced.
+        [ -s "$WORK/$tag.emu" ] || { echo "k_oracle: $tag produced no cycle count" >&2; return 1; }
+        local nb; nb=$(awk 'END{print NR}' "$WORK/$tag.bucket" 2>/dev/null)
+        [ "$nb" = 4 ] || { echo "k_oracle: $tag attribution produced ${nb:-0} bucket row(s), expected 4" >&2; return 1; }
+        return 0
+    }
+    echo "k_oracle: --origins, exact attribution via callgrind (slow; ~30x)" >&2
+    cg_point "$BASEW"  cgbase || refuse "the callgrind baseline point did not run"
+    cg_point "$WINDOW" cgwin  || refuse "the callgrind window point did not run"
+    g() { awk -v k="$2" '$1==k{print $2}' "$WORK/$1.bucket"; }
+    de=$(( $(cat "$WORK/cgwin.emu") - $(cat "$WORK/cgbase.emu") ))
+    [ "$de" -gt 0 ] || refuse "the two callgrind points did not separate in emulated cycles"
+    # Conservation: the buckets must add up to the total callgrind reported.
+    # A bucket that silently lost lines would otherwise read as an origin
+    # that got cheaper.
+    for t in cgbase cgwin; do
+        sum=$(( $(g $t EIG) + $(g $t AOT_IC) + $(g $t OTHER) ))
+        tot=$(g $t TOTAL)
+        awk -v a="$sum" -v b="$tot" 'BEGIN{exit !(b>0 && (a-b<b*0.01 && b-a<b*0.01))}' ||
+            refuse "$t buckets sum to $sum but callgrind reported $tot -- the attribution dropped instructions, so a bucket would read low"
+    done
+    printf '
+== per-origin, %d emulated cycles net of startup (exact) ==
+' "$de"
+    ofails=0; oexam=0; orows=0
+    while read -r name declared tol _rest; do
+        case "$name" in ''|\#*|WINDOW|BASELINE|K_TOTAL) continue;; esac
+        orows=$((orows+1))
+        d=$(( $(g cgwin "$name") - $(g cgbase "$name") ))
+        oexam=$((oexam+1))
+        read -r v dev <<<"$(awk -v m="$d" -v e="$de" -v dc="$declared" -v t="$tol" 'BEGIN{
+            k=m/e; p=(k-dc)/dc*100; printf "%s %.1f\n", ((p<0?-p:p)<=t?"ok":"OUT"), p }')"
+        k=$(awk -v m="$d" -v e="$de" 'BEGIN{printf "%.1f", m/e}')
+        if [ "$v" = ok ]; then
+            printf '  %-10s declared %8.1f  measured %8.1f  %+6.1f%% within %s%%
+' "$name" "$declared" "$k" "$dev" "$tol"
+        else
+            printf '  %-10s declared %8.1f  measured %8.1f  %+6.1f%% OUTSIDE %s%%
+' "$name" "$declared" "$k" "$dev" "$tol"
+            ofails=$((ofails+1))
+        fi
+    done < "$BUDGET"
+    [ "$orows" -gt 0 ] || refuse "no per-origin rows in the budget"
+    [ "$oexam" -gt 0 ] || refuse "parsed $orows origin row(s) and measured NONE"
+    tk=$(awk -v a="$(g cgwin TOTAL)" -v b="$(g cgbase TOTAL)" -v e="$de" 'BEGIN{printf "%.1f", (a-b)/e}')
+    printf '  %-10s %27s %8.1f  (callgrind total, for cross-check against perf)
+' "K_TOTAL" "" "$tk"
+    # Per-symbol, WINDOW MINUS BASELINE. Reading the window file alone and
+    # calling the result "net of startup" would be false labelling, and at a
+    # small window it is badly false: the libc allocator is 20% of a 100k
+    # run and almost none of that is emulation.
+    sym() { callgrind_annotate --threshold=100 "$WORK/$1.cg" 2>/dev/null |
+        awk '/:/ && match($0,/^[ ]*[0-9,]+/){
+               v=substr($0,RSTART,RLENGTH); gsub(/[ ,]/,"",v)
+               fn=$0; sub(/^.*:/,"",fn); sub(/ \[.*$/,"",fn); gsub(/^ +| +$/,"",fn)
+               if (fn!="" && v!="") printf "%s\t%s\n", fn, v }'; }
+    printf '\n== the ten largest single symbols, net of startup, Ir per emulated cycle ==\n'
+    TAB=$(printf '\t')
+    join -t "$TAB" -a1 -e 0 -o 0,1.2,2.2 \
+         <(sym cgwin  | sort -t "$TAB" -k1,1) \
+         <(sym cgbase | sort -t "$TAB" -k1,1) 2>/dev/null |
+      awk -F'\t' '{d=$2-$3; if(d>0) printf "%d\t%s\n", d, $1}' |
+      sort -rn | head -10 |
+      awk -F'\t' -v e="$de" '{printf "  %8.2f  %s\n", $1/e, $2}' 
+    if [ "$ofails" -gt 0 ]; then
+        printf '
+k_oracle: FAIL -- %d origin row(s) outside tolerance.
+' "$ofails"; exit 1
+    fi
+    printf '
+k_oracle: PASS -- %d of %d origin row(s) within tolerance.
+' "$oexam" "$orows"
+    exit 0
+fi
+
 # K_FAKE_POINTS injects two recorded tuples in place of running DMG. It
 # exists for --selftest and nothing else: the comparison logic has to be
 # testable without a 2M-cycle run per plant. It is deliberately NOT a way
@@ -236,9 +379,35 @@ point() {
 if [ -n "${K_FAKE_POINTS:-}" ]; then
     lo=${K_FAKE_POINTS%%;*}; hi=${K_FAKE_POINTS##*;}
 else
-    echo "k_oracle: two-point measurement, window=$WINDOW baseline=$BASEW" >&2
-    lo=$(point "$BASEW" base) || refuse "the baseline point did not run"
-    hi=$(point "$WINDOW" win) || refuse "the window point did not run"
+    # REPEAT AND TAKE MEDIANS. The counter-derived figure (K) is stable to
+    # 0.2% across runs because retired instructions barely vary. The WALL
+    # figures are not: dw is a small difference of two larger noisy numbers
+    # (startup is ~0.4s, the 2M-cycle emulation is ~0.1s), so ordinary
+    # scheduling noise in the baseline propagates straight into clock and
+    # MHz. Measured: a single pair reported 2.172 GHz on one run and 4.501
+    # GHz on the next, on a box whose clock is ~2.1 -- i.e. the derived MHz
+    # was wrong by 2x while K moved 0.1%. Medians of REPS pairs, not one.
+    REPS="${K_REPS:-3}"
+    echo "k_oracle: two-point measurement, window=$WINDOW baseline=$BASEW, $REPS reps" >&2
+    : > "$WORK/pairs"
+    for r in $(seq 1 "$REPS"); do
+        l=$(point "$BASEW"  "base$r") || refuse "baseline point $r did not run"
+        h=$(point "$WINDOW" "win$r")  || refuse "window point $r did not run"
+        echo "$l $h" >> "$WORK/pairs"
+    done
+    med() { sort -g | awk '{v[NR]=$1} END{ if(NR==0) exit 1; print (NR%2)? v[(NR+1)/2] : (v[NR/2]+v[NR/2+1])/2 }'; }
+    # Median each DERIVED quantity, not each raw count: the ratio of medians
+    # is not the median of ratios, and it is the ratios that are compared.
+    i0=0; c0=0; w0=0; e0=0
+    i1=$(awk '{print $5-$1}' "$WORK/pairs" | med)
+    c1=$(awk '{print $6-$2}' "$WORK/pairs" | med)
+    w1=$(awk '{print $7-$3}' "$WORK/pairs" | med)
+    e1=$(awk '{print $8-$4}' "$WORK/pairs" | med)
+    [ -n "$i1" ] && [ -n "$e1" ] || refuse "no usable pairs after $REPS rep(s)"
+    lo="0 0 0 0"; hi="$i1 $c1 $w1 $e1"
+    spread=$(awk '{print ($5-$1)/($8-$4)}' "$WORK/pairs" |
+             sort -g | awk 'NR==1{a=$1} END{ if(a>0) printf "%.2f", $1/a; else print "0" }')
+    echo "k_oracle: K spread across reps (max/min) = ${spread}x" >&2
 fi
 read -r i0 c0 w0 e0 <<<"$lo"
 read -r i1 c1 w1 e1 <<<"$hi"

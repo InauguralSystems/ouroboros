@@ -20,6 +20,20 @@
 # 200k cycles, 219.4 at 2M). Quoting K without its window is meaningless.
 WINDOW  2000000
 BASELINE 0
+# CONFIRMED 2026-09-19 on a THIRD instrument. The rows below were declared
+# from a Xeon under cachegrind; `k_oracle.sh --origins` re-measured them on
+# the Goldmont dev box under callgrind, startup subtracted at the same 2M
+# window, and every row landed inside half a percent:
+#
+#   EIG      declared  86.3  measured  86.0   -0.3%
+#   AOT_IC   declared 111.1  measured 111.0   -0.1%
+#   OTHER    declared  22.1  measured  22.2   +0.5%
+#   K_TOTAL  declared 219.4  measured 219.2 (callgrind) / 219.8 (perf)
+#
+# and the field-access family summed to 90.68 Ir/cycle against the 90.6 that
+# sized the issue. Nothing below changed as a result -- a declaration that
+# survives a new instrument is the outcome this file is built for.
+#
 # row        declared  tol%   basis
 K_TOTAL      219.4     8     measured 2026-09-19 two boxes/two tools, 2M window; this row is the STATE OF TODAY, and is the one tier 1 must move
 EIG          86.3      12    DMG's own compiled code (eig_*). Not compiler scaffolding; a tight C DMG core is ~40, so this half is DMG's structure and tier 1 must NOT move it
