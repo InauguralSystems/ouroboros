@@ -91,6 +91,39 @@ OTHER        22.1      20    guard / box / truthy / refcount
 # 180 the model is trustworthy and 1b is worth its extra proof; if it does
 # not, the model is wrong and 1b would have been built on it.
 #
+# WHAT WAS ACTUALLY BUILT IS NARROWER THAN EITHER, and this is pinned
+# BEFORE the measurement so a miss cannot be explained away afterwards.
+#
+# 1a as landed converts the numeric field READ only (aot_dot_num_tb_ic).
+# The other three members of the field-access family are untouched and
+# still consult a cache:
+#
+#   aot_dot_num_tb_ic       39.24 Ir/cycle   CONVERTED
+#   aot_dot_set_num_tb_ic   28.04            not converted (the write path)
+#   aot_getb_named_ic       13.02            not converted
+#   aot_dot_borrow_ic       10.38            not converted
+#                           -----
+#                           90.68  = the family the 71/180 figures assume
+#
+# So PREDICT_T1A_* above describe 1a applied to all four. Applied to one:
+#
+#   39.24 * (9/21 deleted) = ~17 Ir/cycle saved
+#
+#   PREDICT_T1A_READ_ONLY_K_TOTAL  202     (219.4 - 17)
+#   PREDICT_T1A_READ_ONLY_AOT_IC    94     (111.1 - 17)
+#
+# Conversion measured on DMG before running: 240 static-index sites against
+# 68 surviving ICs, and the three hottest functions convert COMPLETELY --
+# eig_run_headless_loop (46.96 Ir/cycle) 30 si / 0 ic, eig_fetch8 8/0,
+# eig_cpu_mem_read 7/0. Site count is not dynamic weight, but zero ICs left
+# in the hottest function is the reason to expect the full ~17 rather than
+# a fraction of it.
+#
+# If the measurement lands near 202, the instruction-level model is sound
+# and converting the remaining three is straightforward arithmetic. If it
+# lands at 219, the model is wrong somewhere and no amount of further
+# conversion will help until that is understood.
+#
 # The surviving 2 + 4 + 1 after 1b is the boxed Value* deref, which is
 # exactly tier 2 (flat records, unboxed fields) and is why the tiers are
 # separable and worth very different amounts.
