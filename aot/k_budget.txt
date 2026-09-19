@@ -123,9 +123,43 @@ OTHER        22.1      20    guard / box / truthy / refcount. Unmoved by tier 1a
 # not. Whatever keeps it out of line is worth ~2-4 Ir/cycle of call
 # overhead at 1.9 calls per emulated cycle.
 #
-# Remaining in the family: aot_getb_named_ic 13.02, aot_dot_borrow_ic
-# 10.38. Same guard chain, same rule -- keep the helper a leaf, and prefer
-# a shape small enough to inline.
+# REMAINING TWO: NEITHER IS WORTH CONVERTING, and the earlier note here
+# calling them "same guard chain" was wrong about one of them.
+#
+# aot_getb_named_ic 13.02 -- NOT THE SAME PROBLEM. Its signature is
+#   aot_getb_named_ic(Env *g, const char *name, AotNameIC *c)
+# an ENVIRONMENT name lookup, not a dict field access. It caches a slot
+# pointer keyed by binding version. The whole soundness argument for a
+# static field index is that dicts only ever grow, which is a property of
+# dict_set; global bindings can be added AND rebound, so nothing transfers.
+# Resolving global names to direct slots at compile time is a real and
+# probably worthwhile idea, but it is a different mechanism with its own
+# proof obligation, not this one applied again.
+#
+# aot_dot_borrow_ic 10.38 -- convertible, DECLINED on two grounds:
+#
+#   1. It is called 0.34 times per emulated cycle, so deleting the same 9
+#      instructions saves ~3.1 Ir/cycle -- 1.7% of K, at the micro-
+#      optimisation cliff where this project has been burned before.
+#   2. It would remove a safety net the read path deliberately keeps. The
+#      read helper re-checks `v->type == VAL_NUM` and falls back to
+#      deriving by name when it fails, so a WRONG index still yields the
+#      right answer. That net caught a real bug in this very change: the
+#      duplicate-key defect emitted index 2 for a field at index 1, and
+#      the program still printed correctly because vals[2] was NULL and
+#      the cold path re-derived. aot_dot_borrow_ic returns an arbitrary
+#      Value* -- there is no type to re-check, so the same defect would
+#      return the WRONG FIELD silently.
+#
+# 1.7% is not worth converting a detected fault into a silent one. If it
+# is revisited, keep the key-pointer compare (that costs back ~5 of the 9
+# and leaves ~1.7 Ir/cycle, which is not worth the edit at all).
+#
+# SO TIER 1a IS COMPLETE AT K 182.1. The next item down is
+# eig_run_headless_loop at 40.93 -- DMG's own compiled code, not compiler
+# scaffolding. A tight C DMG core is ~40 Ir/cycle for the ENTIRE emulator,
+# so that is the structural wall, and closing it is a DMG question rather
+# than a compiler one.
 #
 # ==========================================================
 #
