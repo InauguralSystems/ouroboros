@@ -1,0 +1,55 @@
+# DECLARED K BUDGET -- what the AOT says DMG should cost, per emulated cycle.
+#
+# K = host instructions retired per emulated cycle. It is machine-independent
+# for a given binary, which is why it, and not MHz, is the declared quantity:
+# a Goldmont N3350 (perf) and a 1-vCPU Xeon (cachegrind) measured the same
+# binary at 254 and 255.9 with two different tools.
+#
+# THESE NUMBERS ARE DECLARATIONS, NOT OBSERVATIONS. Each row is a prediction
+# with a written basis, pinned BEFORE the change that is supposed to move it.
+# There is deliberately no --regenerate: re-deriving a declared value from the
+# run it is policing is how a baseline launders a regression (mechanical-gates
+# section 4), and it is exactly what would happen here, because the thing being
+# measured and the thing being predicted are the same number.
+#
+# To change a row you must change its BASIS line, in the same commit as the
+# code that earns it. A row whose number moves and whose basis does not is
+# the tell.
+#
+# WINDOW is load-bearing: K drifts as startup and warmup amortize (255.9 at
+# 200k cycles, 219.4 at 2M). Quoting K without its window is meaningless.
+WINDOW  2000000
+BASELINE 0
+# row        declared  tol%   basis
+K_TOTAL      219.4     8     measured 2026-09-19 two boxes/two tools, 2M window; this row is the STATE OF TODAY, and is the one tier 1 must move
+EIG          86.3      12    DMG's own compiled code (eig_*). Not compiler scaffolding; a tight C DMG core is ~40, so this half is DMG's structure and tier 1 must NOT move it
+AOT_IC       111.1     12    inline-cache helpers (aot_*). THE TIER 1 TARGET
+OTHER        22.1      20    guard / box / truthy / refcount
+#
+# PRE-REGISTERED PREDICTION FOR ouroboros#233 TIER 1 (static field index).
+# Not yet in force -- these are the numbers tier 1 will be judged against, and
+# they are written down now, before the code, so the result can falsify them.
+#
+# Derived by counting the guard chain in aot_dot_num_tb_ic (aot/aot_rt.h),
+# which a compile-time-constant index deletes, against what survives it:
+#
+#   deleted   target != NULL && target->type == VAL_DICT      ~4 insn
+#   deleted   i = *ic                                          ~1
+#   deleted   i >= 0 && i < target->data.dict.count            ~3
+#   deleted   target->data.dict.keys[i] == *ick                ~4
+#   SURVIVES  vals[i] load, v null+type check, v->data.num     ~6
+#
+# ~12 of ~20.6 Ir/call are guard, ~65%. The field-access family totals 90.6
+# Ir/cycle today; at the same guard fraction it lands near 32, so
+#
+#   PREDICT_TIER1_K_TOTAL   161     (219.4 - 58)
+#   PREDICT_TIER1_AOT_IC     52
+#
+# The surviving ~6 are the boxed Value* deref, and that is precisely what
+# tier 2 (flat records, unboxed numeric fields) exists to remove -- which is
+# why the two tiers are separable and worth very different amounts.
+#
+# WALL SPEEDUP WILL BE SMALLER THAN THE INSTRUCTION SAVING, and quoting the
+# instruction ratio as a speedup is the over-claim this file exists to stop:
+# the ICs are HIGH-IPC (50.6% of instructions, 34.8% of time), so a 1.36x
+# instruction reduction predicts roughly 1.2x wall, not 1.36x.
