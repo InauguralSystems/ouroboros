@@ -44,24 +44,56 @@ OTHER        22.1      20    guard / box / truthy / refcount
 # Not yet in force -- these are the numbers tier 1 will be judged against, and
 # they are written down now, before the code, so the result can falsify them.
 #
-# Derived by counting the guard chain in aot_dot_num_tb_ic (aot/aot_rt.h),
-# which a compile-time-constant index deletes, against what survives it:
+# REVISED 2026-09-19, BEFORE any tier 1 code, and revised for a reason
+# worth stating: the first version of this prediction assumed a constant
+# index deletes the whole guard chain. Working the chain out instruction by
+# instruction says it deletes some of it, and WHICH part depends on a second
+# proof that is not the same as the index proof. Pre-registration is
+# pointless if it is only sharpened after the measurement, so it is
+# sharpened here.
 #
-#   deleted   target != NULL && target->type == VAL_DICT      ~4 insn
-#   deleted   i = *ic                                          ~1
-#   deleted   i >= 0 && i < target->data.dict.count            ~3
-#   deleted   target->data.dict.keys[i] == *ick                ~4
-#   SURVIVES  vals[i] load, v null+type check, v->data.num     ~6
+# aot_dot_num_tb_ic (aot/aot_rt.h), x86-64, ~21 insn against a measured 20.6:
 #
-# ~12 of ~20.6 Ir/call are guard, ~65%. The field-access family totals 90.6
-# Ir/cycle today; at the same guard fraction it lands near 32, so
+#   2   target != NULL                       test / je
+#   3   target->type == VAL_DICT             load type, cmp, jne
+#   1   i = *ic                              load
+#   4   i >= 0 && i < count                  cmp, jl, load count, cmp/jge
+#   4   keys[i] == *ick                      load keys, load keys[i], load *ick, cmp
+#   2   v = vals[i]                          load vals, load vals[i]
+#   4   v && v->type == VAL_NUM              test/je, load type, cmp/jne
+#   1   return v->data.num                   movsd
 #
-#   PREDICT_TIER1_K_TOTAL   161     (219.4 - 58)
-#   PREDICT_TIER1_AOT_IC     52
+# A CONSTANT INDEX deletes the 1 + 4 + 4 = 9 in the middle:
 #
-# The surviving ~6 are the boxed Value* deref, and that is precisely what
-# tier 2 (flat records, unboxed numeric fields) exists to remove -- which is
-# why the two tiers are separable and worth very different amounts.
+#   - `i = *ic` is gone by construction.
+#   - the KEY COMPARE is gone because the index is the proof.
+#   - the BOUNDS CHECK is gone, and this is the part that needs the runtime
+#     fact rather than the source: dicts only ever GROW unless dict_remove
+#     is called, count starts at the literal's key count, so idx < count
+#     holds for the life of the program. It is sound only under the same
+#     no-dict_remove predicate, not independently of it.
+#
+# What survives is the 2 + 3 for "is this actually a dict" and the 2 + 4 + 1
+# for the boxed Value* deref. So there are TWO tiers inside tier 1, and only
+# the second reaches the number first written here:
+#
+#   TIER 1a  static index, KEEP the VAL_DICT check      20.6 -> ~11.6  (-44%)
+#   TIER 1b  1a + proof the target is always a dict     20.6 ->  ~6.6  (-68%)
+#
+# Applied to the 90.6 Ir/cycle field-access family:
+#
+#   PREDICT_T1A_AOT_IC    71      PREDICT_T1A_K_TOTAL   180
+#   PREDICT_T1B_AOT_IC    49      PREDICT_T1B_K_TOTAL   157
+#
+# 1a is the whole-program index proof and nothing else. 1b additionally
+# needs the target's type to be known at every site, which the field maps
+# do not currently assert. Land 1a first and measure it: if 1a lands near
+# 180 the model is trustworthy and 1b is worth its extra proof; if it does
+# not, the model is wrong and 1b would have been built on it.
+#
+# The surviving 2 + 4 + 1 after 1b is the boxed Value* deref, which is
+# exactly tier 2 (flat records, unboxed fields) and is why the tiers are
+# separable and worth very different amounts.
 #
 # WALL SPEEDUP WILL BE SMALLER THAN THE INSTRUCTION SAVING, and quoting the
 # instruction ratio as a speedup is the over-claim this file exists to stop:
