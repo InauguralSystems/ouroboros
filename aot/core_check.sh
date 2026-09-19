@@ -11,49 +11,68 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 EIGS_DIR="${EIGS_DIR:-$HERE/../../EigenScript}"
 MK="$EIGS_DIR/Makefile"
 [ -f "$MK" ] || { echo "core_check: no Makefile at $MK (set EIGS_DIR)"; exit 2; }
-# ASK MAKE, DO NOT GREP ITS SOURCE (mechanical-gates section 1).
+# WHAT THIS NOW CHECKS, AND WHY IT CHANGED (ouroboros#232).
 #
-# This grepped `^SOURCES *:?=` and piped the MATCHING LINE to names(). grep
-# returns one line; a backslash continuation is on the next one. names()
-# strips backslashes, so continuations had been anticipated -- but grep never
-# delivered them. FULL_SOURCES two lines below already wraps, so the style
-# was live in the file.
+# There is no hand-written CORE any more. build.sh DERIVES it from the
+# Makefile of the runtime it is about to link against -- SOURCES minus
+# CLI_ONLY, read via `make -pqRr`. So the drift this file was written to
+# catch cannot happen: there is no second list to diverge.
 #
-# Measured (the phone-side reviewer, 2026-09-19): reformatting SOURCES with
-# one line break, changing ZERO TUs, made `task` VANISH from the MISSING list
-# while adding fourteen phantom extras. The phantoms are the loud half; the
-# quiet half is a genuinely absent TU no longer being reported, from a
-# cosmetic edit -- the instrument going silent in the direction that costs
-# you. That is the whole failure class this file exists to prevent, living
-# inside the file.
+# That also fixed a bug this gate could not have caught, because the gate
+# had it too. A hand list can only be right for ONE runtime, and there are
+# two: CI links the PIN (v0.43.0 -- 20 TUs, no builtins_buf/fsutil/task)
+# while a developer's sibling checkout is main (23 TUs). Any single list is
+# wrong somewhere, and adding the three names turned a green CI red.
 #
-# `make -pqRr` prints the post-expansion database: continuations joined,
-# variables resolved, += applied. There is no fallback to the old parse on
-# purpose -- a gate that cannot read its authority must FAIL, not guess.
-mk_var() {  # $1 = variable name -> one TU basename per line
-    make -C "$EIGS_DIR" -pqRr 2>/dev/null |
-        sed -nE "s/^$1 :?= *//p" | head -1 |
-        tr ' ' '\n' |
+# So the gate's job is now to keep the DERIVATION honest:
+#   1. build.sh must not reintroduce a literal list;
+#   2. the derivation must be non-vacuous against the configured EIGS_DIR;
+#   3. CLI_ONLY must still be the five TUs the exclusion assumes.
+fail_n=0
+
+if grep -qE '^CORE="[a-z_]' "$HERE/build.sh"; then
+    echo "core_check: build.sh has a LITERAL CORE list again -- it drifted four times as a literal and must stay derived from \$EIGS_DIR/Makefile"
+    fail_n=1
+fi
+if ! grep -q 'mk_tus SOURCES' "$HERE/build.sh"; then
+    echo "core_check: build.sh no longer derives CORE from SOURCES -- the derivation is the mechanism, not a convenience"
+    fail_n=1
+fi
+
+mk_tus() {  # mirrors build.sh; `make -q` exits 1 normally, so tolerate it
+    local db line
+    db=$(make -C "$EIGS_DIR" -pqRr 2>/dev/null || true)
+    line=$(printf '%s\n' "$db" | awk -v v="$1" '$1==v && ($2==":=" || $2=="=") {print; exit}')
+    printf '%s\n' "$line" | tr ' ' '\n' |
         sed -nE 's#^(\$\(SRC_DIR\)|[a-z_0-9]+)/([a-z_0-9]+)\.c$#\2#p' | sort -u
 }
-core=$(sed -n '/^CORE="/,/"/p' "$HERE/build.sh" | tr -d '"\\' | sed 's/^CORE=//' | tr ' ' '\n' | grep -E '^[a-z_0-9]+$' | sort -u)
-sources=$(mk_var SOURCES)
-cli=$(mk_var CLI_ONLY)
-
-# VACUITY, both sides (section 121). The bug above did not produce an EMPTY
-# list, it produced a SHORT one, so "non-empty" would not have caught it.
-# These floors are the shape of the truth, not its exact value: SOURCES only
-# grows, and CLI_ONLY has been five since it was introduced.
-n_sources=$(printf '%s\n' "$sources" | grep -c .)
+srcs=$(mk_tus SOURCES); cli=$(mk_tus CLI_ONLY)
+n_src=$(printf '%s\n' "$srcs" | grep -c .)
 n_cli=$(printf '%s\n' "$cli" | grep -c .)
-[ "$n_sources" -ge 25 ] || { echo "core_check: read only $n_sources TU(s) from upstream SOURCES (floor 25) -- the extraction is broken, not the tree"; exit 2; }
-[ "$n_cli" -eq 5 ] || { echo "core_check: read $n_cli TU(s) from CLI_ONLY, expected 5 -- upstream changed the CLI split, or the extraction is broken; confirm which before editing CORE"; exit 2; }
-want=$(comm -23 <(printf '%s\n' "$sources") <(printf '%s\n' "$cli"))
-missing=$(comm -13 <(printf '%s\n' "$core") <(printf '%s\n' "$want"))
-extra=$(comm -23 <(printf '%s\n' "$core") <(printf '%s\n' "$want"))
-if [ -z "$missing" ] && [ -z "$extra" ]; then
-  echo "core_check: build.sh CORE matches upstream SOURCES minus CLI_ONLY ($(printf '%s\n' "$core" | wc -l) TUs)"; exit 0
+core=$(comm -23 <(printf '%s\n' "$srcs") <(printf '%s\n' "$cli"))
+n_core=$(printf '%s\n' "$core" | grep -c .)
+
+# Vacuity, both sides (section 121). The historical bug produced a SHORT
+# list, not an empty one, so "non-empty" would not have caught it.
+if [ "$n_src" -lt 20 ]; then
+    echo "core_check: read only $n_src TU(s) from $EIGS_DIR SOURCES (floor 20) -- the extraction is broken, not the tree"
+    fail_n=1
 fi
-[ -n "$missing" ] && echo "core_check: upstream TU(s) MISSING from build.sh CORE (an AOT link fails the moment one is referenced): $(echo $missing)"
-[ -n "$extra" ] && echo "core_check: build.sh CORE names TU(s) upstream no longer builds: $(echo $extra)"
+if [ "$n_cli" -ne 5 ]; then
+    echo "core_check: CLI_ONLY has $n_cli TU(s), expected 5 -- upstream changed the CLI split; confirm before trusting the exclusion"
+    fail_n=1
+fi
+# A TU that the runtime builds but the derivation drops would be invisible
+# otherwise: every SOURCES entry is either in CORE or in CLI_ONLY, nothing
+# may fall between them.
+lost=$(comm -23 <(printf '%s\n' "$srcs") <(cat <(printf '%s\n' "$core") <(printf '%s\n' "$cli") | sort -u))
+if [ -n "$lost" ]; then
+    echo "core_check: TU(s) in SOURCES reached neither CORE nor CLI_ONLY: $(echo $lost)"
+    fail_n=1
+fi
+
+if [ "$fail_n" = 0 ]; then
+    echo "core_check: build.sh derives CORE from $EIGS_DIR ($n_core TUs = SOURCES $n_src - CLI_ONLY $n_cli), no literal list"
+    exit 0
+fi
 exit 1
