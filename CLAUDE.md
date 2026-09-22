@@ -7,10 +7,9 @@ a differential test. The single worst outcome is a silent wrong number; a
 loud throw always beats a coercing guess.
 
 **But the oracle is not the authority on what the language SHOULD do.**
-This file used to say a divergence is "a bug in THIS repo, never the VM",
-and that sentence is wrong in one specific and recurring case: when the AOT
-cannot compile a construct because the VM's rule is not a property of the
-source. Then the finding is a LANGUAGE finding, and it goes upstream.
+A divergence is a bug in this repo except in one specific and recurring
+case: when the AOT cannot compile a construct because the VM's rule is not
+a property of the source. Then the finding is a LANGUAGE finding, and it goes upstream.
 
 Every other consumer repo stresses the language by USING it; the AOT
 stresses it by having to know what a construct means before running it.
@@ -25,7 +24,7 @@ inner is 5 / print of inner` prints 5 as a main program, prints 5 when
 `load_file`d, and dies "undefined variable" when `import`ed; top-level
 `return` has three meanings on the same three roads. Fourteen rounds
 resolved every finding by matching or refusing, and never once asked
-whether the rule being matched was right — because this file said not to.
+whether the rule being matched was right.
 
 So: match the VM by default, and it stays the oracle for every ordinary
 divergence. But when matching it forces a REFUSAL — when the honest answer
@@ -97,12 +96,12 @@ stub checks; the same command runs those checks alone from the repository root.
 - **`frontend.eigs` drifts silently — mirror `parser.c` precisely.**
   Verified pain points: `of` binds unary-or-tighter; numeric lexing must
   match the pinned oracle (scientific + leading-dot with lookahead
-  guards; since v0.25.0 hex is INTEGER-only, lexed not strtod — the 0x
+  guards; hex is INTEGER-only, lexed not strtod — the 0x
   prefix is decisive and hex-float forms are loud parse errors);
   f-string desugaring parenthesized as one primary;
   postfix is per-primary; the full precedence chain
   `or→and→cmp→bitor→bitxor→bitand→shift→add→mul→unary→call→primary`.
-  Since v0.24.0: a parenthesized literal list carries a 3rd marker slot
+  A parenthesized literal list carries a 3rd marker slot
   (`["list", elems, 1]`) and never spreads (#355).
 - **AOT return-type metadata considers EVERY return** (`collect_return_
   nodes`); mixed-type returns are generic `Value*`. When declared type
@@ -110,8 +109,8 @@ stub checks; the same command runs those checks alone from the repository root.
   (`g_ret_type`) — value-preserving keeps byte-exactness.
 - **The AOT envelope is deliberately partial** — defaulted params,
   under-arity calls, and whole-list args to user fns all **throw loudly**
-  at build time (F-OURO-23) rather than guessing. Since the 2026-08-16
-  train, also loud at build time: the `when` qualifier, module-shadowing
+  at build time (F-OURO-23) rather than guessing. Also loud at build
+  time: the `when` qualifier, module-shadowing
   `local` on BUFFER globals (numeric shadows compile to C block-scope
   locals since #109 — F-OURO-33; BOXED string/list/dict shadows are
   per-call-env bindings with runtime chain dispatch since #86's
@@ -191,13 +190,10 @@ Y."* Stop there and ask whether Y is a **law** — language semantics, a
 physical constant, an external contract — or a **decision**. If it is a
 decision, price the alternative before designing around it.
 
-Bought 2026-08-28 (ouroboros#127 / DMG). **The specific situation below has
-since been FIXED — static loads are resolved and DMG now compiles whole.
-Measured 2026-09-19: a `perf record` of the AOT DMG binary contains no
-`vm_run`/`vm_execute`/interpreter frames at all, and the binary runs
-cpu_instrs at 17.3 MHz on the dev box against 3.0 MHz for the VM. The
-paragraph is kept because the REASONING is the lesson, not the state — but
-do not cite its numbers as current.** At the time: the AOT compiled the main
+Bought 2026-08-28 (ouroboros#127 / DMG). The situation below was later fixed
+(static loads are resolved; DMG compiles whole, with no interpreter frames
+in a `perf record`). It is kept because the reasoning is the lesson, not the
+state — its numbers are historical. At the time: the AOT compiled the main
 file to C but emitted `load_file` as a runtime call, so loaded modules were
 parsed and interpreted by the linked VM. A real bug lived in that seam and was found,
 minimised, fixed and verified. It was also reported as "unlocking the AOT
