@@ -1,8 +1,8 @@
 # (#1361) the packed guard aot_vguard collapses a NaN LANE to 0; under strict
-# the VM's per-element num_guard raises instead. Three emitters use it: the
+# the VM's per-element num_guard raises instead. Four emitters use it: the
 # reassociated `dot` of two buffers (inf * 0 in one product), the
-# element-wise vector map (emit_vectorized) and the output-axis matmul loop
-# (outvec). The raise must also name the STATEMENT's line: the vectorized
+# element-wise vector map (emit_vectorized), the output-axis matmul loop
+# (outvec) and the row-wise map (rowmap). The raise must also name the STATEMENT's line: the vectorized
 # bodies never stamped one, so a raise inside them reported the loop header.
 # The inf is a matmul overflow copied into a buffer (raw, as on the VM).
 define vmap(a, o1, o2, n) as:
@@ -30,6 +30,15 @@ define mm(out, X, W, S, Din, Dout) as:
                 d is d + 1
             out[i * Dout + o] is s
             o is o + 1
+        i is i + 1
+    return 0
+define rows(out, x, g, S, D) as:
+    i is 0
+    loop while i < S:
+        d is 0
+        loop while d < D:
+            out[i * D + d] is g[d] * x[i * D + d] + 1
+            d is d + 1
         i is i + 1
     return 0
 nb is buffer of 4
@@ -79,6 +88,18 @@ O is buffer of 16
 try:
     mm of [O, xb, W, 2, 4, 8]
     print of O[0]
+catch e:
+    print of e.message
+    print of e.line
+g is buffer of 4
+g[0] is 1
+g[1] is 0
+g[2] is 1
+g[3] is 1
+R is buffer of 8
+try:
+    rows of [R, xb, g, 2, 4]
+    print of R[5]
 catch e:
     print of e.message
     print of e.line

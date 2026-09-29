@@ -128,9 +128,8 @@ static inline __attribute__((always_inline)) double aot_num_guard_inl(double x) 
     return x;
 }
 #define num_guard(x) aot_num_guard_inl(x)
-/* The packed guard's NaN lanes: the same strict raise, out of line so the
- * hot loop pays one movemask+branch and no call. The soft path is unchanged
- * (the lanes still collapse to 0 in aot_vguard). */
+/* A NaN reached a packed (SIMD) computation: raise under strict, return
+ * under EIGS_STRICT=0 so the caller recomputes with the soft guard. */
 static void __attribute__((noinline, cold)) aot_vnan(void) { aot_strict_nan(NULL); }
 /* `sqrt of <provably numeric>` (emit_num's intrinsic). The VM's op_sqrt
  * (builtins_tensor.c) answers a negative argument with 0 + EIGS_MATH_INVALID
@@ -151,10 +150,29 @@ static inline double aot_sqrt(double x) {
  * The emitter writes vectorized loops in terms of AOT_VW / aot_v*; this maps
  * them to the widest available ISA at compile time. The packed guard uses
  * min/max INTRINSICS (vector-extension select-clamp is ~4x more ops and loses).
- * aot_vguard is byte-exact vs num_guard (NaN->0 via cmp+and, +/-1e308 clamp). */
+ * aot_vguard is byte-exact vs num_guard (NaN->0 via cmp+and, +/-1e308 clamp).
+ *
+ * (#1361) Under strict (the runtime's default) the VM RAISES where num_guard
+ * meets a NaN, and a lane zeroed by aot_vguard is invisible downstream. A
+ * NaN check per guard cost +27% instructions on bench/dot_reduction, so the
+ * strict-aware form is split instead:
+ *   - aot_vguardp: the same +/-1e308 clamp with the operands ordered so a NaN
+ *     PROPAGATES (minpd/maxpd return their SECOND operand when either is NaN)
+ *     and no cmp+and at all. Byte-identical to aot_vguard on every non-NaN
+ *     lane, and a NaN anywhere in the expression reaches its result.
+ *   - aot_vnanany: one unordered compare + movemask, once per STORE (or once
+ *     per reduction), where aot_vguard paid two ops per guard.
+ *   - on a NaN: aot_vnan() raises under strict; under EIGS_STRICT=0 the
+ *     caller recomputes that one value with the old soft expression, so the
+ *     soft answer is the old code's by construction.
+ * aot_vdivp keeps aot_vdiv's zero-divisor raise and adds the NaN lanes to
+ * its (cold) check, walking lanes in element order so the first failing
+ * element decides between the NaN raise and "division by zero", as on the
+ * VM. */
 #if defined(__x86_64__) || defined(__i386__)
 #include <immintrin.h>
 #endif
+static void aot_vdivp_cold(const double *a, const double *b);
 #if defined(__AVX2__)
 typedef __m256d aot_vec;
 #define AOT_VW 4
@@ -165,18 +183,28 @@ typedef __m256d aot_vec;
 #define aot_vadd   _mm256_add_pd
 #define aot_vsub   _mm256_sub_pd
 static inline aot_vec aot_vguard(aot_vec x){
-    aot_vec ok = _mm256_cmp_pd(x, x, _CMP_EQ_OQ);
-    if (__builtin_expect(_mm256_movemask_pd(ok) != 0xF, 0)) aot_vnan();   /* #1361 */
-    x = _mm256_and_pd(x, ok);
+    x = _mm256_and_pd(x, _mm256_cmp_pd(x, x, _CMP_EQ_OQ));
     x = _mm256_min_pd(x, _mm256_set1_pd(1e308));
     return _mm256_max_pd(x, _mm256_set1_pd(-1e308));
 }
+static inline aot_vec aot_vguardp(aot_vec x){
+    x = _mm256_min_pd(_mm256_set1_pd(1e308), x);
+    return _mm256_max_pd(_mm256_set1_pd(-1e308), x);
+}
+static inline int aot_vnanany(aot_vec x){ return _mm256_movemask_pd(_mm256_cmp_pd(x, x, _CMP_UNORD_Q)) != 0; }
 static inline aot_vec aot_viota(long base){ return _mm256_add_pd(_mm256_set1_pd((double)base), _mm256_set_pd(3.0,2.0,1.0,0.0)); }
 static inline aot_vec aot_vdiv(aot_vec a, aot_vec b){   /* any b==0 lane RAISES (round 72: the VM raises post-fail-soft-reform; the old lane mask was the same fossil as aot_ddiv's) */
     aot_vec z = _mm256_cmp_pd(b, _mm256_setzero_pd(), _CMP_EQ_OQ);
     if (_mm256_movemask_pd(z))
         rt_error(EK_VALUE, g_trace_current_line, "division by zero");
     return aot_vguard(_mm256_div_pd(a, b));
+}
+static inline aot_vec aot_vdivp(aot_vec a, aot_vec b){
+    aot_vec bad = _mm256_or_pd(_mm256_cmp_pd(b, _mm256_setzero_pd(), _CMP_EQ_OQ), _mm256_cmp_pd(a, b, _CMP_UNORD_Q));
+    if (__builtin_expect(_mm256_movemask_pd(bad), 0)) {
+        double al[4], bl[4]; _mm256_storeu_pd(al, a); _mm256_storeu_pd(bl, b); aot_vdivp_cold(al, bl);
+    }
+    return aot_vguardp(_mm256_div_pd(a, b));
 }
 static inline double aot_vhsum(aot_vec x){
     __m128d lo = _mm256_castpd256_pd128(x), hi = _mm256_extractf128_pd(x, 1);
@@ -193,18 +221,28 @@ typedef __m128d aot_vec;
 #define aot_vadd   _mm_add_pd
 #define aot_vsub   _mm_sub_pd
 static inline aot_vec aot_vguard(aot_vec x){
-    aot_vec ok = _mm_cmpeq_pd(x, x);
-    if (__builtin_expect(_mm_movemask_pd(ok) != 0x3, 0)) aot_vnan();      /* #1361 */
-    x = _mm_and_pd(x, ok);
+    x = _mm_and_pd(x, _mm_cmpeq_pd(x, x));
     x = _mm_min_pd(x, _mm_set1_pd(1e308));
     return _mm_max_pd(x, _mm_set1_pd(-1e308));
 }
+static inline aot_vec aot_vguardp(aot_vec x){
+    x = _mm_min_pd(_mm_set1_pd(1e308), x);
+    return _mm_max_pd(_mm_set1_pd(-1e308), x);
+}
+static inline int aot_vnanany(aot_vec x){ return _mm_movemask_pd(_mm_cmpunord_pd(x, x)) != 0; }
 static inline aot_vec aot_viota(long base){ return _mm_add_pd(_mm_set1_pd((double)base), _mm_set_pd(1.0,0.0)); }
 static inline aot_vec aot_vdiv(aot_vec a, aot_vec b){   /* any b==0 lane RAISES (round 72, see the AVX2 variant) */
     aot_vec z = _mm_cmpeq_pd(b, _mm_setzero_pd());
     if (_mm_movemask_pd(z))
         rt_error(EK_VALUE, g_trace_current_line, "division by zero");
     return aot_vguard(_mm_div_pd(a, b));
+}
+static inline aot_vec aot_vdivp(aot_vec a, aot_vec b){
+    aot_vec bad = _mm_or_pd(_mm_cmpeq_pd(b, _mm_setzero_pd()), _mm_cmpunord_pd(a, b));
+    if (__builtin_expect(_mm_movemask_pd(bad), 0)) {
+        double al[2], bl[2]; _mm_storeu_pd(al, a); _mm_storeu_pd(bl, b); aot_vdivp_cold(al, bl);
+    }
+    return aot_vguardp(_mm_div_pd(a, b));
 }
 static inline double aot_vhsum(aot_vec x){ return _mm_cvtsd_f64(_mm_add_pd(x, _mm_unpackhi_pd(x, x))); }
 #else
@@ -220,7 +258,18 @@ static inline aot_vec aot_vguard(aot_vec x){ return num_guard(x); }
 static inline aot_vec aot_viota(long base){ return (double)base; }
 static inline aot_vec aot_vdiv(aot_vec a, aot_vec b){ if (b == 0.0) rt_error(EK_VALUE, g_trace_current_line, "division by zero"); return num_guard(a / b); }
 static inline double aot_vhsum(aot_vec x){ return x; }
+/* One lane: num_guard already raises (strict) or zeroes (soft) per element,
+ * exactly the VM's order, so the propagating forms ARE the soft ones. */
+#define aot_vguardp(x)   aot_vguard(x)
+#define aot_vdivp(a, b)  aot_vdiv((a), (b))
+#define aot_vnanany(x)   0
 #endif
+static void __attribute__((noinline, cold)) aot_vdivp_cold(const double *a, const double *b) {
+    for (int k = 0; k < AOT_VW; k++) {
+        if (a[k] != a[k] || b[k] != b[k]) { aot_vnan(); return; }   /* soft: the store recomputes */
+        if (b[k] == 0.0) rt_error(EK_VALUE, g_trace_current_line, "division by zero");
+    }
+}
 
 /* ---- lifecycle ---- */
 static Env *aot_boot(void) {
@@ -996,16 +1045,77 @@ static double *aot_buf_data_at(Value *b, const char *site) { aot_buf_expect_at(b
  * left-to-right loop cannot vectorize — FP add is non-associative.) Per-lane
  * vguard + final num_guard keep the no-NaN/Inf invariant. Result agrees with
  * the VM within tolerance, not byte-for-byte — see aot/test/run.sh. */
-static inline double aot_dot(Value *a, Value *b) {
-    double *ad = a->data.buffer.data, *bd = b->data.buffer.data;
-    long an = a->data.buffer.count, bn = b->data.buffer.count;
-    long n = an < bn ? an : bn, i = 0;
+/* (#1361) the reductions run the propagating guard and test the lanes ONCE
+ * after the vector loop; a NaN lane (reachable: inf * 0 from a matmul
+ * overflow, or a NaN element) raises under strict, and under EIGS_STRICT=0
+ * the call is recomputed by the pre-#1361 loop verbatim (the _soft forms). */
+static double __attribute__((noinline, cold)) aot_dot_soft(const double *ad, const double *bd, long n) {
+    aot_vnan();
+    long i = 0;
     aot_vec acc = aot_vset(0.0);
     for (; i + AOT_VW <= n; i += AOT_VW)
         acc = aot_vguard(aot_vadd(acc, aot_vguard(aot_vmul(aot_vload(ad + i), aot_vload(bd + i)))));
     double s = aot_vhsum(acc);
     for (; i < n; i++) s = num_guard(s + num_guard(ad[i] * bd[i]));
     return num_guard(s);
+}
+static double __attribute__((noinline, cold)) aot_sum_soft(const double *d, long n) {
+    aot_vnan();
+    long i = 0;
+    aot_vec acc = aot_vset(0.0);
+    for (; i + AOT_VW <= n; i += AOT_VW)
+        acc = aot_vguard(aot_vadd(acc, aot_vload(d + i)));
+    double s = aot_vhsum(acc);
+    for (; i < n; i++) s = num_guard(s + d[i]);
+    return num_guard(s);
+}
+static double __attribute__((noinline, cold)) aot_norm_soft(const double *d, long n) {
+    aot_vnan();
+    long i = 0;
+    aot_vec acc = aot_vset(0.0);
+    for (; i + AOT_VW <= n; i += AOT_VW) {
+        aot_vec v = aot_vload(d + i);
+        acc = aot_vguard(aot_vadd(acc, aot_vguard(aot_vmul(v, v))));
+    }
+    double s = aot_vhsum(acc);
+    for (; i < n; i++) s = num_guard(s + num_guard(d[i] * d[i]));
+    return num_guard(sqrt(s));
+}
+static inline double aot_dot_n(const double *ad, const double *bd, long n) {
+    long i = 0;
+    aot_vec acc = aot_vset(0.0);
+    for (; i + AOT_VW <= n; i += AOT_VW)
+        acc = aot_vguardp(aot_vadd(acc, aot_vguardp(aot_vmul(aot_vload(ad + i), aot_vload(bd + i)))));
+    if (__builtin_expect(aot_vnanany(acc), 0)) return aot_dot_soft(ad, bd, n);
+    double s = aot_vhsum(acc);
+    for (; i < n; i++) s = num_guard(s + num_guard(ad[i] * bd[i]));
+    return num_guard(s);
+}
+static inline double aot_sum_n(const double *d, long n) {
+    long i = 0;
+    aot_vec acc = aot_vset(0.0);
+    for (; i + AOT_VW <= n; i += AOT_VW)
+        acc = aot_vguardp(aot_vadd(acc, aot_vload(d + i)));
+    if (__builtin_expect(aot_vnanany(acc), 0)) return aot_sum_soft(d, n);
+    double s = aot_vhsum(acc);
+    for (; i < n; i++) s = num_guard(s + d[i]);
+    return num_guard(s);
+}
+static inline double aot_norm_n(const double *d, long n) {
+    long i = 0;
+    aot_vec acc = aot_vset(0.0);
+    for (; i + AOT_VW <= n; i += AOT_VW) {
+        aot_vec v = aot_vload(d + i);
+        acc = aot_vguardp(aot_vadd(acc, aot_vguardp(aot_vmul(v, v))));
+    }
+    if (__builtin_expect(aot_vnanany(acc), 0)) return aot_norm_soft(d, n);
+    double s = aot_vhsum(acc);
+    for (; i < n; i++) s = num_guard(s + num_guard(d[i] * d[i]));
+    return num_guard(sqrt(s));
+}
+static inline double aot_dot(Value *a, Value *b) {
+    long an = a->data.buffer.count, bn = b->data.buffer.count;
+    return aot_dot_n(a->data.buffer.data, b->data.buffer.data, an < bn ? an : bn);
 }
 
 /* (round 91) The fast reductions index data.buffer.data with NO type check,
@@ -1040,28 +1150,8 @@ static double aot_reduce_poly1(Env *g, const char *name, Value *a) {
 
 /* sum of a / norm of a — sibling association-unspecified reductions (same
  * reassociated-SIMD license as aot_dot; tolerance oracle, not byte-exact). */
-static inline double aot_sum(Value *a) {
-    double *d = a->data.buffer.data;
-    long n = a->data.buffer.count, i = 0;
-    aot_vec acc = aot_vset(0.0);
-    for (; i + AOT_VW <= n; i += AOT_VW)
-        acc = aot_vguard(aot_vadd(acc, aot_vload(d + i)));
-    double s = aot_vhsum(acc);
-    for (; i < n; i++) s = num_guard(s + d[i]);
-    return num_guard(s);
-}
-static inline double aot_norm(Value *a) {
-    double *d = a->data.buffer.data;
-    long n = a->data.buffer.count, i = 0;
-    aot_vec acc = aot_vset(0.0);
-    for (; i + AOT_VW <= n; i += AOT_VW) {
-        aot_vec v = aot_vload(d + i);
-        acc = aot_vguard(aot_vadd(acc, aot_vguard(aot_vmul(v, v))));
-    }
-    double s = aot_vhsum(acc);
-    for (; i < n; i++) s = num_guard(s + num_guard(d[i] * d[i]));
-    return num_guard(sqrt(s));
-}
+static inline double aot_sum(Value *a) { return aot_sum_n(a->data.buffer.data, a->data.buffer.count); }
+static inline double aot_norm(Value *a) { return aot_norm_n(a->data.buffer.data, a->data.buffer.count); }
 
 static inline double aot_sum_v(Env *g, Value *a) {
     if (a && a->type == VAL_BUFFER) return aot_sum(a);
@@ -1126,42 +1216,20 @@ static inline double aot_dot_range(Value *A, double sa, double ea, Value *B, dou
     long s1, e1, s2, e2;
     aot_srange(sa, ea, la, &s1, &e1);
     aot_srange(sb, eb, lb, &s2, &e2);
-    long n1 = e1 - s1, n2 = e2 - s2, n = n1 < n2 ? n1 : n2, i = 0;
-    double *a = A->data.buffer.data + s1, *b = B->data.buffer.data + s2;
-    aot_vec acc = aot_vset(0.0);
-    for (; i + AOT_VW <= n; i += AOT_VW)
-        acc = aot_vguard(aot_vadd(acc, aot_vguard(aot_vmul(aot_vload(a + i), aot_vload(b + i)))));
-    double s = aot_vhsum(acc);
-    for (; i < n; i++) s = num_guard(s + num_guard(a[i] * b[i]));
-    return num_guard(s);
+    long n1 = e1 - s1, n2 = e2 - s2;
+    return aot_dot_n(A->data.buffer.data + s1, B->data.buffer.data + s2, n1 < n2 ? n1 : n2);
 }
 static inline double aot_sum_range(Value *A, double sa, double ea) {
     long la = A->data.buffer.count;
     long s1, e1;
     aot_srange(sa, ea, la, &s1, &e1);
-    long n = e1 - s1, i = 0;
-    double *a = A->data.buffer.data + s1;
-    aot_vec acc = aot_vset(0.0);
-    for (; i + AOT_VW <= n; i += AOT_VW)
-        acc = aot_vguard(aot_vadd(acc, aot_vload(a + i)));
-    double s = aot_vhsum(acc);
-    for (; i < n; i++) s = num_guard(s + a[i]);
-    return num_guard(s);
+    return aot_sum_n(A->data.buffer.data + s1, e1 - s1);
 }
 static inline double aot_norm_range(Value *A, double sa, double ea) {
     long la = A->data.buffer.count;
     long s1, e1;
     aot_srange(sa, ea, la, &s1, &e1);
-    long n = e1 - s1, i = 0;
-    double *a = A->data.buffer.data + s1;
-    aot_vec acc = aot_vset(0.0);
-    for (; i + AOT_VW <= n; i += AOT_VW) {
-        aot_vec v = aot_vload(a + i);
-        acc = aot_vguard(aot_vadd(acc, aot_vguard(aot_vmul(v, v))));
-    }
-    double s = aot_vhsum(acc);
-    for (; i < n; i++) s = num_guard(s + num_guard(a[i] * a[i]));
-    return num_guard(sqrt(s));
+    return aot_norm_n(A->data.buffer.data + s1, e1 - s1);
 }
 /* (round 92) Ranged siblings of the _v wrappers. Round 91 shipped these with
  * a HAND-WRITTEN materializer -- breaking the rule its own commit stated for

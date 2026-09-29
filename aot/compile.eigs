@@ -4993,6 +4993,20 @@ define vec_loop(loopnode, nm, bt) as:
             return null
     return {"ctr": ctr, "bound": bound, "assigns": assigns, "bufs": keys of bufs}
 
+# (#1361) a packed expression in its NaN-propagating form (aot_rt.h's
+# aot_vguardp/aot_vdivp: same clamp, NaN reaches the result) and the store
+# that tests it once: a NaN raises under strict, and under EIGS_STRICT=0 the
+# value is recomputed by the soft expression -- the pre-#1361 emission
+# verbatim. Pure expressions (loads and arithmetic), so the recompute can
+# only repeat what the first evaluation did.
+define vec_prop(e) as:
+    return str_replace of [(str_replace of [e, "aot_vguard(", "aot_vguardp("]), "aot_vdiv(", "aot_vdivp("]
+define vec_nancheck(e) as:
+    local p is vec_prop of e
+    if p == e:
+        return e
+    return "({ aot_vec _vp = " + p + "; if (__builtin_expect(aot_vnanany(_vp), 0)) { aot_vnan(); _vp = " + e + "; } _vp; })"
+
 define emit_vec(node, ctr, raw) as:
     local n is unwrap of node
     local t is n[0]
@@ -5162,7 +5176,7 @@ define emit_vectorized(node, vinfo, ind, nm, bt, minits) as:
     s is s + i3 + "for (; _vi + AOT_VW <= _hi; _vi += AOT_VW) {\n"
     for a in range of (len of assigns):
         local rw is map_elidable of (assigns[a])["val"]
-        s is s + i4 + vstamp[str of a] + "aot_vstore(_p_" + (cn of (assigns[a])["buf"]) + " + _vi, " + (emit_vec of [(assigns[a])["val"], ctr, rw]) + ");\n"
+        s is s + i4 + vstamp[str of a] + "aot_vstore(_p_" + (cn of (assigns[a])["buf"]) + " + _vi, " + (vec_nancheck of (emit_vec of [(assigns[a])["val"], ctr, rw])) + ");\n"
     s is s + i3 + "}\n"
     # interior scalar remainder: raw (still in-bounds)
     s is s + i3 + "for (; _vi < _hi; _vi++) {\n"
@@ -5665,9 +5679,22 @@ define emit_outvec(d, ind, nm, bt, guard, minits) as:
     s is s + i3 + "aot_vec _acc = aot_vset(0.0);\n"
     s is s + i3 + cD + " = 0;\n"
     s is s + i3 + "while (" + cD + " < " + IB + ") {\n"
-    s is s + i4 + accline
+    s is s + i4 + (vec_prop of accline)
     s is s + i4 + cD + " = " + cD + " + 1;\n"
     s is s + i3 + "}\n"
+    if guard == 1:
+        # (#1361) the accumulator ran propagating; one test per chunk. A NaN
+        # raises under strict; under EIGS_STRICT=0 the chunk's reduction is
+        # re-run with the soft guard (the pre-#1361 loop verbatim).
+        s is s + i3 + "if (__builtin_expect(aot_vnanany(_acc), 0)) {\n"
+        s is s + i4 + "aot_vnan();\n"
+        s is s + i4 + "_acc = aot_vset(0.0);\n"
+        s is s + i4 + cD + " = 0;\n"
+        s is s + i4 + "while (" + cD + " < " + IB + ") {\n"
+        s is s + i4 + "    " + accline
+        s is s + i4 + "    " + cD + " = " + cD + " + 1;\n"
+        s is s + i4 + "}\n"
+        s is s + i3 + "}\n"
     s is s + i3 + "aot_vstore(_pv_" + cRES + " + " + SBASE + " + " + cO + ", _acc);\n"
     s is s + i2 + "}\n"
     # (round 83) materialize the carried scalar: the vector block
@@ -5873,7 +5900,12 @@ define rowmap_loop(node, nm, bt) as:
         return null
     if (name_in_expr of [SBASE, D]) == 1:
         return null
-    return {"D": D, "BOUND": BOUND, "RES": RES, "SBASE": SBASE, "SIDX": SIDX, "VEXPR": VEXPR, "vbufs": vbufs, "node": node}
+    # (#1361) the store's source line, stamped before the vector loop: a
+    # strict raise inside it names the statement, not the loop header.
+    local RMLINE is 0
+    if (raw[0])[0] == "_line":
+        RMLINE is (raw[0])[1]
+    return {"D": D, "BOUND": BOUND, "RES": RES, "SBASE": SBASE, "SIDX": SIDX, "VEXPR": VEXPR, "vbufs": vbufs, "node": node, "LINE": RMLINE}
 
 define emit_rowmap(d, ind, nm, bt, minits) as:
     # (round 117) every NAME in the recognized shape -- counters, the
@@ -5922,8 +5954,10 @@ define emit_rowmap(d, ind, nm, bt, minits) as:
     local vbufs is d["vbufs"]
     for k in range of (len of vbufs):
         s is s + i2 + "double* _pv_" + (cn of vbufs[k]) + " = aot_buf_data(" + (cn of vbufs[k]) + ");\n"
+    if d["LINE"] > 0:
+        s is s + i2 + "g_trace_current_line = " + (str of d["LINE"]) + ";\n"
     s is s + i2 + "for (; " + cD + " + AOT_VW <= " + OB + "; " + cD + " += AOT_VW) {\n"
-    s is s + i3 + "aot_vstore(_pv_" + cRES + " + " + SBASE + " + " + cD + ", " + (emit_term_ov of [d["VEXPR"], D, nm, bt, 1]) + ");\n"
+    s is s + i3 + "aot_vstore(_pv_" + cRES + " + " + SBASE + " + " + cD + ", " + (vec_nancheck of (emit_term_ov of [d["VEXPR"], D, nm, bt, 1])) + ");\n"
     s is s + i2 + "}\n"
     s is s + i2 + "while (" + cD + " < " + OB + ") {\n"
     s is s + i3 + "aot_buf_set_i(" + cRES + ", " + (emit_int of d["SIDX"]) + ", " + (emit_num of [d["VEXPR"], nm, bt, 0]) + ");\n"
