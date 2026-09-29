@@ -25,6 +25,11 @@ fi
 
 fail=0
 n=0
+# Per-run temp dir: fixed /tmp/ouro_* paths collided when two runs overlapped
+# (a stop gate in one worktree, a manual run in another) -- one run's rm -f
+# deleted the other's reject case mid-flight.
+OURO_TMP=$(mktemp -d "${TMPDIR:-/tmp}/ouro-run.XXXXXX") || { echo "FATAL: mktemp failed" >&2; exit 2; }
+trap 'rm -rf "$OURO_TMP"' EXIT
 
 # Parity contract (#101): the string compare alone is vacuous when the
 # reference run itself dies — a program that errors on BOTH sides degrades to
@@ -80,7 +85,7 @@ done
 # silently rot into a valid program the front-end wrongly refuses.
 echo "--- reject (front-end raises where the C parser/lexer raises) ---"
 reject_one() {
-  printf '%s\n' "$1" > /tmp/ouro_reject.eigs
+  printf '%s\n' "$1" > "$OURO_TMP"/ouro_reject.eigs
   # timeout on BOTH invocations: a reject case that HANGS a parser must fail
   # the tier, not the suite. Round 49 found the frontend spinning forever on a
   # match block holding a non-case statement (the C parser's no-progress guard
@@ -91,8 +96,8 @@ reject_one() {
   # rejected", so the hang case's own regression gate was green with the
   # no-progress guard reverted (proven by plant). A hang must FAIL BY NAME on
   # either arm; "rejected" means exited nonzero under its own power.
-  timeout 20 "$EIGS" /tmp/ouro_reject.eigs >/dev/null 2>&1; c_rc=$?
-  timeout 20 "$EIGS" ouroboros.eigs /tmp/ouro_reject.eigs >/dev/null 2>&1; f_rc=$?
+  timeout 20 "$EIGS" "$OURO_TMP"/ouro_reject.eigs >/dev/null 2>&1; c_rc=$?
+  timeout 20 "$EIGS" ouroboros.eigs "$OURO_TMP"/ouro_reject.eigs >/dev/null 2>&1; f_rc=$?
   if [ "$c_rc" -eq 124 ] || [ "$c_rc" -eq 137 ]; then
     echo "FAIL: C oracle HUNG on [$(printf '%s' "$1" | tr '\n' ';')]"; fail=1
   elif [ "$f_rc" -eq 124 ] || [ "$f_rc" -eq 137 ]; then
@@ -104,7 +109,7 @@ reject_one() {
   else
     echo "PASS: rejected [$(printf '%s' "$1" | tr '\n' ';')]"
   fi
-  rm -f /tmp/ouro_reject.eigs
+  rm -f "$OURO_TMP"/ouro_reject.eigs
 }
 # Round 47: the C lexer measures indent as spaces, then tabs, then trailing
 # spaces, and STOPS (lexer.c:252-256) -- a tab after that run is inline
@@ -201,9 +206,9 @@ reject_one 'print of (report of converged)'
 # only cases BOTH sides reject today belong here.
 echo "--- must_reject (both sides must die at run time) ---"
 must_reject() {
-  printf '%s\n' "$1" > /tmp/ouro_must_reject.eigs
-  c_out="$(timeout 20 "$EIGS" /tmp/ouro_must_reject.eigs 2>/dev/null)"; c_rc=$?
-  o_out="$(timeout 20 "$EIGS" ouroboros.eigs /tmp/ouro_must_reject.eigs 2>/dev/null)"; o_rc=$?
+  printf '%s\n' "$1" > "$OURO_TMP"/ouro_must_reject.eigs
+  c_out="$(timeout 20 "$EIGS" "$OURO_TMP"/ouro_must_reject.eigs 2>/dev/null)"; c_rc=$?
+  o_out="$(timeout 20 "$EIGS" ouroboros.eigs "$OURO_TMP"/ouro_must_reject.eigs 2>/dev/null)"; o_rc=$?
   # 124/137 = timeout kill: a HANG must fail by name (see reject_one -- its
   # first timeout let rc 124 read as a pass)
   if [ "$c_rc" -eq 124 ] || [ "$c_rc" -eq 137 ] || [ "$o_rc" -eq 124 ] || [ "$o_rc" -eq 137 ]; then
@@ -220,7 +225,7 @@ must_reject() {
   else
     echo "PASS: must_reject [$(printf '%s' "$1" | tr '\n' ';')]"
   fi
-  rm -f /tmp/ouro_must_reject.eigs
+  rm -f "$OURO_TMP"/ouro_must_reject.eigs
 }
 must_reject 'print of undefined_var_xyz'
 # #106: a DISCARDED bare interrogative statement (one that is not the last
@@ -274,18 +279,18 @@ echo "--- driver-input tier (missing/dir/empty vs the C oracle) ---"
 # upstream is_file, EigenScript#1058; not probed here because the drivers
 # cannot pass it yet.)
 di_fail=0
-: > /tmp/ouro_di_empty.eigs
-timeout 20 "$EIGS" ouroboros.eigs /tmp/ouro_di_missing_$$.eigs >/dev/null 2>&1; [ $? -eq 1 ] || { echo "FAIL: driver-input self-host missing (want rc 1)"; di_fail=1; }
+: > "$OURO_TMP"/ouro_di_empty.eigs
+timeout 20 "$EIGS" ouroboros.eigs "$OURO_TMP"/ouro_di_missing_$$.eigs >/dev/null 2>&1; [ $? -eq 1 ] || { echo "FAIL: driver-input self-host missing (want rc 1)"; di_fail=1; }
 timeout 20 "$EIGS" ouroboros.eigs /tmp >/dev/null 2>&1; [ $? -eq 1 ] || { echo "FAIL: driver-input self-host dir (want rc 1)"; di_fail=1; }
-timeout 20 "$EIGS" ouroboros.eigs /tmp/ouro_di_empty.eigs >/dev/null 2>&1; [ $? -eq 0 ] || { echo "FAIL: driver-input self-host empty (want rc 0 -- the oracle runs an empty file)"; di_fail=1; }
-timeout 60 "$EIGS" aot/compile.eigs /tmp/ouro_di_missing_$$.eigs . >/dev/null 2>&1; [ $? -eq 1 ] || { echo "FAIL: driver-input aot missing (want rc 1)"; di_fail=1; }
+timeout 20 "$EIGS" ouroboros.eigs "$OURO_TMP"/ouro_di_empty.eigs >/dev/null 2>&1; [ $? -eq 0 ] || { echo "FAIL: driver-input self-host empty (want rc 0 -- the oracle runs an empty file)"; di_fail=1; }
+timeout 60 "$EIGS" aot/compile.eigs "$OURO_TMP"/ouro_di_missing_$$.eigs . >/dev/null 2>&1; [ $? -eq 1 ] || { echo "FAIL: driver-input aot missing (want rc 1)"; di_fail=1; }
 timeout 60 "$EIGS" aot/compile.eigs /tmp . >/dev/null 2>&1; [ $? -eq 1 ] || { echo "FAIL: driver-input aot dir (want rc 1)"; di_fail=1; }
 # the aot side's want-rc-0 canary: transpiling an EMPTY file must SUCCEED
 # (round-51 adjudication: an empty file is a valid program). This is also the
 # probe that catches a driver too broken to run -- without it, a compile.eigs
 # with a parse error on line 1 passes both rc-1 probes above.
-timeout 60 "$EIGS" aot/compile.eigs /tmp/ouro_di_empty.eigs . >/dev/null 2>&1; [ $? -eq 0 ] || { echo "FAIL: driver-input aot empty (want rc 0 -- an empty file is a valid program)"; di_fail=1; }
-rm -f /tmp/ouro_di_empty.eigs
+timeout 60 "$EIGS" aot/compile.eigs "$OURO_TMP"/ouro_di_empty.eigs . >/dev/null 2>&1; [ $? -eq 0 ] || { echo "FAIL: driver-input aot empty (want rc 0 -- an empty file is a valid program)"; di_fail=1; }
+rm -f "$OURO_TMP"/ouro_di_empty.eigs
 if [ "$di_fail" -eq 0 ]; then echo "PASS: driver-input tier (6 probes)"; else fail=1; fi
 
 echo "--- bootstrap (full self-host: front-end + codegen, byte-exact fixed point) ---"
