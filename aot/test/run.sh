@@ -173,6 +173,29 @@ PY
         fi ;;
     esac
   fi
+  # (#1361) `*_strict.eigs`: the fixture of an AOT site that mirrors the
+  # runtime's strict flag. The ambient run above holds whatever the runtime's
+  # default is; these also pin both halves explicitly, on the SAME binary --
+  # the flag is read at run time, never baked in -- and each pair must be
+  # byte-equal with rc 0 (the fixtures catch their raises). A fixture whose
+  # VM output does not move between =1 and =0 reaches no strict site: FAIL.
+  if [ "$match" -eq 1 ]; then
+    case "$name" in *_strict.eigs)
+      s_vm1=""
+      for sm in 1 0; do
+        s_ref=$(EIGS_STRICT=$sm timeout "$AOT_TEST_TIMEOUT" "$EIG" "$prog" 2>&1); s_rrc=$?
+        s_got=$(EIGS_STRICT=$sm timeout "$AOT_TEST_TIMEOUT" "$bin" 2>&1); s_grc=$?
+        if [ "$s_rrc" -ne 0 ] || [ "$s_grc" -ne 0 ] || [ "$s_ref" != "$s_got" ]; then
+          match=0; why="EIGS_STRICT=$sm: VM rc $s_rrc, AOT rc $s_grc, outputs $([ "$s_ref" = "$s_got" ] && echo equal || echo differ)"
+          ref="$s_ref"; got="$s_got"; break
+        fi
+        [ "$sm" = 1 ] && s_vm1="$s_ref"
+      done
+      if [ "$match" -eq 1 ] && [ "$s_vm1" = "$s_ref" ]; then
+        match=0; why="_strict fixture prints the same on the VM under EIGS_STRICT=1 and =0 -- it reaches no strict site"
+      fi ;;
+    esac
+  fi
   if [ "$match" -eq 1 ]; then
     echo "PASS: $name"
   else

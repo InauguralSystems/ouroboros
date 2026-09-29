@@ -1,0 +1,53 @@
+# (#1361) a NaN buffer ELEMENT is reachable under strict: ext_store
+# round-trips a tagged buffer body with "nan" in it. Then (a) sum/norm's
+# packed guard sees a NaN lane (under strict the VM's num_guard raises);
+# (b) the outvec matmul precheck aot_buf_maxabs skipped NaN (it fails every
+# `>`), admitted the UNGUARDED reduction and stored the NaN raw. The NaN
+# sits at index 0 so the soft halves also agree: the VM's sequential
+# accumulator and the AOT's lanes both restart from 0 there.
+define mm(out, X, W, S, Din, Dout) as:
+    i is 0
+    loop while i < S:
+        o is 0
+        loop while o < Dout:
+            s is 0
+            d is 0
+            loop while d < Din:
+                s is s + X[i * Din + d] * W[d * Dout + o]
+                d is d + 1
+            out[i * Dout + o] is s
+            o is o + 1
+        i is i + 1
+    return 0
+path is "/tmp/ouroboros_t358_strict_nan.store"
+remove_file of path
+st is store_open of path
+k is store_put of [st, "c", {"v": {"_eigs_buffer": ["nan", 1, 2, 3, 4, 5, 6, 7], "_eigs_shape": [0, 0]}}]
+got is store_get of [st, "c", k]
+store_close of st
+remove_file of path
+b is buffer of 8
+buf_copy of [got.v, 0, b, 0, 8]
+print of b[3]
+try:
+    print of (sum of b)
+catch e:
+    print of e.message
+    print of e.line
+try:
+    print of (norm of b)
+catch e:
+    print of e.message
+W is buffer of 32
+w is 0
+loop while w < 32:
+    W[w] is 1
+    w is w + 1
+O is buffer of 16
+try:
+    mm of [O, b, W, 2, 4, 8]
+    print of O[9]
+catch e:
+    print of e.message
+    print of e.line
+print of "after"

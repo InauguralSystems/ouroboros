@@ -99,6 +99,54 @@ static inline int aot_depth_enter(void) {
 }
 static inline void aot_depth_leave(int *p) { (void)p; aot_depth--; }
 
+/* ---- strict mode (EigenScript#1361: ON by default, EIGS_STRICT=0 opts out) --
+ * Every builtin the emitted C CALLS already follows the flag. What does not
+ * is each place this header or the emitter computes a builtin's or an
+ * operator's answer ITSELF and substitutes a stand-in on a NaN or a domain
+ * error. Each such site keeps its stand-in on the soft path and, on that
+ * branch only, reads the runtime's own per-state flag (g_strict ==
+ * eigs_current->state->strict: no second env read, nothing baked into the
+ * binary) and raises the VM's error. The raise goes through the exiting
+ * rt_error above (the runtime's eigs_strict_nan_raise alone would only leave
+ * the error PENDING under aot_boot's g_try_depth, and the program would run
+ * past it -- round 154's lesson), so these helpers must stay below it. */
+static void __attribute__((noinline, cold)) aot_strict_nan(const char *who) {
+    if (!g_strict) return;
+    eigs_strict_nan_raise(who);     /* the VM's text: "<who|arithmetic>: result is not a number ..." */
+    aot_error_exit();
+}
+/* (round 184) num_guard is `static inline` in eigenscript.h, but gcc left it
+ * out of line at the emitted code's hundreds of call sites (7.2% of DMG's
+ * profile as a CALL). Same body, forced inline; byte-exact. (#1361) Defined
+ * HERE, before its first user, so every num_guard in this header and in the
+ * emitted C is this one: the boxed operators and aot_ddiv/aot_dmod below
+ * used to take the runtime's copy, whose strict raise only goes pending. */
+static inline __attribute__((always_inline)) double aot_num_guard_inl(double x) {
+    if (x != x) { g_math_flags |= EIGS_MATH_INVALID; aot_strict_nan(NULL); return 0.0; }
+    if (x > EIGS_NUM_MAX)  { g_math_flags |= EIGS_MATH_OVERFLOW; return EIGS_NUM_MAX; }
+    if (x < -EIGS_NUM_MAX) { g_math_flags |= EIGS_MATH_OVERFLOW; return -EIGS_NUM_MAX; }
+    return x;
+}
+#define num_guard(x) aot_num_guard_inl(x)
+/* The packed guard's NaN lanes: the same strict raise, out of line so the
+ * hot loop pays one movemask+branch and no call. The soft path is unchanged
+ * (the lanes still collapse to 0 in aot_vguard). */
+static void __attribute__((noinline, cold)) aot_vnan(void) { aot_strict_nan(NULL); }
+/* `sqrt of <provably numeric>` (emit_num's intrinsic). The VM's op_sqrt
+ * (builtins_tensor.c) answers a negative argument with 0 + EIGS_MATH_INVALID
+ * and, under strict, raises this EK_VALUE text; the old num_guard(sqrt(x))
+ * got the soft half right and, under strict, would name "arithmetic". */
+static double __attribute__((noinline, cold)) aot_sqrt_domain(void) {
+    if (g_strict)
+        rt_error(EK_VALUE, g_trace_current_line, "sqrt: argument out of domain (negative)");
+    g_math_flags |= EIGS_MATH_INVALID;
+    return 0.0;
+}
+static inline double aot_sqrt(double x) {
+    if (__builtin_expect(x < 0, 0)) return aot_sqrt_domain();
+    return num_guard(sqrt(x));
+}
+
 /* ---- portable SIMD layer for vectorized element-wise numeric loops ----
  * The emitter writes vectorized loops in terms of AOT_VW / aot_v*; this maps
  * them to the widest available ISA at compile time. The packed guard uses
@@ -117,7 +165,9 @@ typedef __m256d aot_vec;
 #define aot_vadd   _mm256_add_pd
 #define aot_vsub   _mm256_sub_pd
 static inline aot_vec aot_vguard(aot_vec x){
-    x = _mm256_and_pd(x, _mm256_cmp_pd(x, x, _CMP_EQ_OQ));
+    aot_vec ok = _mm256_cmp_pd(x, x, _CMP_EQ_OQ);
+    if (__builtin_expect(_mm256_movemask_pd(ok) != 0xF, 0)) aot_vnan();   /* #1361 */
+    x = _mm256_and_pd(x, ok);
     x = _mm256_min_pd(x, _mm256_set1_pd(1e308));
     return _mm256_max_pd(x, _mm256_set1_pd(-1e308));
 }
@@ -143,7 +193,9 @@ typedef __m128d aot_vec;
 #define aot_vadd   _mm_add_pd
 #define aot_vsub   _mm_sub_pd
 static inline aot_vec aot_vguard(aot_vec x){
-    x = _mm_and_pd(x, _mm_cmpeq_pd(x, x));
+    aot_vec ok = _mm_cmpeq_pd(x, x);
+    if (__builtin_expect(_mm_movemask_pd(ok) != 0x3, 0)) aot_vnan();      /* #1361 */
+    x = _mm_and_pd(x, ok);
     x = _mm_min_pd(x, _mm_set1_pd(1e308));
     return _mm_max_pd(x, _mm_set1_pd(-1e308));
 }
@@ -907,7 +959,16 @@ static void   aot_buf_set_i_at(Value *b, long idx, double v, const char *site) {
 static double aot_buf_maxabs(Value *b) {
     double *d = b->data.buffer.data; long n = b->data.buffer.count, i;
     double m = 0.0;
-    for (i = 0; i < n; i++) { double a = d[i] < 0 ? -d[i] : d[i]; if (a > m) m = a; }
+    for (i = 0; i < n; i++) {
+        double a = d[i] < 0 ? -d[i] : d[i];
+        /* #1361: a NaN element fails every `>`, so it used to leave m finite
+         * and admit the UNGUARDED reduction, which stored the NaN raw where
+         * the VM's num_guard collapses it (soft) or raises (strict). An
+         * unordered element answers inf, which sends the call down the
+         * guarded arm; the precheck loop is once per call, not per term. */
+        if (__builtin_expect(a != a, 0)) return INFINITY;
+        if (a > m) m = a;
+    }
     return m;
 }
 static double aot_buf_len_at(Value *b, const char *site) {
@@ -925,16 +986,6 @@ static double *aot_buf_data_at(Value *b, const char *site) { aot_buf_expect_at(b
 #define aot_buf_get(b, i)        aot_buf_get_at((b), (i), #b)
 #define aot_buf_set(b, i, v)     aot_buf_set_at((b), (i), (v), #b)
 #define aot_buf_get_i(b, i)      aot_buf_get_i_at((b), (i), #b)
-/* (round 184) num_guard is `static inline` in eigenscript.h, but gcc left it
- * out of line at the emitted code's hundreds of call sites (7.2% of DMG's
- * profile as a CALL). Same body, forced inline; byte-exact. */
-static inline __attribute__((always_inline)) double aot_num_guard_inl(double x) {
-    if (x != x) { g_math_flags |= EIGS_MATH_INVALID; return 0.0; }
-    if (x > EIGS_NUM_MAX)  { g_math_flags |= EIGS_MATH_OVERFLOW; return EIGS_NUM_MAX; }
-    if (x < -EIGS_NUM_MAX) { g_math_flags |= EIGS_MATH_OVERFLOW; return -EIGS_NUM_MAX; }
-    return x;
-}
-#define num_guard(x) aot_num_guard_inl(x)
 #define aot_buf_set_i(b, i, v)   aot_buf_set_i_at((b), (i), (v), #b)
 #define aot_buf_len(b)           aot_buf_len_at((b), #b)
 #define aot_buf_data(b)          aot_buf_data_at((b), #b)
@@ -1920,6 +1971,13 @@ static AotTensor aot_tensor_matmul(AotTensor a, AotTensor b) {
             for (long j = 0; j < bc; j++) orow[j] += aik * brow[j];
         }
     }
+    /* #1361: inf - inf leaves a raw NaN, and the VM's builtin_tensor_matmul
+     * scans its result for one (both the buffer and the list path): strict
+     * raises "matmul: result is not a number", naming matmul. The soft half
+     * (the buffer's null sentinel, the list's 0) is left exactly as it was --
+     * the buffer NaN read is an open upstream decision (ROADMAP). */
+    for (long i = 0, n = o.rows * bc; i < n; i++)
+        if (__builtin_expect(o.data[i] != o.data[i], 0)) { aot_strict_nan("matmul"); break; }
     return o;
 }
 

@@ -2567,8 +2567,9 @@ define emit_num(node, nm, bt, raw) as:
                 # (round 137, #183) the intrinsic only for a provably numeric
                 # argument; a boxed one takes the builtin call below, which is
                 # elementwise over a list as the VM is.
-                # VM sqrt guards (sqrt of negative -> NaN -> 0).
-                return "num_guard(sqrt(" + (emit_num of [node[2], nm, bt, 0]) + "))"
+                # VM sqrt of a negative: 0 + invalid, or the strict raise
+                # (#1361) -- aot_sqrt mirrors both halves.
+                return "aot_sqrt(" + (emit_num of [node[2], nm, bt, 0]) + ")"
             # (round 172) floor/ceil/round/abs on a PROVABLY numeric argument
             # are the libm call the VM's builtin makes (builtins.c:
             # `make_num(floor(arg->data.num))` and siblings; make_num guards,
@@ -4945,7 +4946,13 @@ define vec_loop(loopnode, nm, bt) as:
             bufs[tgt[1]] is 1
             wbufs[tgt[1]] is 1
             collect_read_bufs of [st[3], bufs]
-            assigns is (append of [assigns, {"buf": tgt[1], "val": st[3]}])
+            # (#1361) the statement's source line rides along: a raise
+            # inside the vector body (a strict NaN in aot_vguard, a checked
+            # boundary store) must name THIS line, as the VM's OP_LINE does.
+            local vln is 0
+            if (body[k])[0] == "_line":
+                vln is (body[k])[1]
+            assigns is (append of [assigns, {"buf": tgt[1], "val": st[3], "line": vln}])
         else:
             return null
     if sawinc != 1:
@@ -5132,6 +5139,16 @@ define emit_vectorized(node, vinfo, ind, nm, bt, minits) as:
     s is s + i2 + "if (" + guard + ") {\n"
     for k in range of (len of bufs):
         s is s + i3 + "double* _p_" + (cn of bufs[k]) + " = aot_buf_data(" + (cn of bufs[k]) + ");\n"
+    # (#1361) line stamps: one assign -> one stamp before the loops (the
+    # line never changes inside them, so the hot loop pays nothing); two or
+    # more -> a stamp before each store, so a raise names its statement.
+    local vstamp is {}
+    for a in range of (len of assigns):
+        vstamp[str of a] is ""
+        if ((len of assigns) > 1) and (((assigns[a])["line"]) > 0):
+            vstamp[str of a] is "g_trace_current_line = " + (str of (assigns[a])["line"]) + "; "
+    if ((len of assigns) == 1) and (((assigns[0])["line"]) > 0):
+        s is s + i3 + "g_trace_current_line = " + (str of (assigns[0])["line"]) + ";\n"
     # safe interior [_lo, _hi): all neighbor offsets land in [0, _n)
     s is s + i3 + "long _lo = " + (str of (0 - minoff)) + "; if (_lo > _n) _lo = _n;\n"
     s is s + i3 + "long _hi = _n - " + (str of maxoff) + "; if (_hi < _lo) _hi = _lo;\n"
@@ -5139,24 +5156,24 @@ define emit_vectorized(node, vinfo, ind, nm, bt, minits) as:
     # head boundary: checked (matches VM wrap/error)
     s is s + i3 + "for (; _vi < _lo; _vi++) {\n"
     for a in range of (len of assigns):
-        s is s + i4 + "aot_buf_set(" + (cn of (assigns[a])["buf"]) + ", (double)_vi, " + (emit_vcheck of [(assigns[a])["val"], ctr]) + ");\n"
+        s is s + i4 + vstamp[str of a] + "aot_buf_set(" + (cn of (assigns[a])["buf"]) + ", (double)_vi, " + (emit_vcheck of [(assigns[a])["val"], ctr]) + ");\n"
     s is s + i3 + "}\n"
     # interior vector
     s is s + i3 + "for (; _vi + AOT_VW <= _hi; _vi += AOT_VW) {\n"
     for a in range of (len of assigns):
         local rw is map_elidable of (assigns[a])["val"]
-        s is s + i4 + "aot_vstore(_p_" + (cn of (assigns[a])["buf"]) + " + _vi, " + (emit_vec of [(assigns[a])["val"], ctr, rw]) + ");\n"
+        s is s + i4 + vstamp[str of a] + "aot_vstore(_p_" + (cn of (assigns[a])["buf"]) + " + _vi, " + (emit_vec of [(assigns[a])["val"], ctr, rw]) + ");\n"
     s is s + i3 + "}\n"
     # interior scalar remainder: raw (still in-bounds)
     s is s + i3 + "for (; _vi < _hi; _vi++) {\n"
     for a in range of (len of assigns):
         local rw2 is map_elidable of (assigns[a])["val"]
-        s is s + i4 + "_p_" + (cn of (assigns[a])["buf"]) + "[_vi] = " + (emit_vscalar of [(assigns[a])["val"], ctr, rw2]) + ";\n"
+        s is s + i4 + vstamp[str of a] + "_p_" + (cn of (assigns[a])["buf"]) + "[_vi] = " + (emit_vscalar of [(assigns[a])["val"], ctr, rw2]) + ";\n"
     s is s + i3 + "}\n"
     # tail boundary: checked
     s is s + i3 + "for (; _vi < _n; _vi++) {\n"
     for a in range of (len of assigns):
-        s is s + i4 + "aot_buf_set(" + (cn of (assigns[a])["buf"]) + ", (double)_vi, " + (emit_vcheck of [(assigns[a])["val"], ctr]) + ");\n"
+        s is s + i4 + vstamp[str of a] + "aot_buf_set(" + (cn of (assigns[a])["buf"]) + ", (double)_vi, " + (emit_vcheck of [(assigns[a])["val"], ctr]) + ");\n"
     s is s + i3 + "}\n"
     s is s + i3 + (cn of ctr) + " = (double)_n;\n"
     s is s + i2 + "} else {\n"
@@ -5433,6 +5450,12 @@ define outvec_loop(node, nm, bt) as:
     if (len of ibody) != 2:
         return null
     local a0 is ibody[0]
+    # (#1361) the accumulation statement's line: the only statement of the
+    # vector body that can raise (a strict NaN in the packed guard or the
+    # scalar tail's num_guard), stamped once before the loops.
+    local ACCLINE is 0
+    if ((s2[2])[0])[0] == "_line":
+        ACCLINE is ((s2[2])[0])[1]
     if a0[0] != "assign":
         return null
     if a0[1] != ACC:
@@ -5545,7 +5568,7 @@ define outvec_loop(node, nm, bt) as:
             return null
         if (is_affine_in of [r85b, D]) == 0:
             return null
-    return {"O": O, "OBOUND": OBOUND, "ACC": ACC, "D": D, "IBOUND": IBOUND, "RES": RES, "SIDX": SIDX, "SBASE": SBASE, "TERM": TERM, "ovbufs": (keys of ovb), "node": node}
+    return {"O": O, "OBOUND": OBOUND, "ACC": ACC, "D": D, "IBOUND": IBOUND, "RES": RES, "SIDX": SIDX, "SBASE": SBASE, "TERM": TERM, "ACCLINE": ACCLINE, "ovbufs": (keys of ovb), "node": node}
 
 # (round 117) see the recognizers' heads: every NAME in a recognized shape is
 # bound by construction on each path the lowering emits. Recurses one level
@@ -5635,6 +5658,8 @@ define emit_outvec(d, ind, nm, bt, guard, minits) as:
     local accline is "_acc = aot_vadd(_acc, " + (emit_term_ov of [TERM, O, nm, bt, guard]) + ");\n"
     if guard == 1:
         accline is "_acc = aot_vguard(aot_vadd(_acc, " + (emit_term_ov of [TERM, O, nm, bt, 1]) + "));\n"
+    if d["ACCLINE"] > 0:
+        s is s + i2 + "g_trace_current_line = " + (str of d["ACCLINE"]) + ";\n"
     s is s + i2 + "long _oent = " + cO + ";\n"
     s is s + i2 + "for (; " + cO + " + AOT_VW <= " + OB + "; " + cO + " += AOT_VW) {\n"
     s is s + i3 + "aot_vec _acc = aot_vset(0.0);\n"

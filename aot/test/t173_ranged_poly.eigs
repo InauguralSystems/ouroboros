@@ -19,7 +19,15 @@ print of (rn of xs)
 ys is [1, 2, 3, 4]
 print of (rs of ys)
 print of (rn of ys)
-print of (rs of "abcd")
+# (#1361) `sum of "ab"` is a type mistake: 0 under EIGS_STRICT=0, and under
+# strict (the runtime's default since EigenScript#1361) the builtin's raise.
+# The AOT defers this shape to the runtime's own builtin, so both halves
+# are the oracle's by construction; the catch keeps the rest of the program
+# running under either default.
+try:
+    print of (rs of "abcd")
+catch e:
+    print of e.message
 zb is buffer of 4
 zb[0] is 1
 zb[1] is 2

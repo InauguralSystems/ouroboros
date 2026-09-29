@@ -1,0 +1,21 @@
+# (#1361) `sqrt of <provably numeric>` is emit_num's intrinsic, not a call to
+# the builtin. A negative argument: 0 + the invalid flag on the soft path,
+# and under strict (the runtime's default since EigenScript#1361) the VM's
+# "sqrt: argument out of domain (negative)" -- the old num_guard(sqrt(x))
+# named "arithmetic" there. The _strict class runs this under EIGS_STRICT
+# unset, =1 and =0 and diffs each against the VM.
+define f(x) as:
+    return sqrt of (x - 5)
+define g(x) as:
+    return sqrt of (x * (0 - 1))
+print of (f of 9)
+print of (f of 5)
+print of (g of 0)
+try:
+    print of (f of 1)
+    print of (math_flags of null)
+catch e:
+    print of e.kind
+    print of e.message
+    print of e.line
+print of "after"
