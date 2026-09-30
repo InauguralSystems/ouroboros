@@ -160,11 +160,13 @@ static inline double aot_sqrt(double x) {
  *     PROPAGATES (minpd/maxpd return their SECOND operand when either is NaN)
  *     and no cmp+and at all. Byte-identical to aot_vguard on every non-NaN
  *     lane, and a NaN anywhere in the expression reaches its result.
- *   - aot_vnanany: one unordered compare + movemask, once per STORE (or once
- *     per reduction), where aot_vguard paid two ops per guard.
- *   - on a NaN: aot_vnan() raises under strict; under EIGS_STRICT=0 the
- *     caller recomputes that one value with the old soft expression, so the
- *     soft answer is the old code's by construction.
+ *   - aot_vnanany: one unordered compare + movemask, once per stored CHUNK
+ *     (or once per reduction), where aot_vguard paid two ops per guard.
+ *   - on a NaN: a packed map or matmul chunk is not stored and the emitter
+ *     breaks to its scalar loop, which raises (strict) or zeroes (soft) in
+ *     the VM's element order; a reduction (aot_dot_n & co., one result, no
+ *     partial state) calls aot_vnan(), which raises under strict, and under
+ *     EIGS_STRICT=0 recomputes with the old soft loop.
  * aot_vdivn is the element-wise map's division: a zero-divisor lane becomes
  * a NaN (the mask ORed in is all-ones bits) instead of raising inside the
  * packed body, so a chunk's one NaN test covers both failures and the map

@@ -4995,18 +4995,13 @@ define vec_loop(loopnode, nm, bt) as:
 
 # (#1361) a packed expression in its NaN-propagating form (aot_rt.h's
 # aot_vguardp/aot_vdivn: same clamp, a NaN -- or a zero divisor -- reaches
-# the result as a NaN) and, for the one-store emitters, the store that tests
-# it once: a NaN raises under strict, and under EIGS_STRICT=0 the value is
-# recomputed by the soft expression -- the pre-#1361 emission verbatim. Pure
-# expressions (loads and arithmetic), so the recompute can only repeat what
-# the first evaluation did. emit_vectorized tests its chunk instead.
+# the result as a NaN). Every packed emitter (emit_vectorized, emit_outvec,
+# emit_rowmap) computes a chunk in this form, tests it once, and stores it
+# only if it is clean; a failing chunk breaks, unstored, to the emitter's
+# scalar loop, which runs it in the VM's element order. No emitter raises a
+# chunk in place: that left the chunk's earlier elements unwritten.
 define vec_prop(e) as:
     return str_replace of [(str_replace of [e, "aot_vguard(", "aot_vguardp("]), "aot_vdiv(", "aot_vdivn("]
-define vec_nancheck(e) as:
-    local p is vec_prop of e
-    if p == e:
-        return e
-    return "({ aot_vec _vp = " + p + "; if (__builtin_expect(aot_vnanany(_vp), 0)) { aot_vnan(); _vp = " + e + "; } _vp; })"
 
 # fwd: buffer name -> the C vector an EARLIER statement of the same chunk
 # computed for it (emit_vectorized's deferred stores); a same-element read
@@ -5173,8 +5168,14 @@ define emit_vectorized(node, vinfo, ind, nm, bt, minits) as:
     s is s + i3 + "long _lo = " + (str of (0 - minoff)) + "; if (_lo > _n) _lo = _n;\n"
     s is s + i3 + "long _hi = _n - " + (str of maxoff) + "; if (_hi < _lo) _hi = _lo;\n"
     s is s + i3 + "long _vi = 0;\n"
+    # (#1361) the scalar loops (head, remainder, tail) are where a raise can
+    # happen, so each writes the counter before its element: a caught raise
+    # leaves it at the failing element, as the VM's does (it used to keep
+    # its entry value, 0, until the loop completed).
+    local vctr is (cn of ctr) + " = (double)_vi;\n"
     # head boundary: checked (matches VM wrap/error)
     s is s + i3 + "for (; _vi < _lo; _vi++) {\n"
+    s is s + i4 + vctr
     for a in range of (len of assigns):
         s is s + i4 + vstamp[str of a] + "aot_buf_set(" + (cn of (assigns[a])["buf"]) + ", (double)_vi, " + (emit_vcheck of [(assigns[a])["val"], ctr]) + ");\n"
     s is s + i3 + "}\n"
@@ -5227,12 +5228,14 @@ define emit_vectorized(node, vinfo, ind, nm, bt, minits) as:
     # interior scalar remainder: raw (still in-bounds); also the element-order
     # re-run of a failing chunk (above)
     s is s + i3 + "for (; _vi < _hi; _vi++) {\n"
+    s is s + i4 + vctr
     for a in range of (len of assigns):
         local rw2 is map_elidable of (assigns[a])["val"]
         s is s + i4 + vstamp[str of a] + "_p_" + (cn of (assigns[a])["buf"]) + "[_vi] = " + (emit_vscalar of [(assigns[a])["val"], ctr, rw2]) + ";\n"
     s is s + i3 + "}\n"
     # tail boundary: checked
     s is s + i3 + "for (; _vi < _n; _vi++) {\n"
+    s is s + i4 + vctr
     for a in range of (len of assigns):
         s is s + i4 + vstamp[str of a] + "aot_buf_set(" + (cn of (assigns[a])["buf"]) + ", (double)_vi, " + (emit_vcheck of [(assigns[a])["val"], ctr]) + ");\n"
     s is s + i3 + "}\n"
@@ -5722,33 +5725,29 @@ define emit_outvec(d, ind, nm, bt, guard, minits) as:
     if d["ACCLINE"] > 0:
         s is s + i2 + "g_trace_current_line = " + (str of d["ACCLINE"]) + ";\n"
     s is s + i2 + "long _oent = " + cO + ";\n"
-    s is s + i2 + "for (; " + cO + " + AOT_VW <= " + OB + "; " + cO + " += AOT_VW) {\n"
+    # (#1361) the guarded arm at width 1 would raise INSIDE this loop, where
+    # the sum lives in _acc and ACC keeps a stale value; skipping the loop
+    # there hands every column to the scalar tail (it is scalar code anyway).
+    local ovw1 is ""
+    if guard == 1:
+        ovw1 is "AOT_VW > 1 && "
+    s is s + i2 + "for (; " + ovw1 + cO + " + AOT_VW <= " + OB + "; " + cO + " += AOT_VW) {\n"
     s is s + i3 + "aot_vec _acc = aot_vset(0.0);\n"
     s is s + i3 + cD + " = 0;\n"
     s is s + i3 + "while (" + cD + " < " + IB + ") {\n"
     s is s + i4 + (vec_prop of accline)
     s is s + i4 + cD + " = " + cD + " + 1;\n"
     s is s + i3 + "}\n"
-    if guard == 0:
-        # (#1361) the unguarded arm (emit_matmul proved no product or partial
-        # sum can overflow) still sees a NaN ELEMENT, which aot_buf_maxabs
-        # does not screen: it makes the chunk's sums NaN, and the chunk goes
-        # unstored to the scalar tail below, which runs it and the rest of
-        # the row column by column with num_guard, as the VM does.
-        s is s + i3 + "if (__builtin_expect(aot_vnanany(_acc), 0)) break;\n"
-    if guard == 1:
-        # (#1361) the accumulator ran propagating; one test per chunk. A NaN
-        # raises under strict; under EIGS_STRICT=0 the chunk's reduction is
-        # re-run with the soft guard (the pre-#1361 loop verbatim).
-        s is s + i3 + "if (__builtin_expect(aot_vnanany(_acc), 0)) {\n"
-        s is s + i4 + "aot_vnan();\n"
-        s is s + i4 + "_acc = aot_vset(0.0);\n"
-        s is s + i4 + cD + " = 0;\n"
-        s is s + i4 + "while (" + cD + " < " + IB + ") {\n"
-        s is s + i4 + "    " + accline
-        s is s + i4 + "    " + cD + " = " + cD + " + 1;\n"
-        s is s + i4 + "}\n"
-        s is s + i3 + "}\n"
+    # (#1361) one test per chunk, both arms. A NaN in _acc (a NaN element on
+    # the unguarded arm, which aot_buf_maxabs does not screen; any NaN on the
+    # guarded arm, whose accumulator runs propagating) sends the chunk
+    # unstored to the scalar tail below, which runs it and the rest of the
+    # row column by column with num_guard, as the VM does: a strict raise
+    # names the VM's first failing (column, term) with the earlier columns
+    # stored and ACC/D at their VM values; under EIGS_STRICT=0 the tail's
+    # soft guard gives the VM's numbers. The guarded arm used to raise the
+    # chunk in place (aot_vnan), leaving its earlier columns unwritten.
+    s is s + i3 + "if (__builtin_expect(aot_vnanany(_acc), 0)) break;\n"
     s is s + i3 + "aot_vstore(_pv_" + cRES + " + " + SBASE + " + " + cO + ", _acc);\n"
     s is s + i2 + "}\n"
     # (round 83) materialize the carried scalar: the vector block
@@ -6010,8 +6009,19 @@ define emit_rowmap(d, ind, nm, bt, minits) as:
         s is s + i2 + "double* _pv_" + (cn of vbufs[k]) + " = aot_buf_data(" + (cn of vbufs[k]) + ");\n"
     if d["LINE"] > 0:
         s is s + i2 + "g_trace_current_line = " + (str of d["LINE"]) + ";\n"
+    # (#1361) compute the chunk propagating, test it once, store it; a NaN
+    # chunk BREAKS, unstored, to the scalar loop below, which runs it and the
+    # rest of the row element by element with num_guard, as the VM does: a
+    # strict raise leaves the chunk's earlier elements written and D at the
+    # failing element; under EIGS_STRICT=0 the soft guard gives the VM's
+    # numbers. Raising the chunk in place (vec_nancheck's aot_vnan, rounds
+    # 1-2) left its earlier elements unwritten.
     s is s + i2 + "for (; " + cD + " + AOT_VW <= " + OB + "; " + cD + " += AOT_VW) {\n"
-    s is s + i3 + "aot_vstore(_pv_" + cRES + " + " + SBASE + " + " + cD + ", " + (vec_nancheck of (emit_term_ov of [d["VEXPR"], D, nm, bt, 1])) + ");\n"
+    local rme is emit_term_ov of [d["VEXPR"], D, nm, bt, 1]
+    s is s + i3 + "aot_vec _vs = " + (vec_prop of rme) + ";\n"
+    if (vec_prop of rme) != rme:
+        s is s + i3 + "if (__builtin_expect(aot_vnanany(_vs), 0)) break;\n"
+    s is s + i3 + "aot_vstore(_pv_" + cRES + " + " + SBASE + " + " + cD + ", _vs);\n"
     s is s + i2 + "}\n"
     s is s + i2 + "while (" + cD + " < " + OB + ") {\n"
     s is s + i3 + "aot_buf_set_i(" + cRES + ", " + (emit_int of d["SIDX"]) + ", " + (emit_num of [d["VEXPR"], nm, bt, 0]) + ");\n"

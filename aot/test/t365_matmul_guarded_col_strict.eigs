@@ -1,0 +1,52 @@
+# (#1361, round 3) The GUARDED matmul arm (emit_outvec guard == 1, taken when
+# the no-overflow precheck fails: X[5] = 1e300, W[7] = 1e9) with a NaN element
+# (W[1], from an ext_store round-trip of a tagged buffer body, as t364). Row 0's
+# column 0 is finite and column 1 is not: the VM stores O[0] and raises at
+# column 1 (strict), with s/d/o at their values in that column; under
+# EIGS_STRICT=0 the NaN term is 0 and the row runs on. The arm used to raise
+# the whole chunk in place, leaving O[0] unwritten and o at the chunk start.
+define mm(out, X, W, S, Din, Dout) as:
+    i is 0
+    o is 0
+    s is 0
+    d is 0
+    try:
+        loop while i < S:
+            o is 0
+            loop while o < Dout:
+                s is 0
+                d is 0
+                loop while d < Din:
+                    s is s + X[i * Din + d] * W[d * Dout + o]
+                    d is d + 1
+                out[i * Dout + o] is s
+                o is o + 1
+            i is i + 1
+    catch e:
+        print of e.message
+        print of e.line
+    print of f"i={i} o={o} d={d} s={s}"
+    return 0
+path is "/tmp/ouroboros_t365_strict_nan.store"
+remove_file of path
+st is store_open of path
+k is store_put of [st, "c", {"v": {"_eigs_buffer": [2, "nan", 3, 4], "_eigs_shape": [0, 0]}}]
+got is store_get of [st, "c", k]
+store_close of st
+remove_file of path
+W is buffer of 32
+w is 0
+loop while w < 32:
+    W[w] is 1
+    w is w + 1
+buf_copy of [got.v, 0, W, 0, 4]
+X is buffer of 8
+x is 0
+loop while x < 8:
+    X[x] is x + 1
+    x is x + 1
+X[5] is 1e300
+W[7] is 1000000000
+O is buffer of 16
+mm of [O, X, W, 2, 4, 8]
+print of f"{O[0]} {O[1]} {O[2]} {O[3]} {O[8]} {O[9]} {O[10]}"

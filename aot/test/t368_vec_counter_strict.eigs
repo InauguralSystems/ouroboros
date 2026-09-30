@@ -1,0 +1,27 @@
+# (#1361, round 3) The element-wise map's counter after a caught raise. The
+# VM's `i` is the failing element (5: c[5] = inf, inf - inf); the packed map
+# broke to its scalar loop at the chunk start and raised there, but it wrote
+# the counter only when the loop completed, so `i` kept its entry value, 0.
+# Elements before the failing one are written (o = c + 1 for them).
+nb is buffer of 4
+nb[0] is 1e300
+nb[1] is 1e300
+nb[2] is 1e300
+nb[3] is 1e300
+nm is reshape of [nb, 2, 2]
+p is matmul of [nm, nm]
+define f(c, o, n) as:
+    i is 0
+    try:
+        loop while i < n:
+            o[i] is (c[i] - c[i]) + 1
+            i is i + 1
+    catch e:
+        print of e.message
+        print of e.line
+    return i
+c is buffer of 8
+c[5] is p[0]
+o is buffer of 8
+print of (f of [c, o, 8])
+print of f"{o[0]} {o[3]} {o[4]} {o[5]} {o[6]} {o[7]}"

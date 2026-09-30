@@ -1,0 +1,42 @@
+# (#1361, round 3) A standalone output-axis loop (no enclosing row loop, so
+# not the matmul shape: emit_outvec's guarded arm directly) meeting a NaN in
+# column 3 (X[1] = inf times W[1*4 + 3] = 0). The VM stores columns 0-2 and
+# raises at column 3 with d = 1; under EIGS_STRICT=0 the NaN term is 0.
+nb is buffer of 4
+nb[0] is 1e300
+nb[1] is 1e300
+nb[2] is 1e300
+nb[3] is 1e300
+nm is reshape of [nb, 2, 2]
+p is matmul of [nm, nm]
+define ov(out, X, W, Din, Dout) as:
+    o is 0
+    s is 0
+    d is 0
+    try:
+        loop while o < Dout:
+            s is 0
+            d is 0
+            loop while d < Din:
+                s is s + X[d] * W[d * Dout + o]
+                d is d + 1
+            out[o] is s
+            o is o + 1
+    catch e:
+        print of e.message
+        print of e.line
+    print of f"o={o} d={d} s={s}"
+    return 0
+X is buffer of 3
+X[0] is 2
+X[1] is p[0]
+X[2] is 5
+W is buffer of 12
+w is 0
+loop while w < 12:
+    W[w] is 1
+    w is w + 1
+W[7] is 0
+O is buffer of 4
+ov of [O, X, W, 3, 4]
+print of f"{O[0]} {O[1]} {O[2]} {O[3]}"
