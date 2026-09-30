@@ -29,11 +29,28 @@ if ! EIGS="$EIG" PYTHONDONTWRITEBYTECODE=1 python3 test/slot_scalar_emission.py;
   echo 'FAIL: slot scalar emission coverage' >&2
   exit 1
 fi
+# (#1361) The AOT-owned strict sites, DERIVED from aot_rt.h, never listed: each
+# definition whose body reads g_strict, closed over the header definitions that
+# call one (a macro-built function through its macro). Comments are stripped
+# first. A `_strict` fixture's generated C must call at least one of them.
+strict_sites=$(awk '{ line = $0
+  if (inc) { if (!sub(/.*\*\//, "", line)) next; inc = 0 }
+  gsub(/\/\*([^*]|\*+[^*\/])*\*+\//, "", line); sub(/\/\/.*/, "", line); if (sub(/\/\*.*/, "", line)) inc = 1 }
+line ~ /^(static |#define [A-Za-z_0-9]+\(|[A-Z_]+\([a-z_0-9]+,)/ {
+  h = line; gsub(/__attribute__\(\([^)]*\)\)/, "", h); sub(/^#define /, "", h)
+  if (h ~ /^[A-Z_]+\([a-z_0-9]+,/) { nm = h; sub(/^[A-Z_]+\(/, "", nm); sub(/,.*/, "", nm); m = h; sub(/\(.*/, "", m); body[nm] = body[nm] " " m "("; nm = ""; next }
+  sub(/\(.*/, "", h); n = split(h, w, /[^A-Za-z_0-9]+/); nm = w[n] }
+nm != "" { body[nm] = body[nm] " " line }
+END { for (d in body) if (body[d] ~ /[^A-Za-z_0-9]g_strict[^A-Za-z_0-9]/) set[d] = 1
+  do { grew = 0; for (d in body) if (!(d in set)) for (s in set) if (index(body[d], s "(")) { set[d] = 1; grew = 1; break } } while (grew)
+  for (s in set) print s }' aot_rt.h | paste -sd'|' -)
+[ -n "$strict_sites" ] || { echo 'FAIL: derived ZERO strict sites from aot_rt.h (no definition reads g_strict)'; exit 1; }
+strict_n=0
 fail=0
 for prog in test/*.eigs; do
   name=$(basename "$prog")
   # `_`-prefixed files are companion MODULES for import fixtures, not tests.
-  case "$name" in _*) continue;; esac
+  case "$name" in _*) continue;; *_strict.eigs) strict_n=$((strict_n + 1));; esac
   bin=$(mktemp /tmp/aot_test.XXXXXX)
   why=""
   if ! bash build.sh "$prog" "$bin" >/tmp/aot_build.log 2>&1; then
@@ -193,6 +210,14 @@ PY
       done
       if [ "$match" -eq 1 ] && [ "$s_vm1" = "$s_ref" ]; then
         match=0; why="_strict fixture prints the same on the VM under EIGS_STRICT=1 and =0 -- it reaches no strict site"
+      fi
+      # The VM moving proves A strict site ran, not an AOT one: a runtime
+      # builtin's own raise moves it too. Require one in the emitted C.
+      if [ "$match" -eq 1 ]; then
+        s_gen=$(timeout 120 "$EIG" compile.eigs "$prog" "${EIGS_DIR:-../../EigenScript}" 2>&1); s_trc=$?
+        if [ "$s_trc" -ne 0 ] || ! printf '%s\n' "$s_gen" | grep -qE "(^|[^A-Za-z_0-9])($strict_sites)\("; then
+          match=0; why="_strict fixture's generated C (transpile rc $s_trc) calls none of aot_rt.h's strict sites -- its strict raise is not the AOT's"
+        fi
       fi ;;
     esac
   fi
@@ -206,6 +231,13 @@ PY
   fi
   rm -f "$bin"
 done
+# A FLOOR on the _strict class (the count at #1361 round 4), not a pin: it may
+# grow; with fewer, a fixture was lost or renamed out of the class.
+if [ "$strict_n" -lt 16 ]; then
+  echo "FAIL: _strict class examined $strict_n fixture(s), floor 16"; fail=1
+else
+  echo "--- _strict class: $strict_n fixture(s) examined ---"
+fi
 # ---- bench transpile-check tier (#109) --------------------------------
 # Every aot/bench/*.eigs must BUILD (rc=0). The benches are the #64/F-OURO-25
 # forcing-function corpus and nothing else covered them: the #105/#107

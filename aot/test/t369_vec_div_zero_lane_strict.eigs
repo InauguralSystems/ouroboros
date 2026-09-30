@@ -1,0 +1,43 @@
+# (#1361, round 4) A zero divisor in the element-wise map's packed body, with
+# no NaN anywhere: every numerator is nonzero, so a/0 is inf, not 0/0. The
+# packed division (aot_vdivn) ORs a zero-divisor lane to NaN so the chunk's
+# one NaN test hands it to the scalar loop, which raises "division by zero"
+# in the VM's element order. Without that mask, inf clamps to 1e308, the
+# chunk is stored and the map runs to the end with no error (the fixtures
+# before this one each paired the zero divisor with a NaN, which hid it).
+# n = 9: the zero sits mid-chunk (6), in the last lane of a chunk (7), and
+# in the scalar tail (8), at both SSE2 (2-wide) and AVX2 (4-wide).
+define f(a, z, o, n) as:
+    i is 0
+    try:
+        loop while i < n:
+            o[i] is a[i] / z[i]
+            i is i + 1
+    catch e:
+        print of e.message
+        print of e.line
+    return i
+define trial(zi) as:
+    a is buffer of 9
+    z is buffer of 9
+    o is buffer of 9
+    k is 0
+    loop while k < 9:
+        a[k] is k + 1
+        z[k] is 2
+        k is k + 1
+    z[zi] is 0
+    print of (f of [a, z, o, 9])
+    print of f"{o[0]} {o[5]} {o[6]} {o[7]} {o[8]}"
+trial of 6
+trial of 7
+trial of 8
+# The strict-dependent half, still NaN-free: sqrt's domain check tests x < 0
+# before any sqrt is taken. Division by zero raises in both modes; this line
+# is what moves between EIGS_STRICT=1 and =0.
+define g(x) as:
+    return sqrt of (x - 5)
+try:
+    print of (g of 1)
+catch e:
+    print of e.message
