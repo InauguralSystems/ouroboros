@@ -3160,9 +3160,9 @@ define emit_val(node, nm, bt) as:
             # name, and `nosuch of lst[7]` reported an out-of-range index,
             # where the VM names the callee. Same stdout and rc, wrong
             # message -- and the _err tier compares message text.
-            return "({ " + hc1[0] + "Value* _sqcf = aot_call_resolve(__eigs_g, \"" + callee[1] + "\", " + hc1[1] + "); Value* _sqca = " + (emit_val of [(barg[1])[0], nm, bt]) + "; " + (host_fn_stamp of callee[1]) + "aot_call_dispatch(_sqcf, _sqca); })"
+            return "({ " + hc1[0] + "Value* _sqcf = aot_call_resolve(__eigs_g, \"" + callee[1] + "\", " + hc1[1] + "); Value* _sqca = " + (emit_val of [(barg[1])[0], nm, bt]) + "; " + (host_fn_stamp of callee[1]) + (restamp_call of [callee[1], "aot_call_dispatch(_sqcf, _sqca)"]) + "; })"
         local hc2 is ic_cache of 0
-        return "({ " + hc2[0] + "Value* _sqcf = aot_call_resolve(__eigs_g, \"" + callee[1] + "\", " + hc2[1] + "); Value* _sqca = " + (emit_val of [node[2], nm, bt]) + "; " + (host_fn_stamp of callee[1]) + "aot_call_dispatch(_sqcf, _sqca); })"
+        return "({ " + hc2[0] + "Value* _sqcf = aot_call_resolve(__eigs_g, \"" + callee[1] + "\", " + hc2[1] + "); Value* _sqca = " + (emit_val of [node[2], nm, bt]) + "; " + (host_fn_stamp of callee[1]) + (restamp_call of [callee[1], "aot_call_dispatch(_sqcf, _sqca)"]) + "; })"
     if t == "slice":
         # (round 129, #179) a slice in VALUE position. The runtime mirror of
         # OP_SLICE_GET (aot_slice_any: per-type length rule, negative
@@ -3612,7 +3612,11 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
         # only traced ones: rt_error reads g_trace_current_line, so an
         # unstamped program reported "Error line 0" where the VM names the
         # source line. One store per statement; the DMG canary measures it.
-        return ind + "g_trace_current_line = " + (str of node[1]) + ";\n" + (emit_stmt of [node[2], ind, nm, bt, minits, gf])
+        # (#1361 r5) __aot_ln is the frame's own copy of the stamp: a C local,
+        # so gcc folds it to a constant and it costs nothing. The call macro
+        # (AOT_RESTAMP, aot_rt.h) writes it back after a compiled call
+        # returns, which is the VM's frame line.
+        return ind + "g_trace_current_line = __aot_ln = " + (str of node[1]) + ";\n" + (emit_stmt of [node[2], ind, nm, bt, minits, gf])
     if t == "assign":
         local name is node[1]
         if g_genp[name] == 1:
@@ -5161,9 +5165,9 @@ define emit_vectorized(node, vinfo, ind, nm, bt, minits) as:
     for a in range of (len of assigns):
         vstamp[str of a] is ""
         if ((len of assigns) > 1) and (((assigns[a])["line"]) > 0):
-            vstamp[str of a] is "g_trace_current_line = " + (str of (assigns[a])["line"]) + "; "
+            vstamp[str of a] is "g_trace_current_line = __aot_ln = " + (str of (assigns[a])["line"]) + "; "
     if ((len of assigns) == 1) and (((assigns[0])["line"]) > 0):
-        s is s + i3 + "g_trace_current_line = " + (str of (assigns[0])["line"]) + ";\n"
+        s is s + i3 + "g_trace_current_line = __aot_ln = " + (str of (assigns[0])["line"]) + ";\n"
     # safe interior [_lo, _hi): all neighbor offsets land in [0, _n)
     s is s + i3 + "long _lo = " + (str of (0 - minoff)) + "; if (_lo > _n) _lo = _n;\n"
     s is s + i3 + "long _hi = _n - " + (str of maxoff) + "; if (_hi < _lo) _hi = _lo;\n"
@@ -5723,7 +5727,7 @@ define emit_outvec(d, ind, nm, bt, guard, minits) as:
     if guard == 1:
         accline is "_acc = aot_vguard(aot_vadd(_acc, " + (emit_term_ov of [TERM, O, nm, bt, 1]) + "));\n"
     if d["ACCLINE"] > 0:
-        s is s + i2 + "g_trace_current_line = " + (str of d["ACCLINE"]) + ";\n"
+        s is s + i2 + "g_trace_current_line = __aot_ln = " + (str of d["ACCLINE"]) + ";\n"
     s is s + i2 + "long _oent = " + cO + ";\n"
     # (#1361) the guarded arm at width 1 would raise INSIDE this loop, where
     # the sum lives in _acc and ACC keeps a stale value; skipping the loop
@@ -6008,7 +6012,7 @@ define emit_rowmap(d, ind, nm, bt, minits) as:
     for k in range of (len of vbufs):
         s is s + i2 + "double* _pv_" + (cn of vbufs[k]) + " = aot_buf_data(" + (cn of vbufs[k]) + ");\n"
     if d["LINE"] > 0:
-        s is s + i2 + "g_trace_current_line = " + (str of d["LINE"]) + ";\n"
+        s is s + i2 + "g_trace_current_line = __aot_ln = " + (str of d["LINE"]) + ";\n"
     # (#1361) compute the chunk propagating, test it once, store it; a NaN
     # chunk BREAKS, unstored, to the scalar loop below, which runs it and the
     # rest of the row element by element with num_guard, as the VM does: a
@@ -8671,8 +8675,8 @@ define collect_local_marked(node, acc) as:
 # contains a try (see has_try / the function attribute).
 define main_sig(has) as:
     if has == 1:
-        return "__attribute__((optimize(\"O0\"))) int main(int argc, char **argv) {\n"
-    return "int main(int argc, char **argv) {\n"
+        return "__attribute__((optimize(\"O0\"))) int main(int argc, char **argv) {\n    int __aot_ln = 0; (void)__aot_ln;\n"
+    return "int main(int argc, char **argv) {\n    int __aot_ln = 0; (void)__aot_ln;\n"
 define main_tryb(has) as:
     if has == 1:
         return "    int _tryb = aot_try_n;   /* handler depth at entry (round 153) */\n"
@@ -9914,12 +9918,12 @@ define emit_function(fn, finfo, gnm, gbt) as:
                 dump_rec of [name, "for", dfvn[k], fvk, dl[dfvn[k]]]
     g_cur_has_try is has_try of body
     g_cur_try_depth is 0
-    local sig is "static " + finfo["ret"] + " " + (cn of name) + "("
+    local sig is "static " + finfo["ret"] + " (" + (cn of name) + ")("
     if g_cur_has_try == 1:
         # (round 153) -O0 for this function: its C locals must hold their
         # values across the catch's longjmp (only volatile locals are
         # guaranteed to otherwise).
-        sig is "static " + finfo["ret"] + " __attribute__((optimize(\"O0\"))) " + (cn of name) + "("
+        sig is "static " + finfo["ret"] + " __attribute__((optimize(\"O0\"))) (" + (cn of name) + ")("
     if (len of params) == 0:
         sig is sig + "void"
     for k in range of (len of params):
@@ -10196,7 +10200,7 @@ define emit_function(fn, finfo, gnm, gbt) as:
             tailret is tailret + "    aot_tframe_leave(_tmark);\n    return NULL;\n"
         else:
             tailret is tailret + "    return NULL;\n"
-    local _result is sig + " {\n" + decls + bodyc + tailret + "}\n"
+    local _result is sig + " {\n" + "    int __aot_ln = g_trace_current_line; (void)__aot_ln;\n" + decls + bodyc + tailret + "}\n"
     g_observed is _save_obs
     g_traced is _save_tr
     g_obs_traced is _save_otr
@@ -12258,6 +12262,16 @@ define emit_program(ast) as:
     local fc is ""
     for k in range of (len of funcs):
         fc is fc + (g_fsigs[(funcs[k])[1]]) + ";\n"
+    # (#1361 r5) every direct call of a compiled function goes through
+    # AOT_RESTAMP (aot_rt.h): the callee's stamps leave its own last line in
+    # g_trace_current_line, and the caller writes its frame line back. The
+    # definitions spell the name in parentheses, so only calls expand.
+    for k in range of (len of funcs):
+        local _rsn is cn of ((funcs[k])[1])
+        local _rsv is ""
+        if ((g_funcs[(funcs[k])[1]])["ret"]) == "void":
+            _rsv is "_V"
+        fc is fc + "#define " + _rsn + "(...) AOT_RESTAMP" + _rsv + "(" + _rsn + "(__VA_ARGS__))\n"
     fc is fc + fdefs
     g_scalbound is infer_scalar_bounds of [rest, nm]
     g_bufbound is infer_buffer_bounds of [rest, bt]
@@ -12400,6 +12414,9 @@ define emit_program(ast) as:
         gdecls is gdecls + "static inline Value *aot_dispatch_sh_" + (cn of shnames[i]) + "(Value *table, Value *keyv, Value *ctx) { return aot_dispatch_sh(table, keyv, ctx, __sh_" + (cn of shnames[i]) + ", __sh_" + (cn of shnames[i]) + "_n); }\n"
         gdecls is gdecls + "static inline double aot_dispatch_sh_num_" + (cn of shnames[i]) + "(Value *table, Value *keyv, Value *ctx, const char *site) { return aot_dispatch_sh_num(table, keyv, ctx, __sh_" + (cn of shnames[i]) + ", __sh_" + (cn of shnames[i]) + "_n, site); }\n"
         gdecls is gdecls + "static inline double aot_dispatch_sh_num_b_" + (cn of shnames[i]) + "(Value *table, double d, Value *ctx, const char *site) { return aot_dispatch_sh_num_b(table, d, ctx, __sh_" + (cn of shnames[i]) + ", __sh_" + (cn of shnames[i]) + "_n, site); }\n"
+        # (#1361 r5) a shadow hit calls a compiled handler directly: its call sites restamp like a direct call.
+        for _shp in ["aot_dispatch_sh_", "aot_dispatch_sh_num_", "aot_dispatch_sh_num_b_"]:
+            gdecls is gdecls + "#define " + _shp + (cn of shnames[i]) + "(...) AOT_RESTAMP(" + _shp + (cn of shnames[i]) + "(__VA_ARGS__))\n"
     # emit_function sets G_CUR_FN; the module body has no emit_function, so
     # reset it or every site label in main() inherits the LAST function's
     # name (that stale label sent an earlier debugging session chasing
@@ -12484,11 +12501,11 @@ define emit_program(ast) as:
             local wcallm is (cn of wn) + "(" + wmulti + ")"
             wprotos is wprotos + "static Value* __wrap_" + (cn of wn) + "(Value* __a);\n"
             if (wi["ret"]) == "double":
-                wraps is wraps + "static Value* __wrap_" + (cn of wn) + "(Value* __a) { return make_num(" + wcallm + "); }\n"
+                wraps is wraps + "static Value* __wrap_" + (cn of wn) + "(Value* __a) { const int __aot_ln = g_trace_current_line; return make_num(" + wcallm + "); }\n"
             elif (wi["ret"]) == "Value*":
-                wraps is wraps + "static Value* __wrap_" + (cn of wn) + "(Value* __a) { return " + wcallm + "; }\n"
+                wraps is wraps + "static Value* __wrap_" + (cn of wn) + "(Value* __a) { const int __aot_ln = g_trace_current_line; return " + wcallm + "; }\n"
             else:
-                wraps is wraps + "static Value* __wrap_" + (cn of wn) + "(Value* __a) { " + wcallm + "; return make_null(); }\n"
+                wraps is wraps + "static Value* __wrap_" + (cn of wn) + "(Value* __a) { const int __aot_ln = g_trace_current_line; " + wcallm + "; return make_null(); }\n"
             continue
         local warg is "__a"
         if (wpt[0]) == "num":
@@ -12507,11 +12524,11 @@ define emit_program(ast) as:
         local wcall is (cn of wn) + "(" + warg + ")"
         wprotos is wprotos + "static Value* __wrap_" + (cn of wn) + "(Value* __a);\n"
         if (wi["ret"]) == "double":
-            wraps is wraps + "static Value* __wrap_" + (cn of wn) + "(Value* __a) { return make_num(" + wcall + "); }\n"
+            wraps is wraps + "static Value* __wrap_" + (cn of wn) + "(Value* __a) { const int __aot_ln = g_trace_current_line; return make_num(" + wcall + "); }\n"
         elif (wi["ret"]) == "Value*":
-            wraps is wraps + "static Value* __wrap_" + (cn of wn) + "(Value* __a) { return " + wcall + "; }\n"
+            wraps is wraps + "static Value* __wrap_" + (cn of wn) + "(Value* __a) { const int __aot_ln = g_trace_current_line; return " + wcall + "; }\n"
         else:
-            wraps is wraps + "static Value* __wrap_" + (cn of wn) + "(Value* __a) { " + wcall + "; return make_null(); }\n"
+            wraps is wraps + "static Value* __wrap_" + (cn of wn) + "(Value* __a) { const int __aot_ln = g_trace_current_line; " + wcall + "; return make_null(); }\n"
     local hdr is "#include \"aot_rt.h\"\n\nstatic Env* __eigs_g = NULL;\n" + gdecls + "\n" + wprotos + fc + "\n" + wraps + "\n" + (main_sig of g_mod_has_try) + "    __eigs_g = aot_boot(); (void)__eigs_g;\n    aot_args(argc, argv);\n    aot_no_loop_rebinds(__eigs_g);\n" + (nested_bind_lines of []) + (main_tryb of g_mod_has_try) + obshdr
     local ftr is "    aot_shutdown(__eigs_g);\n    return 0;\n}\n"
     return hdr + body + ftr
@@ -12766,6 +12783,15 @@ define nested_bind_lines() as:
 # (round 188, #203) a call site of a VM builtin that runs a chunk stamps the
 # compiled caller's name for the synthetic host frame (aot_rt.h); every
 # other builtin call emits nothing.
+# (#1361 r5) a builtin that runs code (CALLBACK_BUILTINS: interpreted code
+# stamps the shared line; a compiled callback restores it in its __wrap_)
+# gets its caller's frame line written back, as AOT_RESTAMP does for a
+# direct call of a compiled function.
+define restamp_call(callee, call) as:
+    if CALLBACK_BUILTINS[callee] == 1:
+        return "AOT_RESTAMP(" + call + ")"
+    return call
+
 define host_fn_stamp(callee) as:
     if (callee == "vm_run_bytecode") or (callee == "sandbox_run"):
         return "aot_host_fn = \"" + (c_escape of (G_CUR_FN[0])) + "\"; "

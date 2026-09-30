@@ -75,6 +75,18 @@ static Value *aot_take_error_value(void) {   /* vm_take_error_value's shape */
  * decrements; a catch restores the depth it saved (longjmp runs no
  * cleanups). The check runs BEFORE the callee's first line stamp, so the
  * reported line is the caller's, as on the VM. */
+/* (#1361 r5) Every AOT-owned raise names g_trace_current_line, the last
+ * statement stamp. A compiled callee's stamps leave ITS last line there, so
+ * `(side of "B") + (sqrt of (n - 5))` reported side's line 3 where the VM
+ * reports its frame's line 5. Each emitted C function keeps its current
+ * stamp in a local, __aot_ln (a constant after gcc's propagation), and every
+ * direct call of a compiled function -- or of a shadow-dispatch helper,
+ * which calls a handler directly -- expands through this macro and writes
+ * the caller's line back when the callee returns. The store is dead, and
+ * removed, when the next statement's stamp follows it. Wrappers entered from
+ * the runtime (__wrap_*) take __aot_ln from the stamp they were entered at. */
+#define AOT_RESTAMP(call) ({ __auto_type __aot_r = (call); g_trace_current_line = __aot_ln; __aot_r; })
+#define AOT_RESTAMP_V(call) ({ (call); g_trace_current_line = __aot_ln; })
 static int aot_depth = 0;
 static void aot_error_exit(void) {
     if (aot_try_n > 0) longjmp(*aot_try_bufs[aot_try_n - 1], 1);

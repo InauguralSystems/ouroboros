@@ -32,7 +32,8 @@ fi
 # (#1361) The AOT-owned strict sites, DERIVED from aot_rt.h, never listed: each
 # definition whose body reads g_strict, closed over the header definitions that
 # call one (a macro-built function through its macro). Comments are stripped
-# first. A `_strict` fixture's generated C must call at least one of them.
+# first. A `_strict` fixture's generated C must call at least one of them
+# (these include num_guard and aot_add, so any float arithmetic satisfies it).
 strict_sites=$(awk '{ line = $0
   if (inc) { if (!sub(/.*\*\//, "", line)) next; inc = 0 }
   gsub(/\/\*([^*]|\*+[^*\/])*\*+\//, "", line); sub(/\/\/.*/, "", line); if (sub(/\/\*.*/, "", line)) inc = 1 }
@@ -212,11 +213,12 @@ PY
         match=0; why="_strict fixture prints the same on the VM under EIGS_STRICT=1 and =0 -- it reaches no strict site"
       fi
       # The VM moving proves A strict site ran, not an AOT one: a runtime
-      # builtin's own raise moves it too. Require one in the emitted C.
+      # builtin's own raise moves it too. Tested: the generated C calls an AOT
+      # strict-decision helper. It cannot tell whose raise fired.
       if [ "$match" -eq 1 ]; then
         s_gen=$(timeout 120 "$EIG" compile.eigs "$prog" "${EIGS_DIR:-../../EigenScript}" 2>&1); s_trc=$?
         if [ "$s_trc" -ne 0 ] || ! printf '%s\n' "$s_gen" | grep -qE "(^|[^A-Za-z_0-9])($strict_sites)\("; then
-          match=0; why="_strict fixture's generated C (transpile rc $s_trc) calls none of aot_rt.h's strict sites -- its strict raise is not the AOT's"
+          match=0; why="_strict fixture's generated C (transpile rc $s_trc) calls no AOT strict-decision helper"
         fi
       fi ;;
     esac
@@ -231,10 +233,10 @@ PY
   fi
   rm -f "$bin"
 done
-# A FLOOR on the _strict class (the count at #1361 round 4), not a pin: it may
+# A FLOOR on the _strict class (the count at #1361 round 5), not a pin: it may
 # grow; with fewer, a fixture was lost or renamed out of the class.
-if [ "$strict_n" -lt 16 ]; then
-  echo "FAIL: _strict class examined $strict_n fixture(s), floor 16"; fail=1
+if [ "$strict_n" -lt 17 ]; then
+  echo "FAIL: _strict class examined $strict_n fixture(s), floor 17"; fail=1
 else
   echo "--- _strict class: $strict_n fixture(s) examined ---"
 fi

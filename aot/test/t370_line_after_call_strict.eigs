@@ -1,0 +1,90 @@
+# (#1361 r5) An AOT-owned raise reports its FRAME's line after a call in
+# the same statement. Each statement below calls a compiled function (side,
+# whose last line is 5) and then raises in the same statement. The VM
+# reports the raising statement's line; the AOT used to report 5, because
+# the callee's stamps were left in g_trace_current_line when it returned.
+# Raises: sqrt's domain raise, division by zero, num_guard's NaN raise, the
+# dot reduction's NaN raise, and a call made through a function VALUE (the
+# __wrap_ entry), a shadow-dispatch hit (a direct call of a handler), and a
+# builtin that runs interpreted code (eval, whose code stamps the line too).
+# The NaN comes from a matmul that overflowed to inf (t355),
+# copied into plain buffers (a module tensor read inside a function is a
+# separate, pre-existing divergence).
+define side(t) as:
+    print of t
+    return 1
+define f_sqrt(n) as:
+    return (side of "s") + (sqrt of (n - 5))
+define f_div(n) as:
+    return (side of "d") + (1 / (n - 1))
+define f_nan(b) as:
+    return (side of "n") + (b[0] - b[1])
+define f_dot(xb, zb) as:
+    return (side of "r") + (dot of [xb, zb])
+define f_val(fn, n) as:
+    return (fn of "v") + (sqrt of (n - 5))
+define f_deep(n) as:
+    return (f_div of 3) + (sqrt of (n - 5))
+define f_eval(n) as:
+    return (eval of "1 + 1") + (sqrt of (n - 5))
+define h_side(ctx) as:
+    print of "h"
+    return 1
+define f_disp(n) as:
+    return (dispatch of [tbl, 0, [n]]) + (sqrt of (n - 5))
+tbl is []
+append of [tbl, h_side]
+nb is buffer of 4
+nb[0] is 1e300
+nb[1] is 1e300
+nb[2] is 1e300
+nb[3] is 1e300
+nm is reshape of [nb, 2, 2]
+np is matmul of [nm, nm]
+ib is buffer of 2
+ib[0] is np[0]
+ib[1] is np[1]
+xb is buffer of 8
+xb[1] is 3
+xb[5] is np[0]
+zb is buffer of 8
+zb[1] is 2
+try:
+    print of (f_sqrt of 1)
+catch e:
+    print of f"sqrt {e.line}"
+try:
+    print of (f_div of 1)
+catch e:
+    print of f"div {e.line}"
+try:
+    print of (f_nan of ib)
+catch e:
+    print of f"nan {e.line}"
+try:
+    print of (f_dot of [xb, zb])
+catch e:
+    print of f"dot {e.line}"
+try:
+    print of (f_val of [side, 1])
+catch e:
+    print of f"val {e.line}"
+try:
+    print of (f_deep of 1)
+catch e:
+    print of f"deep {e.line}"
+try:
+    print of (f_eval of 1)
+catch e:
+    print of f"eval {e.line}"
+try:
+    print of (f_disp of 1)
+catch e:
+    print of f"disp {e.line}"
+try:
+    m is (side of "m") + (sqrt of (0 - 4))
+    print of m
+catch e:
+    print of f"module {e.line}"
+print of (f_sqrt of 9)
+print of "after"
