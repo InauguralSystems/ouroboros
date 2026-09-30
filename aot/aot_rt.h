@@ -110,10 +110,20 @@ static inline void aot_depth_leave(int *p) { (void)p; aot_depth--; }
  * rt_error above (the runtime's eigs_strict_nan_raise alone would only leave
  * the error PENDING under aot_boot's g_try_depth, and the program would run
  * past it -- round 154's lesson), so these helpers must stay below it. */
-static void __attribute__((noinline, cold)) aot_strict_nan(const char *who) {
-    if (!g_strict) return;
+/* The raise is split out as NORETURN and the flag test stays inline: a cold
+ * call that can RETURN (soft mode) makes gcc assume it may write any global,
+ * so each num_guard cost a reload of a module numeric and kept the line
+ * stamp stored every iteration -- +4.2% Ir on bench/transformer_block, whose
+ * scalar matmul inner loop went 90 -> 94 instructions at 4b43ed2 -> 42eb592.
+ * A call that cannot return has no continuation to feed (92), and
+ * num_guard's NaN test is marked unlikely (88). */
+static void __attribute__((noinline, cold, noreturn)) aot_strict_nan_raise(const char *who) {
     eigs_strict_nan_raise(who);     /* the VM's text: "<who|arithmetic>: result is not a number ..." */
     aot_error_exit();
+    __builtin_unreachable();
+}
+static inline void aot_strict_nan(const char *who) {
+    if (g_strict) aot_strict_nan_raise(who);
 }
 /* (round 184) num_guard is `static inline` in eigenscript.h, but gcc left it
  * out of line at the emitted code's hundreds of call sites (7.2% of DMG's
@@ -122,7 +132,7 @@ static void __attribute__((noinline, cold)) aot_strict_nan(const char *who) {
  * emitted C is this one: the boxed operators and aot_ddiv/aot_dmod below
  * used to take the runtime's copy, whose strict raise only goes pending. */
 static inline __attribute__((always_inline)) double aot_num_guard_inl(double x) {
-    if (x != x) { g_math_flags |= EIGS_MATH_INVALID; aot_strict_nan(NULL); return 0.0; }
+    if (__builtin_expect(x != x, 0)) { g_math_flags |= EIGS_MATH_INVALID; aot_strict_nan(NULL); return 0.0; }
     if (x > EIGS_NUM_MAX)  { g_math_flags |= EIGS_MATH_OVERFLOW; return EIGS_NUM_MAX; }
     if (x < -EIGS_NUM_MAX) { g_math_flags |= EIGS_MATH_OVERFLOW; return -EIGS_NUM_MAX; }
     return x;
