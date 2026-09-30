@@ -34,9 +34,11 @@ fi
 # call one (a macro-built function through its macro). Comments are stripped
 # first. A `_strict` fixture's generated C must call at least one of them
 # (these include num_guard and aot_add, so any float arithmetic satisfies it).
-strict_sites=$(awk '{ line = $0
+rt_src=$(awk '{ line = $0
   if (inc) { if (!sub(/.*\*\//, "", line)) next; inc = 0 }
-  gsub(/\/\*([^*]|\*+[^*\/])*\*+\//, "", line); sub(/\/\/.*/, "", line); if (sub(/\/\*.*/, "", line)) inc = 1 }
+  gsub(/\/\*([^*]|\*+[^*\/])*\*+\//, "", line); sub(/\/\/.*/, "", line); if (sub(/\/\*.*/, "", line)) inc = 1
+  print line }' aot_rt.h)
+strict_sites=$(printf '%s\n' "$rt_src" | awk '{ line = $0 }
 line ~ /^(static |#define [A-Za-z_0-9]+\(|[A-Z_]+\([a-z_0-9]+,)/ {
   h = line; gsub(/__attribute__\(\([^)]*\)\)/, "", h); sub(/^#define /, "", h)
   if (h ~ /^[A-Z_]+\([a-z_0-9]+,/) { nm = h; sub(/^[A-Z_]+\(/, "", nm); sub(/,.*/, "", nm); m = h; sub(/\(.*/, "", m); body[nm] = body[nm] " " m "("; nm = ""; next }
@@ -44,8 +46,26 @@ line ~ /^(static |#define [A-Za-z_0-9]+\(|[A-Z_]+\([a-z_0-9]+,)/ {
 nm != "" { body[nm] = body[nm] " " line }
 END { for (d in body) if (body[d] ~ /[^A-Za-z_0-9]g_strict[^A-Za-z_0-9]/) set[d] = 1
   do { grew = 0; for (d in body) if (!(d in set)) for (s in set) if (index(body[d], s "(")) { set[d] = 1; grew = 1; break } } while (grew)
-  for (s in set) print s }' aot_rt.h | paste -sd'|' -)
+  for (s in set) print s }' | paste -sd'|' -)
 [ -n "$strict_sites" ] || { echo 'FAIL: derived ZERO strict sites from aot_rt.h (no definition reads g_strict)'; exit 1; }
+# (#1361 r6) No call made from compiled code changes g_trace_current_line
+# (aot_rt.h, above AOT_FOREIGN). Direct compiled calls restore through the
+# AOT_RESTAMP macro compile.eigs emits beside every prototype. Every other
+# exit from compiled code is one of these call tokens in aot_rt.h (comments
+# stripped) or compile.eigs: call_eigs_fn, a builtin's function pointer, a
+# named runtime builtin_* (prototypes aside), a shadow table's handler
+# pointer. Each must be AOT_FOREIGN's direct argument. Keyed on those
+# spellings: a runtime entry spelled any other way is not seen.
+fx=$( { printf '%s\n' "$rt_src"; cat compile.eigs; } | awk '
+/^(static )?(Value|double|int|void|long)[ *]+builtin_[a-z_0-9]+\([^)]*\);[ \t]*$/ { next }
+{ line = $0
+  while (match(line, /(^|[^A-Za-z_0-9>.])(call_eigs_fn|[a-z]+->data\.builtin|builtin_[a-z_0-9]+|sh\[[a-z]+\])\(/)) {
+    n++; if (substr(line, 1, RSTART) !~ /AOT_FOREIGN\($/) { bad++; print "FAIL: call leaves compiled code outside AOT_FOREIGN: " $0 }
+    line = substr(line, RSTART + RLENGTH) } }
+END { print n + 0, bad + 0 }')
+printf '%s\n' "$fx" | grep '^FAIL' ; set -- $(printf '%s\n' "$fx" | tail -1)
+[ "$1" -gt 0 ] && [ "$2" -eq 0 ] || { echo "FAIL: line-restore sites: $1 examined, $2 outside AOT_FOREIGN"; exit 1; }
+echo "--- line-restore: $1 call(s) leaving compiled code, all inside AOT_FOREIGN ---"
 strict_n=0
 fail=0
 for prog in test/*.eigs; do

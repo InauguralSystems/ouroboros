@@ -3160,9 +3160,9 @@ define emit_val(node, nm, bt) as:
             # name, and `nosuch of lst[7]` reported an out-of-range index,
             # where the VM names the callee. Same stdout and rc, wrong
             # message -- and the _err tier compares message text.
-            return "({ " + hc1[0] + "Value* _sqcf = aot_call_resolve(__eigs_g, \"" + callee[1] + "\", " + hc1[1] + "); Value* _sqca = " + (emit_val of [(barg[1])[0], nm, bt]) + "; " + (host_fn_stamp of callee[1]) + (restamp_call of [callee[1], "aot_call_dispatch(_sqcf, _sqca)"]) + "; })"
+            return "({ " + hc1[0] + "Value* _sqcf = aot_call_resolve(__eigs_g, \"" + callee[1] + "\", " + hc1[1] + "); Value* _sqca = " + (emit_val of [(barg[1])[0], nm, bt]) + "; " + (host_fn_stamp of callee[1]) + "aot_call_dispatch(_sqcf, _sqca)" + "; })"
         local hc2 is ic_cache of 0
-        return "({ " + hc2[0] + "Value* _sqcf = aot_call_resolve(__eigs_g, \"" + callee[1] + "\", " + hc2[1] + "); Value* _sqca = " + (emit_val of [node[2], nm, bt]) + "; " + (host_fn_stamp of callee[1]) + (restamp_call of [callee[1], "aot_call_dispatch(_sqcf, _sqca)"]) + "; })"
+        return "({ " + hc2[0] + "Value* _sqcf = aot_call_resolve(__eigs_g, \"" + callee[1] + "\", " + hc2[1] + "); Value* _sqca = " + (emit_val of [node[2], nm, bt]) + "; " + (host_fn_stamp of callee[1]) + "aot_call_dispatch(_sqcf, _sqca)" + "; })"
     if t == "slice":
         # (round 129, #179) a slice in VALUE position. The runtime mirror of
         # OP_SLICE_GET (aot_slice_any: per-type length rule, negative
@@ -12260,18 +12260,19 @@ define emit_program(ast) as:
     for k in range of (len of funcs):
         fdefs is fdefs + "\n" + (emit_function of [funcs[k], g_funcs[(funcs[k])[1]], nm, bt])
     local fc is ""
-    for k in range of (len of funcs):
-        fc is fc + (g_fsigs[(funcs[k])[1]]) + ";\n"
-    # (#1361 r5) every direct call of a compiled function goes through
-    # AOT_RESTAMP (aot_rt.h): the callee's stamps leave its own last line in
-    # g_trace_current_line, and the caller writes its frame line back. The
-    # definitions spell the name in parentheses, so only calls expand.
+    # (#1361 r5/r6) every compiled function's prototype is followed by its
+    # call macro, in the same statement: a direct call goes through
+    # AOT_RESTAMP (aot_rt.h), which writes the caller's frame line back when
+    # the callee returns (the callee's stamps leave its own last line in
+    # g_trace_current_line). The definitions spell the name in parentheses,
+    # so only calls expand. Calls that leave compiled code any other way
+    # restore the line inside aot_rt.h (AOT_FOREIGN).
     for k in range of (len of funcs):
         local _rsn is cn of ((funcs[k])[1])
         local _rsv is ""
         if ((g_funcs[(funcs[k])[1]])["ret"]) == "void":
             _rsv is "_V"
-        fc is fc + "#define " + _rsn + "(...) AOT_RESTAMP" + _rsv + "(" + _rsn + "(__VA_ARGS__))\n"
+        fc is fc + (g_fsigs[(funcs[k])[1]]) + ";\n#define " + _rsn + "(...) AOT_RESTAMP" + _rsv + "(" + _rsn + "(__VA_ARGS__))\n"
     fc is fc + fdefs
     g_scalbound is infer_scalar_bounds of [rest, nm]
     g_bufbound is infer_buffer_bounds of [rest, bt]
@@ -12414,9 +12415,6 @@ define emit_program(ast) as:
         gdecls is gdecls + "static inline Value *aot_dispatch_sh_" + (cn of shnames[i]) + "(Value *table, Value *keyv, Value *ctx) { return aot_dispatch_sh(table, keyv, ctx, __sh_" + (cn of shnames[i]) + ", __sh_" + (cn of shnames[i]) + "_n); }\n"
         gdecls is gdecls + "static inline double aot_dispatch_sh_num_" + (cn of shnames[i]) + "(Value *table, Value *keyv, Value *ctx, const char *site) { return aot_dispatch_sh_num(table, keyv, ctx, __sh_" + (cn of shnames[i]) + ", __sh_" + (cn of shnames[i]) + "_n, site); }\n"
         gdecls is gdecls + "static inline double aot_dispatch_sh_num_b_" + (cn of shnames[i]) + "(Value *table, double d, Value *ctx, const char *site) { return aot_dispatch_sh_num_b(table, d, ctx, __sh_" + (cn of shnames[i]) + ", __sh_" + (cn of shnames[i]) + "_n, site); }\n"
-        # (#1361 r5) a shadow hit calls a compiled handler directly: its call sites restamp like a direct call.
-        for _shp in ["aot_dispatch_sh_", "aot_dispatch_sh_num_", "aot_dispatch_sh_num_b_"]:
-            gdecls is gdecls + "#define " + _shp + (cn of shnames[i]) + "(...) AOT_RESTAMP(" + _shp + (cn of shnames[i]) + "(__VA_ARGS__))\n"
     # emit_function sets G_CUR_FN; the module body has no emit_function, so
     # reset it or every site label in main() inherits the LAST function's
     # name (that stale label sent an earlier debugging session chasing
@@ -12783,15 +12781,6 @@ define nested_bind_lines() as:
 # (round 188, #203) a call site of a VM builtin that runs a chunk stamps the
 # compiled caller's name for the synthetic host frame (aot_rt.h); every
 # other builtin call emits nothing.
-# (#1361 r5) a builtin that runs code (CALLBACK_BUILTINS: interpreted code
-# stamps the shared line; a compiled callback restores it in its __wrap_)
-# gets its caller's frame line written back, as AOT_RESTAMP does for a
-# direct call of a compiled function.
-define restamp_call(callee, call) as:
-    if CALLBACK_BUILTINS[callee] == 1:
-        return "AOT_RESTAMP(" + call + ")"
-    return call
-
 define host_fn_stamp(callee) as:
     if (callee == "vm_run_bytecode") or (callee == "sandbox_run"):
         return "aot_host_fn = \"" + (c_escape of (G_CUR_FN[0])) + "\"; "

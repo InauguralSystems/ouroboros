@@ -75,16 +75,28 @@ static Value *aot_take_error_value(void) {   /* vm_take_error_value's shape */
  * decrements; a catch restores the depth it saved (longjmp runs no
  * cleanups). The check runs BEFORE the callee's first line stamp, so the
  * reported line is the caller's, as on the VM. */
-/* (#1361 r5) Every AOT-owned raise names g_trace_current_line, the last
- * statement stamp. A compiled callee's stamps leave ITS last line there, so
- * `(side of "B") + (sqrt of (n - 5))` reported side's line 3 where the VM
- * reports its frame's line 5. Each emitted C function keeps its current
- * stamp in a local, __aot_ln (a constant after gcc's propagation), and every
- * direct call of a compiled function -- or of a shadow-dispatch helper,
- * which calls a handler directly -- expands through this macro and writes
- * the caller's line back when the callee returns. The store is dead, and
- * removed, when the next statement's stamp follows it. Wrappers entered from
- * the runtime (__wrap_*) take __aot_ln from the stamp they were entered at. */
+/* (#1361 r5/r6) Every AOT-owned raise names g_trace_current_line, the last
+ * statement stamp, and so does a runtime builtin's raise (line 0 -> the
+ * stamp). Code a call runs stamps that global too, so `(side of "B") +
+ * (sqrt of (n - 5))` reported side's last line where the VM reports its
+ * frame's line. The invariant: NO CALL MADE FROM COMPILED CODE CHANGES THE
+ * LINE. Two mechanisms, one per kind of callee:
+ *  - a direct call of a compiled function expands through AOT_RESTAMP (the
+ *    emitter defines `eig_f(...)` as this macro beside every compiled
+ *    function's prototype; the definitions spell `(eig_f)(`). Each emitted
+ *    C function keeps its stamp in a local, __aot_ln (a constant after gcc's
+ *    propagation), so the restore is one immediate store, dead and removed
+ *    when the next statement's stamp follows it. __wrap_* entries take
+ *    __aot_ln from the stamp they were entered at.
+ *  - every other call leaves compiled code through this header: into the
+ *    runtime (call_eigs_fn, a builtin's function pointer, a named builtin_*,
+ *    which may run interpreted code -- eval, load_file's children,
+ *    dispatch, sort_by, an eval-defined function) or through a shadow
+ *    table's function pointer. Each of those call tokens sits inside
+ *    AOT_FOREIGN, which saves the line before the call and writes it back
+ *    after. aot/test/run.sh enumerates the tokens and fails on one outside
+ *    AOT_FOREIGN (or on zero examined). */
+#define AOT_FOREIGN(call) ({ const int __aot_fl = g_trace_current_line; __auto_type __aot_fr = (call); g_trace_current_line = __aot_fl; __aot_fr; })
 #define AOT_RESTAMP(call) ({ __auto_type __aot_r = (call); g_trace_current_line = __aot_ln; __aot_r; })
 #define AOT_RESTAMP_V(call) ({ (call); g_trace_current_line = __aot_ln; })
 static int aot_depth = 0;
@@ -1590,7 +1602,7 @@ static inline int aot_env_bound(Env *e, const char *name) {
     return env_resolve_chain(e, name, env_hash_name(name), &i, &d) != NULL;
 }
 static Value *aot_observe_of(Env *e, const char *name, int band) {
-    if (band != 0) return builtin_observe(NULL);
+    if (band != 0) return AOT_FOREIGN(builtin_observe(NULL));
     int oidx = -1, odepth = 0;
     Env *oe = env_resolve_chain(e, name, env_hash_name(name), &oidx, &odepth);
     /* (round 116) EigenScript#1059: `observe of v` on an unbound name dies
@@ -1608,7 +1620,7 @@ static Value *aot_observe_of(Env *e, const char *name, int band) {
         list_append_owned(list, make_num(s->prev_dH));
         return list;
     }
-    return builtin_observe(NULL);
+    return AOT_FOREIGN(builtin_observe(NULL));
 }
 /* ---- temporal interrogatives (the trace tape) ----
  * `prev of x`, `what is x at L`. trace_assign feeds the per-name prev-map +
@@ -2938,7 +2950,7 @@ static Value *aot_dispatch_v(Value *table, Value *keyv, Value *ctx) {
     memset(&lst, 0, sizeof lst);
     lst.type = VAL_LIST; lst.arena = 1;
     lst.data.list.items = items; lst.data.list.count = 3; lst.data.list.capacity = 3;
-    Value *res = builtin_dispatch(&lst);
+    Value *res = AOT_FOREIGN(builtin_dispatch(&lst));
     if (g_exit_requested) exit(g_exit_code);
     if (g_has_error) aot_error_exit();
     if (res == ctx || res == table || res == keyv) val_incref(res);
@@ -2960,7 +2972,7 @@ static inline double aot_dispatch_sh_num(Value *table, Value *keyv, Value *ctx,
     if (shn >= 0 && keyv && keyv->type == VAL_NUM && table && table->type == VAL_LIST) {
         double d = keyv->data.num; int k = (int)d;
         if ((double)k == d && k >= 0 && k < shn && k < table->data.list.count && sh[k]) {
-            double r = sh[k](ctx);
+            double r = AOT_FOREIGN(sh[k](ctx));
             val_decref(keyv); val_decref(table); val_decref(ctx);
             return r;
         }
@@ -2988,7 +3000,7 @@ static inline double aot_dispatch_sh_num_b(Value *table, double d, Value *ctx,
     if (shn >= 0 && table && table->type == VAL_LIST) {
         int k = (int)d;
         if ((double)k == d && k >= 0 && k < shn && k < table->data.list.count && sh[k])
-            return sh[k](ctx);
+            return AOT_FOREIGN(sh[k](ctx));
     }
     val_incref(table); if (ctx) val_incref(ctx);
     return aot_dispatch_sh_num(table, make_num(d), ctx, sh, shn, site);
@@ -3010,7 +3022,7 @@ static inline Value *aot_dispatch_sh(Value *table, Value *keyv, Value *ctx,
     if (shn >= 0 && keyv && keyv->type == VAL_NUM && table && table->type == VAL_LIST) {
         double d = keyv->data.num; int k = (int)d;
         if ((double)k == d && k >= 0 && k < shn && k < table->data.list.count && sh[k]) {
-            double r = sh[k](ctx);
+            double r = AOT_FOREIGN(sh[k](ctx));
             val_decref(keyv); val_decref(table); val_decref(ctx);
             return make_num(r);
         }
@@ -3028,7 +3040,7 @@ static Value *aot_dispatch(Value *table, double key, Value *ctx) {
     lst.type = VAL_LIST; lst.arena = 1;
     lst.data.list.items = items; lst.data.list.count = 3; lst.data.list.capacity = 3;
 
-    Value *res = builtin_dispatch(&lst);
+    Value *res = AOT_FOREIGN(builtin_dispatch(&lst));
     if (g_exit_requested) exit(g_exit_code);
     if (g_has_error) aot_error_exit();
     /* aot_call_name's direct-borrow compensation, verbatim: incref a result
@@ -3058,7 +3070,7 @@ static Value *aot_call_name(Env *g, const char *name, Value *arg) {
                  val_type_name(fn->type));
     Value *res;
     if (fn->type == VAL_BUILTIN) res = aot_call_vm_builtin(fn, arg);
-    else                         res = call_eigs_fn(fn, arg);
+    else                         res = AOT_FOREIGN(call_eigs_fn(fn, arg));
     /* `exit of N` unwinds via g_has_error TOO (builtin_exit sets both flags);
      * it is a clean requested exit, not an error — honor the code, print
      * nothing (the VM's main clears g_has_error when g_exit_requested). */
@@ -3149,7 +3161,7 @@ static Value *aot_call_value(Value *fn, Value *arg) {
     }
     Value *res;
     if (fn->type == VAL_BUILTIN) res = aot_call_vm_builtin(fn, arg);
-    else                         res = call_eigs_fn(fn, arg);
+    else                         res = AOT_FOREIGN(call_eigs_fn(fn, arg));
     if (g_exit_requested) exit(g_exit_code);
     if (g_has_error) aot_error_exit();
     if (!res) { val_decref(arg); val_decref(fn); return make_null(); }
@@ -3226,13 +3238,11 @@ static Value *aot_call_vm_builtin(Value *fn, Value *arg) {
          * no host frame -- so the probe is a constant expression.) */
         if (!eigs_current->vm) {
             /* the probe's own OP_LINE overwrites the shared trace line
-             * (measured: the first trace said line 1); save and restore */
-            int host_line = g_trace_current_line;
+             * (measured: the first trace said line 1); AOT_FOREIGN restores */
             Value *_es = make_str("0");
-            Value *_er = builtin_eval(_es);
+            Value *_er = AOT_FOREIGN(builtin_eval(_es));
             if (_er && _er != _es) val_decref(_er);
             val_decref(_es);
-            g_trace_current_line = host_line;
         }
         if (eigs_current->vm && g_vm.frame_count < VM_FRAMES_MAX) {
             CallFrame *hf = &g_vm.frames[g_vm.frame_count++];
@@ -3257,7 +3267,7 @@ static Value *aot_call_vm_builtin(Value *fn, Value *arg) {
          * (g_vm.current_line, kept fresh by the host's OP_LINE); the AOT's
          * stamp is that line, so hand it to the VM before the run */
         if (eigs_current && eigs_current->vm) g_vm.current_line = g_trace_current_line;
-        Value *res = fn->data.builtin(arg);
+        Value *res = AOT_FOREIGN(fn->data.builtin(arg));
         if (pushed && g_vm.frame_count > 0 && g_vm.frames[g_vm.frame_count - 1].chunk == &aot_host_chunk) g_vm.frame_count--;
         g_try_depth = 1;
         if (g_exit_requested) exit(g_exit_code);
@@ -3273,7 +3283,7 @@ static Value *aot_call_vm_builtin(Value *fn, Value *arg) {
         }
         return res;
     }
-    return fn->data.builtin(arg);
+    return AOT_FOREIGN(fn->data.builtin(arg));
 }
 
 static Value *aot_call_dispatch(Value *fn, Value *arg) {
@@ -3281,7 +3291,7 @@ static Value *aot_call_dispatch(Value *fn, Value *arg) {
         rt_error(EK_TYPE, g_trace_current_line, "cannot call %s", val_type_name(fn->type));
     Value *res;
     if (fn->type == VAL_BUILTIN) res = aot_call_vm_builtin(fn, arg);
-    else                         res = call_eigs_fn(fn, arg);
+    else                         res = AOT_FOREIGN(call_eigs_fn(fn, arg));
     if (g_exit_requested) exit(g_exit_code);
     if (g_has_error) aot_error_exit();
     if (!res) { val_decref(arg); val_decref(fn); return make_null(); }
@@ -3306,7 +3316,7 @@ static Value *aot_call_name_ic(Env *g, const char *name, Value *arg, AotNameIC *
                  val_type_name(fn->type));
     Value *res;
     if (fn->type == VAL_BUILTIN) res = aot_call_vm_builtin(fn, arg);
-    else                         res = call_eigs_fn(fn, arg);
+    else                         res = AOT_FOREIGN(call_eigs_fn(fn, arg));
     /* `exit of N` unwinds via g_has_error TOO (builtin_exit sets both flags);
      * it is a clean requested exit, not an error — honor the code, print
      * nothing (the VM's main clears g_has_error when g_exit_requested). */

@@ -1,12 +1,19 @@
 # (#1361 r5) An AOT-owned raise reports its FRAME's line after a call in
-# the same statement. Each statement below calls a compiled function (side,
-# whose last line is 5) and then raises in the same statement. The VM
-# reports the raising statement's line; the AOT used to report 5, because
-# the callee's stamps were left in g_trace_current_line when it returned.
+# the same statement. Each statement below calls a function (side, say) and
+# then raises in the same statement. The VM reports the raising statement's
+# line; the AOT used to report the callee's last line, because the callee's
+# stamps were left in g_trace_current_line when it returned.
 # Raises: sqrt's domain raise, division by zero, num_guard's NaN raise, the
 # dot reduction's NaN raise, and a call made through a function VALUE (the
-# __wrap_ entry), a shadow-dispatch hit (a direct call of a handler), and a
-# builtin that runs interpreted code (eval, whose code stamps the line too).
+# __wrap_ entry), shadow-dispatch hits (a direct call of a handler: numeric,
+# numeric with a borrowed key, and value context), and a builtin that runs
+# interpreted code (eval, whose code stamps the line too).
+# (#1361 r6) The callee may also be INTERPRETED: a function from a nested
+# literal load_file (the DMG debugger shape), one defined by eval, called by
+# name, through a value (a parameter, and an index expression), through
+# dispatch's builtin path, and as sort_by's key function; its OP_LINE stamps
+# name its own lines. One row raises from a runtime builtin (len) instead of
+# an AOT-owned site.
 # The NaN comes from a matmul that overflowed to inf (t355),
 # copied into plain buffers (a module tensor read inside a function is a
 # separate, pre-existing divergence).
@@ -32,8 +39,31 @@ define h_side(ctx) as:
     return 1
 define f_disp(n) as:
     return (dispatch of [tbl, 0, [n]]) + (sqrt of (n - 5))
+define f_disp_b(n, c) as:
+    k is n - n
+    return (dispatch of [tbl, k, c]) + (sqrt of (n - 5))
+define f_disp_v(n) as:
+    return [(dispatch of [tbl, 0, [n]]), (sqrt of (n - 5))]
+flag is 1
+if flag == 1:
+    load_file of "data/t370_mod.eigs"
+eval of "define ev(t) as:\n    x is 1\n    y is 2\n    return 1"
+define f_nload(n) as:
+    return (mside of "a") + (sqrt of (n - 5))
+define f_evfn(n) as:
+    return (ev of "a") + (sqrt of (n - 5))
+define f_evrt(n) as:
+    return (ev of "a") + (len of n)
+define f_evdisp(n) as:
+    return (dispatch of [etbl, 0, [n]]) + (sqrt of (n - 5))
+define f_evexpr(n) as:
+    return (etbl[0] of "a") + (sqrt of (n - 5))
+define f_sortby(n) as:
+    return (len of (sort_by of [[3, 1, 2], mkey])) + (sqrt of (n - 5))
 tbl is []
 append of [tbl, h_side]
+etbl is []
+append of [etbl, ev]
 nb is buffer of 4
 nb[0] is 1e300
 nb[1] is 1e300
@@ -81,6 +111,47 @@ try:
     print of (f_disp of 1)
 catch e:
     print of f"disp {e.line}"
+try:
+    print of (f_disp_b of [1, [1]])
+catch e:
+    print of f"disp_b {e.line}"
+try:
+    print of (f_disp_v of 1)
+catch e:
+    print of f"disp_v {e.line}"
+try:
+    print of (f_nload of 1)
+catch e:
+    print of f"nload {e.line}"
+try:
+    print of (f_evfn of 1)
+catch e:
+    print of f"evfn {e.line}"
+try:
+    print of (f_evrt of 1)
+catch e:
+    print of f"evrt {e.line}"
+try:
+    print of (f_val of [ev, 1])
+catch e:
+    print of f"evval {e.line}"
+try:
+    print of (f_evdisp of 1)
+catch e:
+    print of f"evdisp {e.line}"
+try:
+    print of (f_evexpr of 1)
+catch e:
+    print of f"evexpr {e.line}"
+try:
+    print of (f_sortby of 1)
+catch e:
+    print of f"sortby {e.line}"
+try:
+    mm is (mside of "m") + (sqrt of (0 - 4))
+    print of mm
+catch e:
+    print of f"mmodule {e.line}"
 try:
     m is (side of "m") + (sqrt of (0 - 4))
     print of m
