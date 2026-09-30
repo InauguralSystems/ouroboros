@@ -48,24 +48,30 @@ END { for (d in body) if (body[d] ~ /[^A-Za-z_0-9]g_strict[^A-Za-z_0-9]/) set[d]
   do { grew = 0; for (d in body) if (!(d in set)) for (s in set) if (index(body[d], s "(")) { set[d] = 1; grew = 1; break } } while (grew)
   for (s in set) print s }' | paste -sd'|' -)
 [ -n "$strict_sites" ] || { echo 'FAIL: derived ZERO strict sites from aot_rt.h (no definition reads g_strict)'; exit 1; }
-# (#1361 r6) No call made from compiled code changes g_trace_current_line
+# (#1361) No call made from compiled code changes g_trace_current_line
 # (aot_rt.h, above AOT_FOREIGN). Direct compiled calls restore through the
 # AOT_RESTAMP macro compile.eigs emits beside every prototype. Every other
-# exit from compiled code is one of these call tokens in aot_rt.h (comments
-# stripped) or compile.eigs: call_eigs_fn, a builtin's function pointer, a
-# named runtime builtin_* (prototypes aside), a shadow table's handler
-# pointer. Each must be AOT_FOREIGN's direct argument. Keyed on those
-# spellings: a runtime entry spelled any other way is not seen.
-fx=$( { printf '%s\n' "$rt_src"; cat compile.eigs; } | awk '
-/^(static )?(Value|double|int|void|long)[ *]+builtin_[a-z_0-9]+\([^)]*\);[ \t]*$/ { next }
-{ line = $0
-  while (match(line, /(^|[^A-Za-z_0-9>.])(call_eigs_fn|[a-z]+->data\.builtin|builtin_[a-z_0-9]+|sh\[[a-z]+\])\(/)) {
-    n++; if (substr(line, 1, RSTART) !~ /AOT_FOREIGN\($/) { bad++; print "FAIL: call leaves compiled code outside AOT_FOREIGN: " $0 }
-    line = substr(line, RSTART + RLENGTH) } }
-END { print n + 0, bad + 0 }')
-printf '%s\n' "$fx" | grep '^FAIL' ; set -- $(printf '%s\n' "$fx" | tail -1)
-[ "$1" -gt 0 ] && [ "$2" -eq 0 ] || { echo "FAIL: line-restore sites: $1 examined, $2 outside AOT_FOREIGN"; exit 1; }
-echo "--- line-restore: $1 call(s) leaving compiled code, all inside AOT_FOREIGN ---"
+# exit is enumerated by gcc, not by spelling: the call graph of aot_rt.h
+# (every static and inline definition kept) lists each indirect call and each
+# direct call of call_eigs_fn or a runtime builtin_*, located at its outermost
+# macro expansion, and the source there must begin `AOT_FOREIGN(`. The C that
+# compile.eigs emits reaches the runtime only through aot_rt.h, so its code
+# lines may not name an exit at all. Not seen: an exit inside a macro body
+# aot_rt.h never expands, and a direct call of a runtime entry named otherwise.
+fxd=$(mktemp -d); printf '#include "aot_rt.h"\n' > "$fxd/fx.c"
+gcc -O0 ${AOT_ARCH:--march=native} -fkeep-static-functions -fkeep-inline-functions -fcallgraph-info -I"$PWD" \
+  -I"${EIGS_DIR:-../../EigenScript}/src" -c "$fxd/fx.c" -o "$fxd/fx.o" 2>"$fxd/err" && [ -s "$fxd/fx.ci" ] ||
+  { cat "$fxd/err"; echo 'FAIL: line-restore: no call graph of aot_rt.h (gcc -fcallgraph-info)'; exit 1; }
+fx=$( { awk -v h="$PWD/aot_rt.h" 'NR == FNR { src[FNR] = $0; next }
+/^edge: .*targetname: "(__indirect_call|call_eigs_fn|builtin_[a-z_0-9]+)"/ {
+  loc = $0; sub(/.*label: "/, "", loc); sub(/".*/, "", loc); split(loc, p, ":")
+  n++; if (p[1] != h || substr(src[p[2]], p[3], 12) != "AOT_FOREIGN(") print "FAIL: call leaves compiled code outside AOT_FOREIGN: " loc ": " src[p[2]] }
+END { print n + 0 }' aot_rt.h "$fxd/fx.ci"
+  grep -nE '(data\.builtin|call_eigs_fn|(^|[^A-Za-z_0-9])builtin_[a-z_0-9]+)' compile.eigs | grep -vE '^[0-9]+:[[:space:]]*#' | sed 's/^/FAIL: compile.eigs names an exit from compiled code: /'; } )
+rm -rf "$fxd"; printf '%s\n' "$fx" | grep '^FAIL'; fxn=$(printf '%s\n' "$fx" | grep -v '^FAIL' | tail -1)
+fxb=$(printf '%s\n' "$fx" | grep -c '^FAIL'); [ "$fxn" -gt 0 ] && [ "$fxb" -eq 0 ] ||
+  { echo "FAIL: line-restore sites: $fxn examined, $fxb outside AOT_FOREIGN"; exit 1; }
+echo "--- line-restore: $fxn call(s) leaving compiled code, all inside AOT_FOREIGN ---"
 strict_n=0
 fail=0
 for prog in test/*.eigs; do

@@ -1,0 +1,10 @@
+# (#1361 r7) The uncaught form of t370's right-operand rows: the error line
+# names the statement that raised, not the callee's last line (the VM kept
+# the callee's line before EigenScript#1424). `%` by zero raises under every
+# EIGS_STRICT setting.
+define zero(x) as:
+    y is x - x
+    return y
+print of "before"
+z is 7 % (zero of 4)
+print of "not reached"

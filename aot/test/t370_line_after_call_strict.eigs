@@ -14,6 +14,12 @@
 # dispatch's builtin path, and as sort_by's key function; its OP_LINE stamps
 # name its own lines. One row raises from a runtime builtin (len) instead of
 # an AOT-owned site.
+# (#1361 r7, against EigenScript#1424's VM) The call may also be the RIGHT
+# or ONLY operand of the raising operation: sqrt of (neg of 4), 1 / (zero of
+# 4), 7 % (zero of 4), and a type error with the call on either side of a
+# str (s + (f1 of 1), (f1 of 1) + s, (f1 of 1) - s); each at module level and
+# inside a compiled function. The VM used to keep the callee's line here.
+# t371 is the uncaught form.
 # The NaN comes from a matmul that overflowed to inf (t355),
 # copied into plain buffers (a module tensor read inside a function is a
 # separate, pre-existing divergence).
@@ -44,6 +50,27 @@ define f_disp_b(n, c) as:
     return (dispatch of [tbl, k, c]) + (sqrt of (n - 5))
 define f_disp_v(n) as:
     return [(dispatch of [tbl, 0, [n]]), (sqrt of (n - 5))]
+define neg(x) as:
+    y is 0 - x
+    return y
+define zero(x) as:
+    y is x - x
+    return y
+define f1(x) as:
+    y is x + 1
+    return y
+define r_sqrt(n) as:
+    return sqrt of (neg of n)
+define r_div(n) as:
+    return 1 / (zero of n)
+define r_mod(n) as:
+    return 7 % (zero of n)
+define r_typel(t) as:
+    return t + (f1 of 1)
+define r_typer(t) as:
+    return (f1 of 1) + t
+define r_types(t) as:
+    return (f1 of 1) - t
 flag is 1
 if flag == 1:
     load_file of "data/t370_mod.eigs"
@@ -157,5 +184,55 @@ try:
     print of m
 catch e:
     print of f"module {e.line}"
+s is "a"
+try:
+    z is sqrt of (neg of 4)
+    print of z
+catch e:
+    print of f"rsqrt {e.line}"
+try:
+    z is 1 / (zero of 4)
+catch e:
+    print of f"rdiv {e.line}"
+try:
+    z is 7 % (zero of 4)
+catch e:
+    print of f"rmod {e.line}"
+try:
+    z is s + (f1 of 1)
+catch e:
+    print of f"rtypel {e.line}"
+try:
+    z is (f1 of 1) + s
+catch e:
+    print of f"rtyper {e.line}"
+try:
+    z is (f1 of 1) - s
+catch e:
+    print of f"rtypes {e.line}"
+try:
+    print of (r_sqrt of 4)
+catch e:
+    print of f"fsqrt {e.line}"
+try:
+    print of (r_div of 4)
+catch e:
+    print of f"fdiv {e.line}"
+try:
+    print of (r_mod of 4)
+catch e:
+    print of f"fmod {e.line}"
+try:
+    print of (r_typel of s)
+catch e:
+    print of f"ftypel {e.line}"
+try:
+    print of (r_typer of s)
+catch e:
+    print of f"ftyper {e.line}"
+try:
+    print of (r_types of s)
+catch e:
+    print of f"ftypes {e.line}"
 print of (f_sqrt of 9)
 print of "after"

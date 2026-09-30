@@ -86,16 +86,18 @@ static Value *aot_take_error_value(void) {   /* vm_take_error_value's shape */
  *    function's prototype; the definitions spell `(eig_f)(`). Each emitted
  *    C function keeps its stamp in a local, __aot_ln (a constant after gcc's
  *    propagation), so the restore is one immediate store, dead and removed
- *    when the next statement's stamp follows it. __wrap_* entries take
- *    __aot_ln from the stamp they were entered at.
+ *    when the next statement's stamp follows it. A __wrap_* entry calls
+ *    its function unexpanded: the runtime reaches it only through a
+ *    builtin's function pointer, and that call restores (below), while
+ *    the interpreter keeps its own line.
  *  - every other call leaves compiled code through this header: into the
  *    runtime (call_eigs_fn, a builtin's function pointer, a named builtin_*,
  *    which may run interpreted code -- eval, load_file's children,
  *    dispatch, sort_by, an eval-defined function) or through a shadow
  *    table's function pointer. Each of those call tokens sits inside
  *    AOT_FOREIGN, which saves the line before the call and writes it back
- *    after. aot/test/run.sh enumerates the tokens and fails on one outside
- *    AOT_FOREIGN (or on zero examined). */
+ *    after. aot/test/run.sh has gcc enumerate these calls (its call graph
+ *    of this header) and fails on one outside AOT_FOREIGN (or on zero). */
 #define AOT_FOREIGN(call) ({ const int __aot_fl = g_trace_current_line; __auto_type __aot_fr = (call); g_trace_current_line = __aot_fl; __aot_fr; })
 #define AOT_RESTAMP(call) ({ __auto_type __aot_r = (call); g_trace_current_line = __aot_ln; __aot_r; })
 #define AOT_RESTAMP_V(call) ({ (call); g_trace_current_line = __aot_ln; })

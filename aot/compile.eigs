@@ -12496,14 +12496,17 @@ define emit_program(ast) as:
                 wmulti is wmulti + wexpr
             if whas == 1:
                 wmulti is wmulti + ", " + wargc
-            local wcallm is (cn of wn) + "(" + wmulti + ")"
+            # (#1361) the name in parentheses: no AOT_RESTAMP here. The runtime
+            # enters a __wrap_ only through a builtin's function pointer, and
+            # that call (aot_rt.h, AOT_FOREIGN) restores the caller's line.
+            local wcallm is "(" + (cn of wn) + ")(" + wmulti + ")"
             wprotos is wprotos + "static Value* __wrap_" + (cn of wn) + "(Value* __a);\n"
             if (wi["ret"]) == "double":
-                wraps is wraps + "static Value* __wrap_" + (cn of wn) + "(Value* __a) { const int __aot_ln = g_trace_current_line; return make_num(" + wcallm + "); }\n"
+                wraps is wraps + "static Value* __wrap_" + (cn of wn) + "(Value* __a) { return make_num(" + wcallm + "); }\n"
             elif (wi["ret"]) == "Value*":
-                wraps is wraps + "static Value* __wrap_" + (cn of wn) + "(Value* __a) { const int __aot_ln = g_trace_current_line; return " + wcallm + "; }\n"
+                wraps is wraps + "static Value* __wrap_" + (cn of wn) + "(Value* __a) { return " + wcallm + "; }\n"
             else:
-                wraps is wraps + "static Value* __wrap_" + (cn of wn) + "(Value* __a) { const int __aot_ln = g_trace_current_line; " + wcallm + "; return make_null(); }\n"
+                wraps is wraps + "static Value* __wrap_" + (cn of wn) + "(Value* __a) { " + wcallm + "; return make_null(); }\n"
             continue
         local warg is "__a"
         if (wpt[0]) == "num":
@@ -12519,14 +12522,14 @@ define emit_program(ast) as:
             if (wpt[0]) == "num":
                 wd1 is "0"
             warg is "(aot_argc(__a, 1) > 0 ? " + warg + " : " + wd1 + "), aot_argc(__a, 1)"
-        local wcall is (cn of wn) + "(" + warg + ")"
+        local wcall is "(" + (cn of wn) + ")(" + warg + ")"
         wprotos is wprotos + "static Value* __wrap_" + (cn of wn) + "(Value* __a);\n"
         if (wi["ret"]) == "double":
-            wraps is wraps + "static Value* __wrap_" + (cn of wn) + "(Value* __a) { const int __aot_ln = g_trace_current_line; return make_num(" + wcall + "); }\n"
+            wraps is wraps + "static Value* __wrap_" + (cn of wn) + "(Value* __a) { return make_num(" + wcall + "); }\n"
         elif (wi["ret"]) == "Value*":
-            wraps is wraps + "static Value* __wrap_" + (cn of wn) + "(Value* __a) { const int __aot_ln = g_trace_current_line; return " + wcall + "; }\n"
+            wraps is wraps + "static Value* __wrap_" + (cn of wn) + "(Value* __a) { return " + wcall + "; }\n"
         else:
-            wraps is wraps + "static Value* __wrap_" + (cn of wn) + "(Value* __a) { const int __aot_ln = g_trace_current_line; " + wcall + "; return make_null(); }\n"
+            wraps is wraps + "static Value* __wrap_" + (cn of wn) + "(Value* __a) { " + wcall + "; return make_null(); }\n"
     local hdr is "#include \"aot_rt.h\"\n\nstatic Env* __eigs_g = NULL;\n" + gdecls + "\n" + wprotos + fc + "\n" + wraps + "\n" + (main_sig of g_mod_has_try) + "    __eigs_g = aot_boot(); (void)__eigs_g;\n    aot_args(argc, argv);\n    aot_no_loop_rebinds(__eigs_g);\n" + (nested_bind_lines of []) + (main_tryb of g_mod_has_try) + obshdr
     local ftr is "    aot_shutdown(__eigs_g);\n    return 0;\n}\n"
     return hdr + body + ftr
