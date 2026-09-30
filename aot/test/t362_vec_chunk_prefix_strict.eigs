@@ -1,0 +1,54 @@
+# (#1361) A raise inside a vectorized chunk must leave the chunk's EARLIER
+# elements written, as the VM does. Here the first statement fails first, at
+# element 1 (a[1] * z[1] is inf * 0, a NaN), so the raise names the right
+# statement either way; but the VM has already written element 0 of both
+# outputs, and the packed body, which tests a whole chunk before storing it,
+# had written nothing of chunk 0..1. The one-store loop k has the same shape.
+# Under EIGS_STRICT=0 the NaN stores 0 and element 2's division by zero
+# (statement 2) raises on both sides.
+nb is buffer of 4
+nb[0] is 1e300
+nb[1] is 1e300
+nb[2] is 1e300
+nb[3] is 1e300
+nm is reshape of [nb, 2, 2]
+p is matmul of [nm, nm]
+define h(a, z, o1, o2, n) as:
+    i is 0
+    loop while i < n:
+        o1[i] is a[i] * z[i]
+        o2[i] is a[i] / z[i]
+        i is i + 1
+    return 0
+define k1(a, z, o1, n) as:
+    i is 0
+    loop while i < n:
+        o1[i] is a[i] * z[i]
+        i is i + 1
+    return 0
+a is buffer of 8
+z is buffer of 8
+k is 0
+loop while k < 8:
+    a[k] is k + 1
+    z[k] is 2
+    k is k + 1
+a[1] is p[0]
+z[1] is 0
+z[2] is 0
+o1 is buffer of 8
+o2 is buffer of 8
+try:
+    h of [a, z, o1, o2, 8]
+catch e:
+    print of e.message
+    print of e.line
+print of f"{o1[0]} {o1[1]} {o1[2]} {o1[3]} / {o2[0]} {o2[1]} {o2[2]} {o2[3]}"
+o3 is buffer of 8
+try:
+    k1 of [a, z, o3, 8]
+    print of "k1 ran"
+catch e:
+    print of e.message
+    print of e.line
+print of f"{o3[0]} {o3[1]} {o3[2]} {o3[3]}"

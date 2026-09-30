@@ -165,14 +165,14 @@ static inline double aot_sqrt(double x) {
  *   - on a NaN: aot_vnan() raises under strict; under EIGS_STRICT=0 the
  *     caller recomputes that one value with the old soft expression, so the
  *     soft answer is the old code's by construction.
- * aot_vdivp keeps aot_vdiv's zero-divisor raise and adds the NaN lanes to
- * its (cold) check, walking lanes in element order so the first failing
- * element decides between the NaN raise and "division by zero", as on the
- * VM. */
+ * aot_vdivn is the element-wise map's division: a zero-divisor lane becomes
+ * a NaN (the mask ORed in is all-ones bits) instead of raising inside the
+ * packed body, so a chunk's one NaN test covers both failures and the map
+ * hands the chunk to its scalar loop, which raises in the VM's element and
+ * statement order (emit_vectorized). */
 #if defined(__x86_64__) || defined(__i386__)
 #include <immintrin.h>
 #endif
-static void aot_vdivp_cold(const double *a, const double *b);
 #if defined(__AVX2__)
 typedef __m256d aot_vec;
 #define AOT_VW 4
@@ -199,12 +199,8 @@ static inline aot_vec aot_vdiv(aot_vec a, aot_vec b){   /* any b==0 lane RAISES 
         rt_error(EK_VALUE, g_trace_current_line, "division by zero");
     return aot_vguard(_mm256_div_pd(a, b));
 }
-static inline aot_vec aot_vdivp(aot_vec a, aot_vec b){
-    aot_vec bad = _mm256_or_pd(_mm256_cmp_pd(b, _mm256_setzero_pd(), _CMP_EQ_OQ), _mm256_cmp_pd(a, b, _CMP_UNORD_Q));
-    if (__builtin_expect(_mm256_movemask_pd(bad), 0)) {
-        double al[4], bl[4]; _mm256_storeu_pd(al, a); _mm256_storeu_pd(bl, b); aot_vdivp_cold(al, bl);
-    }
-    return aot_vguardp(_mm256_div_pd(a, b));
+static inline aot_vec aot_vdivn(aot_vec a, aot_vec b){
+    return aot_vguardp(_mm256_or_pd(_mm256_div_pd(a, b), _mm256_cmp_pd(b, _mm256_setzero_pd(), _CMP_EQ_OQ)));
 }
 static inline double aot_vhsum(aot_vec x){
     __m128d lo = _mm256_castpd256_pd128(x), hi = _mm256_extractf128_pd(x, 1);
@@ -237,12 +233,8 @@ static inline aot_vec aot_vdiv(aot_vec a, aot_vec b){   /* any b==0 lane RAISES 
         rt_error(EK_VALUE, g_trace_current_line, "division by zero");
     return aot_vguard(_mm_div_pd(a, b));
 }
-static inline aot_vec aot_vdivp(aot_vec a, aot_vec b){
-    aot_vec bad = _mm_or_pd(_mm_cmpeq_pd(b, _mm_setzero_pd()), _mm_cmpunord_pd(a, b));
-    if (__builtin_expect(_mm_movemask_pd(bad), 0)) {
-        double al[2], bl[2]; _mm_storeu_pd(al, a); _mm_storeu_pd(bl, b); aot_vdivp_cold(al, bl);
-    }
-    return aot_vguardp(_mm_div_pd(a, b));
+static inline aot_vec aot_vdivn(aot_vec a, aot_vec b){
+    return aot_vguardp(_mm_or_pd(_mm_div_pd(a, b), _mm_cmpeq_pd(b, _mm_setzero_pd())));
 }
 static inline double aot_vhsum(aot_vec x){ return _mm_cvtsd_f64(_mm_add_pd(x, _mm_unpackhi_pd(x, x))); }
 #else
@@ -259,17 +251,14 @@ static inline aot_vec aot_viota(long base){ return (double)base; }
 static inline aot_vec aot_vdiv(aot_vec a, aot_vec b){ if (b == 0.0) rt_error(EK_VALUE, g_trace_current_line, "division by zero"); return num_guard(a / b); }
 static inline double aot_vhsum(aot_vec x){ return x; }
 /* One lane: num_guard already raises (strict) or zeroes (soft) per element,
- * exactly the VM's order, so the propagating forms ARE the soft ones. */
+ * exactly the VM's order, so the propagating forms ARE the soft ones. The
+ * element-wise map skips its packed loop at this width (emit_vectorized's
+ * `AOT_VW > 1`), so aot_vdivn is never executed here. aot_vnanany is a real
+ * test: emit_outvec's unguarded arm accumulates raw and needs it. */
 #define aot_vguardp(x)   aot_vguard(x)
-#define aot_vdivp(a, b)  aot_vdiv((a), (b))
-#define aot_vnanany(x)   0
+#define aot_vdivn(a, b)  aot_vdiv((a), (b))
+#define aot_vnanany(x)   ((x) != (x))
 #endif
-static void __attribute__((noinline, cold)) aot_vdivp_cold(const double *a, const double *b) {
-    for (int k = 0; k < AOT_VW; k++) {
-        if (a[k] != a[k] || b[k] != b[k]) { aot_vnan(); return; }   /* soft: the store recomputes */
-        if (b[k] == 0.0) rt_error(EK_VALUE, g_trace_current_line, "division by zero");
-    }
-}
 
 /* ---- lifecycle ---- */
 static Env *aot_boot(void) {
@@ -1008,16 +997,14 @@ static void   aot_buf_set_i_at(Value *b, long idx, double v, const char *site) {
 static double aot_buf_maxabs(Value *b) {
     double *d = b->data.buffer.data; long n = b->data.buffer.count, i;
     double m = 0.0;
-    for (i = 0; i < n; i++) {
-        double a = d[i] < 0 ? -d[i] : d[i];
-        /* #1361: a NaN element fails every `>`, so it used to leave m finite
-         * and admit the UNGUARDED reduction, which stored the NaN raw where
-         * the VM's num_guard collapses it (soft) or raises (strict). An
-         * unordered element answers inf, which sends the call down the
-         * guarded arm; the precheck loop is once per call, not per term. */
-        if (__builtin_expect(a != a, 0)) return INFINITY;
-        if (a > m) m = a;
-    }
+    /* A NaN element fails every `>` and leaves m finite, which admits the
+     * UNGUARDED reduction. That is sound under #1361 because a NaN operand
+     * makes every sum it enters a NaN, and emit_outvec's unguarded arm tests
+     * each stored chunk and hands a NaN one to its scalar loop (num_guard in
+     * the VM's column order). Round 1 tested every element here instead:
+     * +0.6% Ir on bench/matmul (266k elements per call, a compare and a
+     * branch each, against one test per two output columns). */
+    for (i = 0; i < n; i++) { double a = d[i] < 0 ? -d[i] : d[i]; if (a > m) m = a; }
     return m;
 }
 static double aot_buf_len_at(Value *b, const char *site) {

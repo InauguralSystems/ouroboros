@@ -1,0 +1,59 @@
+# (#1361, critic round 1) The state a caught raise leaves behind in a
+# multi-store vectorized loop must be the VM's: every element before the
+# failing one fully written, the failing element's earlier statements written,
+# nothing after. Eight elements, so the failure sits in a LATER chunk at SIMD
+# width 2 (chunk 4..5) and width 4 (chunk 4..7), not at the loop's start:
+#   element 5, statement 2: c[5] - c[5] is inf - inf, a NaN (strict raises;
+#     EIGS_STRICT=0 stores 0 and runs on);
+#   element 6, statement 1: a[6] / z[6] divides by zero (raises in both modes).
+# Statement 1 is a read-modify-write (o1[i] is o1[i] + ...), so a chunk that is
+# stored and then re-run would add twice; statement 2 reads o1[i], the value
+# statement 1 just wrote for the same element. The first call has no failing
+# element and pins the plain values of both shapes.
+nb is buffer of 4
+nb[0] is 1e300
+nb[1] is 1e300
+nb[2] is 1e300
+nb[3] is 1e300
+nm is reshape of [nb, 2, 2]
+p is matmul of [nm, nm]
+define g(a, z, c, o1, o2, n) as:
+    i is 0
+    loop while i < n:
+        o1[i] is o1[i] + a[i] / z[i]
+        o2[i] is c[i] - c[i] + o1[i] * 2
+        i is i + 1
+    return 0
+define show(o1, o2) as:
+    print of f"{o1[0]} {o1[1]} {o1[2]} {o1[3]} {o1[4]} {o1[5]} {o1[6]} {o1[7]}"
+    print of f"{o2[0]} {o2[1]} {o2[2]} {o2[3]} {o2[4]} {o2[5]} {o2[6]} {o2[7]}"
+define fill(o1, o2) as:
+    k is 0
+    loop while k < 8:
+        o1[k] is 10
+        o2[k] is 20
+        k is k + 1
+    return 0
+a is buffer of 8
+z is buffer of 8
+c is buffer of 8
+k is 0
+loop while k < 8:
+    a[k] is k + 1
+    z[k] is 2
+    c[k] is k
+    k is k + 1
+o1 is buffer of 8
+o2 is buffer of 8
+fill of [o1, o2]
+g of [a, z, c, o1, o2, 8]
+show of [o1, o2]
+c[5] is p[0]
+z[6] is 0
+fill of [o1, o2]
+try:
+    g of [a, z, c, o1, o2, 8]
+catch e:
+    print of e.message
+    print of e.line
+show of [o1, o2]

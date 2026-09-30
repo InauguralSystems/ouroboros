@@ -1,0 +1,43 @@
+# (#1361) Control for t360-t362: the FIRST statement fails first, and at the
+# first element of a chunk at SIMD width 2 and 4 (element 4: a[4] * z[4] is
+# inf * 0, a NaN); the second statement fails only at a later element
+# (element 5: c[5] - c[5] is inf - inf). Statement order and element order
+# agree and no earlier lane of the chunk is owed a store, so the pre-fix
+# packed body already matched the VM here; the element-order re-run must
+# keep it matching. Neither failure raises under EIGS_STRICT=0 (both are
+# NaNs, stored as 0), so the soft run completes on both sides.
+nb is buffer of 4
+nb[0] is 1e300
+nb[1] is 1e300
+nb[2] is 1e300
+nb[3] is 1e300
+nm is reshape of [nb, 2, 2]
+p is matmul of [nm, nm]
+define h(a, z, c, o1, o2, n) as:
+    i is 0
+    loop while i < n:
+        o1[i] is a[i] * z[i]
+        o2[i] is c[i] - c[i] + z[i]
+        i is i + 1
+    return 0
+a is buffer of 8
+z is buffer of 8
+c is buffer of 8
+k is 0
+loop while k < 8:
+    a[k] is k + 1
+    z[k] is 2
+    c[k] is k
+    k is k + 1
+a[4] is p[0]
+z[4] is 0
+c[5] is p[0]
+o1 is buffer of 8
+o2 is buffer of 8
+try:
+    h of [a, z, c, o1, o2, 8]
+catch e:
+    print of e.message
+    print of e.line
+print of f"{o1[0]} {o1[1]} {o1[2]} {o1[3]} {o1[4]} {o1[5]} {o1[6]} {o1[7]}"
+print of f"{o2[0]} {o2[1]} {o2[2]} {o2[3]} {o2[4]} {o2[5]} {o2[6]} {o2[7]}"
