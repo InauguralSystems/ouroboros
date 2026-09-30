@@ -86,10 +86,15 @@ static Value *aot_take_error_value(void) {   /* vm_take_error_value's shape */
  *    function's prototype; the definitions spell `(eig_f)(`). Each emitted
  *    C function keeps its stamp in a local, __aot_ln (a constant after gcc's
  *    propagation), so the restore is one immediate store, dead and removed
- *    when the next statement's stamp follows it. A __wrap_* entry calls
- *    its function unexpanded: the runtime reaches it only through a
- *    builtin's function pointer, and that call restores (below), while
- *    the interpreter keeps its own line.
+ *    when the next statement's stamp follows it. A __wrap_* entry (a
+ *    compiled function called by the runtime) sets __aot_ln from the line
+ *    it was entered at and calls through the macro. LOAD-BEARING (#1361
+ *    r8): the AOT_FOREIGN restore below runs only after the whole builtin
+ *    returns, and a builtin can call a compiled callback and then raise on
+ *    its own first (sort_by: "key function must return a number"). That
+ *    raise reads this global, so without the __wrap_ restore it names the
+ *    callback's last line (t370's cbsort rows; r7 removed it on the belief
+ *    that AOT_FOREIGN subsumed it).
  *  - every other call leaves compiled code through this header: into the
  *    runtime (call_eigs_fn, a builtin's function pointer, a named builtin_*,
  *    which may run interpreted code -- eval, load_file's children,

@@ -20,6 +20,13 @@
 # str (s + (f1 of 1), (f1 of 1) + s, (f1 of 1) - s); each at module level and
 # inside a compiled function. The VM used to keep the callee's line here.
 # t371 is the uncaught form.
+# (#1361 r8) A builtin may call a COMPILED callback and then raise on its
+# own before it returns: sort_by's "key function must return a number". The
+# raise must name the sort_by statement, not the key's last line, so the
+# __wrap_ entry restores the line when the callee returns. One row per
+# wrapper arm: a single-parameter key returning a value (at module level and
+# in a function), one that returns nothing (void), and a two-parameter key
+# with a default (the multi-parameter wrapper).
 # The NaN comes from a matmul that overflowed to inf (t355),
 # copied into plain buffers (a module tensor read inside a function is a
 # separate, pre-existing divergence).
@@ -71,6 +78,22 @@ define r_typer(t) as:
     return (f1 of 1) + t
 define r_types(t) as:
     return (f1 of 1) - t
+define cbk(x) as:
+    y is x + 1
+    if x == 2:
+        return "s"
+    return y
+define cbk_void(x) as:
+    y is x + 1
+    if x == 2:
+        print of "v"
+define cbk_multi(x, d is 1) as:
+    y is x + d
+    if x == 2:
+        return "s"
+    return y
+define r_cbsort(xs) as:
+    return sort_by of [xs, cbk]
 flag is 1
 if flag == 1:
     load_file of "data/t370_mod.eigs"
@@ -234,5 +257,22 @@ try:
     print of (r_types of s)
 catch e:
     print of f"ftypes {e.line}"
+cbxs is [3, 1, 2]
+try:
+    print of (sort_by of [cbxs, cbk])
+catch e:
+    print of f"cbsort {e.line}"
+try:
+    print of (sort_by of [cbxs, cbk_void])
+catch e:
+    print of f"cbsort_void {e.line}"
+try:
+    print of (sort_by of [cbxs, cbk_multi])
+catch e:
+    print of f"cbsort_multi {e.line}"
+try:
+    print of (r_cbsort of cbxs)
+catch e:
+    print of f"cbsort_fn {e.line}"
 print of (f_sqrt of 9)
 print of "after"
