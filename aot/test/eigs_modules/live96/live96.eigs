@@ -1,0 +1,6 @@
+count is 4
+box is {"n": 1}
+define mutate(x) as:
+    count is count + x
+    box.n is box.n + x
+    return count

@@ -1,0 +1,10 @@
+# Runtime96 loop-scopes a fresh function binder; body writes stay visible only
+# in the loop and the ordinary post-loop read raises at this source line.
+define fresh(n) as:
+    local seen is 0
+    for k in range of n:
+        k is k + 10
+        seen is seen + k
+    print of seen
+    return k
+print of (fresh of 3)

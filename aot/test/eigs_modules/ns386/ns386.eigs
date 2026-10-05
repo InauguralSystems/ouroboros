@@ -1,0 +1,4 @@
+print of "module-initialized"
+value is "first"
+define read(dummy) as:
+    return value

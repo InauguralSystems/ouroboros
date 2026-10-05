@@ -1,0 +1,4 @@
+define step(x) as:
+    return x + 1
+define apply(x) as:
+    return step of x

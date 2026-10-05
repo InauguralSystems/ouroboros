@@ -1,18 +1,26 @@
-# (#1361) A raise inside a vectorized chunk must leave the chunk's EARLIER
-# elements written, as the VM does. Here the first statement fails first, at
-# element 1 (a[1] * z[1] is inf * 0, a NaN), so the raise names the right
-# statement either way; but the VM has already written element 0 of both
-# outputs, and the packed body, which tests a whole chunk before storing it,
-# had written nothing of chunk 0..1. The one-store loop k has the same shape.
-# Under EIGS_STRICT=0 the NaN stores 0 and element 2's division by zero
-# (statement 2) raises on both sides.
-nb is buffer of 4
-nb[0] is 1e300
-nb[1] is 1e300
-nb[2] is 1e300
-nb[3] is 1e300
-nm is reshape of [nb, 2, 2]
-p is matmul of [nm, nm]
+# (#1361) Preserve earlier-element stores when a vector chunk raises.
+# Raw NaN copied to a[1] makes the first statement's scalar read raise under
+# strict1; element0's outputs must remain. Under strict0 the NaN read becomes0
+# and the two-store loop reaches division by zero, while the one-store loop
+# completes. Keep both real functions, catches and prefix output rows.
+# Raw-infinity extraction separately witnesses finite scalar clamping.
+raw_inf_buf is buffer of 4
+raw_inf_buf[0] is 1e300
+raw_inf_buf[1] is 1e300
+raw_inf_buf[2] is 1e300
+raw_inf_buf[3] is 1e300
+raw_inf_mat is reshape of [raw_inf_buf, 2, 2]
+raw_inf is matmul of [raw_inf_mat, raw_inf_mat]
+print of (raw_inf[0] > 1e308)
+seed_a is buffer of 2
+seed_a[0] is 1e300
+seed_a[1] is 1e300
+seed_b is buffer of 2
+seed_b[0] is 1e300
+seed_b[1] is 0 - 1e300
+seed_am is reshape of [seed_a, 2, 1]
+seed_bm is reshape of [seed_b, 2, 1]
+seed_nan is matmul_at of [seed_am, seed_bm]
 define h(a, z, o1, o2, n) as:
     i is 0
     loop while i < n:
@@ -33,7 +41,8 @@ loop while k < 8:
     a[k] is k + 1
     z[k] is 2
     k is k + 1
-a[1] is p[0]
+buf_copy of [seed_nan, 0, a, 1, 1]
+print of "preparation-complete"
 z[1] is 0
 z[2] is 0
 o1 is buffer of 8

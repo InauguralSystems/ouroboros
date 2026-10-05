@@ -1,19 +1,26 @@
-# (#1361, critic round 1) A vectorized loop with TWO stores that can each fail
-# must raise in the VM's ELEMENT order. The VM runs element 0's two statements,
-# then element 1's: element 0's second statement (c[0] - c[0] = inf - inf, a
-# NaN) fails first, at line 21, after o1[0] was written. The packed body ran
-# one statement at a time over a whole chunk and raised element 1's `1 / 0`
-# (line 20) first, with nothing of the chunk stored. Under EIGS_STRICT=0 the
-# NaN becomes 0 and element 1's division by zero raises on both sides.
-# The critic's repro (vorder_min), wrapped in try so both modes exit 0; the
-# state after the raise is printed too.
-nb is buffer of 4
-nb[0] is 1e300
-nb[1] is 1e300
-nb[2] is 1e300
-nb[3] is 1e300
-nm is reshape of [nb, 2, 2]
-p is matmul of [nm, nm]
+# (#1361) Preserve ELEMENT order in a two-store vectorizable loop.
+# At element0 the first statement has finite input and writes o1[0]; the
+# second statement reads a copied raw NaN and raises under strict1. Element1's
+# first statement divides by zero in both modes. Strict0 normalizes the NaN
+# read and reaches that later zero divisor. Keep both outputs and caught line.
+# Raw-infinity extraction separately witnesses finite scalar clamping.
+raw_inf_buf is buffer of 4
+raw_inf_buf[0] is 1e300
+raw_inf_buf[1] is 1e300
+raw_inf_buf[2] is 1e300
+raw_inf_buf[3] is 1e300
+raw_inf_mat is reshape of [raw_inf_buf, 2, 2]
+raw_inf is matmul of [raw_inf_mat, raw_inf_mat]
+print of (raw_inf[0] > 1e308)
+seed_a is buffer of 2
+seed_a[0] is 1e300
+seed_a[1] is 1e300
+seed_b is buffer of 2
+seed_b[0] is 1e300
+seed_b[1] is 0 - 1e300
+seed_am is reshape of [seed_a, 2, 1]
+seed_bm is reshape of [seed_b, 2, 1]
+seed_nan is matmul_at of [seed_am, seed_bm]
 define f(z, c, o1, o2, n) as:
     i is 0
     loop while i < n:
@@ -27,7 +34,8 @@ z[0] is 1
 z[1] is 0
 z[2] is 1
 z[3] is 1
-c[0] is p[0]
+buf_copy of [seed_nan, 0, c, 0, 1]
+print of "preparation-complete"
 o1 is buffer of 4
 o2 is buffer of 4
 try:

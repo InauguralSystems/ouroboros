@@ -1,15 +1,18 @@
-# (#1361) the packed guard aot_vguard collapses a NaN LANE to 0; under strict
-# the VM's per-element num_guard raises instead. Four emitters use it: the
-# reassociated `dot` of two buffers (inf * 0 in one product), the
-# element-wise vector map (emit_vectorized), the output-axis matmul loop
-# (outvec) and the row-wise map (rowmap). The raise must also name the STATEMENT's line: the vectorized
-# bodies never stamped one, so a raise inside them reported the loop header.
-# The inf is a matmul overflow copied into a buffer (raw, as on the VM).
-define vmap(a, o1, o2, n) as:
+# (#1361) Ordinary matmul_at creates a raw NaN, copied into xb[5]
+# without a scalar read. Scalar buffer reads raise under strict1 and normalize
+# NaN to0 under strict0. The separate overflowing matmul scalar read is finite
+# clamp coverage, not the strict discriminator. Keep dot/ranged-dot, two-store
+# vector map, one-store map, matmul-shaped outvec and rowmap target calls.
+# vmap's first input is finite; only its second statement reads xb's NaN,
+# so element5's first store precedes its strict failure. Print the prefix/state
+# after the catch. A nonzero second-output sentinel distinguishes untouched
+# failure/later lanes from completed zero stores; shared-X matmul/rowmap
+# fail at their first NaN operand read.
+define vmap(a, c, o1, o2, n) as:
     i is 0
     loop while i < n:
         o1[i] is a[i] + 1
-        o2[i] is a[i] - a[i]
+        o2[i] is c[i] - c[i]
         i is i + 1
     return 0
 define vmap1(a, o1, n) as:
@@ -41,17 +44,27 @@ define rows(out, x, g, S, D) as:
             d is d + 1
         i is i + 1
     return 0
-nb is buffer of 4
-nb[0] is 1e300
-nb[1] is 1e300
-nb[2] is 1e300
-nb[3] is 1e300
-nm is reshape of [nb, 2, 2]
-np is matmul of [nm, nm]
+raw_inf_buf is buffer of 4
+raw_inf_buf[0] is 1e300
+raw_inf_buf[1] is 1e300
+raw_inf_buf[2] is 1e300
+raw_inf_buf[3] is 1e300
+raw_inf_mat is reshape of [raw_inf_buf, 2, 2]
+raw_inf is matmul of [raw_inf_mat, raw_inf_mat]
+print of (raw_inf[0] > 1e308)
+seed_a is buffer of 2
+seed_a[0] is 1e300
+seed_a[1] is 1e300
+seed_b is buffer of 2
+seed_b[0] is 1e300
+seed_b[1] is 0 - 1e300
+seed_am is reshape of [seed_a, 2, 1]
+seed_bm is reshape of [seed_b, 2, 1]
+seed_nan is matmul_at of [seed_am, seed_bm]
 xb is buffer of 8
 xb[1] is 3
-xb[5] is np[0]
-print of (xb[5] > 1e308)
+buf_copy of [seed_nan, 0, xb, 5, 1]
+print of "preparation-complete"
 zb is buffer of 8
 zb[1] is 2
 try:
@@ -66,12 +79,17 @@ catch e:
     print of e.line
 o1 is buffer of 8
 o2 is buffer of 8
+fill_index is 0
+loop while fill_index < 8:
+    o2[fill_index] is 7
+    fill_index is fill_index + 1
 try:
-    vmap of [xb, o1, o2, 8]
+    vmap of [zb, xb, o1, o2, 8]
     print of o2[5]
 catch e:
     print of e.message
     print of e.line
+print of f"vmap-prefix {o1[4]} {o1[5]} {o1[6]} / {o2[4]} {o2[5]} {o2[6]}"
 try:
     vmap1 of [xb, o1, 8]
     print of o1[5]

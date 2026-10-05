@@ -1,10 +1,8 @@
-# (#1361) a NaN buffer ELEMENT is reachable under strict: ext_store
-# round-trips a tagged buffer body with "nan" in it. Then (a) sum/norm's
-# packed guard sees a NaN lane (under strict the VM's num_guard raises);
-# (b) the outvec matmul precheck aot_buf_maxabs skipped NaN (it fails every
-# `>`), admitted the UNGUARDED reduction and stored the NaN raw. The NaN
-# sits at index 0 so the soft halves also agree: the VM's sequential
-# accumulator and the AOT's lanes both restart from 0 there.
+# (#1361) Prepare one raw NaN by actual matmul_at plus buf_copy to b[0].
+# Finite lanes b[1..7] retain values1..7; no serialized buffer construction.
+# Keep sum, norm and the actual matmul-shaped loop, catches and after marker.
+# Strict1 rejects NaN at the target read/reduction; strict0 normalizes it.
+# b[0] remains the first lane so the reduction's finite suffix is observable.
 define mm(out, X, W, S, Din, Dout) as:
     i is 0
     loop while i < S:
@@ -19,15 +17,25 @@ define mm(out, X, W, S, Din, Dout) as:
             o is o + 1
         i is i + 1
     return 0
-path is "/tmp/ouroboros_t358_strict_nan.store"
-remove_file of path
-st is store_open of path
-k is store_put of [st, "c", {"v": {"_eigs_buffer": ["nan", 1, 2, 3, 4, 5, 6, 7], "_eigs_shape": [0, 0]}}]
-got is store_get of [st, "c", k]
-store_close of st
-remove_file of path
+seed_a is buffer of 2
+seed_a[0] is 1e300
+seed_a[1] is 1e300
+seed_b is buffer of 2
+seed_b[0] is 1e300
+seed_b[1] is 0 - 1e300
+seed_am is reshape of [seed_a, 2, 1]
+seed_bm is reshape of [seed_b, 2, 1]
+seed_nan is matmul_at of [seed_am, seed_bm]
 b is buffer of 8
-buf_copy of [got.v, 0, b, 0, 8]
+b[1] is 1
+b[2] is 2
+b[3] is 3
+b[4] is 4
+b[5] is 5
+b[6] is 6
+b[7] is 7
+buf_copy of [seed_nan, 0, b, 0, 1]
+print of "preparation-complete"
 print of b[3]
 try:
     print of (sum of b)

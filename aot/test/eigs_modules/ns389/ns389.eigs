@@ -1,0 +1,8 @@
+value is 1
+define internal(v) as:
+    value is v
+    return report of value
+define previous(dummy) as:
+    return prev of value
+define status(dummy) as:
+    return report of value

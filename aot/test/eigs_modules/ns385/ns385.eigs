@@ -1,0 +1,3 @@
+value is "module"
+define read(dummy) as:
+    return value

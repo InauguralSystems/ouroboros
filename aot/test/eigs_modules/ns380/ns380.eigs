@@ -1,0 +1,4 @@
+label is "old"
+define replace(x) as:
+    label is x
+    return label

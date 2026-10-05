@@ -1,0 +1,19 @@
+# Ordinary current-runtime namespace conformance; VM is the output oracle.
+import ns382
+alias is ns382
+print of (ns382.read of 0)
+alias["count"] is 20
+print of (ns382.read of 0)
+print of ns382.count
+print of (alias.bump of 0)
+print of ns382["count"]
+
+# The same numeric dot-read/write sites execute repeatedly through a parameter.
+define bump_dot(m) as:
+    m.count is m.count + 1
+    return m.count + 0
+for step in range of 3:
+    print of (bump_dot of alias)
+    print of (ns382.read of 0)
+    print of (alias.bump of 0)
+    print of alias.count

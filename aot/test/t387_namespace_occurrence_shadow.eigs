@@ -1,0 +1,6 @@
+# Ordinary current-runtime namespace conformance; VM is the output oracle.
+import ns387
+print of (ns387.shadow of 0)
+print of (ns387.conditional of 0)
+print of (ns387.conditional of 1)
+print of ns387.value

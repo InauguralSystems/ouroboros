@@ -1,0 +1,12 @@
+# Ordinary current-runtime namespace conformance; VM is the output oracle.
+import ns385
+saved is ns385
+escaped is ns385.read
+ns385 is {"value": "host"}
+print of ns385.value
+print of (saved.read of 0)
+print of (escaped of 0)
+define select(ns385) as:
+    return ns385.value
+print of (select of ns385)
+print of (select of saved)

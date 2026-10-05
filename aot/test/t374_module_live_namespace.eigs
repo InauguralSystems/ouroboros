@@ -1,0 +1,7 @@
+# Imported function rebinding and mutation-through-a-container are both live.
+import live96
+print of live96.count
+print of live96.box.n
+print of (live96.mutate of 3)
+print of live96.count
+print of live96.box.n

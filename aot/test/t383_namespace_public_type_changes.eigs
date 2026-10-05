@@ -1,0 +1,14 @@
+# Ordinary current-runtime namespace conformance; VM is the output oracle.
+import ns383
+alias is ns383
+print of (ns383.read of 0)
+alias.value is "text"
+print of (ns383.read of 0)
+alias["value"] is [2, 3]
+print of (ns383.read of 0)
+b is buf_from_list of [[8, 9]]
+alias.value is b
+print of (ns383.read of 0)[1]
+alias.value is {"x": "record"}
+print of (ns383.read of 0).x
+print of (type of ns383.value)

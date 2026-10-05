@@ -11,14 +11,19 @@
 #
 # `w` is the one named channel; `i`, `s`, `k`, `tot` are named by nothing.
 tot is 0.0
-define f(k) as:
+define f(k, final_read) as:
     local w is k
     local s is 0.0
     for i in range of 5:
         s is s + i
         w is w * 0.5
     tot is tot + s
-    return [report of w, s, i]
-print of (f of 8.0)
-print of (f of 4.0)
+    if final_read:
+        return i
+    return [report of w, s]
+print of (f of [8.0, 0])
+print of (f of [4.0, 0])
 print of f"tot {tot}"
+
+# Preserve both observer/sum calls and outward total before the invalid read.
+print of (f of [8.0, 1])

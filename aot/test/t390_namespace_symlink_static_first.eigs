@@ -1,0 +1,16 @@
+# Ordinary symlink cache identity: compiled import, then interpreted import.
+# eigs_modules/ns390/ns390.eigs is a checked-in relative symlink to data/.
+import ns390
+alias390 is ns390
+old390 is ns390.read
+define load_child390(dummy) as:
+    load_file of "data/t390_symlink_child.eigs"
+    return 1
+print of (load_child390 of 0)
+print of (alias390 == runtime_alias390)
+print of (old390 of 0)
+alias390.value is "compiled-write"
+print of (runtime_alias390.read of 0)
+runtime_alias390["value"] is "alias-write"
+print of (ns390.read of 0)
+print of (old390 of 0)

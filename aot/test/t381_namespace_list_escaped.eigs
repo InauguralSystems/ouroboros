@@ -1,0 +1,8 @@
+# Ordinary current-runtime namespace conformance; VM is the output oracle.
+import ns381
+old is ns381.values
+alias is ns381
+print of (alias.replace of ([2, 3]))
+print of ns381["values"]
+print of old
+print of (values of alias)

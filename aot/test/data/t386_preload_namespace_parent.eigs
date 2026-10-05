@@ -1,0 +1,2 @@
+import ns386_parent
+print of (ns386_parent.read of 0)

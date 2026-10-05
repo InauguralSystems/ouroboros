@@ -1,0 +1,4 @@
+values is [1]
+define replace(x) as:
+    values is x
+    return values

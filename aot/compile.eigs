@@ -432,6 +432,13 @@ g_stmt_tmp_seq is 0
 # below the cap, so the bracket would only cost (3-4.5% on the DMG canary).
 g_need_depth is 0
 g_cur_bound_bit is {}
+# Fresh function for-binders are loop-scoped by runtime96: their binding bit
+# is live only while the loop body executes.
+g_cur_fresh_for is {}
+# Lexical emission state is separate from the persistent read-guard class.
+g_cur_active_for is {}
+g_cur_for_slot is {}
+g_cur_for_owned is 0
 
 define bound_bit_of(name, nmap) as:
     if g_cur_bound_bit[name] == 1:
@@ -455,6 +462,10 @@ define bound_bit_of(name, nmap) as:
 # stays the pre-existing 0-vs-null residual (ouroboros#196) rather than a
 # death the VM does not have (round-117 critic: p_m4 `return z` -> VM null).
 define bound_bit_read_of(name, nmap) as:
+    if g_cur_fresh_for[name] == 1:
+        if g_cur_active_for[name] == 1:
+            return 0
+        return 1
     if g_bound_bit[name] != 1:
         return 0
     return bound_bit_common of [name, nmap]
@@ -729,6 +740,8 @@ define static_field_index(node, field) as:
     if g_uses_dict_remove == 1:
         return null
     local sfd is unwrap of node
+    if (sfd[0] == "ident") and (((module_public of sfd[1]) == 1) or (G_NAMESPACE_VALUES[sfd[1]] == 1)):
+        return null
     if sfd[0] != "ident":
         return null
     # one binding source only -- see single_binding_names for the wrong
@@ -823,10 +836,22 @@ g_locshadow is {}
 g_boxshadow is {}
 G_SH_N is [0]
 define envc(name) as:
+    if (module_public of name) == 1:
+        if g_boxshadow[name] != 1:
+            return module_env of name
     if g_envloc[name] == 1:
         return "__eigs_l"
     return "__eigs_g"
 define env_read(name) as:
+    if g_cur_for_slot[name] != null:
+        return "aot_lv_get(&" + g_cur_for_slot[name] + ")"
+    if (module_public of name) == 1:
+        local mk is module_key of name
+        local me is module_env of name
+        if g_boxshadow[name] == 1:
+            return "aot_get_sh(__eigs_l, " + me + ", \"" + mk + "\")"
+        local mc is ic_cache of 0
+        return "({ " + mc[0] + "aot_get_named_ic(" + me + ", \"" + mk + "\", " + mc[1] + "); })"
     if g_boxshadow[name] == 1:
         return "aot_get_sh(__eigs_l, __eigs_g, \"" + name + "\")"
     if (g_lowerloc == 1) and (g_envloc[name] == 1):
@@ -844,6 +869,16 @@ define ic_cache(tag) as:
     G_IC_N[0] is (G_IC_N[0]) + 1
     return ["static AotNameIC __n" + hn + " = {0}; ", "&__n" + hn]
 define env_read_num(name, site) as:
+    if g_cur_for_slot[name] != null:
+        return "aot_lv_num(&" + g_cur_for_slot[name] + ", " + site + ")"
+    if (module_public of name) == 1:
+        local mk is module_key of name
+        local me is module_env of name
+        if g_boxshadow[name] == 1:
+            local mh is ic_hash_only of 0
+            return "({ " + mh[0] + "aot_get_num_sh(__eigs_l, " + me + ", \"" + mk + "\", " + mh[1] + ", " + site + "); })"
+        local mc is ic_cache of 0
+        return "({ " + mc[0] + "aot_get_num_named_ic(" + me + ", \"" + mk + "\", " + mc[1] + ", " + site + "); })"
     if (g_lowerloc == 1) and (g_envloc[name] == 1) and (g_boxshadow[name] != 1):
         return "aot_lv_num(&" + (lv of name) + ", " + site + ")"
     if g_boxshadow[name] == 1:
@@ -858,6 +893,8 @@ define ic_hash_only(tag) as:
     G_IC_N[0] is (G_IC_N[0]) + 1
     return ["static uint32_t __h" + hn + " = 0; ", "&__h" + hn]
 define env_write_num(name, dexpr) as:
+    if g_cur_for_slot[name] != null:
+        return "aot_lv_set_num(&" + g_cur_for_slot[name] + ", " + dexpr + ");"
     if (g_lowerloc == 1) and (g_envloc[name] == 1) and (g_boxshadow[name] != 1):
         return "aot_lv_set_num(&" + (lv of name) + ", " + dexpr + ");"
     if g_boxshadow[name] == 1:
@@ -867,6 +904,15 @@ define env_write_num(name, dexpr) as:
     return "{ " + hp[0] + "aot_set_num_ic(" + (envc of name) + ", \"" + name + "\", " + hp[1] + ", " + dexpr + "); }"
 
 define env_readb(name) as:
+    if g_cur_for_slot[name] != null:
+        return "aot_lv_getb(&" + g_cur_for_slot[name] + ")"
+    if (module_public of name) == 1:
+        local mk is module_key of name
+        local me is module_env of name
+        if g_boxshadow[name] == 1:
+            return "aot_getb_sh(__eigs_l, " + me + ", \"" + mk + "\")"
+        local mc is ic_cache of 0
+        return "({ " + mc[0] + "aot_getb_named_ic(" + me + ", \"" + mk + "\", " + mc[1] + "); })"
     if g_boxshadow[name] == 1:
         return "aot_getb_sh(__eigs_l, __eigs_g, \"" + name + "\")"
     if (g_lowerloc == 1) and (g_envloc[name] == 1):
@@ -923,7 +969,7 @@ define infer_tensors(stmts) as:
                     allt is 0
             if allt == 1:
                 tt[v] is 1
-    return tt
+    return module_unclassify of tt
 
 # (round 187, #203) Buffer-KIND tensors: a `t[i]` read on one is a raw double
 # for ANY shape (the VM's shaped buffer is one flat buffer), so it may be
@@ -1018,7 +1064,7 @@ define infer_tensor_buf(stmts, bt) as:
                     if allt == 1:
                         tb[v] is 1
                         changed is 1
-    return tb
+    return module_unclassify of tb
 
 # Does `name` appear as a dot target (`name.field`)? -> a dict param.
 # Is the INCOMING value of param `name` dead — never read before the body
@@ -1139,7 +1185,7 @@ define infer_buffers(stmts) as:
                     allbuf is 0
             if allbuf == 1:
                 bt[v] is 1
-    return bt
+    return module_unclassify of bt
 
 # ---- numeric-scalar inference (now buffer-aware: buf[i] and len-of-buf are numeric) ----
 define is_num_expr(node, nm, bt) as:
@@ -1151,6 +1197,8 @@ define is_num_expr(node, nm, bt) as:
     if t == "predicate":
         return 1
     if t == "ident":
+        if (module_public of node[1]) == 1:
+            return 0
         if nm[node[1]] == 1:
             return 1
         return 0
@@ -1243,6 +1291,8 @@ define is_num_expr(node, nm, bt) as:
         return 0
     if t == "call":
         local callee is unwrap of node[1]
+        if (callee[0] == "ident") and ((module_public of callee[1]) == 1):
+            return 0
         # a predicate verdict is a number (0/1), like the bare form above
         if callee[0] == "predicate":
             return 1
@@ -1380,6 +1430,8 @@ define int_expr_bound(node) as:
     # place instead of implicit everywhere.
     local n is unwrap of node
     local t is n[0]
+    if (t == "ident") and ((module_public of n[1]) == 1):
+        return null
     if t == "num":
         if (int_lit_ok of n[1]) == 0:
             return null
@@ -1457,6 +1509,11 @@ define is_int_expr(node) as:
 define emit_int(node) as:
     local n is unwrap of node
     local t is n[0]
+    if t == "ident":
+        if (g_cur_fresh_for[n[1]] == 1) and (g_cur_active_for[n[1]] != 1):
+            return "((long)aot_num_ck(aot_undefined_name(\"" + n[1] + "\")))"
+        if g_cur_for_slot[n[1]] != null:
+            return "((long)" + (env_read_num of [n[1], "\"for binder\""]) + ")"
     if t == "num":
         # (round 96) the literal leaf carries LONG width. A bare decimal
         # constant is typed `int` by C whenever it fits, so a
@@ -2014,6 +2071,8 @@ define infer_numeric(stmts, bt) as:
     local nm is {}
     for i in range of (len of names):
         nm[names[i]] is 1
+        if (module_public of names[i]) == 1:
+            nm[names[i]] is 0
     local changed is 1
     loop while changed == 1:
         changed is 0
@@ -2028,7 +2087,7 @@ define infer_numeric(stmts, bt) as:
                 if allnum == 0:
                     nm[v] is 0
                     changed is 1
-    return nm
+    return module_unclassify of nm
 
 # Like infer_numeric, but pre-seeds a set of names as numeric (a function's
 # numeric params + globals) so locals that depend on them stay numeric, while
@@ -2046,6 +2105,8 @@ define infer_numeric_seeded(stmts, bt, seed) as:
             nm[sk[i]] is 1
     for i in range of (len of names):
         nm[names[i]] is 1
+        if (module_public of names[i]) == 1:
+            nm[names[i]] is 0
     local changed is 1
     loop while changed == 1:
         changed is 0
@@ -2060,7 +2121,7 @@ define infer_numeric_seeded(stmts, bt, seed) as:
                 if allnum == 0:
                     nm[v] is 0
                     changed is 1
-    return nm
+    return module_unclassify of nm
 
 # ---- bounded-induction analysis (guard-free vars in a loop) ----
 define module_inits(stmts) as:
@@ -2353,6 +2414,11 @@ define slice_arg_parts(argnode, nm, bt) as:
 
 define emit_num(node, nm, bt, raw) as:
     local t is node[0]
+    if t == "ident":
+        if (g_cur_fresh_for[node[1]] == 1) and (g_cur_active_for[node[1]] != 1):
+            return "aot_num_ck(aot_undefined_name(\"" + node[1] + "\"))"
+        if g_cur_for_slot[node[1]] != null:
+            return env_read_num of [node[1], "\"for binder\""]
     if t == "_line":
         return emit_num of [node[2], nm, bt, raw]
     if t == "num":
@@ -2360,6 +2426,8 @@ define emit_num(node, nm, bt, raw) as:
     if t == "predicate":
         return "((double)aot_predicate(" + (str of node[1]) + "))"
     if t == "ident":
+        if (module_public of node[1]) == 1:
+            return env_read_num of [node[1], "\"" + (c_escape of (G_CUR_FN[0])) + ": name " + (c_escape of (module_key of node[1])) + "\""]
         # (#218) an interrogated call-local: the call-local wins once bound
         # in this call; otherwise the read is whatever this regime's module
         # read is -- computed by re-entering with the mark cleared.
@@ -2496,6 +2564,8 @@ define emit_num(node, nm, bt, raw) as:
         return "aot_buf_get(" + (cn of tgt[1]) + ", " + (emit_num of [node[2], nm, bt, 0]) + ")"
     if t == "call":
         local callee is unwrap of node[1]
+        if (callee[0] == "ident") and ((module_public of callee[1]) == 1):
+            return "aot_num_ck_at(" + (emit_module_call of [node, nm, bt]) + ", \"public function result\")"
         # predicate-of in a NUMERIC context (`d is diverging of u`, a condition,
         # an arithmetic operand): the verdict is a 0/1 double, same as the bare
         # form five lines up. Without this the node falls through to the boxed
@@ -2503,6 +2573,8 @@ define emit_num(node, nm, bt, raw) as:
         if callee[0] == "predicate":
             local pna is unwrap of node[2]
             if pna[0] == "ident":
+                if (module_public of pna[1]) == 1:
+                    return "((double)aot_predicate_of(" + (module_env of pna[1]) + ", \"" + (module_key of pna[1]) + "\", " + (str of callee[1]) + ", 0))"
                 local pnfn is 0
                 if g_funcs[pna[1]] != null:
                     pnfn is 1
@@ -2727,6 +2799,12 @@ define emit_num(node, nm, bt, raw) as:
     throw of ("AOT: emit_num on non-numeric node " + t)
 
 define emit_val(node, nm, bt) as:
+    local binding_node is unwrap of node
+    if binding_node[0] == "ident":
+        if (g_cur_fresh_for[binding_node[1]] == 1) and (g_cur_active_for[binding_node[1]] != 1):
+            return "aot_undefined_name(\"" + binding_node[1] + "\")"
+        if g_cur_for_slot[binding_node[1]] != null:
+            return env_read of binding_node[1]
     # (round 169) a shadow-table dispatch is "numeric" to the classifier
     # (every handler returns a double) but may answer NULL for a missing
     # entry; in a VALUE context it goes through the null-capable helper,
@@ -2764,6 +2842,13 @@ define emit_val(node, nm, bt) as:
         if (len of node) >= 5:
             if node[4] != null:
                 throw of "AOT: the `when <n>` interrogative qualifier is not supported"
+        if (ie[0] == "ident") and ((module_public of ie[1]) == 1):
+            local mk is module_key of ie[1]
+            if iat == null:
+                if ik == 6:
+                    return "(aot_env_bound(" + (module_env of ie[1]) + ", \"" + mk + "\") ? aot_prev_val(\"" + mk + "\") : aot_undefined_name(\"" + mk + "\"))"
+            else:
+                return "aot_query_at_val(" + (str of ik) + ", \"" + mk + "\", (int)(" + (emit_num of [iat, nm, bt, 0]) + "))"
         if iat == null:
             if ik == 6:
                 if ((G_CUR_FN[0]) == "<module>") and (g_module_names[ie[1]] != 1):
@@ -2828,6 +2913,8 @@ define emit_val(node, nm, bt) as:
         # unlike `prev of z`, which dies.
         return "aot_query_at_val(" + (str of ik) + ", \"" + ie[1] + "\", (int)(" + (emit_num of [iat, nm, bt, 0]) + "))"
     if t == "ident":
+        if (module_public of node[1]) == 1:
+            return env_read of node[1]
         # (#218) an interrogated call-local read in VALUE position (reached
         # when the regime keeps the module name off the numeric map, e.g. a
         # module-observed program): the pair wins once bound in this call.
@@ -2854,7 +2941,7 @@ define emit_val(node, nm, bt) as:
             g_fn_as_value[node[1]] is 1
             # (round 98) the per-function singleton; increfed per read so a
             # consuming caller cannot free the shared identity.
-            return "({ if (!__fnv_" + (cn of node[1]) + ") __fnv_" + (cn of node[1]) + " = make_native_fn(__wrap_" + (cn of node[1]) + ", \"" + (c_escape of node[1]) + "\"); val_incref(__fnv_" + (cn of node[1]) + "); __fnv_" + (cn of node[1]) + "; })"
+            return "({ if (!__fnv_" + (cn of node[1]) + ") __fnv_" + (cn of node[1]) + " = make_native_fn(__wrap_" + (cn of node[1]) + ", \"" + (c_escape of (module_fn_name of node[1])) + "\"); val_incref(__fnv_" + (cn of node[1]) + "); __fnv_" + (cn of node[1]) + "; })"
         return env_read of node[1]
     if t == "index":
         # target[idx] on a boxed value (list/dict/string/buffer). A buffer index
@@ -2952,6 +3039,8 @@ define emit_val(node, nm, bt) as:
         return (binfn of bop) + "(" + (emit_val of [node[2], nm, bt]) + ", " + (emit_val of [node[3], nm, bt]) + ")"
     if t == "call":
         local callee is unwrap of node[1]
+        if (callee[0] == "ident") and ((module_public of callee[1]) == 1):
+            return emit_module_call of [node, nm, bt]
         # `<predicate> of <name>` parses as a CALL whose callee is the
         # predicate keyword: ["call", ["predicate", kind], ["ident", name]].
         # It is not an ident, so it used to hit the refusal below and no
@@ -2961,6 +3050,8 @@ define emit_val(node, nm, bt) as:
         if callee[0] == "predicate":
             local pa is unwrap of node[2]
             if pa[0] == "ident":
+                if (module_public of pa[1]) == 1:
+                    return "make_num((double)aot_predicate_of(" + (module_env of pa[1]) + ", \"" + (module_key of pa[1]) + "\", " + (str of callee[1]) + ", 0))"
                 local pfn is 0
                 if g_funcs[pa[1]] != null:
                     pfn is 1
@@ -3033,6 +3124,8 @@ define emit_val(node, nm, bt) as:
                     rhelper is "aot_trajectory"
                 elif callee[1] == "observe":
                     rhelper is "aot_observe_of"
+                if (module_public of ra[1]) == 1:
+                    return rhelper + "(" + (module_env of ra[1]) + ", \"" + (module_key of ra[1]) + "\", 0)"
                 return rhelper + "(__eigs_g, \"" + ra[1] + "\", " + rfn + ")"
         # user function returning a Value* (e.g. a tensor-returning forward pass)
         # -> direct native C call.
@@ -3259,6 +3352,11 @@ CMPNB_L is {"==": "aot_eq_nb_t", "!=": "aot_ne_nb_t", "<": "aot_lt_nlb_t", ">": 
 # handed an owned ref as before (#130).
 define borrowable_cvar(node, nm, bt) as:
     local n is unwrap of node
+    if n[0] == "ident":
+        if (g_cur_fresh_for[n[1]] == 1) and (g_cur_active_for[n[1]] != 1):
+            return ""
+        if g_cur_for_slot[n[1]] != null:
+            return ""
     if n[0] == "index":
         # (round 170) `c[k]` on a proven list whose slot holds a RECORD is a
         # borrowable base: the list's own reference, valid while the list
@@ -3272,6 +3370,8 @@ define borrowable_cvar(node, nm, bt) as:
                 return "aot_index_borrow_ib(" + bb + ", " + (str of ib[1]) + ")"
         return ""
     if n[0] != "ident":
+        return ""
+    if (module_public of n[1]) == 1:
         return ""
     if bt[n[1]] == 1:
         return cn of n[1]
@@ -3410,9 +3510,11 @@ define emit_cond(node, nm, bt) as:
 # control leaves. `pre` carries any extra pre-return cleanup (the tensor
 # frame-pool release).
 define emit_return(ctype, expr, ind, pre) as:
-    if (g_envactive == 0) and (pre == "") and (g_cur_try_depth == 0) and (g_cur_genp_release == "") and (g_stmt_tmp_used == 0):
+    if (g_envactive == 0) and (pre == "") and (g_cur_try_depth == 0) and (g_cur_genp_release == "") and (g_stmt_tmp_used == 0) and (g_cur_for_owned == 0):
         return ind + "return " + expr + ";\n"
     local s is ind + "{ " + ctype + " _rv = " + expr + ";"
+    if g_cur_for_owned == 1:
+        s is s + " aot_for_owned_drain_to(_forb);"
     if g_stmt_tmp_used == 1:
         # Relative to this statement's mark (declared by emit_stmts just
         # before the statement): the caller's pending temporaries stay.
@@ -3441,8 +3543,8 @@ define emit_return(ctype, expr, ind, pre) as:
     return s + " return _rv; }\n"
 
 # (round 182, EigenScript#1064) names bound so far IN PROGRAM ORDER while a
-# function body is emitted: an assignment, a `local`, or a for binder marks
-# its name once its statement has been emitted. The VM's compiler adds a
+# function body is emitted: an assignment or a `local` marks its name
+# once its statement has been emitted. A fresh for binder is retired at exit. The VM's compiler adds a
 # frame slot at the same point, and a later `for` over a name that already
 # has a slot restores the pre-loop value at loop exit; the emitter mirrors
 # that with a C block-local shadow (lscope) when the name is here.
@@ -3455,10 +3557,25 @@ define mark_bound_so_far(st) as:
         return 0
     if n[0] == "_line":
         return mark_bound_so_far of [n[2]]
-    if (n[0] == "assign") or (n[0] == "local") or (n[0] == "for"):
+    if (n[0] == "assign") or (n[0] == "local"):
         local _bs is G_BOUND_SO_FAR[0]
         _bs[(n[1])] is 1
     return 0
+
+# Every successful plain binding updates its per-call bit, independent of
+# its numeric/boxed/lowered storage arm. In particular a boxed rebind after
+# a fresh loop makes the name readable again; a raising RHS never gets here.
+define assigned_bound_bit(st, ind) as:
+    # _line recurses through emit_stmt; only the bare store appends its bit.
+    local n is st
+    if (type of n) != "list":
+        return ""
+    if (len of n) == 0:
+        return ""
+    if (n[0] == "assign") or (n[0] == "local"):
+        if g_cur_bound_bit[n[1]] == 1:
+            return ind + (cn of n[1]) + "_b = 1;\n"
+    return ""
 
 define emit_stmts(stmts, ind, nm, bt, minits, gf) as:
     local out is ""
@@ -3505,6 +3622,10 @@ define lowered_slot_expr(node, nm, bt) as:
     if n[0] != "ident":
         return ""
     local name is n[1]
+    if (g_cur_fresh_for[name] == 1) and (g_cur_active_for[name] != 1):
+        return ""
+    if g_cur_for_slot[name] != null:
+        return g_cur_for_slot[name]
     if (g_lowerloc != 1) or (g_envloc[name] != 1) or (g_boxshadow[name] == 1):
         return ""
     if (nm[name] == 1) or (bt[name] == 1) or (g_dict[name] == 1) or (g_genp[name] == 1) or (g_tensor[name] == 1) or (g_funcs[name] != null):
@@ -3604,6 +3725,15 @@ define emit_slot_condition(node, nm, bt) as:
     return "({ AotScalarRead _scl = " + left_read + "; AotScalarRead _scr = " + right_read + "; " + neg + "aot_scalar_equal(_scl, _scr); })"
 
 define emit_stmt(node, ind, nm, bt, minits, gf) as:
+    local emitted is emit_stmt_inner of [node, ind, nm, bt, minits, gf]
+    # Resolve the RHS against the old identity, then allocate the ordinary
+    # local in the compiler's state even if the runtime store may not execute.
+    if node[0] == "assign":
+        if g_cur_active_for[node[1]] != 1:
+            g_cur_fresh_for[node[1]] is 0
+    return emitted + (assigned_bound_bit of [node, ind])
+
+define emit_stmt_inner(node, ind, nm, bt, minits, gf) as:
     local t is node[0]
     if t == "_line":
         # stamp the current source line for the trace tape (mirrors OP_LINE), so
@@ -3617,8 +3747,56 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
         # (AOT_RESTAMP, aot_rt.h) writes it back after a compiled call
         # returns, which is the VM's frame line.
         return ind + "g_trace_current_line = __aot_ln = " + (str of node[1]) + ";\n" + (emit_stmt of [node[2], ind, nm, bt, minits, gf])
+    if t == "_module_begin":
+        local mc is "__modcache_" + (cn of node[1])
+        local me is "__modenv_" + (cn of node[1])
+        local mh is "__modcached_" + (cn of node[1])
+        local mk is "__modkey_" + (cn of node[1])
+        return ind + "{ char " + mk + "[AOT_MODULE_CACHE_KEY_CAP]; aot_module_cache_key(\"" + (c_escape of node[2]) + "\", " + mk + "); Value* " + mc + " = NULL; int " + mh + " = eigs_module_cache_get(" + mk + ", &" + mc + "); if (" + mh + ") { " + me + " = eigs_module_ns_env(" + mc + "); aot_set(__eigs_g, \"__moddict_" + node[1] + "\", " + mc + "); } else { " + me + " = aot_module_begin(__eigs_g, \"__modhold_" + node[1] + "\"); } if (!" + mh + ") {\n"
+    if t == "_module_pause":
+        return ind + "}\n"
+    if t == "_module_resume":
+        return ind + "if (!__modcached_" + (cn of node[1]) + ") {\n"
+    if t == "_module_end":
+        local me is "__modenv_" + (cn of node[1])
+        return ind + "aot_set(__eigs_g, \"__moddict_" + node[1] + "\", aot_module_publish(&" + me + ", __modkey_" + (cn of node[1]) + ")); aot_set(__eigs_g, \"__modhold_" + node[1] + "\", make_null()); } }\n"
     if t == "assign":
         local name is node[1]
+        if g_cur_for_slot[name] != null:
+            local fs_rhs is emit_val of [node[2], nm, bt]
+            local fs_trace is ""
+            if (traced_name of name) == 1:
+                fs_trace is "aot_trace_assign_val(\"" + name + "\", __fv); "
+            return ind + "{ Value* __fv = " + fs_rhs + "; " + fs_trace + "aot_lv_set(&" + g_cur_for_slot[name] + ", __fv); }\n"
+        if (module_public of name) == 1:
+            # RHS is complete before the single store. Both the public Env
+            # and a real per-call shadow use original source-key identity.
+            local mk is module_key of name
+            local me is module_env of name
+            if g_boxshadow[name] == 1:
+                if (len of node) >= 4:
+                    me is "__eigs_l"
+                else:
+                    me is "(env_get(__eigs_l, \"" + mk + "\") ? __eigs_l : " + me + ")"
+            local mc is ic_cache of 0
+            local ms is ""
+            if (is_num_expr of [node[2], nm, bt]) == 1:
+                ms is "double __mv = " + (emit_num of [node[2], nm, bt, 0]) + "; "
+                if (traced_name of name) == 1:
+                    ms is ms + "aot_trace_assign(\"" + mk + "\", __mv); "
+                if ((obs_name of name) == 1) or (g_outward_obs[name] == 1):
+                    ms is ms + "aot_observe_num(" + me + ", \"" + mk + "\", __mv);"
+                else:
+                    ms is ms + "aot_set_num_ic(" + me + ", \"" + mk + "\", " + mc[1] + ", __mv);"
+            else:
+                ms is "Value* __mv = " + (emit_val of [node[2], nm, bt]) + "; "
+                if (traced_name of name) == 1:
+                    ms is ms + "aot_trace_assign_val(\"" + mk + "\", __mv); "
+                if ((obs_name of name) == 1) or (g_outward_obs[name] == 1):
+                    ms is ms + "aot_observe_val(" + me + ", \"" + mk + "\", __mv);"
+                else:
+                    ms is ms + "aot_set_ic(" + me + ", \"" + mk + "\", " + mc[1] + ", __mv);"
+            return ind + "{ " + mc[0] + ms + " }\n"
         if g_genp[name] == 1:
             # A generic param is a C Value* var. Unobserved: rebind the C var
             # directly — every read of a genp uses the C name (emit_args,
@@ -3973,7 +4151,17 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
             local _mir is ""
             local _rd is G_NESTED_READS[_lfp]
             for _ri in range of (len of _rd):
-                _mir is _mir + ind + "aot_set(__eigs_g, \"" + (c_escape of (_rd[_ri])) + "\", " + (emit_val of [["ident", (_rd[_ri])], nm, bt]) + ");   /* #127: visible to the loaded file */\n"
+                # An Env-backed value is already visible to interpreted
+                # load_file code. Reading it here invents an earlier access
+                # (e.g. a child imports this name before its own first read).
+                # Mirror only storage the emitted identifier keeps in C.
+                local _rn is _rd[_ri]
+                local _cbacked is 0
+                if (module_public of _rn) != 1:
+                    if ((nm[_rn] == 1) and ((obs_name of _rn) == 0)) or (bt[_rn] == 1) or (g_dict[_rn] == 1) or (g_tensor[_rn] == 1) or (g_genp[_rn] == 1):
+                        _cbacked is 1
+                if _cbacked == 1:
+                    _mir is _mir + ind + "aot_set(__eigs_g, \"" + (c_escape of (_rd[_ri])) + "\", " + (emit_val of [["ident", (_rd[_ri])], nm, bt]) + ");   /* #127: visible to the loaded file */\n"
             return _mir + ind + "{ Value* _r = " + (emit_val of [node, nm, bt]) + "; if (_r) val_decref(_r); }\n"
         if callee[0] == "ident":
             if (g_funcs[callee[1]] != null) and (g_cur_params[callee[1]] != 1):
@@ -4146,6 +4334,10 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
         # The loop var lives in the env (aot_set/aot_get), so numeric uses in the
         # body go through the boxed path; byte-exact, break/continue map to C.
         local fvar is node[1]
+        local fresh_storage is 0
+        if ((G_CUR_FN[0]) != "<module>") and (g_cur_params[fvar] != 1) and (g_module_names[fvar] != 1) and ((G_BOUND_SO_FAR[0])[fvar] != 1) and (g_cur_active_for[fvar] != 1):
+            g_cur_fresh_for[fvar] is 1
+            fresh_storage is 1
         local fiter is node[2]
         local fbody is node[3]
         # (round 112) An OBSERVED program's module-level `for` over a
@@ -4192,9 +4384,11 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
         if ((G_CUR_FN[0]) != "<module>") and ((g_module_names[fvar] == 1) or ((g_interrogated_names[fvar] == 1) and (g_cur_params[fvar] != 1))):
             _lsc_early is 1
         if (_lsc_early == 0) and ((G_CUR_FN[0]) != "<module>") and ((obs_name of fvar) == 0):
-            if (g_cur_params[fvar] == 1) or ((G_BOUND_SO_FAR[0])[fvar] == 1):
+            if (g_cur_params[fvar] == 1) or ((G_BOUND_SO_FAR[0])[fvar] == 1) or (g_cur_active_for[fvar] == 1):
                 if g_genp[fvar] == 1:
                     fsv_kind is "genp"
+                elif g_cur_for_slot[fvar] != null:
+                    fsv_kind is "forslot"
                 elif (g_forunbox[fvar] != null) or (g_cur_params[fvar] == 1) or (nm[fvar] == 1):
                     fsv_kind is "num"
                 elif (g_lowerloc == 1) and (g_envloc[fvar] == 1):
@@ -4215,7 +4409,34 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
         else:
             itexpr is emit_val of [fiter, nm, bt]
         local fo is ind + "{ Value* " + itv + " = " + itexpr + ";\n"
-        if fsv_kind == "num":
+        if g_cur_fresh_for[fvar] == 1:
+            fo is fo + ind + "  int _fsvb_" + (cn of fvar) + " = " + (cn of fvar) + "_b;\n"
+        local prior_for_slot is g_cur_for_slot[fvar]
+        local slot_binder is ""
+        local prior_for_bt is bt[fvar]
+        local prior_for_dict is g_dict[fvar]
+        local prior_for_tensor is g_tensor[fvar]
+        if (fresh_storage == 1) and (_lsc_early == 0) and ((obs_name of fvar) == 0):
+            if (g_forunbox[fvar] != null) or (nm[fvar] == 1):
+                local fresh_ctype is "double"
+                if g_int[fvar] == 1:
+                    fresh_ctype is "long"
+                fo is fo + ind + "  " + fresh_ctype + " " + (cn of fvar) + " = 0;\n"
+            elif (g_lowerloc == 1) and (g_envloc[fvar] == 1):
+                slot_binder is lv of fvar
+                fo is fo + ind + "  EigsSlot " + slot_binder + " = slot_null();\n"
+            else:
+                slot_binder is "__for_slot_" + (cn of fvar)
+                fo is fo + ind + "  EigsSlot " + slot_binder + " = slot_null();\n"
+                g_cur_for_slot[fvar] is slot_binder
+                bt[fvar] is 0
+                g_dict[fvar] is 0
+                g_tensor[fvar] is 0
+            if g_cur_bound_bit[fvar] == 1:
+                fo is fo + ind + "  int " + (cn of fvar) + "_b = 0;\n"
+        if fsv_kind == "forslot":
+            fo is fo + ind + "  Value* _fsv_" + (cn of fvar) + " = aot_lv_get(&" + g_cur_for_slot[fvar] + ");\n"
+        elif fsv_kind == "num":
             fo is fo + ind + "  double _fsv_" + (cn of fvar) + " = " + (cn of fvar) + ";   /* #1064: binder restored after the loop */\n"
         elif fsv_kind == "genp":
             # a generic parameter: the saved pointer must survive the first
@@ -4225,7 +4446,25 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
         elif fsv_kind == "lv":
             fo is fo + ind + "  Value* _fsv_" + (cn of fvar) + " = aot_lv_get(&" + (lv of fvar) + ");\n"
         elif fsv_kind == "env":
-            fo is fo + ind + "  Value* _fsv_" + (cn of fvar) + " = " + (env_read of fvar) + ";\n"
+            # A syntactically allocated local can still be null when its
+            # earlier conditional assignment did not execute.
+            fo is fo + ind + "  Value* _fsv_" + (cn of fvar) + " = aot_get(" + (envc of fvar) + ", \"" + fvar + "\");\n"
+        # Register only newly owned boxed storage/snapshots. Numeric loops
+        # retain their existing zero-allocation path. A caught exit drops
+        # references without restoring the saved binding value.
+        local own_record is ""
+        if (slot_binder != "") or ((fsv_kind != "") and (fsv_kind != "num")):
+            own_record is "_forown_" + (cn of fvar)
+            local own_slot is "NULL"
+            local own_saved is "NULL"
+            if slot_binder != "":
+                own_slot is "&" + slot_binder
+            if (fsv_kind != "") and (fsv_kind != "num"):
+                own_saved is "_fsv_" + (cn of fvar)
+                if fsv_kind == "genp":
+                    own_saved is "(_fsvo_" + (cn of fvar) + " ? " + own_saved + " : NULL)"
+            fo is fo + ind + "  AotForOwned " + own_record + "; aot_for_owned_begin(&" + own_record + ", " + own_slot + ", " + own_saved + ");\n"
+            g_cur_for_owned is 1
         if g_forunbox[fvar] == 2:
             # module scope: the VM loop-scopes the binding (post-loop reads
             # raise 'undefined variable'), so the C var lives in this block —
@@ -4341,7 +4580,9 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
             # the body; post-loop reads dispatch on the pair again.
             lsc_il_prev is g_cur_interloc[fvar]
             g_cur_interloc[fvar] is 0
-        if (lscope == 0) and (g_forunbox[fvar] != null):
+        if (lscope == 0) and (g_cur_for_slot[fvar] != null):
+            fo is fo + ind + "    aot_lv_set(&" + g_cur_for_slot[fvar] + ", aot_iter_get(" + itv + ", " + kv + "));\n"
+        elif (lscope == 0) and (g_forunbox[fvar] != null):
             # unboxed: bind the C double directly — no env write, no boxed
             # read-back in the body. A buffer iterable reads elementwise
             # (aot_buf_get_i); anything else takes the materialized element
@@ -4462,31 +4703,43 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
                     fo is fo + ind + "    { Value* __fv = aot_iter_get(" + itv + ", " + kv + "); aot_trace_assign_val(\"" + fvar + "\", __fv); aot_set(" + (envc of fvar) + ", \"" + fvar + "\", __fv); }\n"
                 else:
                     fo is fo + ind + "    aot_set(" + (envc of fvar) + ", \"" + fvar + "\", aot_iter_get(" + itv + ", " + kv + "));\n"
+        if g_cur_fresh_for[fvar] == 1:
+            fo is fo + ind + "    " + (cn of fvar) + "_b = 1;\n"
+        local _fa_prev is g_cur_active_for[fvar]
+        local _fbs_prev is (G_BOUND_SO_FAR[0])[fvar]
+        g_cur_active_for[fvar] is 1
         fo is fo + (emit_stmts of [fbody, ind + "    ", nm, bt, minits, gf])
+        g_cur_active_for[fvar] is _fa_prev
+        # Assignments to this binder stay in its scope; they do not create
+        # a post-loop binding for a later loop to save. Other names persist.
+        local _fbs_map is G_BOUND_SO_FAR[0]
+        _fbs_map[fvar] is _fbs_prev
         if lsc_seeded == 1:
             nm[fvar] is lsc_nm_prev
             if lsc_il_prev == 1:
                 g_cur_interloc[fvar] is 1
         fo is fo + ind + "  }\n"
-        # The VM's restore is a SET_LOCAL, recorded in a traced name's history
-        # (`prev of p` after the loop answers the last body write, t218/t119);
-        # trace the restore the same way.
-        if fsv_kind == "num":
+        if g_cur_fresh_for[fvar] == 1:
+            fo is fo + ind + "  " + (cn of fvar) + "_b = _fsvb_" + (cn of fvar) + ";\n"
+        # Runtime96 restores pre-existing binders with SET_LOCAL_INTERNAL.
+        # Storage is restored, but this bookkeeping write is not user-visible
+        # assignment history; binder and body writes above remain traced.
+        if fsv_kind == "forslot":
+            fo is fo + ind + "  aot_lv_set(&" + g_cur_for_slot[fvar] + ", _fsv_" + (cn of fvar) + ");\n"
+        elif fsv_kind == "num":
             fo is fo + ind + "  " + (cn of fvar) + " = _fsv_" + (cn of fvar) + ";\n"
-            if g_traced == 1:
-                fo is fo + ind + "  aot_trace_assign(\"" + fvar + "\", " + (cn of fvar) + ");\n"
         elif fsv_kind == "genp":
-            if g_traced == 1:
-                fo is fo + ind + "  aot_trace_assign_val(\"" + fvar + "\", _fsv_" + (cn of fvar) + ");\n"
             fo is fo + ind + "  { Value* _o = " + (cn of fvar) + "; " + (cn of fvar) + " = _fsv_" + (cn of fvar) + "; if (" + (cn of fvar) + "__own) val_decref(_o); " + (cn of fvar) + "__own = _fsvo_" + (cn of fvar) + "; }\n"
         elif fsv_kind == "lv":
-            if g_traced == 1:
-                fo is fo + ind + "  aot_trace_assign_val(\"" + fvar + "\", _fsv_" + (cn of fvar) + ");\n"
             fo is fo + ind + "  aot_lv_set(&" + (lv of fvar) + ", _fsv_" + (cn of fvar) + ");\n"
         elif fsv_kind == "env":
-            if g_traced == 1:
-                fo is fo + ind + "  aot_trace_assign_val(\"" + fvar + "\", _fsv_" + (cn of fvar) + ");\n"
             fo is fo + ind + "  aot_set(" + (envc of fvar) + ", \"" + fvar + "\", _fsv_" + (cn of fvar) + ");\n"
+        if own_record != "":
+            fo is fo + ind + "  " + own_record + ".saved = NULL; aot_for_owned_end(&" + own_record + ");\n"
+        g_cur_for_slot[fvar] is prior_for_slot
+        bt[fvar] is prior_for_bt
+        g_dict[fvar] is prior_for_dict
+        g_tensor[fvar] is prior_for_tensor
         if fowned == 1:
             fo is fo + ind + "  val_decref(" + itv + ");\n"
         fo is fo + ind + "}\n"
@@ -4632,6 +4885,8 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
 define expr_bound(node, bb) as:
     local n is unwrap of node
     local t is n[0]
+    if (t == "ident") and ((module_public of n[1]) == 1):
+        return null
     if t == "num":
         local a is n[1]
         if a < 0:
@@ -6345,6 +6600,8 @@ define return_node_is_num(rnode, rba, fbt, fgen, fdict, ftt, seen) as:
     if t == "num":
         return 1
     if t == "ident":
+        if (module_public of re[1]) == 1:
+            return 0
         if (fbt[re[1]] == 1) or (fdict[re[1]] == 1) or (fgen[re[1]] == 1) or (ftt[re[1]] == 1):
             return 0
         if g_cur_params_rt[re[1]] == 1:
@@ -7386,6 +7643,8 @@ define arg_class(node, caller_pt, caller_params, caller_locals) as:
     if (len of e) == 0:
         return "unknown"
     local t is e[0]
+    if (t == "ident") and ((module_public of e[1]) == 1):
+        return "gen"
     if t == "str":
         return "gen"
     if t == "dict":
@@ -7552,7 +7811,7 @@ define local_gen_map_for_seeded(fname, body, seed) as:
     local c is (G_LGM_CACHE[0])[sig]
     if c != null:
         return c
-    local m is local_gen_map_seeded of [body, seed]
+    local m is module_unfield of (local_gen_map_seeded of [body, seed])
     local cache is G_LGM_CACHE[0]
     cache[sig] is m
     return m
@@ -9255,7 +9514,7 @@ define genp_rebound_in(node, name) as:
 
 define emit_function(fn, finfo, gnm, gbt) as:
     local name is fn[1]
-    G_CUR_FN[0] is name
+    G_CUR_FN[0] is module_fn_name of name
     G_DBR_EMIT[0] is {}
     G_BOUND_SO_FAR[0] is {}
     local _bs0 is G_BOUND_SO_FAR[0]
@@ -9416,6 +9675,13 @@ define emit_function(fn, finfo, gnm, gbt) as:
     local _cnbk is keys of g_cur_bound
     for cnb in range of (len of _cnbk):
         g_cur_bound_nb[(_cnbk[cnb])] is 1
+    local _ffb is {}
+    collect_for_binders of [body, _ffb]
+    g_cur_fresh_for is {}
+    g_cur_active_for is {}
+    g_cur_for_slot is {}
+    g_cur_for_owned is 0
+    local _ffk is keys of _ffb
     collect_for_binders of [body, g_cur_bound]
     # (round 117/119) every non-parameter LOCAL gets a per-call boundness
     # bit. Round 117 exempted locals with a top-level-statement assign as
@@ -9447,6 +9713,10 @@ define emit_function(fn, finfo, gnm, gbt) as:
         local _cbn is _cbk[_cbi]
         if (_cbparam[_cbn] != 1) and (g_module_names[_cbn] != 1):
             g_cur_bound_bit[_cbn] is 1
+    for _ffi in range of (len of _ffk):
+        local _ffn is _ffk[_ffi]
+        if (g_cur_params[_ffn] != 1) and (g_module_names[_ffn] != 1):
+            g_cur_bound_bit[_ffn] is 1
     local _lmn is keys of _lmk
     local _shcand is []
     local _bshcand is []
@@ -9636,6 +9906,9 @@ define emit_function(fn, finfo, gnm, gbt) as:
                         lparam_boxed is 1
             if lparam_boxed == 0:
                 fnm[lnk[k]] is 1
+    fnm is module_unclassify of fnm
+    fbt is module_unclassify of fbt
+    g_tensor is module_unclassify of g_tensor
     # (#218) interrogated call-locals of this function (see g_cur_interloc).
     # Computed HERE, after the numeric merge, so the all-numeric-writers
     # test sees the body's numeric locals (`z is k` with a body-local k
@@ -9706,6 +9979,7 @@ define emit_function(fn, finfo, gnm, gbt) as:
     g_btmap is fbt
     if g_observed == 0:
         g_int is infer_int of [body, params, fnm, fbt]
+    g_int is module_unclassify of g_int
     # (#218) the interrogated call-local pair is a double; an int-typed read
     # (emit_int's raw C name) would bypass the pair's dispatch.
     local _ilgk is keys of g_cur_interloc
@@ -10136,8 +10410,6 @@ define emit_function(fn, finfo, gnm, gbt) as:
                 decls is decls + "    long " + (cn of v) + " = 0;\n"
             else:
                 decls is decls + "    double " + (cn of v) + " = 0;\n"
-            if (g_cur_bound_bit[v] == 1) and (g_tensor[v] != 1) and (fbt[v] != 1):
-                decls is decls + "    int " + (cn of v) + "_b = 0;   /* boundness bit (round 117) */\n"
     # (round 154) the VM's frame cap: enter/leave bracket every compiled
     # function (cleanup attribute = every C return path).
     if g_need_depth == 1:
@@ -10167,6 +10439,17 @@ define emit_function(fn, finfo, gnm, gbt) as:
                 fudp is 1
         if (fudp == 0) and (ba[fud] == null) and (gnm[fud] != 1) and (gbt[fud] != 1):
             decls is decls + "    double " + (cn of fud) + " = 0;\n"
+
+    # Binding identity is independent of the value's C storage class.
+    # assigned_bound_bit updates every per-call bit, including buffer,
+    # tensor and env-backed locals; fresh binders also need a frame bit
+    # even when their value exists only in a loop block. Declare exactly
+    # the same map once, rather than filtering through value declarations.
+    local _bdecls is keys of g_cur_bound_bit
+    for _bdi in range of (len of _bdecls):
+        local _bdn is _bdecls[_bdi]
+        if g_cur_bound_bit[_bdn] == 1:
+            decls is decls + "    int " + (cn of _bdn) + "_b = 0;   /* per-call binding identity */\n"
     # #132 whitelist: lower the frame env to C EigsSlot variables only when
     # nothing in this function needs a real Env. A boxed module shadow does
     # (aot_get_sh dispatches on binding PRESENCE in __eigs_l), so its presence
@@ -10185,12 +10468,15 @@ define emit_function(fn, finfo, gnm, gbt) as:
     local fminits is module_inits of body
     local bodyc is emit_stmts of [body, "    ", fnm, fbt, fminits, {}]
     local tailret is ""
+    if g_cur_for_owned == 1:
+        decls is decls + "    AotForOwned* _forb = aot_for_owned_top;\n"
+        tailret is "    aot_for_owned_drain_to(_forb);\n"
     if g_lowerloc == 1:
         for k in range of (len of _lvn):
             tailret is tailret + "    slot_decref(" + (lv of (_lvn[k])) + ");\n"
     elif g_envactive == 1:
         # fallthrough exit (no return statement taken): free the call env.
-        tailret is "    env_decref(__eigs_l);\n"
+        tailret is tailret + "    env_decref(__eigs_l);\n"
     if g_cur_genp_release != "":
         tailret is tailret + "    " + g_cur_genp_release + "\n"
     if (finfo["ret"]) == "double":
@@ -10943,7 +11229,7 @@ define find_shadow_tables(funcs, rest) as:
     local names is keys of g_mod_rba
     local infos is {}
     for i in range of (len of names):
-        if g_funcs[(names[i])] == null:
+        if (g_funcs[(names[i])] == null) and ((module_public of names[i]) != 1):
             infos[(names[i])] is [1, 0]
     sh_walk_all of [rest, infos, ""]
     for k in range of (len of funcs):
@@ -11044,6 +11330,8 @@ define index_of_buf_field(node, fmap) as:
         return 0
     local dm is unwrap of tgt[1]
     if dm[0] != "ident":
+        return 0
+    if (module_public of dm[1]) == 1:
         return 0
     # (round 167) the assignment-site census names the field "buf" when
     # every write anywhere is a buffer (or `[]`): it overrides a literal's
@@ -11146,6 +11434,11 @@ define fc_walk(node, lb, pbuf, assigns, acc) as:
     return 0
 
 define field_class_census(funcs, rest) as:
+    if (len of (keys of G_MODULE_ENVS)) > 0:
+        # Cross-record field names cannot identify a namespace reached through
+        # an arbitrary alias. Keep checked dynamic field reads in import code.
+        g_field_class is {}
+        return 0
     local acc is {}
     local mlb is infer_buffers of rest
     fc_walk of [rest, mlb, {}, (collect_assigns of [rest, {}]), acc]
@@ -11238,6 +11531,9 @@ define elem_maps_census(funcs, rest) as:
         em_walk of [efn[3], _emf, acc]
         g_cur_fmap is _emf0
     g_elem_maps is acc
+    local _pub_em is keys of g_module_live
+    for mi in range of (len of _pub_em):
+        g_elem_maps[_pub_em[mi]] is null
     return 0
 
 # seed the handlers of every shadow table dispatched with a module list
@@ -11323,6 +11619,8 @@ define elem_class_of(node, fmap) as:
     if (b[0] != "ident") or (i[0] != "num"):
         return null
     local em is null
+    if (module_public of b[1]) == 1:
+        return null
     local bm is fmap[(b[1]) + ".#fields"]
     if (bm != null) and (bm["#elems"] != null):
         em is (bm["#elems"])[(str of i[1])]
@@ -11348,6 +11646,7 @@ define emit_borrow_arg(node, nm, bt, siblings) as:
     return ""
 
 define emit_program(ast) as:
+    module_namespace_aliases of ast[1]
     local stmts is ast
     if ast[0] == "block":
         stmts is ast[1]
@@ -12373,6 +12672,9 @@ define emit_program(ast) as:
     # loop; function bodies were emitted earlier against g_bound_bit filled
     # by the pre-pass below, so the two must agree -- see the pre-pass.
     local gdecls is ""
+    local _menvs is keys of G_MODULE_ENVS
+    for mi in range of (len of _menvs):
+        gdecls is gdecls + "static Env* __modenv_" + (cn of _menvs[mi]) + " = NULL;\n"
     local names is keys of nm
     for i in range of (len of names):
         # observed numeric vars live in the env (created by aot_observe_num), so
@@ -12433,6 +12735,10 @@ define emit_program(ast) as:
     # per-call bits (the critic's p_d1: the LAST function's marks leaked here
     # and a module bit-name it had `local`-shadowed skipped its check).
     g_cur_localmarked is {}
+    g_cur_fresh_for is {}
+    g_cur_active_for is {}
+    g_cur_for_slot is {}
+    g_cur_for_owned is 0
     g_cur_bound_bit is {}
     g_cur_shadowbit is {}
     g_cur_interloc is {}
@@ -12484,7 +12790,7 @@ define emit_program(ast) as:
                     throw of ("AOT: function '" + wn + "' used as a value takes a tensor parameter, which has no boxed calling convention")
                 local wexpr is ""
                 if (wpt[wk]) == "num":
-                    wexpr is "aot_num_ck_bat(aot_arg_at(__a, " + (str of wk) + "), \"" + (c_escape of wn) + " parameter " + (str of wk) + "\")"
+                    wexpr is "aot_num_ck_bat(aot_arg_at(__a, " + (str of wk) + "), \"" + (c_escape of (module_fn_name of wn)) + " parameter " + (str of wk) + "\")"
                 else:
                     wexpr is "aot_arg_at(__a, " + (str of wk) + ")"
                 if (whas == 1) and (wdefs[wk] != null):
@@ -12519,7 +12825,7 @@ define emit_program(ast) as:
             # #100-item-4 family is the same shape and the same answer applies:
             # a loud death beats a coercing guess. Borrowed, per the builtin
             # argument convention — this must not consume __a.
-            warg is "aot_num_ck_bat(__a, \"" + (c_escape of wn) + " parameter\")"
+            warg is "aot_num_ck_bat(__a, \"" + (c_escape of (module_fn_name of wn)) + " parameter\")"
         if (fn_has_defaults of wn) == 1:
             # (round 193) `g of []` through a value is argc 0 (the VM's default fires)
             local wd1 is "NULL"
@@ -12588,10 +12894,10 @@ define _lf_dirname(p) as:
 # runtime call ONLY at depth 0, where the baked g_script_dir is the same
 # base the VM would raise from; in a spliced child the runtime call would
 # resolve from the MAIN program's directory, a base the VM never uses, so it
-# is refused by name (t306's refuse twin). Symlinks are not canonicalised (the runtime realpath()s;
-# no such builtin) -- only a symlinked directory whose physical parent
-# holds a different eigs.json could differ, and the runtime fallback would
-# too.
+# is refused by name (t306's refuse twin). Source-resolution symlinks are not canonicalised here (no
+# such language builtin); a physical project-parent difference remains a
+# resolver limitation. Module cache keys are canonicalised separately in
+# generated runtime code, matching the VM even for a lexical symlink path.
 define _lf_is_file(p) as:
     if (file_exists of p) == 0:
         return 0
@@ -12826,6 +13132,72 @@ G_STDLIB is [""]
 # module's top level. First import stashes the dict in __imp_M; a repeat import
 # rebinds from the stash, which is the cached-object semantics exactly.
 G_IMPORTED is {}
+# Resolved public binding descriptor: renamed identity -> [module, source key].
+# Existing ident/assign AST shapes retain this identity throughout the compiler.
+g_module_live is {}
+# Only actual source-public module bindings carry these resolved descriptors.
+# Alpha-renamed params/loop/catch bindings and private names are absent.
+G_MODULE_ENVS is {}
+G_MODULE_IMPLS is {}
+# Import handles and their top-level aliases can change type too. This is a
+# may-namespace census, never a module-identity shortcut for a syntactic dot.
+G_NAMESPACE_VALUES is {}
+define module_namespace_aliases(stmts) as:
+    local mods is keys of G_MODULE_ENVS
+    for mi in range of (len of mods):
+        G_NAMESPACE_VALUES["__moddict_" + mods[mi]] is 1
+    local binds is collect_assigns of [stmts, {}]
+    local names is keys of binds
+    local changed is 1
+    loop while changed == 1:
+        changed is 0
+        for mi in range of (len of names):
+            if G_NAMESPACE_VALUES[names[mi]] != 1:
+                local rhs is binds[names[mi]]
+                for ri in range of (len of rhs):
+                    local rn is unwrap of rhs[ri]
+                    if (rn[0] == "ident") and (G_NAMESPACE_VALUES[rn[1]] == 1):
+                        G_NAMESPACE_VALUES[names[mi]] is 1
+                        changed is 1
+    return 0
+define module_key(name) as:
+    if g_module_live[name] != null:
+        return (g_module_live[name])[1]
+    return name
+define module_env(name) as:
+    return "__modenv_" + (cn of (g_module_live[name])[0])
+define module_public(name) as:
+    if g_module_live[name] != null:
+        return 1
+    return 0
+# A public binding can be replaced through aliases/index access invisible to
+# the AST. Its initial value is never evidence for a permanent storage class.
+define module_unclassify(classes) as:
+    local pub is keys of g_module_live
+    for mi in range of (len of pub):
+        if classes[pub[mi]] != null:
+            classes[pub[mi]] is 0
+    return classes
+define module_unfield(fields) as:
+    local aliases is keys of G_NAMESPACE_VALUES
+    for ai in range of (len of aliases):
+        fields[(aliases[ai]) + ".#fields"] is null
+    local pub is keys of g_module_live
+    for mi in range of (len of pub):
+        fields[(pub[mi]) + ".#fields"] is null
+    return fields
+define module_fn_name(name) as:
+    if G_MODULE_IMPLS[name] != null:
+        return (G_MODULE_IMPLS[name])[1]
+    return name
+# Dynamic public calls capture the actual callee before any argument, even
+# when the argument replaces that binding. The result remains arbitrary Value.
+define emit_module_call(node, nm, bt) as:
+    local ca is unwrap of node[2]
+    local arg is node[2]
+    if (ca[0] == "list") and ((len of ca) == 2) and ((len of ca[1]) == 1):
+        arg is (ca[1])[0]
+    return "({ Value* _mcf = " + (emit_val of [node[1], nm, bt]) + "; Value* _mca = " + (emit_val of [arg, nm, bt]) + "; aot_call_value(_mcf, _mca); })"
 
 # Top-level binding names of a module, in SOURCE ORDER, first occurrence wins.
 # That order is the contract: `keys of <module>` was probed against the VM and
@@ -13327,7 +13699,8 @@ define module_freeread_name(stmts, rset, rtop) as:
 
 # ---- MODULE NAMESPACING (ouroboros#141) -----------------------------------
 # Rename every name a module can create in the merged scope to `<M>__<name>`,
-# so splicing cannot collide with the program and no guard is needed.
+# so splicing cannot collide with the program. Public identities resolve to
+# module Env descriptors; private names retain their existing storage.
 #
 # Only two node shapes carry a name that must move: an `ident` reference, and
 # the name slot of `assign`/`func`. Every OTHER binder — `for` variables,
@@ -13442,13 +13815,13 @@ define copy_map(m) as:
     return c
 
 # Ensure module `mname` is spliced into `out` exactly once, under its own
-# `<M>__` prefix, leaving its snapshot dict at __moddict_<M>. Binding a NAME
+# `<M>__` prefix, leaving its cached live namespace at __moddict_<M>. Binding a NAME
 # for it is the caller's job: a program-level import binds the plain name, a
 # module's own import binds that module's renamed name.
 define splice_module(mname, base, depth, out) as:
         # ---- `import NAME` (#121), NAMESPACED (#141) -------------------
-        # Splice the module ONCE under its own prefix and bind a snapshot
-        # dict, canonically as __moddict_<M>. Any later import of the same
+        # Splice the module ONCE under its own prefix and bind a live
+        # namespace, canonically as __moddict_<M>. Any later import of the same
         # module — by the program or by another module — rebinds from that,
         # which is the VM's module-cache identity.
         #
@@ -13498,7 +13871,7 @@ define splice_module(mname, base, depth, out) as:
             if frn != null:
                 throw of ("AOT: module '" + mname + "' READS '" + frn + "' on a path that can run before the module's own first write to it, and never binds it at its top level. On the VM that read resolves OUTWARD into the importing program (and dies `undefined variable '" + frn + "'` if the importer has none) while the write is call-local; the AOT splices the module under a private prefix, so the same read would answer from '" + mname + "__" + frn + "' -- null, silently. Refused rather than guessed (ouroboros#141 residual). THE EXIT is to give '" + frn + "' a definite first write ahead of that read -- an unconditional assignment at the top of the body that reads it, or a module top-level binding (measured: one such line restores lib/ui_w_special to the envelope). Marking the write `local` also works wherever the module-shadow guard admits it (it is refused in an observed/temporal function, and where the shadow's C block would not cover every later use).")
             # A module top-level binding made inside conditional control flow
-            # cannot be represented: the dict is a snapshot of what RAN.
+            # cannot be represented: the namespace contains what RAN.
             if (module_has_toplevel_return of ["block", (mast[1])]) == 1:
                 throw of ("AOT: module '" + mname + "' ends its own top level with a `return`. The AOT splices a module into the program, so that `return` would return from the whole program and skip building the module dict — silently, with no output at all. Refused rather than guessed (ouroboros#146).")
             local condb is {}
@@ -13510,6 +13883,12 @@ define splice_module(mname, base, depth, out) as:
             local ren is {}
             for ri in range of (len of rk):
                 ren[(rk[ri])] is mname + "__" + (rk[ri])
+            G_MODULE_ENVS[mname] is mpath
+            for ri in range of (len of rtop):
+                local rtn is rtop[ri]
+                if (substr of [rtn, 0, 1]) != "_":
+                    g_module_live[(ren[rtn])] is [mname, rtn]
+            append of [out, ["_module_begin", mname, mpath]]
             # Mark BEFORE recursing so an import cycle terminates.
             G_IMPORTED[mname] is 1
             # Prefix for this module's binders, read by rename_ast's binder
@@ -13549,23 +13928,31 @@ define splice_module(mname, base, depth, out) as:
                     # which is correct only for a program-level import — as
                     # a nested one it bound `complex` globally and clobbered
                     # the importing program's own `complex`.
+                    # Restore/init child handles even when the parent was
+                    # loaded earlier by the VM. The parent's own binding and
+                    # other initialization still execute only on a cache miss.
+                    append of [out, ["_module_pause", mname]]
                     splice_module of [inner, mpath, depth + 1, out]
+                    append of [out, ["_module_resume", mname]]
                     append of [out, ["assign", (ren[inner]), ["ident", "__moddict_" + inner]]]
                 else:
-                    append of [out, (rename_ast of [mst1, ren, {}])]
-            local pairs is []
-            for ri in range of (len of rtop):
-                # (round 136, #142) the VM omits `_`-prefixed module
-                # bindings from the module dict (measured: `keys of
-                # checksum` is ["crc32", "adler32", "sum8"]; the AOT's
-                # dict also carried _blen/_byte/_crc_table/_crc_init).
-                # Filtered HERE only: the rename set above still needs
-                # every binding, private ones included.
-                local rtn is rtop[ri]
-                if (substr of [rtn, 0, 1]) == "_":
-                    continue
-                append of [pairs, [rtn, ["ident", (ren[rtn])]]]
-            append of [out, ["assign", "__moddict_" + mname, ["dict", pairs]]]
+                    local renamed is rename_ast of [mst1, ren, {}]
+                    local ru is unwrap of renamed
+                    if (ru[0] == "func") and ((module_public of ru[1]) == 1):
+                        local public_name is ru[1]
+                        local source_name is module_key of public_name
+                        local impl_name is mname + "__fnimpl__" + source_name
+                        ru[1] is impl_name
+                        G_MODULE_IMPLS[impl_name] is [mname, source_name]
+                        append of [out, renamed]
+                        # The wrapper binding EXECUTES at the original define.
+                        local bind is ["assign", public_name, ["ident", impl_name]]
+                        if renamed[0] == "_line":
+                            bind is ["_line", renamed[1], bind]
+                        append of [out, bind]
+                    else:
+                        append of [out, renamed]
+            append of [out, ["_module_end", mname, mpath]]
             G_MODPFX[0] is saved_pfx
 
 # (round 114, ouroboros#127) A `load_file` whose path is COMPUTED cannot be

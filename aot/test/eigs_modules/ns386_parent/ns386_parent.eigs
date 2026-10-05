@@ -1,0 +1,4 @@
+print of "ns386-parent-initialized"
+import ns386_child
+define read(dummy) as:
+    return ns386_child.read of 0

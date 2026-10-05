@@ -1,0 +1,11 @@
+# The same scope rule holds when an unrelated name enables observer emission.
+define fresh(n) as:
+    local watched is n
+    local seen is 0
+    for i in range of n:
+        seen is seen + i
+        watched is watched * 0.5
+    print of seen
+    print of (report of watched)
+    return i
+print of (fresh of 4)

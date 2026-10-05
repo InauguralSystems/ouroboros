@@ -1,0 +1,11 @@
+# Ordinary current-runtime namespace conformance; VM is the output oracle.
+import ns388
+print of ns388.first
+print of (ns388.read of 0)
+old is ns388.product
+print of (old of 3)
+define replacement(n) as:
+    return 4
+ns388.product is replacement
+print of (old of 2)
+print of (ns388.product of 2)

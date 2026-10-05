@@ -51,6 +51,42 @@
 enum { AOT_TRY_MAX = 64 };
 static jmp_buf *aot_try_bufs[AOT_TRY_MAX];
 static int aot_try_n = 0;
+/* Only loop-created boxed storage and saved binder references are registered.
+ * Ordinary expression temporaries keep their existing exception contract.
+ * Dispose before longjmp, while the registered stack slots are still live;
+ * dropping a snapshot never restores its old value on a caught exit. */
+typedef struct AotForOwned {
+    struct AotForOwned *prev;
+    int handler_depth;
+    EigsSlot *slot;
+    Value *saved;
+} AotForOwned;
+static AotForOwned *aot_for_owned_top = NULL;
+static inline void aot_for_owned_begin(AotForOwned *r, EigsSlot *slot, Value *saved) {
+    *r = (AotForOwned){aot_for_owned_top, aot_try_n, slot, saved};
+    aot_for_owned_top = r;
+}
+static inline void aot_for_owned_drop(void) {
+    AotForOwned *r = aot_for_owned_top;
+    aot_for_owned_top = r->prev;
+    if (r->slot) { slot_decref(*r->slot); *r->slot = slot_null(); }
+    val_decref(r->saved);
+    r->prev = NULL; r->slot = NULL; r->saved = NULL;
+}
+static inline void aot_for_owned_end(AotForOwned *r) {
+    if (aot_for_owned_top != r) { fputs("AOT loop ownership order error\n", stderr); abort(); }
+    aot_for_owned_drop();
+}
+static inline void aot_for_owned_drain_to(AotForOwned *mark) {
+    while (aot_for_owned_top != mark) {
+        if (!aot_for_owned_top) { fputs("AOT loop ownership frame error\n", stderr); abort(); }
+        aot_for_owned_drop();
+    }
+}
+static inline void aot_for_owned_unwind(int handler_depth) {
+    while (aot_for_owned_top && aot_for_owned_top->handler_depth >= handler_depth)
+        aot_for_owned_drop();
+}
 static void aot_try_push(jmp_buf *b) {
     if (aot_try_n >= AOT_TRY_MAX) { fprintf(stderr, "Error: 'try' nested more than %d deep\n", AOT_TRY_MAX); exit(1); }
     aot_try_bufs[aot_try_n++] = b;
@@ -108,6 +144,7 @@ static Value *aot_take_error_value(void) {   /* vm_take_error_value's shape */
 #define AOT_RESTAMP_V(call) ({ (call); g_trace_current_line = __aot_ln; })
 static int aot_depth = 0;
 static void aot_error_exit(void) {
+    aot_for_owned_unwind(aot_try_n);
     if (aot_try_n > 0) longjmp(*aot_try_bufs[aot_try_n - 1], 1);
     fprintf(stderr, "%s\n", g_error_msg);
     exit(1);
@@ -169,6 +206,14 @@ static inline __attribute__((always_inline)) double aot_num_guard_inl(double x) 
     return x;
 }
 #define num_guard(x) aot_num_guard_inl(x)
+
+/* A scalar buffer read must transfer to the current AOT handler immediately.
+ * The runtime inline buffer_read_num was defined before the AOT num_guard
+ * override, so calling it here would only set a pending error and continue.
+ * Bulk kernel storage remains raw; normalize when an element is read. */
+static inline __attribute__((always_inline)) double aot_buffer_read_num(const Value *buffer, int64_t index) {
+    return num_guard(buffer->data.buffer.data[index]);
+}
 /* A NaN reached a packed (SIMD) computation: raise under strict, return
  * under EIGS_STRICT=0 so the caller recomputes with the soft guard. */
 static void __attribute__((noinline, cold)) aot_vnan(void) { aot_strict_nan(NULL); }
@@ -507,6 +552,50 @@ static void aot_set(Env *g, const char *name, Value *val) {
     env_set_local_owned(g, name, val);     /* adopts val's birth ref */
 }
 
+/* A module namespace is an authoritative Env projection, exactly as IMPORT.
+ * A hidden namespace roots the fresh Env before initializers can raise;
+ * publication installs the actual namespace/cache roots before dropping it.
+ * The returned Value is owned. Static Env pointers borrow from these roots,
+ * so escaped compiled wrappers keep their module authority after user aliases
+ * are replaced. No implementation symbols enter the original-key Env. */
+/* Match IMPORT's cache identity, separately from source-path resolution.
+ * Compute once before initialization and keep the same key for publication:
+ * initializer code can change filesystem state. The VM uses the resolved
+ * spelling only when realpath fails (vm.c IMPORT, abs_path[8192]). */
+enum { AOT_MODULE_CACHE_KEY_CAP = 8192 };
+static void aot_module_cache_key(const char *path, char key[AOT_MODULE_CACHE_KEY_CAP]) {
+    if (!realpath(path, key))
+        snprintf(key, AOT_MODULE_CACHE_KEY_CAP, "%s", path);
+}
+static Env *aot_module_begin(Env *g, const char *hold_name) {
+    Env *e = env_new(g_builtin_env);
+    Value *holder = make_dict(0);
+    eigs_module_ns_attach(holder, e);
+    aot_set(g, hold_name, holder); /* hidden root, including failed initializers */
+    env_decref(e);               /* no unrooted creator ref */
+    return e;                   /* borrowed from holder, later cache/namespace */
+}
+static Value *aot_module_publish(Env **module, const char *cache_key) {
+    Env *e = *module;
+    Value *ns = make_dict(e->count);
+    for (int i = 0; i < e->count; ++i) {
+        if (!e->names[i] || e->names[i][0] == '_') continue;
+        Value *v = slot_to_value(e->values[i]);
+        dict_set(ns, e->names[i], v);
+        val_decref(v);
+    }
+    eigs_module_ns_attach(ns, e);
+    if (!eigs_module_cache_put(cache_key, ns, e)) {
+        Value *cached = NULL;
+        if (!eigs_module_cache_get(cache_key, &cached))
+            rt_error(EK_UNDEFINED_NAME, g_trace_current_line, "module cache publication failed");
+        *module = eigs_module_ns_env(cached);
+        val_decref(ns);
+        ns = cached;
+    }
+    return ns;
+}
+
 /* ---- boxed module-global `local` shadow (#86, F-OURO-35) ----
  * The VM's chain walk in miniature: once `local NAME is <boxed>` has
  * EXECUTED in this call, the frame binding (__eigs_l) wins; before it (and
@@ -556,7 +645,8 @@ static Value *aot_index_get_ib_slow(Value *target, double d);
  * There is no second implementation to keep in step. */
 static inline Value *aot_dot_get_tb_ic(Value *target, const char *key,
                                        int *ic, const char **ick) {
-    if (__builtin_expect(target != NULL && target->type == VAL_DICT, 1)) {
+    if (__builtin_expect(target != NULL && target->type == VAL_DICT
+                         && !target->module_ns, 1)) {
         int i = *ic;
         if (__builtin_expect(i >= 0 && i < target->data.dict.count
                              && target->data.dict.keys[i] == *ick, 1)) {
@@ -622,7 +712,8 @@ static __attribute__((noinline)) double aot_dot_num_si_cold(Value *target, const
  * miss reports the same diagnostic the IC would have. */
 static inline double aot_dot_num_tb_si(Value *target, const char *key,
                                        int idx, const char *site) {
-    if (__builtin_expect(target != NULL && target->type == VAL_DICT, 1)) {
+    if (__builtin_expect(target != NULL && target->type == VAL_DICT
+                         && !target->module_ns, 1)) {
         Value *v = target->data.dict.vals[idx];
         if (__builtin_expect(v != NULL && v->type == VAL_NUM, 1)) return v->data.num;
     }
@@ -631,7 +722,8 @@ static inline double aot_dot_num_tb_si(Value *target, const char *key,
 
 static inline double aot_dot_num_tb_ic(Value *target, const char *key,
                                        int *ic, const char **ick, const char *site) {
-    if (__builtin_expect(target != NULL && target->type == VAL_DICT, 1)) {
+    if (__builtin_expect(target != NULL && target->type == VAL_DICT
+                         && !target->module_ns, 1)) {
         int i = *ic;
         if (__builtin_expect(i >= 0 && i < target->data.dict.count
                              && target->data.dict.keys[i] == *ick, 1)) {
@@ -643,7 +735,8 @@ static inline double aot_dot_num_tb_ic(Value *target, const char *key,
 }
 static inline void aot_dot_set_num_tb_ic(Value *target, const char *key, double d,
                                          int *ic, const char **ick) {
-    if (__builtin_expect(target != NULL && target->type == VAL_DICT, 1)) {
+    if (__builtin_expect(target != NULL && target->type == VAL_DICT
+                         && !target->module_ns, 1)) {
         int i = *ic;
         if (__builtin_expect(i >= 0 && i < target->data.dict.count
                              && target->data.dict.keys[i] == *ick, 1)) {
@@ -986,7 +1079,7 @@ static double aot_list_num_at(Value *b, long i, const char *site) {
 }
 static double aot_buf_get_at(Value *b, double idx, const char *site) {
     if (b && b->type == VAL_LIST) return aot_list_num_at(b, aot_idx_k(idx, b->data.list.count, 1), site);
-    aot_buf_expect_at(b, site); return b->data.buffer.data[aot_idx(idx, b->data.buffer.count)];
+    aot_buf_expect_at(b, site); return aot_buffer_read_num(b, aot_idx(idx, b->data.buffer.count));
 }
 static void   aot_buf_set_at(Value *b, double idx, double v, const char *site) {
     if (b && b->type == VAL_LIST) {
@@ -1019,7 +1112,7 @@ static long aot_idx_ik(long i, int count, int is_list) {
 static inline long aot_idx_i(long i, int count) { return aot_idx_ik(i, count, 0); }
 static double aot_buf_get_i_at(Value *b, long idx, const char *site) {
     if (b && b->type == VAL_LIST) return aot_list_num_at(b, aot_idx_ik(idx, b->data.list.count, 1), site);
-    aot_buf_expect_at(b, site); return b->data.buffer.data[aot_idx_i(idx, b->data.buffer.count)];
+    aot_buf_expect_at(b, site); return aot_buffer_read_num(b, aot_idx_i(idx, b->data.buffer.count));
 }
 static void   aot_buf_set_i_at(Value *b, long idx, double v, const char *site) {
     if (b && b->type == VAL_LIST) {
@@ -2011,7 +2104,7 @@ static inline double aot_tensor_num_at(AotTensor t, double d, const char *site) 
      * buffer is one flat buffer); a LIST-kind 2-D tensor's t[i] is a row. */
     long n = (t.kind == 1 || t.is1d) ? (t.is1d ? t.cols : t.rows * t.cols) : -1;
     if (__builtin_expect(n >= 0 && (double)i == d && i >= 0 && i < n, 1))
-        return t.data[i];
+        return num_guard(t.data[i]);
     if (n < 0)
         rt_error(EK_TYPE, g_trace_current_line, "non-numeric value in a numeric context at %s (type list)", site);
     if ((double)i != d)
@@ -2160,7 +2253,7 @@ static __attribute__((noinline)) Value *aot_index_get_ib_slow(Value *target, dou
         if (!aot_idx_is_int(d, &i))
             rt_error(EK_VALUE, g_trace_current_line, "index must be an integer, got %g", d);
         else if (aot_idx_resolve(&i, target->data.buffer.count))
-            result = make_num(target->data.buffer.data[i]);
+            result = make_num(aot_buffer_read_num(target, i));
         else
             rt_error(EK_INDEX, g_trace_current_line, "buffer index %d out of range (length %d)", i, target->data.buffer.count);
     } else {
@@ -2184,7 +2277,7 @@ static inline double aot_index_num_ib(Value *target, double d, const char *site)
         long i = (long)d;
         if (target->type == VAL_BUFFER) {
             if (__builtin_expect((double)i == d && i >= 0 && i < (long)target->data.buffer.count, 1))
-                return target->data.buffer.data[i];
+                return aot_buffer_read_num(target, i);
         } else if (target->type == VAL_LIST) {
             if (__builtin_expect((double)i == d && i >= 0 && i < (long)target->data.list.count, 1)) {
                 Value *r = target->data.list.items[i];
@@ -2327,7 +2420,7 @@ static Value *aot_index_get_i(Value *target, double d) {
         if (!aot_idx_is_int(d, &i))
             rt_error(EK_VALUE, g_trace_current_line, "index must be an integer, got %g", d);
         else if (aot_idx_resolve(&i, target->data.buffer.count))
-            result = make_num(target->data.buffer.data[i]);
+            result = make_num(aot_buffer_read_num(target, i));
         else
             rt_error(EK_INDEX, g_trace_current_line, "buffer index %d out of range (length %d)", i, target->data.buffer.count);
     } else {
@@ -2365,7 +2458,7 @@ static Value *aot_index_get(Value *target, Value *idx) {
         if (!aot_idx_is_int(idx->data.num, &i))
             rt_error(EK_VALUE, g_trace_current_line, "index must be an integer, got %g", idx->data.num);
         else if (aot_idx_resolve(&i, target->data.buffer.count))
-            result = make_num(target->data.buffer.data[i]);
+            result = make_num(aot_buffer_read_num(target, i));
         else
             rt_error(EK_INDEX, g_trace_current_line, "buffer index %d out of range (length %d)", i, target->data.buffer.count);
     } else {
@@ -2516,7 +2609,7 @@ static inline AotScalarRead aot_scalar_index(EigsSlot target, AotScalarRead inde
             }
         } else if (container && container->type == VAL_BUFFER && number >= 0 &&
                    number < container->data.buffer.count && (double)(int)number == number) {
-            double result = num_guard(container->data.buffer.data[(int)number]);
+            double result = aot_buffer_read_num(container, (int)number);
             val_decref(index.value);
             return aot_scalar_number(result);
         }
@@ -2710,11 +2803,20 @@ static inline int aot_ic_slot(Value *target, const char *key,
     return i;
 }
 
+/* Namespace slots are projections of their attached Env, not authoritative
+ * dictionary array entries. Cached and static-index dot siblings must use this
+ * lookup rather than reuse a possibly stale mirrored slot. Returns borrowed. */
+static inline Value *aot_dot_value_ic(Value *target, const char *key,
+                                     int *ic, const char **ick) {
+    if (target->module_ns) return dict_get(target, key);
+    int i = aot_ic_slot(target, key, ic, ick);
+    return (i >= 0) ? target->data.dict.vals[i] : NULL;
+}
+
 static inline Value *aot_dot_borrow_ic(Value *target, const char *key,
                                        int *ic, const char **ick) {
     if (target && target->type == VAL_DICT) {
-        int i = aot_ic_slot(target, key, ic, ick);
-        return (i >= 0) ? target->data.dict.vals[i] : NULL;
+        return aot_dot_value_ic(target, key, ic, ick);
     }
     if (target)
         rt_error(EK_TYPE, g_trace_current_line, "cannot access field '%s' on %s",
@@ -2731,8 +2833,7 @@ static inline Value *aot_dot_borrow_ic(Value *target, const char *key,
 static __attribute__((noinline)) Value *aot_dot_get_tb_slow(Value *target, const char *key,
                                                            int *ic, const char **ick) {
     if (target && target->type == VAL_DICT) {
-        int i = aot_ic_slot(target, key, ic, ick);
-        Value *v = (i >= 0) ? target->data.dict.vals[i] : NULL;
+        Value *v = aot_dot_value_ic(target, key, ic, ick);
         if (v) { val_incref(v); return v; }
         return make_null();
     }
@@ -2745,8 +2846,7 @@ static __attribute__((noinline)) Value *aot_dot_get_tb_slow(Value *target, const
 static __attribute__((noinline)) double aot_dot_num_tb_slow(Value *target, const char *key,
                                                            int *ic, const char **ick, const char *site) {
     if (target && target->type == VAL_DICT) {
-        int i = aot_ic_slot(target, key, ic, ick);
-        Value *v = (i >= 0) ? target->data.dict.vals[i] : NULL;
+        Value *v = aot_dot_value_ic(target, key, ic, ick);
         if (v && v->type == VAL_NUM) return v->data.num;
         rt_error(EK_TYPE, g_trace_current_line, "non-numeric value in a numeric context at %s (type %s)",
                 site, v ? val_type_name(v->type) : "null");
@@ -2761,6 +2861,10 @@ static __attribute__((noinline)) void aot_dot_set_num_tb_slow(Value *target, con
                                                              int *ic, const char **ick) {
     d = num_guard(d);
     if (target && target->type == VAL_DICT) {
+        if (target->module_ns) {
+            dict_set_owned(target, key, make_num(d));
+            return;
+        }
         int i = aot_ic_slot(target, key, ic, ick);
         if (i >= 0) {
             Value *old = target->data.dict.vals[i];
@@ -2783,8 +2887,7 @@ static __attribute__((noinline)) void aot_dot_set_num_tb_slow(Value *target, con
 static double aot_dot_num_ic(Value *target, const char *key,
                              int *ic, const char **ick, const char *site) {
     if (target && target->type == VAL_DICT) {
-        int i = aot_ic_slot(target, key, ic, ick);
-        Value *v = (i >= 0) ? target->data.dict.vals[i] : NULL;
+        Value *v = aot_dot_value_ic(target, key, ic, ick);
         if (v && v->type == VAL_NUM) {
             double d = v->data.num;
             val_decref(target);
@@ -2808,8 +2911,7 @@ static double aot_dot_num_ic(Value *target, const char *key,
 static Value *aot_dot_get_ic(Value *target, const char *key,
                              int *ic, const char **ick) {
     if (target && target->type == VAL_DICT) {
-        int i = aot_ic_slot(target, key, ic, ick);
-        Value *v = (i >= 0) ? target->data.dict.vals[i] : NULL;
+        Value *v = aot_dot_value_ic(target, key, ic, ick);
         if (v) val_incref(v);
         val_decref(target);
         return v ? v : make_null();
@@ -2838,6 +2940,11 @@ static void aot_dot_set_num_ic(Value *target, const char *key, double d,
     d = num_guard(d);   /* make_num guards; this path must not depend on its
                          * caller having done so (emit_num does, today). */
     if (target && target->type == VAL_DICT) {
+        if (target->module_ns) {
+            dict_set_owned(target, key, make_num(d));
+            val_decref(target);
+            return;
+        }
         int i = aot_ic_slot(target, key, ic, ick);
         if (i >= 0) {
             Value *old = target->data.dict.vals[i];
@@ -2864,6 +2971,11 @@ static void aot_dot_set_num_ic(Value *target, const char *key, double d,
 static void aot_dot_set_ic(Value *target, const char *key, Value *val,
                            int *ic, const char **ick) {
     if (target && target->type == VAL_DICT) {
+        if (target->module_ns) {
+            dict_set_owned(target, key, val);
+            val_decref(target);
+            return;
+        }
         int i = aot_ic_slot(target, key, ic, ick);
         if (i >= 0) {
             Value *promoted = promote_if_arena(val);
@@ -2919,7 +3031,7 @@ static long aot_iter_len(Value *v) {
 }
 static Value *aot_iter_get(Value *v, long k) {   /* owned element k */
     if (v->type == VAL_LIST)   { Value *e = v->data.list.items[k]; val_incref(e); return e; }
-    if (v->type == VAL_BUFFER) return make_num(v->data.buffer.data[k]);
+    if (v->type == VAL_BUFFER) return make_num(aot_buffer_read_num(v, k));
     rt_error(EK_TYPE, g_trace_current_line,
              "'for' requires a list or buffer, got %s", val_type_name(v->type));
     return make_null(); /* unreachable */

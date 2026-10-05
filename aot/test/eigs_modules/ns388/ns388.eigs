@@ -1,0 +1,9 @@
+value is 1
+define read(dummy) as:
+    return value
+first is read of 0
+value is 2
+define product(n) as:
+    if n == 0:
+        return 1
+    return n * (product of (n - 1))

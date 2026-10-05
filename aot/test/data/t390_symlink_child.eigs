@@ -1,0 +1,5 @@
+# This import runs interpreted after the compiled import.
+import ns390
+runtime_alias390 is ns390
+ns390.value is "interpreted-write"
+print of (ns390.read of 0)
