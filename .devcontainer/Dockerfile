@@ -50,7 +50,13 @@ RUN apt-get update \
 # or value or over a non-identifier operand -- mirrored in src/frontend.eigs
 # (own token kind, every p_report_error arm) and pinned by test/run.sh's
 # reject_one cases. #1113: embed observer gate default -- no mirror needed.
-ARG EIGS_REF=v0.43.0
+#
+# v0.44.0: the mirrors land in the same PR as this bump (ouroboros#243/#262).
+# EigenScript#1105: a function-scope `for` binder is loop-scoped and its
+# owned value unwinds on exit. EigenScript#1057: module namespaces are live
+# views, not import-time snapshots. EigenScript#1361: the strict default at
+# every AOT-owned stand-in.
+ARG EIGS_REF=v0.44.0
 RUN mkdir -p /opt/eigenscript-src && cd /opt/eigenscript-src && git init -q \
  && git remote add origin https://github.com/InauguralSystems/EigenScript.git \
  && git fetch -q --depth 1 origin "${EIGS_REF}" && git checkout -q FETCH_HEAD \
