@@ -1,0 +1,63 @@
+# (#1361) Preserve earlier-element stores when a vector chunk raises.
+# Raw NaN copied to a[1] makes the first statement's scalar read raise under
+# strict1; element0's outputs must remain. Under strict0 the NaN read becomes0
+# and the two-store loop reaches division by zero, while the one-store loop
+# completes. Keep both real functions, catches and prefix output rows.
+# Raw-infinity extraction separately witnesses finite scalar clamping.
+raw_inf_buf is buffer of 4
+raw_inf_buf[0] is 1e300
+raw_inf_buf[1] is 1e300
+raw_inf_buf[2] is 1e300
+raw_inf_buf[3] is 1e300
+raw_inf_mat is reshape of [raw_inf_buf, 2, 2]
+raw_inf is matmul of [raw_inf_mat, raw_inf_mat]
+print of (raw_inf[0] > 1e308)
+seed_a is buffer of 2
+seed_a[0] is 1e300
+seed_a[1] is 1e300
+seed_b is buffer of 2
+seed_b[0] is 1e300
+seed_b[1] is 0 - 1e300
+seed_am is reshape of [seed_a, 2, 1]
+seed_bm is reshape of [seed_b, 2, 1]
+seed_nan is matmul_at of [seed_am, seed_bm]
+define h(a, z, o1, o2, n) as:
+    i is 0
+    loop while i < n:
+        o1[i] is a[i] * z[i]
+        o2[i] is a[i] / z[i]
+        i is i + 1
+    return 0
+define k1(a, z, o1, n) as:
+    i is 0
+    loop while i < n:
+        o1[i] is a[i] * z[i]
+        i is i + 1
+    return 0
+a is buffer of 8
+z is buffer of 8
+k is 0
+loop while k < 8:
+    a[k] is k + 1
+    z[k] is 2
+    k is k + 1
+buf_copy of [seed_nan, 0, a, 1, 1]
+print of "preparation-complete"
+z[1] is 0
+z[2] is 0
+o1 is buffer of 8
+o2 is buffer of 8
+try:
+    h of [a, z, o1, o2, 8]
+catch e:
+    print of e.message
+    print of e.line
+print of f"{o1[0]} {o1[1]} {o1[2]} {o1[3]} / {o2[0]} {o2[1]} {o2[2]} {o2[3]}"
+o3 is buffer of 8
+try:
+    k1 of [a, z, o3, 8]
+    print of "k1 ran"
+catch e:
+    print of e.message
+    print of e.line
+print of f"{o3[0]} {o3[1]} {o3[2]} {o3[3]}"

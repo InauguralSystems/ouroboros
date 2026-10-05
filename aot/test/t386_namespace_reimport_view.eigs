@@ -1,0 +1,26 @@
+# Ordinary current-runtime namespace conformance; VM is the output oracle.
+import ns386
+alias is ns386
+alias.value is "changed"
+alias["extra"] is [7, 8]
+ns386 is {"value": "temporary"}
+import ns386
+print of (alias == ns386)
+print of (ns386.read of 0)
+print of (keys of ns386)
+print of (values of ns386)
+print of ns386
+
+# The runtime loader pre-populates a parent/child cache before either static
+# import. Both init markers must appear once; direct child access must work.
+define preload(dummy) as:
+    load_file of "data/t386_preload_namespace_parent.eigs"
+    return 1
+print of (preload of 0)
+import ns386_parent
+import ns386_child
+print of (ns386_parent.ns386_child == ns386_child)
+print of (ns386_parent.read of 0)
+ns386_child.value is "updated-child"
+print of (ns386_parent.read of 0)
+print of (ns386_child.read of 0)

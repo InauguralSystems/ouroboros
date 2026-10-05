@@ -1,0 +1,9 @@
+value is "module"
+define shadow(dummy) as:
+    local before is value
+    local value is before + "-local"
+    return [before, value]
+define conditional(flag) as:
+    if flag:
+        local value is "branch"
+    return value

@@ -1,0 +1,13 @@
+# Reverse ordering: interpreted cache entry before compiled import.
+define load_child391(dummy) as:
+    load_file of "data/t391_symlink_child.eigs"
+    return 1
+print of (load_child391 of 0)
+import ns391
+print of (runtime_alias391 == ns391)
+print of (ns391.read of 0)
+ns391.value is "compiled-after"
+print of (runtime_old391 of 0)
+runtime_alias391["value"] is "escaped-after"
+print of (ns391.read of 0)
+print of (runtime_old391 of 0)

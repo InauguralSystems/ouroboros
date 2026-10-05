@@ -1,0 +1,10 @@
+# Ordinary current-runtime namespace conformance; VM is the output oracle.
+import ns389
+print of (ns389.internal of 8)
+print of (ns389.previous of 0)
+ns389["value"] is 4
+print of (ns389.previous of 0)
+print of (ns389.status of 0)
+print of (ns389.internal of 6)
+print of (ns389.previous of 0)
+print of ns389.value

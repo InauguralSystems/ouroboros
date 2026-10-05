@@ -1,0 +1,124 @@
+# (#1361) Ordinary matmul_at creates a raw NaN, copied into xb[5]
+# without a scalar read. Scalar buffer reads raise under strict1 and normalize
+# NaN to0 under strict0. The separate overflowing matmul scalar read is finite
+# clamp coverage, not the strict discriminator. Keep dot/ranged-dot, two-store
+# vector map, one-store map, matmul-shaped outvec and rowmap target calls.
+# vmap's first input is finite; only its second statement reads xb's NaN,
+# so element5's first store precedes its strict failure. Print the prefix/state
+# after the catch. A nonzero second-output sentinel distinguishes untouched
+# failure/later lanes from completed zero stores; shared-X matmul/rowmap
+# fail at their first NaN operand read.
+define vmap(a, c, o1, o2, n) as:
+    i is 0
+    loop while i < n:
+        o1[i] is a[i] + 1
+        o2[i] is c[i] - c[i]
+        i is i + 1
+    return 0
+define vmap1(a, o1, n) as:
+    i is 0
+    loop while i < n:
+        o1[i] is a[i] * 0
+        i is i + 1
+    return 0
+define mm(out, X, W, S, Din, Dout) as:
+    i is 0
+    loop while i < S:
+        o is 0
+        loop while o < Dout:
+            s is 0
+            d is 0
+            loop while d < Din:
+                s is s + X[i * Din + d] * W[d * Dout + o]
+                d is d + 1
+            out[i * Dout + o] is s
+            o is o + 1
+        i is i + 1
+    return 0
+define rows(out, x, g, S, D) as:
+    i is 0
+    loop while i < S:
+        d is 0
+        loop while d < D:
+            out[i * D + d] is g[d] * x[i * D + d] + 1
+            d is d + 1
+        i is i + 1
+    return 0
+raw_inf_buf is buffer of 4
+raw_inf_buf[0] is 1e300
+raw_inf_buf[1] is 1e300
+raw_inf_buf[2] is 1e300
+raw_inf_buf[3] is 1e300
+raw_inf_mat is reshape of [raw_inf_buf, 2, 2]
+raw_inf is matmul of [raw_inf_mat, raw_inf_mat]
+print of (raw_inf[0] > 1e308)
+seed_a is buffer of 2
+seed_a[0] is 1e300
+seed_a[1] is 1e300
+seed_b is buffer of 2
+seed_b[0] is 1e300
+seed_b[1] is 0 - 1e300
+seed_am is reshape of [seed_a, 2, 1]
+seed_bm is reshape of [seed_b, 2, 1]
+seed_nan is matmul_at of [seed_am, seed_bm]
+xb is buffer of 8
+xb[1] is 3
+buf_copy of [seed_nan, 0, xb, 5, 1]
+print of "preparation-complete"
+zb is buffer of 8
+zb[1] is 2
+try:
+    print of (dot of [xb, zb])
+catch e:
+    print of e.message
+    print of e.line
+try:
+    print of (dot of [xb[0 : 8], zb[0 : 8]])
+catch e:
+    print of e.message
+    print of e.line
+o1 is buffer of 8
+o2 is buffer of 8
+fill_index is 0
+loop while fill_index < 8:
+    o2[fill_index] is 7
+    fill_index is fill_index + 1
+try:
+    vmap of [zb, xb, o1, o2, 8]
+    print of o2[5]
+catch e:
+    print of e.message
+    print of e.line
+print of f"vmap-prefix {o1[4]} {o1[5]} {o1[6]} / {o2[4]} {o2[5]} {o2[6]}"
+try:
+    vmap1 of [xb, o1, 8]
+    print of o1[5]
+catch e:
+    print of e.message
+    print of e.line
+W is buffer of 32
+w is 0
+loop while w < 32:
+    W[w] is 1
+    w is w + 1
+W[13] is 0
+O is buffer of 16
+try:
+    mm of [O, xb, W, 2, 4, 8]
+    print of O[0]
+catch e:
+    print of e.message
+    print of e.line
+g is buffer of 4
+g[0] is 1
+g[1] is 0
+g[2] is 1
+g[3] is 1
+R is buffer of 8
+try:
+    rows of [R, xb, g, 2, 4]
+    print of R[5]
+catch e:
+    print of e.message
+    print of e.line
+print of "after"

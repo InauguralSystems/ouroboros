@@ -3,11 +3,13 @@
 ## The tension
 
 EigenScript guarantees programs never observe NaN or Infinity — `num_guard`
-runs after every numeric op (`x!=x → 0`, `|x|>1e308 → ±1e308`). This is **not
-decorative**: the observer system (`converged`/`stable`/`equilibrium`) compares
-`dH`/entropy against thresholds, and NaN destroys ordering (`NaN != NaN`, every
-NaN comparison is false). One NaN would silently corrupt convergence detection —
-the language's core feature. So the guarantee is load-bearing for the niche.
+runs after every numeric op (`|x|>1e308 → ±1e308`; a NaN RAISES under the
+runtime's strict default, EigenScript#1361, and becomes 0 only under
+`EIGS_STRICT=0`). This is **not decorative**: the observer system
+(`converged`/`stable`/`equilibrium`) compares `dH`/entropy against thresholds,
+and NaN destroys ordering (`NaN != NaN`, every NaN comparison is false). One
+NaN would silently corrupt convergence detection — the language's core feature.
+So the guarantee is load-bearing for the niche.
 
 But `num_guard`'s **branch** blocks SIMD auto-vectorization of element-wise
 numeric loops (`out[i] = f(in[i])`) — the hot shape of matmuls, physics solvers,
@@ -42,8 +44,11 @@ a NaN/Inf.* It is **not**: *every `+` is individually clamped.* So:
    second type, no unsafe mode.
 2. **Implement `num_guard`'s effect as a branch-free PACKED guard** that
    vectorizes: `cmp x,x` + `and` (NaN→0), then `min`/`max` clamp. Verified
-   semantically identical to scalar `num_guard`, including NaN and overflow
-   (`bench/simd_guard.c`).
+   semantically identical to the soft (`EIGS_STRICT=0`) scalar `num_guard`,
+   including NaN and overflow (`bench/simd_guard.c`). Under the strict default
+   a NaN must raise instead, so the packed loops clamp with a guard that lets a
+   NaN propagate and test each stored chunk once; a NaN chunk goes to the
+   scalar loop, which raises in the VM's element order (`aot_rt.h`, #1361).
 3. **Elide guards where intermediates provably can't overflow** (the
    bounded-range analysis already in `compile.eigs`) → those loops emit fully
    raw → full SIMD width.

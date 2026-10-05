@@ -1,0 +1,6 @@
+# Preserve the interpreted namespace and function before static import.
+import ns391
+runtime_alias391 is ns391
+runtime_old391 is ns391.read
+ns391.value is "interpreted-first"
+print of (runtime_old391 of 0)

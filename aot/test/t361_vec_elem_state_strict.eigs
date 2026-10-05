@@ -1,0 +1,64 @@
+# (#1361) Preserve partial state and avoid double replay in a two-store map.
+# First run is finite. In the second, element5's SECOND statement reads a raw
+# NaN; strict1 raises after its read-modify-write first output was stored.
+# Strict0 normalizes the read and reaches element6's first-store zero divisor.
+# Eight elements retain later-chunk positions at widths2/4, complete output
+# rows and dependent second-store values. Raw infinity separately clamps.
+raw_inf_buf is buffer of 4
+raw_inf_buf[0] is 1e300
+raw_inf_buf[1] is 1e300
+raw_inf_buf[2] is 1e300
+raw_inf_buf[3] is 1e300
+raw_inf_mat is reshape of [raw_inf_buf, 2, 2]
+raw_inf is matmul of [raw_inf_mat, raw_inf_mat]
+print of (raw_inf[0] > 1e308)
+seed_a is buffer of 2
+seed_a[0] is 1e300
+seed_a[1] is 1e300
+seed_b is buffer of 2
+seed_b[0] is 1e300
+seed_b[1] is 0 - 1e300
+seed_am is reshape of [seed_a, 2, 1]
+seed_bm is reshape of [seed_b, 2, 1]
+seed_nan is matmul_at of [seed_am, seed_bm]
+define g(a, z, c, o1, o2, n) as:
+    i is 0
+    loop while i < n:
+        o1[i] is o1[i] + a[i] / z[i]
+        o2[i] is c[i] - c[i] + o1[i] * 2
+        i is i + 1
+    return 0
+define show(o1, o2) as:
+    print of f"{o1[0]} {o1[1]} {o1[2]} {o1[3]} {o1[4]} {o1[5]} {o1[6]} {o1[7]}"
+    print of f"{o2[0]} {o2[1]} {o2[2]} {o2[3]} {o2[4]} {o2[5]} {o2[6]} {o2[7]}"
+define fill(o1, o2) as:
+    k is 0
+    loop while k < 8:
+        o1[k] is 10
+        o2[k] is 20
+        k is k + 1
+    return 0
+a is buffer of 8
+z is buffer of 8
+c is buffer of 8
+k is 0
+loop while k < 8:
+    a[k] is k + 1
+    z[k] is 2
+    c[k] is k
+    k is k + 1
+o1 is buffer of 8
+o2 is buffer of 8
+fill of [o1, o2]
+g of [a, z, c, o1, o2, 8]
+show of [o1, o2]
+buf_copy of [seed_nan, 0, c, 5, 1]
+print of "preparation-complete"
+z[6] is 0
+fill of [o1, o2]
+try:
+    g of [a, z, c, o1, o2, 8]
+catch e:
+    print of e.message
+    print of e.line
+show of [o1, o2]

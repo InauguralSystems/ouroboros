@@ -31,4 +31,5 @@ jobs:
           # half that proves the oracle can still go red runs everywhere.
           # An oracle that nothing dispatches is not a gate, and that was
           # the exact residual this repo shipped once already.
-          runCmd: bash aot/core_check.sh && bash aot/k_oracle.sh --selftest && EIGS=eigenscript bash test/run.sh && EIGS=eigenscript bash aot/test/run.sh && EIGS=eigenscript bash aot/test/leak.sh
+          # Compiler parity uses the bytecode VM, independent of the caller's JIT settings.
+          runCmd: export EIGS_JIT_OFF=1 && bash aot/core_check.sh && bash aot/k_oracle.sh --selftest && EIGS=eigenscript bash test/run.sh && EIGS=eigenscript bash aot/test/run.sh && EIGS=eigenscript bash aot/test/leak.sh

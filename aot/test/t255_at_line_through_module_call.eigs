@@ -1,10 +1,9 @@
-# ouroboros#156: `what is s at L` through a spliced module call. The VM
-# stamps g_trace_current_line with whatever line last EXECUTED -- inside the
-# callee, its return line -- which retires earlier same-line history
-# entries; the AOT stamped only traced statements' own lines, so the
-# spliced callee never restamped and the query answered seed! where the
-# VM answers seed!!!. Since round 140 every statement stamps, the callee
-# included, and the two agree.
+# ouroboros#156: `what is s at L` through a spliced module call. Line 4
+# names no statement in this file or in _am156.eigs. Measured: the v0.43.0
+# VM answered seed!!!; the #1361 candidate runtime (c9a478e) answers null.
+# The AOT matches main since #1361 round 5, which restores the caller's
+# line after every compiled call (AOT_RESTAMP); before that it answered
+# seed!!!. Line 4 must stay a comment line for `at 4` to mean this.
 import _am156
 s is "seed"
 s is _am156.tag of s

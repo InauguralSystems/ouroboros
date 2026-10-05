@@ -1,0 +1,278 @@
+# (#1361 r5) An AOT-owned raise reports its FRAME's line after a call in
+# the same statement. Each statement below calls a function (side, say) and
+# then raises in the same statement. The VM reports the raising statement's
+# line; the AOT used to report the callee's last line, because the callee's
+# stamps were left in g_trace_current_line when it returned.
+# Raises: sqrt's domain raise, division by zero, num_guard's NaN raise, the
+# dot reduction's NaN raise, and a call made through a function VALUE (the
+# __wrap_ entry), shadow-dispatch hits (a direct call of a handler: numeric,
+# numeric with a borrowed key, and value context), and a builtin that runs
+# interpreted code (eval, whose code stamps the line too).
+# (#1361 r6) The callee may also be INTERPRETED: a function from a nested
+# literal load_file (the DMG debugger shape), one defined by eval, called by
+# name, through a value (a parameter, and an index expression), through
+# dispatch's builtin path, and as sort_by's key function; its OP_LINE stamps
+# name its own lines. One row raises from a runtime builtin (len) instead of
+# an AOT-owned site.
+# (#1361 r7, against EigenScript#1424's VM) The call may also be the RIGHT
+# or ONLY operand of the raising operation: sqrt of (neg of 4), 1 / (zero of
+# 4), 7 % (zero of 4), and a type error with the call on either side of a
+# str (s + (f1 of 1), (f1 of 1) + s, (f1 of 1) - s); each at module level and
+# inside a compiled function. The VM used to keep the callee's line here.
+# t371 is the uncaught form.
+# (#1361 r8) A builtin may call a COMPILED callback and then raise on its
+# own before it returns: sort_by's "key function must return a number". The
+# raise must name the sort_by statement, not the key's last line, so the
+# __wrap_ entry restores the line when the callee returns. One row per
+# wrapper arm: a single-parameter key returning a value (at module level and
+# in a function), one that returns nothing (void), and a two-parameter key
+# with a default (the multi-parameter wrapper).
+# The NaN comes from a matmul that overflowed to inf (t355),
+# copied into plain buffers (a module tensor read inside a function is a
+# separate, pre-existing divergence).
+define side(t) as:
+    print of t
+    return 1
+define f_sqrt(n) as:
+    return (side of "s") + (sqrt of (n - 5))
+define f_div(n) as:
+    return (side of "d") + (1 / (n - 1))
+define f_nan(b) as:
+    return (side of "n") + (b[0] - b[1])
+define f_dot(xb, zb) as:
+    return (side of "r") + (dot of [xb, zb])
+define f_val(fn, n) as:
+    return (fn of "v") + (sqrt of (n - 5))
+define f_deep(n) as:
+    return (f_div of 3) + (sqrt of (n - 5))
+define f_eval(n) as:
+    return (eval of "1 + 1") + (sqrt of (n - 5))
+define h_side(ctx) as:
+    print of "h"
+    return 1
+define f_disp(n) as:
+    return (dispatch of [tbl, 0, [n]]) + (sqrt of (n - 5))
+define f_disp_b(n, c) as:
+    k is n - n
+    return (dispatch of [tbl, k, c]) + (sqrt of (n - 5))
+define f_disp_v(n) as:
+    return [(dispatch of [tbl, 0, [n]]), (sqrt of (n - 5))]
+define neg(x) as:
+    y is 0 - x
+    return y
+define zero(x) as:
+    y is x - x
+    return y
+define f1(x) as:
+    y is x + 1
+    return y
+define r_sqrt(n) as:
+    return sqrt of (neg of n)
+define r_div(n) as:
+    return 1 / (zero of n)
+define r_mod(n) as:
+    return 7 % (zero of n)
+define r_typel(t) as:
+    return t + (f1 of 1)
+define r_typer(t) as:
+    return (f1 of 1) + t
+define r_types(t) as:
+    return (f1 of 1) - t
+define cbk(x) as:
+    y is x + 1
+    if x == 2:
+        return "s"
+    return y
+define cbk_void(x) as:
+    y is x + 1
+    if x == 2:
+        print of "v"
+define cbk_multi(x, d is 1) as:
+    y is x + d
+    if x == 2:
+        return "s"
+    return y
+define r_cbsort(xs) as:
+    return sort_by of [xs, cbk]
+flag is 1
+if flag == 1:
+    load_file of "data/t370_mod.eigs"
+eval of "define ev(t) as:\n    x is 1\n    y is 2\n    return 1"
+define f_nload(n) as:
+    return (mside of "a") + (sqrt of (n - 5))
+define f_evfn(n) as:
+    return (ev of "a") + (sqrt of (n - 5))
+define f_evrt(n) as:
+    return (ev of "a") + (len of n)
+define f_evdisp(n) as:
+    return (dispatch of [etbl, 0, [n]]) + (sqrt of (n - 5))
+define f_evexpr(n) as:
+    return (etbl[0] of "a") + (sqrt of (n - 5))
+define f_sortby(n) as:
+    return (len of (sort_by of [[3, 1, 2], mkey])) + (sqrt of (n - 5))
+tbl is []
+append of [tbl, h_side]
+etbl is []
+append of [etbl, ev]
+nb is buffer of 4
+nb[0] is 1e300
+nb[1] is 1e300
+nb[2] is 1e300
+nb[3] is 1e300
+nm is reshape of [nb, 2, 2]
+np is matmul of [nm, nm]
+ib is buffer of 2
+ib[0] is np[0]
+ib[1] is np[1]
+xb is buffer of 8
+xb[1] is 3
+xb[5] is np[0]
+zb is buffer of 8
+zb[1] is 2
+try:
+    print of (f_sqrt of 1)
+catch e:
+    print of f"sqrt {e.line}"
+try:
+    print of (f_div of 1)
+catch e:
+    print of f"div {e.line}"
+try:
+    print of (f_nan of ib)
+catch e:
+    print of f"nan {e.line}"
+try:
+    print of (f_dot of [xb, zb])
+catch e:
+    print of f"dot {e.line}"
+try:
+    print of (f_val of [side, 1])
+catch e:
+    print of f"val {e.line}"
+try:
+    print of (f_deep of 1)
+catch e:
+    print of f"deep {e.line}"
+try:
+    print of (f_eval of 1)
+catch e:
+    print of f"eval {e.line}"
+try:
+    print of (f_disp of 1)
+catch e:
+    print of f"disp {e.line}"
+try:
+    print of (f_disp_b of [1, [1]])
+catch e:
+    print of f"disp_b {e.line}"
+try:
+    print of (f_disp_v of 1)
+catch e:
+    print of f"disp_v {e.line}"
+try:
+    print of (f_nload of 1)
+catch e:
+    print of f"nload {e.line}"
+try:
+    print of (f_evfn of 1)
+catch e:
+    print of f"evfn {e.line}"
+try:
+    print of (f_evrt of 1)
+catch e:
+    print of f"evrt {e.line}"
+try:
+    print of (f_val of [ev, 1])
+catch e:
+    print of f"evval {e.line}"
+try:
+    print of (f_evdisp of 1)
+catch e:
+    print of f"evdisp {e.line}"
+try:
+    print of (f_evexpr of 1)
+catch e:
+    print of f"evexpr {e.line}"
+try:
+    print of (f_sortby of 1)
+catch e:
+    print of f"sortby {e.line}"
+try:
+    mm is (mside of "m") + (sqrt of (0 - 4))
+    print of mm
+catch e:
+    print of f"mmodule {e.line}"
+try:
+    m is (side of "m") + (sqrt of (0 - 4))
+    print of m
+catch e:
+    print of f"module {e.line}"
+s is "a"
+try:
+    z is sqrt of (neg of 4)
+    print of z
+catch e:
+    print of f"rsqrt {e.line}"
+try:
+    z is 1 / (zero of 4)
+catch e:
+    print of f"rdiv {e.line}"
+try:
+    z is 7 % (zero of 4)
+catch e:
+    print of f"rmod {e.line}"
+try:
+    z is s + (f1 of 1)
+catch e:
+    print of f"rtypel {e.line}"
+try:
+    z is (f1 of 1) + s
+catch e:
+    print of f"rtyper {e.line}"
+try:
+    z is (f1 of 1) - s
+catch e:
+    print of f"rtypes {e.line}"
+try:
+    print of (r_sqrt of 4)
+catch e:
+    print of f"fsqrt {e.line}"
+try:
+    print of (r_div of 4)
+catch e:
+    print of f"fdiv {e.line}"
+try:
+    print of (r_mod of 4)
+catch e:
+    print of f"fmod {e.line}"
+try:
+    print of (r_typel of s)
+catch e:
+    print of f"ftypel {e.line}"
+try:
+    print of (r_typer of s)
+catch e:
+    print of f"ftyper {e.line}"
+try:
+    print of (r_types of s)
+catch e:
+    print of f"ftypes {e.line}"
+cbxs is [3, 1, 2]
+try:
+    print of (sort_by of [cbxs, cbk])
+catch e:
+    print of f"cbsort {e.line}"
+try:
+    print of (sort_by of [cbxs, cbk_void])
+catch e:
+    print of f"cbsort_void {e.line}"
+try:
+    print of (sort_by of [cbxs, cbk_multi])
+catch e:
+    print of f"cbsort_multi {e.line}"
+try:
+    print of (r_cbsort of cbxs)
+catch e:
+    print of f"cbsort_fn {e.line}"
+print of (f_sqrt of 9)
+print of "after"

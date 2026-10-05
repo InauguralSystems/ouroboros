@@ -2,10 +2,10 @@
 # (range / buffer / all-numeric list literal) and the program is neither
 # observed nor traced, the loop var binds a C double per iteration instead of
 # an env slot — no boxed read-back in the body. Function-scope vars keep the
-# VM's slot semantics (post-loop reads see the last iterate); module-scope
+# runtime96 slot semantics (fresh post-loop reads raise); module-scope
 # vars are loop-block-scoped like the VM (a post-loop read is 'undefined
-# variable' there, an out-of-scope C name here — loud both ways, pinned
-# manually since the harness has no reject tier). A name bound by BOTH an
+# variable' there). The final fresh-name read is checked by the harness's
+# error tier after all positive checks. A name bound by BOTH an
 # eligible and an ineligible loop is poisoned and stays boxed everywhere.
 
 # module scope: range iterable + accumulator (the audit's cascade shape)
@@ -38,8 +38,8 @@ for w in ["a", "b"]:
 print of wsum
 print of names
 
-# function scope: post-loop read of the last iterate (slot semantics), and a
-# param reused as the loop var
+# function scope: a fresh post-loop read raises; a reused parameter restores
+# its prior value. The fresh read runs last, after the positive controls.
 define last_of(n) as:
     for k in range of n:
         local dummy is k
@@ -50,7 +50,6 @@ define reuse(p) as:
         local d2 is p
     return p
 
-print of (last_of of 5)
 print of (reuse of 99)
 
 # nested loops, inner var shadowing nothing, accumulating across both
@@ -59,3 +58,6 @@ for r in range of 4:
     for c in range of 3:
         grid is grid + (r * c)
 print of grid
+
+# All original positive controls ran above; the fresh read is the final action.
+print of (last_of of 5)

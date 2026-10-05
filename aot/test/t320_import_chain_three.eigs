@@ -7,10 +7,9 @@
 # folds the next link's into its own running total, so one wrong resolution
 # changes every number below it.
 #
-# The dict chain is also read through two levels of module-qualified access
-# (`ch_top.ch_mid.ch_leaf.ctr`): a module's import is a binding in ITS
-# dict, and the snapshot numbers are the import-time values (100 / 10 / 1),
-# not the bumped ones — the VM's snapshot semantics, kept.
+# The dict chain is also read through two levels of module-qualified access.
+# Runtime96 module namespaces are live: calls through imported functions mutate
+# the same bindings subsequently exposed as fields (127 / 15 / 3).
 #
 # The three links live under test/eigs_modules/<name>/<name>.eigs rather than
 # as `_`-prefixed siblings: a module binding that starts with `_` is OMITTED

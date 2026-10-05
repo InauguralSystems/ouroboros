@@ -1,0 +1,35 @@
+# (#1361) the AOT's own matmul kernel (aot_tensor_matmul) leaves inf - inf as
+# a raw NaN. The VM's builtin scans its result: strict raises "matmul: result
+# is not a number", naming matmul, on the buffer and the list path alike.
+# The soft halves are not printed here: the buffer NaN read (VM null, AOT 0)
+# and a 1x1 list result's shape are older, separate divergences.
+ab is buffer of 4
+ab[0] is 1e300
+ab[1] is 1e300
+ab[2] is 1
+ab[3] is 1
+bb is buffer of 4
+bb[0] is 1e300
+bb[1] is 1
+bb[2] is -1e300
+bb[3] is 1
+am is reshape of [ab, 2, 2]
+bm is reshape of [bb, 2, 2]
+try:
+    r is matmul of [am, bm]
+    print of r[3]
+catch e:
+    print of e.kind
+    print of e.message
+    print of e.line
+la is [[1e300, 1e300], [1, 1]]
+lb is [[1e300, 1], [-1e300, 1]]
+try:
+    lr is matmul of [la, lb]
+    print of lr[1]
+catch e:
+    print of e.message
+    print of e.line
+ok is matmul of [[[1, 2], [3, 4]], [[1, 0], [0, 1]]]
+print of ok
+print of "after"

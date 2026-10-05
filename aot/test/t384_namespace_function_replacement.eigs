@@ -1,0 +1,11 @@
+# Ordinary current-runtime namespace conformance; VM is the output oracle.
+import ns384
+old is ns384.step
+print of (ns384.apply of 2)
+define replacement(x) as:
+    return f"replacement {x}"
+ns384["step"] is replacement
+print of (ns384.apply of 2)
+print of (old of 2)
+print of (type of ns384.step)
+print of ns384

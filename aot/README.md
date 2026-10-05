@@ -87,7 +87,9 @@ ML activation layer; `bench/activation_kernel.eigs`):
 
 The full stack compounds: native code (no bytecode dispatch) × unboxed doubles
 (no `make_num` per op) × raw buffer pointers (no per-element bounds/`buf_get`) ×
-packed SIMD — all preserving no-NaN/Inf (the guard is *in* the vectorized loop).
+packed SIMD — all preserving no-NaN/Inf: the packed loop clamps per op and tests
+each chunk once for a NaN. A NaN chunk goes to the scalar loop, which raises (the
+runtime's strict default) or, only under `EIGS_STRICT=0`, stores 0.
 Dev box, SSE2 2-wide; cloud AVX2 is wider. (Tighter scalar loops are ~64×; this
 kernel's heavier per-element VM overhead makes the gap larger.)
 
@@ -123,7 +125,9 @@ the byte-exact oracle. And at the transformer's reduction length (16/32) it's a
 The resolution is an explicit opt-in: the upstream **`dot` builtin** (EigenScript
 #272) is specified with **unspecified summation association**, which *licenses*
 the AOT to emit a reassociated SIMD reduction (`aot_dot`: AOT_VW partial-sum
-lanes + horizontal sum + scalar tail, per-lane `vguard` keeping no-NaN/Inf). The
+lanes + horizontal sum + scalar tail, a per-lane clamp and one NaN test per call:
+a NaN raises by default; only under `EIGS_STRICT=0` is the call recomputed with
+the soft per-op guard, NaN→0). The
 differential harness compares `dot` programs (`*_tol.eigs`) with **tolerance, not
 bytes**. `dot of [a,b]` over a 4096-wide buffer, 200k times:
 
@@ -264,7 +268,8 @@ so it inherits the scalar path's bounds safety. Recognized by `outvec_loop` (the
 
 ### Accumulator num_guard elision
 
-The reduction's per-op `num_guard` (NaN→0, clamp ±1e308) is the last cost. It
+The reduction's per-op `num_guard` (clamp ±1e308; a NaN raises by default and
+becomes 0 only under `EIGS_STRICT=0`) is the last cost. It
 can't be dropped blind — a transient overflow that comes back down to a *finite*
 value would diverge undetectably, so a "check the output for Inf" is unsound.
 Instead, a **once-per-matmul runtime precheck**: `aot_buf_maxabs` scans the two
@@ -574,6 +579,12 @@ bounded-range analysis eliding guards toward the raw ceiling (~11× on cloud).
 So no-NaN/Inf stays universal and the language still vectorizes — niche by
 identity, general by implementation. Full write-up: **`DESIGN_no_nan_simd.md`**.
 
+That NaN→0 is now the soft half only. Since EigenScript#1361 the runtime is strict
+by default and a NaN RAISES; the NaN→0 stand-in applies only under `EIGS_STRICT=0`.
+The packed loops therefore clamp with `aot_vguardp`, which lets a NaN propagate,
+and test each stored chunk once (`aot_vnanany`); a NaN chunk is not stored and
+the scalar loop raises (or zeroes) in the VM's element order.
+
 **Implemented.** The AOT recognizes the element-wise buffer-map pattern
 (`loop while ctr < bound: buf[ctr] is <+/-/* over buf[ctr] reads & literals>;
 ctr is ctr+1`) and emits a SIMD loop + scalar tail behind a runtime guard
@@ -607,13 +618,12 @@ elides the guard and emits raw vector arithmetic (`test/t9_broadcast`).
 `_vi+k`). The counter isn't a literal-bounded scalar, so these maps stay guarded
 (sound). `test/t10_iota`.
 
-**Division.** `/` vectorizes via `aot_vdiv` (packed `div`, then mask the `b==0`
-lanes to `0`, then guard) — matching the VM's value semantics (`b==0 → 0`,
-overflow clamped). It's never elided (no lower bound on the divisor), so div maps
-stay guarded. `test/t11_div`. *Known gap:* the VM prints a `division by zero`
-warning to **stderr**; the AOT doesn't reproduce it (no source-line tracking in
-generated C — pre-existing in the scalar path), so div-by-zero programs match on
-stdout/value but not on the stderr warning.
+**Division.** `/` vectorizes via `aot_vdivn`: a packed `div` with every `b==0`
+lane forced to NaN, so the chunk's one NaN test hands it to the scalar loop, which
+raises `division by zero` at the VM's element (in both strict modes, as the VM
+does). It's never elided (no lower bound on the divisor), so div maps stay
+guarded. `test/t11_div`; the zero-divisor lane positions are pinned by
+`test/t369_vec_div_zero_lane_strict`.
 
 ## Numeric functions (slice 2)
 

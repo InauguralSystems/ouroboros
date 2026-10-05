@@ -1,0 +1,6 @@
+count is 4
+define read(dummy) as:
+    return count
+define bump(dummy) as:
+    count is count + 1
+    return count

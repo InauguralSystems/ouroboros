@@ -1,0 +1,20 @@
+# Ordinary current-runtime namespace conformance; VM is the output oracle.
+import ns380
+alias is ns380
+print of alias["label"]
+print of (alias.replace of "new")
+print of ns380.label
+print of (keys of alias)
+print of (values of alias)
+print of alias
+
+# Reuse actual dot sites after each internal and external assignment.
+define write_label(m, text) as:
+    m.label is text
+    return m.label
+for step in range of 3:
+    print of (alias.replace of f"internal-{step}")
+    print of alias.label
+    print of (write_label of [alias, f"external-{step}"])
+    print of (ns380.replace of f"next-{step}")
+    print of alias.label

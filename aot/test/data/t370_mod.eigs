@@ -1,0 +1,9 @@
+# t370's companion: loaded INTERPRETED by a nested literal load_file (the DMG
+# debugger shape). Each function's own stamps name lines of this file.
+define mside(t) as:
+    x is 1
+    y is 2
+    return 1
+define mkey(v) as:
+    k is 0 - v
+    return k

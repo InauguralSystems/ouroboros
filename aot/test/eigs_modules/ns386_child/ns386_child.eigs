@@ -1,0 +1,4 @@
+print of "ns386-child-initialized"
+value is "initial-child"
+define read(dummy) as:
+    return value

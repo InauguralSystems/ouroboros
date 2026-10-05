@@ -1,0 +1,19 @@
+# Raw tensor kernels may hold overflow, but every language scalar read crosses
+# num_guard in both strict modes. Finite values and bounds remain unchanged.
+b is buffer of 4
+b[0] is 1e300
+b[1] is 1e300
+b[2] is 1e300
+b[3] is 1e300
+m is reshape of [b, 2, 2]
+p is matmul of [m, m]
+print of (p[0] > 1e308)
+print of p[0]
+f is buffer of 1
+f[0] is 14.5
+q is reshape of [f, 1, 1]
+print of q[0]
+try:
+    print of q[1]
+catch e:
+    print of e.kind

@@ -2,7 +2,7 @@
 # name bound before the loop (parameter, local, earlier assignment, module
 # name) is loop-scoped -- the body sees its own writes, the pre-loop value is
 # back after the loop, on the exhausted and the break path. A fresh name
-# keeps its function-scoped value. Emitted as a C block-local shadow.
+# is undefined after its loop on runtime96. The final call pins that error.
 define f_param(p) as:
     local seen is []
     for p in [7, 8]:
@@ -50,9 +50,11 @@ print of (f_local of 1)
 print of (f_plain of 1)
 print of (f_break of 1)
 print of (f_nested of 0)
-print of (f_fresh of 0)
 print of (f_range of 4)
 pm is 1
 for pm in [7, 8]:
     pm is pm + 10
 print of pm
+
+# All original positive controls ran above; the fresh read is the final action.
+print of (f_fresh of 0)

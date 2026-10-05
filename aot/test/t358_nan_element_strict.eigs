@@ -1,0 +1,61 @@
+# (#1361) Prepare one raw NaN by actual matmul_at plus buf_copy to b[0].
+# Finite lanes b[1..7] retain values1..7; no serialized buffer construction.
+# Keep sum, norm and the actual matmul-shaped loop, catches and after marker.
+# Strict1 rejects NaN at the target read/reduction; strict0 normalizes it.
+# b[0] remains the first lane so the reduction's finite suffix is observable.
+define mm(out, X, W, S, Din, Dout) as:
+    i is 0
+    loop while i < S:
+        o is 0
+        loop while o < Dout:
+            s is 0
+            d is 0
+            loop while d < Din:
+                s is s + X[i * Din + d] * W[d * Dout + o]
+                d is d + 1
+            out[i * Dout + o] is s
+            o is o + 1
+        i is i + 1
+    return 0
+seed_a is buffer of 2
+seed_a[0] is 1e300
+seed_a[1] is 1e300
+seed_b is buffer of 2
+seed_b[0] is 1e300
+seed_b[1] is 0 - 1e300
+seed_am is reshape of [seed_a, 2, 1]
+seed_bm is reshape of [seed_b, 2, 1]
+seed_nan is matmul_at of [seed_am, seed_bm]
+b is buffer of 8
+b[1] is 1
+b[2] is 2
+b[3] is 3
+b[4] is 4
+b[5] is 5
+b[6] is 6
+b[7] is 7
+buf_copy of [seed_nan, 0, b, 0, 1]
+print of "preparation-complete"
+print of b[3]
+try:
+    print of (sum of b)
+catch e:
+    print of e.message
+    print of e.line
+try:
+    print of (norm of b)
+catch e:
+    print of e.message
+W is buffer of 32
+w is 0
+loop while w < 32:
+    W[w] is 1
+    w is w + 1
+O is buffer of 16
+try:
+    mm of [O, b, W, 2, 4, 8]
+    print of O[9]
+catch e:
+    print of e.message
+    print of e.line
+print of "after"

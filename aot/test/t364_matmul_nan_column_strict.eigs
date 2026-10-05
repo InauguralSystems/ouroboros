@@ -1,0 +1,51 @@
+# (#1361) Unguarded matmul-shaped column-prefix control with raw NaN W[1].
+# Ordinary matmul_at/buf_copy prepares W; finite lanes W[0]=2,W[2]=3,W[3]=4
+# are preserved. Strict1 reads NaN at row0/column1 after column0 was stored;
+# strict0 normalizes that operand and continues. Keep the actual matmul loop,
+# caught source line and output-prefix/tail row; no serialized buffer setup.
+define mm(out, X, W, S, Din, Dout) as:
+    i is 0
+    loop while i < S:
+        o is 0
+        loop while o < Dout:
+            s is 0
+            d is 0
+            loop while d < Din:
+                s is s + X[i * Din + d] * W[d * Dout + o]
+                d is d + 1
+            out[i * Dout + o] is s
+            o is o + 1
+        i is i + 1
+    return 0
+seed_a is buffer of 2
+seed_a[0] is 1e300
+seed_a[1] is 1e300
+seed_b is buffer of 2
+seed_b[0] is 1e300
+seed_b[1] is 0 - 1e300
+seed_am is reshape of [seed_a, 2, 1]
+seed_bm is reshape of [seed_b, 2, 1]
+seed_nan is matmul_at of [seed_am, seed_bm]
+W is buffer of 32
+w is 0
+loop while w < 32:
+    W[w] is 1
+    w is w + 1
+W[0] is 2
+W[2] is 3
+W[3] is 4
+buf_copy of [seed_nan, 0, W, 1, 1]
+print of "preparation-complete"
+X is buffer of 8
+x is 0
+loop while x < 8:
+    X[x] is x + 1
+    x is x + 1
+O is buffer of 16
+try:
+    mm of [O, X, W, 2, 4, 8]
+    print of "ran"
+catch e:
+    print of e.message
+    print of e.line
+print of f"{O[0]} {O[1]} {O[2]} {O[3]} {O[8]} {O[9]} {O[10]}"

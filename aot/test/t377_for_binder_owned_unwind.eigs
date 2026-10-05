@@ -1,0 +1,70 @@
+# Runtime96 binder ownership: only the new boxed slot/snapshot references.
+# The shared iterable is borrowed, so caught exits do not abandon a new list.
+# Optional args: large selects256 repeats; second selects one named arm.
+feed is buffer of 1
+feed[0] is 1
+define fresh_slot(q) as:
+    local caught is 0
+    try:
+        for k in feed:
+            k is [buffer of 128]
+            throw of "owned"
+    catch problem:
+        caught is caught + 1
+    return caught
+define prior_snapshot(q) as:
+    local k is [buffer of 64]
+    try:
+        for k in feed:
+            k is [buffer of 128]
+            throw of "owned"
+    catch problem:
+        print_nothing is 0
+    return len of k[0]
+define nested_snapshot(q) as:
+    local seen is 0
+    for k in feed:
+        k is [buffer of 64]
+        try:
+            for k in feed:
+                k is [buffer of 128]
+                throw of "owned"
+        catch problem:
+            seen is seen + (len of k[0])
+        seen is seen + (len of k[0])
+    return seen
+define returned_slot(q) as:
+    for k in feed:
+        k is [buffer of 128]
+        return k
+    return []
+define returned_alias(q) as:
+    local alias is returned_slot of q
+    alias[0][0] is 7
+    return (len of alias[0]) + alias[0][0]
+define exercise(n, which) as:
+    local total is 0
+    local i is 0
+    loop while i < n:
+        if which == "fresh":
+            total is total + (fresh_slot of i)
+        elif which == "prior":
+            total is total + (prior_snapshot of i)
+        elif which == "nested":
+            total is total + (nested_snapshot of i)
+        elif which == "return":
+            total is total + (returned_alias of i)
+        i is i + 1
+    return total
+input_args is args of null
+repeats is 32
+if (len of input_args) > 0:
+    if input_args[0] == "large":
+        repeats is 256
+if (len of input_args) > 1:
+    print of (exercise of [repeats, input_args[1]])
+else:
+    print of (exercise of [repeats, "fresh"])
+    print of (exercise of [repeats, "prior"])
+    print of (exercise of [repeats, "nested"])
+    print of (exercise of [repeats, "return"])

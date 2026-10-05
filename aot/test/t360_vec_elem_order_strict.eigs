@@ -1,0 +1,46 @@
+# (#1361) Preserve ELEMENT order in a two-store vectorizable loop.
+# At element0 the first statement has finite input and writes o1[0]; the
+# second statement reads a copied raw NaN and raises under strict1. Element1's
+# first statement divides by zero in both modes. Strict0 normalizes the NaN
+# read and reaches that later zero divisor. Keep both outputs and caught line.
+# Raw-infinity extraction separately witnesses finite scalar clamping.
+raw_inf_buf is buffer of 4
+raw_inf_buf[0] is 1e300
+raw_inf_buf[1] is 1e300
+raw_inf_buf[2] is 1e300
+raw_inf_buf[3] is 1e300
+raw_inf_mat is reshape of [raw_inf_buf, 2, 2]
+raw_inf is matmul of [raw_inf_mat, raw_inf_mat]
+print of (raw_inf[0] > 1e308)
+seed_a is buffer of 2
+seed_a[0] is 1e300
+seed_a[1] is 1e300
+seed_b is buffer of 2
+seed_b[0] is 1e300
+seed_b[1] is 0 - 1e300
+seed_am is reshape of [seed_a, 2, 1]
+seed_bm is reshape of [seed_b, 2, 1]
+seed_nan is matmul_at of [seed_am, seed_bm]
+define f(z, c, o1, o2, n) as:
+    i is 0
+    loop while i < n:
+        o1[i] is 1 / z[i]
+        o2[i] is c[i] - c[i]
+        i is i + 1
+    return 0
+z is buffer of 4
+c is buffer of 4
+z[0] is 1
+z[1] is 0
+z[2] is 1
+z[3] is 1
+buf_copy of [seed_nan, 0, c, 0, 1]
+print of "preparation-complete"
+o1 is buffer of 4
+o2 is buffer of 4
+try:
+    f of [z, c, o1, o2, 4]
+catch e:
+    print of e.message
+    print of e.line
+print of f"{o1[0]} {o1[1]} {o1[2]} {o1[3]} / {o2[0]} {o2[1]} {o2[2]} {o2[3]}"

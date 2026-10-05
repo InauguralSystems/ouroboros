@@ -1,0 +1,38 @@
+# (#1361) the AOT's inlined num_guard (aot_num_guard_inl, the one every
+# num_guard in aot_rt.h and the emitted C resolves to). A NaN collapses to 0
+# on the soft path; under strict the VM raises "arithmetic: result is not a
+# number". The NaN comes from the one raw non-finite a numeric context can
+# read: a matmul that overflowed to inf (t296's raw element read), so
+# inf - inf. Scalar arithmetic and the tensor kernel's elementwise add
+# (aot_tensor_add) both take the guard.
+nb is buffer of 4
+nb[0] is 1e300
+nb[1] is 1e300
+nb[2] is 1e300
+nb[3] is 1e300
+nm is reshape of [nb, 2, 2]
+np is matmul of [nm, nm]
+mb is buffer of 4
+mb[0] is -1e300
+mb[1] is -1e300
+mb[2] is -1e300
+mb[3] is -1e300
+mm is reshape of [mb, 2, 2]
+nq is matmul of [mm, nm]
+print of (np[0] > 1e308)
+print of (nq[0] < -1e308)
+try:
+    d is np[0] - np[1]
+    print of d
+catch e:
+    print of e.kind
+    print of e.message
+    print of e.line
+try:
+    s is add of [np, nq]
+    print of s[0]
+catch e:
+    print of e.message
+    print of e.line
+print of (np[2] - 1)
+print of "after"

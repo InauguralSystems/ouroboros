@@ -85,9 +85,15 @@ static void check_number_boundaries(void) {
     assert(g_math_flags == EIGS_MATH_OVERFLOW);
     buffer->data.buffer.data[0] = NAN;
     g_math_flags = 0;
-    index_v(&result, values, make_num(0));
-    assert(slot_is_num(result) && result.d == 0);
-    assert(g_math_flags == EIGS_MATH_INVALID);
+    {
+        /* Zero/INVALID is the soft-mode scalar contract, not the boot default. */
+        int saved_strict = g_strict;
+        g_strict = 0;
+        index_v(&result, values, make_num(0));
+        assert(slot_is_num(result) && result.d == 0);
+        assert(g_math_flags == EIGS_MATH_INVALID);
+        g_strict = saved_strict;
+    }
     slot_decref(values);
     slot_decref(result);
 }
@@ -189,8 +195,14 @@ static void check_scalar_consumers(void) {
     slot_decref(same);
     number->data.num = 17;
     g_math_flags = 0;
-    assert(scalar_index_eq_num(numbers, slot_from_num(NAN), 17));
-    assert(g_math_flags == EIGS_MATH_INVALID); /* immediate index materializes */
+    {
+        /* Materializing the NaN index as zero explicitly requires soft mode. */
+        int saved_strict = g_strict;
+        g_strict = 0;
+        assert(scalar_index_eq_num(numbers, slot_from_num(NAN), 17));
+        assert(g_math_flags == EIGS_MATH_INVALID); /* immediate index materializes */
+        g_strict = saved_strict;
+    }
     assert(scalar_index_eq_num(numbers, slot_from_num(-1), 17));
     slot_decref(numbers);
 
@@ -206,8 +218,14 @@ static void check_scalar_consumers(void) {
     assert(g_math_flags == EIGS_MATH_OVERFLOW);
     buffer->data.buffer.data[0] = NAN;
     g_math_flags = 0;
-    assert(scalar_index_eq_num(values, slot_from_num(0), 0));
-    assert(g_math_flags == EIGS_MATH_INVALID);
+    {
+        /* Match the soft-mode buffer-read contract in both helper arms. */
+        int saved_strict = g_strict;
+        g_strict = 0;
+        assert(scalar_index_eq_num(values, slot_from_num(0), 0));
+        assert(g_math_flags == EIGS_MATH_INVALID);
+        g_strict = saved_strict;
+    }
     slot_decref(values);
 
     Value *arena_list = make_list(1);

@@ -1,0 +1,4 @@
+print of "ns390-initialized"
+value is "initial"
+define read(dummy) as:
+    return value
