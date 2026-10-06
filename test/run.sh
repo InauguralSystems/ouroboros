@@ -194,6 +194,16 @@ reject_one 'x is 1
 print of (report_value of 5)'
 reject_one 'd is {"a": 1}
 print of (report of d.a)'
+# #1637 (EigenScript#1647): `true`/`false` are keywords -- never a binding
+# name, and like `null` a literal primary that takes no postfix.
+reject_one 'true is 5'
+reject_one 'local false is 3'
+reject_one 'define true as:
+    return 1'
+reject_one 'for false in [1]:
+    print of 1'
+reject_one 'print of true[0]'
+reject_one 'x is true.y'
 reject_one 'print of (report of converged)'
 
 # Inverse-direction rejects (#101): reject_one's population is parse/lex-time

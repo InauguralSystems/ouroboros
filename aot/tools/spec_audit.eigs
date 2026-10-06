@@ -84,7 +84,7 @@ blind is []
 di is 0
 loop while di < (len of dlines):
     dl is dlines[di]
-    if (starts_with of [dl, "D "]) == 1:
+    if (starts_with of [dl, "D "]):
         df is split of [dl, " "]
         dscope is df[1]
         dname is df[3]
@@ -96,7 +96,7 @@ loop while di < (len of dlines):
             mkind[dname] is dkind
             mline[dname] is dln
         else:
-            if (starts_with of [dkind, "boxed-env"]) == 1:
+            if (starts_with of [dkind, "boxed-env"]):
                 append of [blind, [dscope, dname, dkind, dln]]
     di is di + 1
 
@@ -129,7 +129,7 @@ loop while mi < (len of mnames):
             ln is aline[mn]
     if acount[mn] == null:
         append of [notape, [mn, kd]]
-    elif (starts_with of [kd, "boxed-env"]) == 1:
+    elif (starts_with of [kd, "boxed-env"]):
         if ncount[mn] == acount[mn]:
             append of [missed, [acount[mn], mn, ln, kd]]
         else:

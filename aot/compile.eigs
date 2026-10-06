@@ -1080,7 +1080,11 @@ define param_unread(body, name) as:
     for i in range of (len of body):
         local st is unwrap of body[i]
         if (st[0] == "assign") and (st[1] == name) and ((len of st) <= 4):
-            return ((uses_ident of [st[2], name]) == 0)
+            # #1637: a comparison is a bool now; this helper's 1/0 is a
+            # numeric flag its callers compare (deadp), so keep it a number.
+            if (uses_ident of [st[2], name]) == 0:
+                return 1
+            return 0
         if (uses_ident of [st, name]) == 1:
             return 0
     return 1
@@ -10222,7 +10226,9 @@ define emit_function(fn, finfo, gnm, gbt) as:
     g_fsigs[name] is sig
     # tensor scope -> a per-call frame pool; flatten tensor params at entry.
     local tkeys is keys of g_tensor
-    local hasT is (len of tkeys) > 0
+    local hasT is 0
+    if (len of tkeys) > 0:
+        hasT is 1
     local decls is ""
     if hasT == 1:
         decls is decls + "    long _tmark = aot_tframe_enter();\n"
@@ -12899,9 +12905,9 @@ define _lf_dirname(p) as:
 # resolver limitation. Module cache keys are canonicalised separately in
 # generated runtime code, matching the VM even for a lexical symlink path.
 define _lf_is_file(p) as:
-    if (file_exists of p) == 0:
+    if (not (file_exists of p)):
         return 0
-    if (is_dir of p) == 1:
+    if (is_dir of p):
         return 0
     return 1
 
@@ -12941,7 +12947,7 @@ define _lf_parent(d) as:
 define _lf_project_root(absdir) as:
     local cur is absdir
     loop while cur != null:
-        if (file_exists of (cur + "/eigs.json")) == 1:
+        if (file_exists of (cur + "/eigs.json")):
             return cur
         cur is _lf_parent of cur
     return null
@@ -12950,7 +12956,7 @@ define _lf_ends_with(s, suf) as:
     local n is len of s
     local m is len of suf
     if n < m:
-        return 0
+        return false
     return (substr of [s, n - m, m]) == suf
 
 # [full_path, "static"] to splice, [full_path, "stdlib"] to keep as a
@@ -12965,7 +12971,7 @@ define _lf_resolve(base, path) as:
     if (_lf_is_file of cand) == 1:
         return [cand, "static"]
     # (3) eigs_modules walk: bare <name>.eigs only, stops at the project root
-    if ((index_of of [path, "/"]) < 0) and ((_lf_ends_with of [path, ".eigs"]) == 1) and ((len of path) > 5):
+    if ((index_of of [path, "/"]) < 0) and ((_lf_ends_with of [path, ".eigs"])) and ((len of path) > 5):
         local mname is substr of [path, 0, (len of path) - 5]
         local cur is absdir
         local steps is 0
@@ -12973,7 +12979,7 @@ define _lf_resolve(base, path) as:
             cand is cur + "/eigs_modules/" + mname + "/" + mname + ".eigs"
             if (_lf_is_file of cand) == 1:
                 return [cand, "static"]
-            if (file_exists of (cur + "/eigs.json")) == 1:
+            if (file_exists of (cur + "/eigs.json")):
                 cur is null
             else:
                 cur is _lf_parent of cur
@@ -14106,12 +14112,12 @@ define splice_static_loads(blk, base, depth) as:
 # ---- driver ----
 argv is args of null
 src is read_text of argv[0]
-if (is_dir of (argv[0])) == 1:
+if (is_dir of (argv[0])):
     # see the self-host driver: a directory passes file_exists (fopen-based)
     # and reads as "", while the oracle refuses it -- is_dir separates it from
     # a genuinely empty file
     throw of ("AOT: cannot read source file '" + (argv[0]) + "' (is a directory)")
-if (file_exists of (argv[0])) == 0:
+if (not (file_exists of (argv[0]))):
     # read_text returns EMPTY STRING, not null, for a missing file -- the same
     # gotcha the import fallback hit -- so the driver once compiled a
     # NONEXISTENT source file into a valid empty program: full C skeleton,

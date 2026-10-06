@@ -111,6 +111,9 @@ OP_REPORT_VALUE_NAME is 90
 OP_TRAJECTORY_SLOT is 91
 OP_TRAJECTORY_NAME is 92
 OP_LINE is 68
+# #1637 (EigenScript#1647): the bool literals, appended at the enum end.
+OP_TRUE is 95
+OP_FALSE is 96
 OP_LOOP_STALL_CHECK is 62
 OP_LOOP_CAP_CHECK is 63
 
@@ -554,6 +557,12 @@ define cg_node(c, node) as:
     if t == "null":
         cg_emit of [c, OP_NULL]
         return null
+    if t == "bool":
+        if node[1] == 1:
+            cg_emit of [c, OP_TRUE]
+        else:
+            cg_emit of [c, OP_FALSE]
+        return null
     if t == "ident":
         cg_load_name of [c, node[1]]
         return null
@@ -786,7 +795,7 @@ define cg_node(c, node) as:
             # #868: `when <n>` addresses an occurrence, which only a named
             # binding has. C makes the non-name operand a loud compile error
             # ("'when <n>' requires a variable name"); mirror it.
-            if is_ident == 0:
+            if not is_ident:
                 throw of "ouroboros: 'when <n>' requires a variable name"
             cg_node of [c, when_expr]                   # push the ordinal
             cg_emit of [c, OP_INTERROGATE_NAMED_WHEN]
