@@ -1,0 +1,47 @@
+# #1637 (EigenScript#1647): a bool reaching builtins and containers -- a tensor
+# element (matmul), a buffer store, a sort key, a dispatch handler's result, a
+# list element store, a numeric builtin argument, a str/dict index -- VM vs AOT.
+x is 3
+m is [[x > 1, 1]]
+try:
+    print of (matmul of [m, [[1], [2]]])
+catch e:
+    print of e.message
+b is buffer of 3
+try:
+    b[0] is x > 1
+    print of b[0]
+catch e:
+    print of e.message
+define key(v) as:
+    return v > 1
+try:
+    print of (sort_by of [[3, 1, 2], key])
+catch e:
+    print of e.message
+define h0(c) as:
+    return c > 0
+define h1(c) as:
+    return c < 0
+tbl is [h0, h1]
+print of (dispatch of [tbl, 0, 5])
+print of (dispatch of [tbl, 1, 5])
+v is [1, 2, 3]
+try:
+    v[0] is not x
+    print of v
+catch e:
+    print of e.message
+try:
+    print of (zeros of (x > 1))
+catch e:
+    print of e.message
+try:
+    print of ("abc"[x > 1])
+catch e:
+    print of e.message
+try:
+    d is {}
+    d[x > 1] is 1
+catch e:
+    print of e.message

@@ -1,0 +1,13 @@
+# #1637 (EigenScript#1647): an UNCAUGHT bool raise -- the AOT dies with the
+# VM's text, line and exit code after the same stdout. The comparison result
+# is a bool held in a compiled function's local, and `== 1` on it (the old
+# 1/0 idiom the issue migrates) raises rather than quietly answering false.
+define ready(n) as:
+    local ok is n > 2
+    print of ok
+    if ok == 1:
+        return "migrated?"
+    return "unreachable"
+print of "before"
+print of (ready of 5)
+print of "after"

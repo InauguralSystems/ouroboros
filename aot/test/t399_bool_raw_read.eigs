@@ -1,0 +1,34 @@
+# #1637: a bool that reaches a numeric read raises as the VM does, on every
+# read helper -- the behavioural witness of aot_rt.h's raw-number reader block
+# (aot_num_if / aot_num_proven). Deleting a reader's type test turns these
+# catchable VM errors into the AOT's internal death (or a silent number).
+xs is [1 < 2, 5]
+try:
+    y is xs[0]
+    print of (y + 1)
+catch e:
+    print of f"a {e.message}"
+try:
+    print of (xs[0] * 2)
+catch e:
+    print of f"b {e.message}"
+d is {"k": 3 > 4, "n": 2}
+try:
+    print of (d.k - 1)
+catch e:
+    print of f"c {e.message}"
+define g(r) as:
+    return r.k + r.n
+try:
+    print of (g of d)
+catch e:
+    print of f"d {e.message}"
+define h(v) as:
+    local w is v
+    return w + 1
+try:
+    print of (h of (1 == 1))
+catch e:
+    print of f"e {e.message}"
+print of (xs[1] + 1)
+print of (d.n * 3)

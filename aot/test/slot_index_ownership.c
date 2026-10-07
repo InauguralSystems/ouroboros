@@ -52,9 +52,9 @@ static void check_aliases(void) {
         EigsSlot numbers = one_item(make_num(k));
         EigsSlot replaced = one_item(make_str("old destination"));
         index_v(&replaced, numbers, make_num(0));
-        assert(slot_is_num(replaced) && replaced.d == k);
+        assert(slot_is_num(replaced) && aot_slot_num_proven(replaced) == k);
         index_i(&numbers, numbers, 0);
-        assert(slot_is_num(numbers) && numbers.d == k);
+        assert(slot_is_num(numbers) && aot_slot_num_proven(numbers) == k);
         slot_decref(replaced);
         slot_decref(numbers);
     }
@@ -64,11 +64,11 @@ static void check_number_boundaries(void) {
     EigsSlot numbers = one_item(make_num(0));
     /* Raw runtime storage: the old list-read + slot_from_value does not
      * guard a heap element. An added guard would change both value and flags. */
-    slot_as_ptr(numbers)->data.list.items[0]->data.num = INFINITY;
+    aot_num_put(slot_as_ptr(numbers)->data.list.items[0], INFINITY);
     EigsSlot result = slot_null();
     g_math_flags = 0;
     index_i(&result, numbers, 0);
-    assert(slot_is_num(result) && isinf(result.d));
+    assert(slot_is_num(result) && isinf(aot_slot_num_proven(result)));
     assert(g_math_flags == 0);
     slot_decref(numbers);
 
@@ -81,7 +81,7 @@ static void check_number_boundaries(void) {
     buffer->data.buffer.data[0] = INFINITY;
     g_math_flags = 0;
     index_s(&result, values, slot_from_num(0));
-    assert(slot_is_num(result) && result.d == EIGS_NUM_MAX);
+    assert(slot_is_num(result) && aot_slot_num_proven(result) == EIGS_NUM_MAX);
     assert(g_math_flags == EIGS_MATH_OVERFLOW);
     buffer->data.buffer.data[0] = NAN;
     g_math_flags = 0;
@@ -90,7 +90,7 @@ static void check_number_boundaries(void) {
         int saved_strict = g_strict;
         g_strict = 0;
         index_v(&result, values, make_num(0));
-        assert(slot_is_num(result) && result.d == 0);
+        assert(slot_is_num(result) && aot_slot_num_proven(result) == 0);
         assert(g_math_flags == EIGS_MATH_INVALID);
         g_strict = saved_strict;
     }
@@ -124,11 +124,11 @@ static void check_arena_elements(void) {
     result = slot_null();
     arena_mark_pos();
     list->data.list.items[0] = make_num(0);
-    list->data.list.items[0]->data.num = INFINITY;
+    aot_num_put(list->data.list.items[0], INFINITY);
     g_math_flags = 0;
     index_i(&result, target, 0);
     /* Unlike a heap number, the old arena promotion calls num_guard. */
-    assert(slot_is_num(result) && result.d == EIGS_NUM_MAX);
+    assert(slot_is_num(result) && aot_slot_num_proven(result) == EIGS_NUM_MAX);
     assert(g_math_flags == EIGS_MATH_OVERFLOW);
     slot_decref(target);
     arena_reset_to_mark();
@@ -143,7 +143,7 @@ static int scalar_index_eq(EigsSlot table, EigsSlot index, EigsSlot rhs) {
 #else
     AotScalarRead left = aot_scalar_index(table, aot_scalar_slot(index));
     AotScalarRead right = aot_scalar_slot(rhs);
-    return aot_scalar_equal(left, right);
+    return aot_scalar_equal(left, right, "==");
 #endif
 }
 static int scalar_index_eq_num(EigsSlot table, EigsSlot index, double rhs) {
@@ -151,7 +151,7 @@ static int scalar_index_eq_num(EigsSlot table, EigsSlot index, double rhs) {
     return aot_eq_n_t(aot_index_get(slot_to_value(table), slot_to_value(index)), rhs);
 #else
     AotScalarRead left = aot_scalar_index(table, aot_scalar_slot(index));
-    return aot_scalar_equal(left, aot_scalar_number(rhs));
+    return aot_scalar_equal(left, aot_scalar_number(rhs), "==");
 #endif
 }
 static void scalar_sum_store(EigsSlot *dst, EigsSlot table, EigsSlot left, EigsSlot right) {
@@ -169,7 +169,7 @@ static int scalar_sum_eq_num(EigsSlot left, EigsSlot right, double expected) {
     Value *r = slot_to_value(right);
     return aot_eq_n_t(aot_add(l, r), expected);
 #else
-    return aot_scalar_equal(aot_scalar_add_slots(left, right), aot_scalar_number(expected));
+    return aot_scalar_equal(aot_scalar_add_slots(left, right), aot_scalar_number(expected), "==");
 #endif
 }
 static void check_scalar_consumers(void) {
@@ -181,11 +181,11 @@ static void check_scalar_consumers(void) {
     assert(g_math_flags == EIGS_MATH_OVERFLOW);
     EigsSlot numbers = one_item(make_num(0));
     Value *number = slot_as_ptr(numbers)->data.list.items[0];
-    number->data.num = INFINITY;
+    aot_num_put(number, INFINITY);
     g_math_flags = 0;
     assert(scalar_index_eq_num(numbers, slot_from_num(0), INFINITY));
     assert(g_math_flags == 0); /* heap list read is raw, not stored in a slot */
-    number->data.num = NAN;
+    aot_num_put(number, NAN);
     val_incref(number);
     EigsSlot same = slot_from_heap(number);
     g_math_flags = 0;
@@ -193,7 +193,7 @@ static void check_scalar_consumers(void) {
     assert(!scalar_index_eq_num(numbers, slot_from_num(0), 0));
     assert(g_math_flags == 0); /* heap NaN identity must survive */
     slot_decref(same);
-    number->data.num = 17;
+    aot_num_put(number, 17);
     g_math_flags = 0;
     {
         /* Materializing the NaN index as zero explicitly requires soft mode. */
@@ -233,7 +233,7 @@ static void check_scalar_consumers(void) {
     EigsSlot arena_target = slot_from_value(arena_list);
     arena_mark_pos();
     arena_list->data.list.items[0] = make_num(0);
-    arena_list->data.list.items[0]->data.num = INFINITY;
+    aot_num_put(arena_list->data.list.items[0], INFINITY);
     g_math_flags = 0;
     assert(scalar_index_eq_num(arena_target, slot_from_num(0), INFINITY));
     assert(g_math_flags == 0); /* read does not promote an arena number */

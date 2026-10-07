@@ -4,6 +4,10 @@
 # wrong together: all eight outputs wrong, rc 0. Both now restrict
 # to minus (emit_int throws on anything else); this shape demotes
 # and matches.
+# #1637 (EigenScript#1647): `not d` is a bool now and `(not d) + 5` RAISES
+# on the VM ("cannot apply '+' to bool and num", line 18), so the fixture is
+# an _err row: the AOT must die with the same text and line -- an -d
+# miscompile would print eight numbers and exit 0, which this class fails.
 src is buffer of 16
 out is buffer of 8
 j is 0

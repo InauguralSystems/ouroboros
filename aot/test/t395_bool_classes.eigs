@@ -1,0 +1,78 @@
+# #1637 (EigenScript#1647): the AOT's storage classifiers meet a bool. Each
+# row puts a bool on one side of a decision the inference branches on, with
+# the numeric case beside it as the control: a local that is a number on one
+# path and a bool on another (the numeric use sits on the path not taken), a
+# parameter one caller hands a bool and another a number, a function whose
+# returns mix a bool and a number, a dict field and a list element holding a
+# bool, and a bool built in a hot loop's condition.
+define mixed_local(k) as:
+    local v is k * 2
+    if k > 3:
+        v is k > 5
+        return v
+    return v + 1
+print of (mixed_local of 2)
+print of (mixed_local of 4)
+print of (mixed_local of 9)
+define show(v) as:
+    print of v
+    return v
+show of 7
+show of (7 > 1)
+show of true
+define mixed_ret(k) as:
+    if k > 0:
+        return k > 5
+    return k
+print of (mixed_ret of 9)
+print of (mixed_ret of -3)
+print of (type of (mixed_ret of 1))
+define all_pos(xs) as:
+    for e in xs:
+        if e <= 0:
+            return false
+    return true
+print of (all_pos of ([1, 2, 3]))
+print of (all_pos of ([1, -2]))
+rec is {"n": 4, "even": (4 % 2) == 0}
+if rec.even:
+    print of "even"
+rec.n is rec.n + 1
+rec.even is (rec.n % 2) == 0
+print of rec
+bits is [1 > 0, 1 < 0, 2 > 1]
+print of bits[0]
+print of bits[1]
+if bits[2]:
+    print of "bit2"
+hits is 0
+seen is false
+i is 0
+loop while i < 200:
+    big is i > 150
+    if big and not seen:
+        seen is true
+        print of i
+    if big:
+        hits is hits + 1
+    i is i + 1
+print of hits
+print of seen
+define count_true(xs) as:
+    local n is 0
+    for e in xs:
+        if e:
+            n is n + 1
+    return n
+print of (count_true of ([true, false, 3 > 2, not 0]))
+# a parameter with no numeric use rebound to a bool, and one re-bound as a
+# for binder over bools: both are boxed on the parameter-class evidence
+define rebound(p) as:
+    p is true
+    return p
+print of (rebound of 5)
+define binds(q) as:
+    for q in [true, false]:
+        print of q
+    return 0
+print of (binds of 7)

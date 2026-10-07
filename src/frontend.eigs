@@ -22,6 +22,7 @@
 # "num", "str", "ident", "op", "kw", "newline", "indent", "dedent", "eof"
 # "lparen", "rparen", "lbracket", "rbracket", "lbrace", "rbrace"
 # "comma", "colon", "dot", "arrow", "pipe", "null"
+# ("true"/"false" lex as "kw" tokens; the parser makes them ["bool", 1|0])
 
 define _is_digit(c) as:
     return contains of ["0123456789", c]
@@ -30,8 +31,8 @@ define _is_alpha(c) as:
     return contains of ["abcdefghijklmnopqrstuvwxyz_ABCDEFGHIJKLMNOPQRSTUVWXYZ", c]
 
 define _is_alnum(c) as:
-    if (_is_alpha of c) == 1:
-        return 1
+    if (_is_alpha of c):
+        return true
     return _is_digit of c
 
 define _is_space(c) as:
@@ -53,7 +54,7 @@ define _hex_val(c) as:
     return i
 
 # Full keyword list matching C lexer
-_keywords is ["is", "of", "define", "as", "if", "else", "elif", "loop", "while", "return", "and", "or", "not", "for", "in", "null", "try", "catch", "break", "continue", "import", "match", "case", "unobserved", "local", "prev", "at", "what", "who", "when", "where", "why", "how", "converged", "stable", "improving", "oscillating", "diverging", "equilibrium"]
+_keywords is ["is", "of", "define", "as", "if", "else", "elif", "loop", "while", "return", "and", "or", "not", "for", "in", "null", "true", "false", "try", "catch", "break", "continue", "import", "match", "case", "unobserved", "local", "prev", "at", "what", "who", "when", "where", "why", "how", "converged", "stable", "improving", "oscillating", "diverging", "equilibrium"]
 
 # Interrogative keywords
 _interrogatives is ["what", "who", "when", "where", "why", "how"]
@@ -390,10 +391,10 @@ define eigen_tokenize(source) as:
             # when followed by a digit, so `.field` still lexes as a dot.
             num_start is 0
             if handled == 0:
-                if (_is_digit of c) == 1:
+                if (_is_digit of c):
                     num_start is 1
                 elif (c == ".") and ((pos + 1) < src_len):
-                    if (_is_digit of (char_at of [source, pos + 1])) == 1:
+                    if (_is_digit of (char_at of [source, pos + 1])):
                         num_start is 1
             if num_start == 1:
                 # Hex INTEGER literals (v0.25.0 pin, upstream #378): the C
@@ -408,7 +409,7 @@ define eigen_tokenize(source) as:
                 if (c == "0") and ((pos + 2) < src_len):
                     xch is char_at of [source, pos + 1]
                     if (xch == "x") or (xch == "X"):
-                        if (_is_hex_digit of (char_at of [source, pos + 2])) == 1:
+                        if (_is_hex_digit of (char_at of [source, pos + 2])):
                             is_hex is 1
                 if is_hex == 1:
                     hval is 0
@@ -416,7 +417,7 @@ define eigen_tokenize(source) as:
                     reading_hex is 1
                     loop while (pos < src_len) and (reading_hex == 1):
                         hch is char_at of [source, pos]
-                        if (_is_hex_digit of hch) == 1:
+                        if (_is_hex_digit of hch):
                             hval is (hval * 16) + (_hex_val of hch)
                             pos is pos + 1
                         else:
@@ -429,7 +430,7 @@ define eigen_tokenize(source) as:
                 reading_num is 1
                 loop while (pos < src_len) and (reading_num == 1):
                     ch is char_at of [source, pos]
-                    if (_is_digit of ch) == 1:
+                    if (_is_digit of ch):
                         buf is buf + ch
                         pos is pos + 1
                     elif (ch == ".") and (has_dot == 0):
@@ -451,21 +452,21 @@ define eigen_tokenize(source) as:
                                 esign is sc
                                 ep is ep + 1
                         if ep < src_len:
-                            if (_is_digit of (char_at of [source, ep])) == 1:
+                            if (_is_digit of (char_at of [source, ep])):
                                 buf is buf + ech + esign
                                 pos is ep
-                                loop while (pos < src_len) and ((_is_digit of (char_at of [source, pos])) == 1):
+                                loop while (pos < src_len) and ((_is_digit of (char_at of [source, pos]))):
                                     buf is buf + (char_at of [source, pos])
                                     pos is pos + 1
                 append of [tokens, ["num", num of buf, line]]
                 handled is 1
             # Identifiers and keywords
-            if (handled == 0) and ((_is_alpha of c) == 1):
+            if (handled == 0) and ((_is_alpha of c)):
                 buf is ""
                 reading_id is 1
                 loop while (pos < src_len) and (reading_id == 1):
                     ch is char_at of [source, pos]
-                    if (_is_alnum of ch) == 1:
+                    if (_is_alnum of ch):
                         buf is buf + ch
                         pos is pos + 1
                     else:
@@ -540,7 +541,7 @@ define eigen_tokenize(source) as:
                     handled is 1
             # Single-character operators and punctuation
             if handled == 0:
-                if (contains of ["+-*/%<>&|^~", c]) == 1:
+                if (contains of ["+-*/%<>&|^~", c]):
                     append of [tokens, ["op", c, line]]
                     pos is pos + 1
                     handled is 1
@@ -1471,6 +1472,18 @@ define _p_parse_primary(p) as:
         _p_advance of p
         return ["null"]
 
+    # #1637: `true`/`false` are boolean literals -- keywords in the contiguous
+    # TOK_IS..TOK_LOCAL run (so `d.true` stays a field via _p_expect_dot_key's
+    # "kw" arm). Like `null`, a primary with no postfix: `true[0]` and
+    # `true.x` leave a token after the statement (parser.c parse_primary).
+    # The AST carries 1/0 in the literal slot, as AST_BOOL's data.num does.
+    if (tt == "kw") and (((_p_peek_val of p) == "true") or ((_p_peek_val of p) == "false")):
+        local bool_tok is _p_cur of p
+        _p_advance of p
+        if bool_tok[1] == "true":
+            return ["bool", 1]
+        return ["bool", 0]
+
     # Temporal: `prev of x [at <e> | when <e>]` (kind 6); bare `prev`/`at` are
     # ordinary identifiers (soft keywords), matching the C grammar.
     if tt == "kw":
@@ -1788,7 +1801,7 @@ define _compute_entropy(val) as:
 
 define _update_observer(name, val) as:
     new_entropy is _compute_entropy of val
-    if (has_key of [_eigen_obs, name]) == 1:
+    if (has_key of [_eigen_obs, name]):
         old is _eigen_obs[name]
         obs_count is old[0] + 1
         prev_ent is old[1]
@@ -1799,7 +1812,7 @@ define _update_observer(name, val) as:
     return null
 
 define _get_observer(name) as:
-    if (has_key of [_eigen_obs, name]) == 1:
+    if (has_key of [_eigen_obs, name]):
         return _eigen_obs[name]
     return [0, 0, 0, 0]
 
@@ -1852,6 +1865,8 @@ define eigen_eval(node, env) as:
         return node[1]
     if ntype == "null":
         return null
+    if ntype == "bool":
+        return node[1] == 1
 
     if ntype == "ident":
         val is _env_get of [env, node[1]]
@@ -1874,24 +1889,22 @@ define eigen_eval(node, env) as:
 
     if ntype == "binop":
         op is node[1]
+        # #1637 (EigenScript#1647): value-returning short-circuit, as the C
+        # VM does (and lib/eigen.eigs): `a and b` is a when a is falsy, else
+        # b; `a or b` is a when a is truthy, else b. `if X:` is the host VM's
+        # own truthiness, so the falsy set matches exactly. The old arms
+        # collapsed the result to 1/0 and tested `left == 0`, which now
+        # raises on a bool left operand.
         if op == "and":
             left is eigen_eval of [node[2], env]
-            if left == 0:
-                return 0
-            if (left == null) or (left == ""):
-                return 0
-            right is eigen_eval of [node[3], env]
-            if right:
-                return 1
-            return 0
+            if left:
+                return eigen_eval of [node[3], env]
+            return left
         if op == "or":
             left is eigen_eval of [node[2], env]
             if left:
-                return 1
-            right is eigen_eval of [node[3], env]
-            if right:
-                return 1
-            return 0
+                return left
+            return eigen_eval of [node[3], env]
         left is eigen_eval of [node[2], env]
         right is eigen_eval of [node[3], env]
         if op == "+":
@@ -1912,39 +1925,27 @@ define eigen_eval(node, env) as:
             if right == 0:
                 return 0
             return left % right
+        # #1637: the host's own comparison -- a bool, with the C VM's raise on
+        # bool-vs-number equality and on ordering bools.
         if op == "==":
-            if left == right:
-                return 1
-            return 0
+            return left == right
         if op == "!=":
-            if left != right:
-                return 1
-            return 0
+            return left != right
         if op == "<":
-            if left < right:
-                return 1
-            return 0
+            return left < right
         if op == ">":
-            if left > right:
-                return 1
-            return 0
+            return left > right
         if op == "<=":
-            if left <= right:
-                return 1
-            return 0
+            return left <= right
         if op == ">=":
-            if left >= right:
-                return 1
-            return 0
+            return left >= right
 
     if ntype == "unary":
         operand is eigen_eval of [node[2], env]
         if node[1] == "-":
             return 0 - operand
         if node[1] == "not":
-            if operand:
-                return 0
-            return 1
+            return not operand
 
     if ntype == "call":
         # Reserved observer forms (E005, #1102): the parser only lets
@@ -2020,7 +2021,7 @@ define eigen_eval(node, env) as:
         target is eigen_eval of [node[1], env]
         key is node[2]
         if (type of target) == "dict":
-            if (has_key of [target, key]) == 1:
+            if (has_key of [target, key]):
                 return target[key]
             return null
         throw of f"cannot access .{key} on {type of target}"
@@ -2083,9 +2084,7 @@ define eigen_eval(node, env) as:
         running is 1
         loop while (max_iter > 0) and (running == 1):
             cond is eigen_eval of [node[1], env]
-            if cond == 0:
-                running is 0
-            elif cond == null:
+            if not cond:
                 running is 0
             else:
                 result is _eval_block of [node[2], env]
@@ -2212,9 +2211,7 @@ define eigen_eval(node, env) as:
             _env_set_local of [comp_env, var_name, iter[i]]
             if filter_node != null:
                 cond is eigen_eval of [filter_node, comp_env]
-                if cond == 0:
-                    continue
-                if cond == null:
+                if not cond:
                     continue
             val is eigen_eval of [expr_node, comp_env]
             append of [result, val]
@@ -2276,6 +2273,8 @@ define eigen_eval(node, env) as:
         return 0
 
     if ntype == "predicate":
+        # #1637: a verdict is a bool, as on the VM (the verdict VALUES here
+        # are this evaluator's own approximation, not the VM's observer).
         kind is node[1]
         # Look at last observer state
         # kind: 0=converged, 1=stable, 2=improving, 3=oscillating, 4=diverging, 5=equilibrium
@@ -2290,36 +2289,36 @@ define eigen_eval(node, env) as:
             # converged: low dH and low entropy
             if (abs of dh) < 0.001:
                 if h < 0.1:
-                    return 1
-            return 0
+                    return true
+            return false
         if kind == 1:
             # stable: low dH, moderate entropy
             if (abs of dh) < 0.01:
                 if h >= 0.1:
-                    return 1
-            return 0
+                    return true
+            return false
         if kind == 2:
             # improving: negative dH
             if dh < (0 - 0.001):
-                return 1
-            return 0
+                return true
+            return false
         if kind == 3:
             # oscillating: sign change in dH
             if (dh * prev_dh) < 0:
                 if (abs of dh) > 0.001:
-                    return 1
-            return 0
+                    return true
+            return false
         if kind == 4:
             # diverging: positive dH
             if dh > 0.001:
-                return 1
-            return 0
+                return true
+            return false
         if kind == 5:
             # equilibrium: very low dH
             if (abs of dh) < 0.001:
-                return 1
-            return 0
-        return 0
+                return true
+            return false
+        return false
 
     return null
 

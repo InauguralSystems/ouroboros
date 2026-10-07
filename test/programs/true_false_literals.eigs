@@ -1,0 +1,32 @@
+# #1637 (EigenScript#1647): `true`/`false` are boolean literals -- keywords in
+# the C lexer's TOK_IS..TOK_LOCAL run, so they are no longer identifiers
+# (`true is 5` is now a parse error on both sides: test/run.sh reject_one) but
+# still serve as dot keys. This file used to pin the opposite (they were plain
+# names, `print of true` printed the bound 5); the pin moved the language.
+print of true
+print of false
+print of [true, false, not true, not false]
+print of (type of true)
+print of (true == true)
+print of (true != false)
+print of (true and 5)
+print of (false or "x")
+x is false
+if not x:
+    print of "falsy"
+if true:
+    print of "truthy"
+d is {"a": 1}
+d.true is 3
+d.false is 4
+print of d.true
+print of d.false
+print of d
+define flip(b) as:
+    return not b
+print of (flip of true)
+print of (flip of false)
+local truthy is 1
+print of truthy
+print of f"{true}-{false}"
+print of (str of true)

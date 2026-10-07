@@ -9,3 +9,4 @@ l2_boxed_slot_numeric_read 261
 l3_genp_rebind 264
 l4_genp_for_binder 264
 l5_owned_arg_temp 262
+l6_bool_values 262

@@ -469,6 +469,15 @@ Permanent positive parity case: `test/programs/true_false_are_identifiers.eigs`
 3 reject + bootstrap fixed point all green. (Same silent-wrong class as
 F-OURO-19; F-OURO-13: the premise was reproduced minimally before fixing.)
 
+**Superseded at the EigenScript#1647 pin (#1637, the boolean type).** The
+language now HAS `true`/`false`: keywords in the C lexer's TOK_IS..TOK_LOCAL
+run (so `d.true` is still a dot key), parsed as a postfix-free literal of type
+`bool`, compiled to OP_TRUE/OP_FALSE (95/96). The front-end mirrors that
+(`["bool", 1|0]`); `true is 5` is a parse error on both sides (reject_one), and
+the parity case became `test/programs/true_false_literals.eigs`. The rule this
+finding enforced -- mirror the pinned C lexer exactly -- is unchanged; the
+pinned lexer moved.
+
 ## F-OURO-21 — `+=`/bitwise operators IMPLEMENTED (were reject-only) — DONE
 
 The C VM compiles compound assignment (`+= -= *= /= &= |= ^= <<= >>=`) and the

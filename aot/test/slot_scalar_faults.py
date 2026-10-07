@@ -15,10 +15,10 @@ import tempfile
 
 FAULTS = {
     'sum_materialization_guard': ('return aot_scalar_number(num_guard(l.number + r.number));', 'return aot_scalar_number(l.number + r.number);'),
-    'heap_nan_identity': ('value->type == VAL_NUM && !isnan(value->data.num)', 'value->type == VAL_NUM'),
-    'list_read_clamp': ('double result = element->data.num; /* raw even for arena nums */', 'double result = num_guard(element->data.num); /* planted extra clamp */'),
+    'heap_nan_identity': ('value->type == VAL_NUM && !isnan(VAL_NUM_RAW(value))', 'value->type == VAL_NUM'),
+    'list_read_clamp': ('double result = VAL_NUM_RAW(element); /* raw even for arena nums */', 'double result = num_guard(VAL_NUM_RAW(element)); /* planted extra clamp */'),
     'buffer_read_guard': ('double result = num_guard(container->data.buffer.data[(int)number]);', 'double result = container->data.buffer.data[(int)number];'),
-    'slot_materialization_guard': ('return aot_scalar_number(num_guard(slot.d));', 'return aot_scalar_number(slot.d);'),
+    'slot_materialization_guard': ('return aot_scalar_number(num_guard(SLOT_NUM_RAW(slot)));', 'return aot_scalar_number(SLOT_NUM_RAW(slot));'),
     'left_value_release': ('val_decref(left.value);', '/* planted missing left release */'),
     'right_value_release': ('val_decref(right.value);', '/* planted missing right release */'),
 }

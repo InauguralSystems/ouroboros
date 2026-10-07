@@ -1080,7 +1080,11 @@ define param_unread(body, name) as:
     for i in range of (len of body):
         local st is unwrap of body[i]
         if (st[0] == "assign") and (st[1] == name) and ((len of st) <= 4):
-            return ((uses_ident of [st[2], name]) == 0)
+            # #1637: a comparison is a bool now; this helper's 1/0 is a
+            # numeric flag its callers compare (deadp), so keep it a number.
+            if (uses_ident of [st[2], name]) == 0:
+                return 1
+            return 0
         if (uses_ident of [st, name]) == 1:
             return 0
     return 1
@@ -1147,6 +1151,43 @@ define unwrap(node) as:
         node is node[2]
     return node
 
+# A dict literal's key as a string, or null when it is not a string literal.
+# The parser takes any expression there (`{k: 1}` keys on k's VALUE, and
+# `{5: 1}` / `{true: 1}` raise "dict key must be a string" at run time), so
+# every walker that reads a key statically asks here first.
+define dict_key_str(kn) as:
+    if (type of kn) == "str":
+        return kn
+    local ku is unwrap of kn
+    if ku[0] == "str":
+        return ku[1]
+    return null
+
+# 1 when every key of the dict literal is a string literal.
+define dict_lit_static(dictnode) as:
+    local prs is dictnode[1]
+    for pk in range of (len of prs):
+        if (dict_key_str of ((prs[pk])[0])) == null:
+            return 0
+    return 1
+
+# (#1637, round 4) a record's SHAPE: its literal's distinct keys in order,
+# recorded in its field map as "#o" (pf_merge keeps it only where every
+# call site agrees). Writes through a map that names a shape demote that
+# shape's fields only (field_write_pass). null for `{}`.
+define dict_lit_shape(dictnode) as:
+    local prs is dictnode[1]
+    local seen is {}
+    local sh is ""
+    for pk in range of (len of prs):
+        local ks is dict_key_str of ((prs[pk])[0])
+        if seen[ks] == null:
+            seen[ks] is 1
+            sh is sh + ks + ","
+    if sh == "":
+        return null
+    return sh
+
 # ---- buffer-type inference: a var is a numeric buffer if every assignment is
 # `buffer of N` / `zeros of N`. ----
 define is_buf_create(rhs) as:
@@ -1188,6 +1229,45 @@ define infer_buffers(stmts) as:
     return module_unclassify of bt
 
 # ---- numeric-scalar inference (now buffer-aware: buf[i] and len-of-buf are numeric) ----
+# #1637 (EigenScript#1647): an expression whose value is CERTAINLY a bool --
+# the literal, a comparison, `not`, a predicate verdict, a BOOL_RET builtin,
+# or and/or of two of these (and/or return an operand). Such a value is never
+# a number: it is not numeric to is_num_expr, it is CERTAIN boxed evidence to
+# the local classifiers, and an arithmetic or bitwise operator over it takes
+# the boxed path, whose helper raises with the VM's own text ("cannot apply
+# '+' to bool and num"). In condition position emit_cond keeps it a C int.
+define is_bool_expr(node) as:
+    local n is unwrap of node
+    if (type of n) != "list":
+        return 0
+    if (len of n) == 0:
+        return 0
+    local t is n[0]
+    if t == "bool":
+        return 1
+    if t == "predicate":
+        return 1
+    if t == "binop":
+        if CMP_OPS[n[1]] == 1:
+            return 1
+        if (n[1] == "and") or (n[1] == "or"):
+            if (is_bool_expr of n[2]) == 1:
+                return is_bool_expr of n[3]
+        return 0
+    if t == "unary":
+        if n[1] == "not":
+            return 1
+        return 0
+    if t == "call":
+        local bc is unwrap of n[1]
+        if bc[0] == "predicate":
+            return 1
+        if bc[0] == "ident":
+            if (BOOL_RET_BUILTINS[bc[1]] == 1) and (g_funcs[bc[1]] == null) and (g_cur_params[bc[1]] != 1) and ((module_public of bc[1]) == 0):
+                return 1
+        return 0
+    return 0
+
 define is_num_expr(node, nm, bt) as:
     local t is node[0]
     if t == "_line":
@@ -1195,7 +1275,8 @@ define is_num_expr(node, nm, bt) as:
     if t == "num":
         return 1
     if t == "predicate":
-        return 1
+        # #1637: a predicate verdict is a bool, not a number
+        return 0
     if t == "ident":
         if (module_public of node[1]) == 1:
             return 0
@@ -1213,7 +1294,7 @@ define is_num_expr(node, nm, bt) as:
         if dm[0] == "ident":
             local fl is g_cur_fmap[(dm[1]) + ".#fields"]
             if fl != null:
-                if fl[(node[2])] == "num":
+                if (field_cls of [fl, node[2]]) == "num":
                     return 1
         return 0
     if t == "binop":
@@ -1221,6 +1302,13 @@ define is_num_expr(node, nm, bt) as:
         # inc. 2): claiming them numeric stops the greatest-fixpoint pass
         # demoting accumulators whose RHS reads a boxed name (the for-in
         # cascade, crc32's table read). Boxed operands emit via aot_num_ck.
+        # #1637: ...except a CERTAIN bool operand: that expression raises on
+        # every execution, and the boxed helper raises it with the VM's text
+        # (`cannot apply '-' to bool and num`), where a checked unbox names
+        # only "a numeric context".
+        if (NUMONLY_OPS[node[1]] == 1) or (node[1] == "+"):
+            if ((is_bool_expr of node[2]) == 1) or ((is_bool_expr of node[3]) == 1):
+                return 0
         if NUMONLY_OPS[node[1]] == 1:
             return 1
         # `+` is polymorphic (str+str concatenates) but the VM raises on any
@@ -1264,12 +1352,21 @@ define is_num_expr(node, nm, bt) as:
             return is_num_expr of [node[3], nm, bt]
         if ARITH_OPS[node[1]] == null:
             return 0
+        # #1637: a comparison yields a bool whatever its operands are.
+        if CMP_OPS[node[1]] == 1:
+            return 0
         if (is_num_expr of [node[2], nm, bt]) == 0:
             return 0
         if (is_num_expr of [node[3], nm, bt]) == 0:
             return 0
         return 1
     if t == "unary":
+        # #1637: `not` yields a bool; `-`/`~` of a certain bool raise, and the
+        # boxed helpers name the bool as the VM does.
+        if node[1] == "not":
+            return 0
+        if (is_bool_expr of node[2]) == 1:
+            return 0
         return is_num_expr of [node[2], nm, bt]
     if t == "index":
         local tgt is unwrap of node[1]
@@ -1293,9 +1390,9 @@ define is_num_expr(node, nm, bt) as:
         local callee is unwrap of node[1]
         if (callee[0] == "ident") and ((module_public of callee[1]) == 1):
             return 0
-        # a predicate verdict is a number (0/1), like the bare form above
+        # #1637: a predicate verdict is a bool, like the bare form above
         if callee[0] == "predicate":
-            return 1
+            return 0
         if callee[0] == "ident":
             # (round 169) a dispatch through a SHADOW table yields a double
             # (every handler is declared double): numeric.
@@ -2066,12 +2163,19 @@ define collect_uses_scoped(node, acc) as:
     return 0
 
 define infer_numeric(stmts, bt) as:
+    return infer_numeric_excl of [stmts, bt, {}]
+
+# ...with the names in `excl` held non-numeric (module names a function's
+# outward write proves are not numbers, module_outward_demote).
+define infer_numeric_excl(stmts, bt, excl) as:
     local assigns is collect_assigns of [stmts, {}]
     local names is keys of assigns
     local nm is {}
     for i in range of (len of names):
         nm[names[i]] is 1
         if (module_public of names[i]) == 1:
+            nm[names[i]] is 0
+        if excl[names[i]] == 1:
             nm[names[i]] is 0
     local changed is 1
     loop while changed == 1:
@@ -2369,7 +2473,7 @@ define slice_arg_parts(argnode, nm, bt) as:
         local bnm is tgt[1]
         local lo is "0"
         if n[2] != null:
-            lo is emit_num of [n[2], nm, bt, 0]
+            lo is emit_num_operand of [n[2], nm, bt, 0, "", "B", "-"]
         # (round 92) a non-bt target is not a C variable -- a 2-D `zeros`
         # is a nested list and left the buf class this round, and emitting
         # its raw name gave gcc an undeclared identifier. Read it boxed
@@ -2390,7 +2494,7 @@ define slice_arg_parts(argnode, nm, bt) as:
         local hidef is 1
         local hi is "aot_slice_len(" + cbuf + ")"
         if n[3] != null:
-            hi is emit_num of [n[3], nm, bt, 0]
+            hi is emit_num_operand of [n[3], nm, bt, 0, "", "B", "-"]
             hidef is 0
         # [0] is a C NAME, so it is mangled like every other emitted name —
         # [2] already was, and the asymmetry meant every consumer emitted the
@@ -2412,8 +2516,83 @@ define slice_arg_parts(argnode, nm, bt) as:
         cb2 is env_readb of n[1]
     return [cb2, "0", "aot_slice_len(" + cb2 + ")", 0, 1]
 
+# #1637: the site string a checked unbox reports. Inside an operator whose
+# OTHER operand's type is known (op_site), it is an OPERAND site -- "\001" op
+# "\001" side "\001" other -- and aot_nonnum_raise words the failure as the
+# VM's operator does ("cannot apply '+' to bool and num", "cannot negate
+# bool"). Set only around one operand's emission and cleared before any
+# nested emission, so an inner read never borrows an outer operator's text.
+G_NUM_SITE is [null]
+define name_site(key) as:
+    if G_NUM_SITE[0] != null:
+        return G_NUM_SITE[0]
+    return "\"" + (c_escape of (G_CUR_FN[0])) + ": name " + (c_escape of key) + "\""
+
+define site_or(osite, default) as:
+    if osite != null:
+        return osite
+    return default
+
+# The VM's type name of an operand known at build time, or "" when unknown.
+define static_type_name(node, nm, bt) as:
+    if (is_num_expr of [node, nm, bt]) == 1:
+        return "num"
+    if (is_bool_expr of node) == 1:
+        return "bool"
+    return ""
+
+# #1637: an index or a stored value the C-buffer fast paths may unbox -- a
+# proven number that is not a bool. Anything else takes the boxed path, which
+# checks in the VM's order (OP_INDEX_GET / OP_INDEX_SET).
+define num_store_ok(node, nm, bt) as:
+    if (is_bool_expr of node) == 1:
+        return 0
+    return is_num_expr of [node, nm, bt]
+
+# The operand site for `side` ("L"/"R" of a binary op, "U" for `~`, "N" for
+# unary minus).
+define op_site(op, side, other) as:
+    return "\"\\001" + op + "\\001" + side + "\\001" + other + "\""
+
+# Emit one operand through emit_num with its operand site, when the operand is
+# a checked read (a boxed name or a certain bool) and the other side's type is
+# known: an operand of a numbers-only/`+` operator (L/R), of `~` (U) or unary
+# minus (N), a slice bound (B) or a buffer element store (S).
+define emit_num_operand(node, nm, bt, raw, op, side, other) as:
+    local u is unwrap of node
+    local applies is 0
+    if (is_bool_expr of u) == 1:
+        applies is 1
+    elif (is_num_expr of [u, nm, bt]) == 0:
+        applies is 1
+    if (applies == 0) or (other == ""):
+        return emit_num of [node, nm, bt, raw]
+    local _saved is G_NUM_SITE[0]
+    G_NUM_SITE[0] is op_site of [op, side, other]
+    local r is emit_num of [node, nm, bt, raw]
+    G_NUM_SITE[0] is _saved
+    return r
+
 define emit_num(node, nm, bt, raw) as:
     local t is node[0]
+    # #1637: a certain bool in a numeric position (an index, a bound, an
+    # operand the caller unboxes) is not a number on any execution. Box it
+    # and unbox CHECKED: loud where the VM raises, never a silent 0/1.
+    if (is_bool_expr of node) == 1:
+        local bsite is G_NUM_SITE[0]
+        G_NUM_SITE[0] is null
+        if bsite == null:
+            bsite is "\"" + (c_escape of (G_CUR_FN[0])) + ": bool\""
+        local bexpr is emit_val of [node, nm, bt]
+        G_NUM_SITE[0] is bsite
+        return "aot_num_ck_at(" + bexpr + ", " + bsite + ")"
+    # An operand site set by emit_num_operand belongs to THIS node's own
+    # checked read. A name reads it through name_site; every other kind takes
+    # it here and clears it, so the reads nested inside (a target, an index,
+    # call arguments) keep their own wording.
+    local osite is G_NUM_SITE[0]
+    if (t != "ident") and (t != "_line"):
+        G_NUM_SITE[0] is null
     if t == "ident":
         if (g_cur_fresh_for[node[1]] == 1) and (g_cur_active_for[node[1]] != 1):
             return "aot_num_ck(aot_undefined_name(\"" + node[1] + "\"))"
@@ -2423,11 +2602,9 @@ define emit_num(node, nm, bt, raw) as:
         return emit_num of [node[2], nm, bt, raw]
     if t == "num":
         return str of node[1]
-    if t == "predicate":
-        return "((double)aot_predicate(" + (str of node[1]) + "))"
     if t == "ident":
         if (module_public of node[1]) == 1:
-            return env_read_num of [node[1], "\"" + (c_escape of (G_CUR_FN[0])) + ": name " + (c_escape of (module_key of node[1])) + "\""]
+            return env_read_num of [node[1], (name_site of (module_key of node[1]))]
         # (#218) an interrogated call-local: the call-local wins once bound
         # in this call; otherwise the read is whatever this regime's module
         # read is -- computed by re-entering with the mark cleared.
@@ -2441,7 +2618,7 @@ define emit_num(node, nm, bt, raw) as:
         # non-number read here is a VM raise ("cannot apply ... to str"),
         # and aot_num's silent 0.0 was the worst-outcome class.
         if (obs_name of node[1]) == 1:
-            return env_read_num of [node[1], "\"" + (c_escape of (G_CUR_FN[0])) + ": name " + (c_escape of node[1]) + "\""]
+            return env_read_num of [node[1], (name_site of node[1])]
         if nm[node[1]] == 1:
             # (round 74) an int-classified name in the DOUBLE path must be
             # CAST: C's promotion keeps `long * long` integral, so a
@@ -2493,27 +2670,25 @@ define emit_num(node, nm, bt, raw) as:
             # instead: correct when it holds a number, loud exactly where the
             # VM raises when it does not. Borrowed — a parameter is not ours
             # to consume.
-            return "aot_num_ck_bat(" + (cn of node[1]) + ", \"" + (c_escape of (G_CUR_FN[0])) + ": name " + (c_escape of node[1]) + "\")"
+            return "aot_num_ck_bat(" + (cn of node[1]) + ", " + (name_site of node[1]) + ")"
         # not a declared C numeric: an env-boxed name in a numeric context
         # (e.g. a for-in loop var indexing a buffer, #70) — read it boxed.
         # CHECKED (#65 inc. 2): the VM raises when a non-number reaches an
         # arithmetic context; aot_num's silent 0.0 was the worst-outcome
         # class.
-        return env_read_num of [node[1], "\"" + (c_escape of (G_CUR_FN[0])) + ": name " + (c_escape of node[1]) + "\""]
+        return env_read_num of [node[1], (name_site of node[1])]
     if t == "unary":
         local uop is node[1]
-        local uv is emit_num of [node[2], nm, bt, raw]
+        local uside is "N"
+        if uop == "~":
+            uside is "U"
+        local uv is emit_num_operand of [node[2], nm, bt, raw, uop, uside, "-"]
         if uop == "-":
             return "(-(" + uv + "))"
         if uop == "~":
             # OP_BNOT: int64 complement of the numeric value (#73 — this used
             # to fall into the `not` arm below, a silent wrong number).
             return "((double)(~(int64_t)(" + uv + ")))"
-        if uop == "not":
-            # Unary tightness since #99 item 1 (parse_unary_body): the operand
-            # is unary-or-tighter, so this numeric arm sees e.g. the `not x`
-            # inside `(not x) + 1` — position-independent either way.
-            return "((" + uv + " == 0.0) ? 1.0 : 0.0)"
         throw of ("AOT: emit_num unexpected unary '" + uop + "'")
     if t == "dot":
         # numeric read of a dict field (#86): box-read then checked unbox.
@@ -2531,30 +2706,33 @@ define emit_num(node, nm, bt, raw) as:
             # goes too.
             local sfi is static_field_index of [node[1], node[2]]
             if sfi != null:
-                return "aot_dot_num_tb_si(" + ncv + ", \"" + (c_escape of node[2]) + "\", " + (str of sfi) + ", " + (ic_site of node[2]) + ")"
+                return "aot_dot_num_tb_si(" + ncv + ", \"" + (c_escape of node[2]) + "\", " + (str of sfi) + ", " + (site_or of [osite, (ic_site of node[2])]) + ")"
         local ic is ic_new of node[2]
         if ncv != "":
-            return "({ " + ic[0] + "aot_dot_num_tb_ic(" + ncv + ", \"" + (c_escape of node[2]) + "\", " + ic[1] + ", " + ic[2] + "); })"
-        return "({ " + ic[0] + "aot_dot_num_ic(" + (emit_val of [node[1], nm, bt]) + ", \"" + (c_escape of node[2]) + "\", " + ic[1] + ", " + ic[2] + "); })"
+            return "({ " + ic[0] + "aot_dot_num_tb_ic(" + ncv + ", \"" + (c_escape of node[2]) + "\", " + ic[1] + ", " + (site_or of [osite, ic[2]]) + "); })"
+        return "({ " + ic[0] + "aot_dot_num_ic(" + (emit_val of [node[1], nm, bt]) + ", \"" + (c_escape of node[2]) + "\", " + ic[1] + ", " + (site_or of [osite, ic[2]]) + "); })"
     if t == "index":
         local tgt is unwrap of node[1]
-        if (tgt[0] == "ident") and (g_tensor_buf[tgt[1]] == 1) and (g_cur_params[tgt[1]] != 1) and ((is_num_expr of [node[2], nm, bt]) == 1):
+        if (tgt[0] == "ident") and (g_tensor_buf[tgt[1]] == 1) and (g_cur_params[tgt[1]] != 1) and ((num_store_ok of [node[2], nm, bt]) == 1):
             # (round 187, #203) raw tensor element, see aot_tensor_num_at.
             return "aot_tensor_num_at(" + (cn of tgt[1]) + ", " + (emit_num of [node[2], nm, bt, 0]) + ", \"" + (c_escape of (G_CUR_FN[0])) + ": index read of " + (c_escape of tgt[1]) + "\")"
         # a buffer C var -> aot_buf_get; anything else (a boxed list local,
         # or a non-ident target like `store.offsets[ci]`, #86) -> boxed
         # index then extract the number.
-        if (tgt[0] != "ident") or (bt[tgt[1]] != 1):
+        # (#1637) a non-number index (a bool) reads through the boxed path
+        # too, so it raises the VM's "cannot index buffer", not a numeric-
+        # context error from unboxing the index.
+        if (tgt[0] != "ident") or (bt[tgt[1]] != 1) or ((num_store_ok of [node[2], nm, bt]) != 1):
             # the index is emitted as a VALUE, not forced numeric: a dict read
             # in a numeric context (`d["a"] + 5`) has a STRING index —
             # aot_index_get dispatches on the runtime types exactly like the
             # VM, and the RESULT is what must be numeric-or-raise here.
-            if (is_num_expr of [node[2], nm, bt]) == 1:
+            if (num_store_ok of [node[2], nm, bt]) == 1:
                 local nib is emit_val_borrow of [node[1], nm, bt, node[2]]
                 if nib != "":
-                    return "aot_index_num_ib(" + nib + ", " + (emit_num of [node[2], nm, bt, 0]) + ", \"" + (c_escape of (G_CUR_FN[0])) + ": index read\")"
-                return "aot_num_ck_at(" + (seq_call3 of ["aot_index_get_i", [[(emit_val of [node[1], nm, bt]), (has_call_node of node[1])], [(emit_num of [node[2], nm, bt, 0]), (has_call_node of node[2])]], ["Value*", "double"]]) + ", \"" + (c_escape of (G_CUR_FN[0])) + ": index read\")"
-            return "aot_num_ck_at(" + (seq_call3 of ["aot_index_get", [[(emit_val of [node[1], nm, bt]), (has_call_node of node[1])], [(emit_val of [node[2], nm, bt]), (has_call_node of node[2])]], ["Value*", "Value*"]]) + ", \"" + (c_escape of (G_CUR_FN[0])) + ": index read\")"
+                    return "aot_index_num_ib(" + nib + ", " + (emit_num of [node[2], nm, bt, 0]) + ", " + (site_or of [osite, "\"" + (c_escape of (G_CUR_FN[0])) + ": index read\""]) + ")"
+                return "aot_num_ck_at(" + (seq_call3 of ["aot_index_get_i", [[(emit_val of [node[1], nm, bt]), (has_call_node of node[1])], [(emit_num of [node[2], nm, bt, 0]), (has_call_node of node[2])]], ["Value*", "double"]]) + ", " + (site_or of [osite, "\"" + (c_escape of (G_CUR_FN[0])) + ": index read\""]) + ")"
+            return "aot_num_ck_at(" + (seq_call3 of ["aot_index_get", [[(emit_val of [node[1], nm, bt]), (has_call_node of node[1])], [(emit_val of [node[2], nm, bt]), (has_call_node of node[2])]], ["Value*", "Value*"]]) + ", " + (site_or of [osite, "\"" + (c_escape of (G_CUR_FN[0])) + ": index read\""]) + ")"
         if (is_int_expr of node[2]) == 1:
             if (has_call_node of node[2]) == 1:
                 return seq_buftgt_i of ["aot_buf_get_i", (cn of tgt[1]), (emit_int of node[2]), ""]
@@ -2644,7 +2822,7 @@ define emit_num(node, nm, bt, raw) as:
                 return "aot_sqrt(" + (emit_num of [node[2], nm, bt, 0]) + ")"
             # (round 172) floor/ceil/round/abs on a PROVABLY numeric argument
             # are the libm call the VM's builtin makes (builtins.c:
-            # `make_num(floor(arg->data.num))` and siblings; make_num guards,
+            # `make_num(floor(x))` on a number argument, and siblings; make_num guards,
             # so num_guard here matches). Before this, `floor of (addr / 0x4000)`
             # on DMG's every memory read was aot_call_resolve + make_num +
             # aot_call_dispatch + unbox. A boxed argument still takes the
@@ -2682,7 +2860,7 @@ define emit_num(node, nm, bt, raw) as:
                     # read in numeric position (the message is the #148/#158
                     # family's, the VM's is "cannot apply ..." -- honest
                     # reason, ledgered divergence in wording only).
-                    return "aot_num_ck_at(" + (emit_val of [node, nm, bt]) + ", \"" + (c_escape of (G_CUR_FN[0])) + ": call " + (c_escape of callee[1]) + "\")"
+                    return "aot_num_ck_at(" + (emit_val of [node, nm, bt]) + ", " + (site_or of [osite, "\"" + (c_escape of (G_CUR_FN[0])) + ": call " + (c_escape of callee[1]) + "\""]) + ")"
                 return emit_call_num of [node, nm, bt]
             # builtin call in a numeric context (#65 inc. 2): emit the boxed
             # call (emit_val mirrors the VM's arg packing, incl. the one call
@@ -2708,12 +2886,12 @@ define emit_num(node, nm, bt, raw) as:
                         # (round 169) unboxed shadow dispatch: the three
                         # operands are evaluated in source order into temps.
                         return "({ Value* _dt = " + (emit_val of [(edarg[1])[0], nm, bt]) + "; Value* _dk = " + (emit_val of [(edarg[1])[1], nm, bt]) + "; Value* _dc = " + (emit_val of [(edarg[1])[2], nm, bt]) + "; aot_dispatch_sh_num_" + (cn of edt[1]) + "(_dt, _dk, _dc, \"" + (c_escape of (G_CUR_FN[0])) + ": dispatch\"); })"
-            return "aot_num_ck_at(" + (emit_val of [node, nm, bt]) + ", \"" + (c_escape of (G_CUR_FN[0])) + ": builtin " + (c_escape of callee[1]) + "\")"
+            return "aot_num_ck_at(" + (emit_val of [node, nm, bt]) + ", " + (site_or of [osite, "\"" + (c_escape of (G_CUR_FN[0])) + ": builtin " + (c_escape of callee[1]) + "\""]) + ")"
         # A callee that is an EXPRESSION, in a NUMERIC context (#121/#140):
         # `complex.mag of a` inside arithmetic. emit_val handles the boxed
         # form; here the result is REQUIRED numeric, exactly as the builtin
         # arm above requires it — the VM raises otherwise.
-        return "aot_num_ck_at(" + (emit_val of [node, nm, bt]) + ", \"" + (c_escape of (G_CUR_FN[0])) + ": value-callee call\")"
+        return "aot_num_ck_at(" + (emit_val of [node, nm, bt]) + ", " + (site_or of [osite, "\"" + (c_escape of (G_CUR_FN[0])) + ": value-callee call\""]) + ")"
     if t == "binop":
         # whole expression proven integer -> native long arithmetic, no guard.
         # (round 74) the result is CAST to double at this boundary: emit_num's
@@ -2727,8 +2905,16 @@ define emit_num(node, nm, bt, raw) as:
         if (is_int_expr of node) == 1:
             return "((double)" + (emit_int of node) + ")"
         local op is node[1]
-        local l is emit_num of [node[2], nm, bt, raw]
-        local r is emit_num of [node[3], nm, bt, raw]
+        local l is ""
+        local r is ""
+        if (op == "+") or (NUMONLY_OPS[op] == 1):
+            l is emit_num_operand of [node[2], nm, bt, raw, op, "L", (static_type_name of [node[3], nm, bt])]
+            # The right operand is read only once the left one has unboxed,
+            # so when the right one fails the left WAS a number.
+            r is emit_num_operand of [node[3], nm, bt, raw, op, "R", "num"]
+        else:
+            l is emit_num of [node[2], nm, bt, raw]
+            r is emit_num of [node[3], nm, bt, raw]
         # (round 89) sequence when either operand can CALL: bare C
         # operator operands evaluate in unspecified order while the VM is
         # left-then-right -- this arm had only matched by gcc mood. Both
@@ -2785,7 +2971,8 @@ define emit_num(node, nm, bt, raw) as:
             return "({ double _sc = " + l + "; _sc == 0.0 ? _sc : (" + r + "); })"
         if op == "or":
             return "({ double _sc = " + l + "; _sc != 0.0 ? _sc : (" + r + "); })"
-        return seqpre + ("((" + l + " " + op + " " + r + ") ? 1.0 : 0.0)") + seqpost
+        # #1637: a comparison is a bool -- is_bool_expr routed it away above.
+        throw of ("AOT: emit_num unexpected binop '" + op + "'")
     if t == "interrogate":
         # (round 194, #139) an interrogative in a NUMERIC context (dynamics:
         # `x is x * 0.9 + (prev of x) * 0.1`). Its value is polymorphic (a
@@ -2795,7 +2982,7 @@ define emit_num(node, nm, bt, raw) as:
         # a non-number dies "non-numeric value in a numeric context" exactly
         # where the VM raises on the arithmetic. The three dynamics programs
         # refused "emit_num on non-numeric node interrogate" for this.
-        return "aot_num_ck_at(" + (emit_val of [node, nm, bt]) + ", \"" + (c_escape of (G_CUR_FN[0])) + ": interrogative\")"
+        return "aot_num_ck_at(" + (emit_val of [node, nm, bt]) + ", " + (site_or of [osite, "\"" + (c_escape of (G_CUR_FN[0])) + ": interrogative\""]) + ")"
     throw of ("AOT: emit_num on non-numeric node " + t)
 
 define emit_val(node, nm, bt) as:
@@ -2820,6 +3007,13 @@ define emit_val(node, nm, bt) as:
                     local _vt is unwrap of (_va[1])[0]
                     if (_vt[0] == "ident") and (g_shadow_tbl[(_vt[1])] == 1):
                         return seq_call3 of ["aot_dispatch_sh_" + (cn of _vt[1]), [[(emit_val of [(_va[1])[0], nm, bt]), (has_call_node of (_va[1])[0])], [(emit_val of [(_va[1])[1], nm, bt]), (has_call_node of (_va[1])[1])], [(emit_val of [(_va[1])[2], nm, bt]), (has_call_node of (_va[1])[2])]], ["Value*", "Value*", "Value*"]]
+    # #1637: a bool VALUE is one of the two immortal singletons; the C int
+    # comes from the condition emitter wherever it has a native form (the
+    # literal, a comparison of two doubles, `not`, a predicate verdict).
+    if (is_bool_expr of node) == 1:
+        local _bv is emit_bool_c of [node, nm, bt]
+        if _bv != "":
+            return "make_bool(" + _bv + ")"
     if (is_num_expr of [node, nm, bt]) == 1:
         return "make_num(" + (emit_num of [node, nm, bt, 0]) + ")"
     local t is node[0]
@@ -2951,11 +3145,11 @@ define emit_val(node, nm, bt) as:
         # env), so aot_index_get(aot_get(...)) would fetch null — box the
         # aot_buf_get double instead (same VM index semantics, loud on error).
         local itgt is unwrap of node[1]
-        if (itgt[0] == "ident") and (bt[itgt[1]] == 1):
+        if (itgt[0] == "ident") and (bt[itgt[1]] == 1) and ((num_store_ok of [node[2], nm, bt]) == 1):
             if (has_call_node of node[2]) == 1:
                 return "make_num(" + (seq_buftgt of ["aot_buf_get", (cn of itgt[1]), (emit_num of [node[2], nm, bt, 0]), "", "double"]) + ")"
             return "make_num(aot_buf_get(" + (cn of itgt[1]) + ", " + (emit_num of [node[2], nm, bt, 0]) + "))"
-        if (is_num_expr of [node[2], nm, bt]) == 1:
+        if (num_store_ok of [node[2], nm, bt]) == 1:
             local bib is emit_val_borrow of [node[1], nm, bt, node[2]]
             if bib != "":
                 return "aot_index_get_ib(" + bib + ", " + (emit_num of [node[2], nm, bt, 0]) + ")"
@@ -2983,6 +3177,24 @@ define emit_val(node, nm, bt) as:
     if t == "dict":
         # dict literal {"k": v, ...} -> owned Value (GCC statement-expr).
         local pairs is node[1]
+        if (dict_lit_static of node) == 0:
+            # (#1637, round 4) a computed key -- `{k: 1}`, and the VM's
+            # raise for `{5: 1}` / `{true: 1}`: every key and value is
+            # evaluated in the VM's order (key0, val0, key1, ...), then
+            # aot_dict_lit_dyn builds the dict as OP_DICT does. The static
+            # arm below would have keyed `{k: 1}` on the identifier's NAME.
+            local np is str of (len of pairs)
+            local dd is "({ Value* _dk[" + np + "]; Value* _dv[" + np + "];"
+            for k in range of (len of pairs):
+                local dpr is pairs[k]
+                local dks is dict_key_str of dpr[0]
+                local dke is ""
+                if dks != null:
+                    dke is "make_str(\"" + (c_escape of dks) + "\")"
+                else:
+                    dke is emit_val of [dpr[0], nm, bt]
+                dd is dd + " _dk[" + (str of k) + "] = " + dke + "; _dv[" + (str of k) + "] = " + (emit_val of [dpr[1], nm, bt]) + ";"
+            return dd + " aot_dict_lit_dyn(" + np + ", _dk, _dv); })"
         local ds is "({ Value* _d = make_dict(" + (str of (len of pairs)) + ");"
         for k in range of (len of pairs):
             local pr is pairs[k]
@@ -2996,13 +3208,9 @@ define emit_val(node, nm, bt) as:
     if t == "unary":
         local uop is node[1]
         if uop == "not":
-            # `not x` -> 1.0 if x is falsy else 0.0 (a number; matches the VM).
-            # aot_truthy consumes its operand, so no extra decref is needed.
-            # Since #99 item 1 the frontend parses `not` at UNARY tightness
-            # (parser.c parse_unary_body): `not x + 1` arrives as
-            # binop(+, unary(not, x), 1) — the not node's operand is always
-            # unary-or-tighter, and the emit is position-independent.
-            return "make_num(aot_truthy(" + (emit_val of [node[2], nm, bt]) + ") ? 0.0 : 1.0)"
+            # #1637: `not x` is a bool (emit_bool_c answers it above; this
+            # arm is the backstop). aot_truthy consumes its operand.
+            return "make_bool(!aot_truthy(" + (emit_val of [node[2], nm, bt]) + "))"
         if uop == "-":
             # OP_NEG exactly (#100 item 5): negate a number, raise the VM's
             # "cannot negate non-numeric" otherwise — the aot_num coercion
@@ -3051,7 +3259,7 @@ define emit_val(node, nm, bt) as:
             local pa is unwrap of node[2]
             if pa[0] == "ident":
                 if (module_public of pa[1]) == 1:
-                    return "make_num((double)aot_predicate_of(" + (module_env of pa[1]) + ", \"" + (module_key of pa[1]) + "\", " + (str of callee[1]) + ", 0))"
+                    return "make_bool(aot_predicate_of(" + (module_env of pa[1]) + ", \"" + (module_key of pa[1]) + "\", " + (str of callee[1]) + ", 0))"
                 local pfn is 0
                 if g_funcs[pa[1]] != null:
                     pfn is 1
@@ -3066,7 +3274,7 @@ define emit_val(node, nm, bt) as:
                 # buffer PARAM keeps the band -- see the bt assign arm.
                 if (((bt[pa[1]] == 1) or (g_btmap[pa[1]] == 1)) and (g_cur_params[pa[1]] == 1)) or (g_dict[pa[1]] == 1) or (g_tensor[pa[1]] == 1):
                     pfn is 1
-                return "make_num((double)aot_predicate_of(__eigs_g, \"" + pa[1] + "\", " + (str of callee[1]) + ", " + (str of pfn) + "))"
+                return "make_bool(aot_predicate_of(__eigs_g, \"" + pa[1] + "\", " + (str of callee[1]) + ", " + (str of pfn) + "))"
             # a non-name operand is `cannot call num` in the VM; refuse loudly
             # rather than emit something that answers about the wrong thing.
             throw of "AOT: a predicate operand must be a name"
@@ -3268,10 +3476,10 @@ define emit_val(node, nm, bt) as:
         # default hi is the target's own length by type.
         local sl_lo is "0"
         if node[2] != null:
-            sl_lo is emit_num of [node[2], nm, bt, 0]
+            sl_lo is emit_num_operand of [node[2], nm, bt, 0, "", "B", "-"]
         local sl_hi is "aot_slice_len(_sl)"
         if node[3] != null:
-            sl_hi is emit_num of [node[3], nm, bt, 0]
+            sl_hi is emit_num_operand of [node[3], nm, bt, 0, "", "B", "-"]
         return "({ Value* _sl = " + (emit_val of [node[1], nm, bt]) + "; double _slo = " + sl_lo + "; double _shi = " + sl_hi + "; Value* _sr = aot_slice_any(_sl, _slo, _shi); val_decref(_sl); _sr; })"
     throw of ("AOT: cannot emit value node '" + t + "'")
 
@@ -3339,9 +3547,9 @@ define emit_tensor(node, nm, bt) as:
 # handled by the fully numeric path; neither side is the general boxed path).
 CMP_OPS is {"==": 1, "!=": 1, "<": 1, ">": 1, "<=": 1, ">=": 1}
 CMPN_R is {"==": "aot_eq_n", "!=": "aot_ne_n", "<": "aot_lt_n", ">": "aot_gt_n", "<=": "aot_le_n", ">=": "aot_ge_n"}
-CMPN_L is {"==": "aot_eq_n", "!=": "aot_ne_n", "<": "aot_lt_nl", ">": "aot_gt_nl", "<=": "aot_le_nl", ">=": "aot_ge_nl"}
+CMPN_L is {"==": "aot_eq_nl", "!=": "aot_ne_nl", "<": "aot_lt_nl", ">": "aot_gt_nl", "<=": "aot_le_nl", ">=": "aot_ge_nl"}
 CMPNB_R is {"==": "aot_eq_nb_t", "!=": "aot_ne_nb_t", "<": "aot_lt_nb_t", ">": "aot_gt_nb_t", "<=": "aot_le_nb_t", ">=": "aot_ge_nb_t"}
-CMPNB_L is {"==": "aot_eq_nb_t", "!=": "aot_ne_nb_t", "<": "aot_lt_nlb_t", ">": "aot_gt_nlb_t", "<=": "aot_le_nlb_t", ">=": "aot_ge_nlb_t"}
+CMPNB_L is {"==": "aot_eq_nlb_t", "!=": "aot_ne_nlb_t", "<": "aot_lt_nlb_t", ">": "aot_gt_nlb_t", "<=": "aot_le_nlb_t", ">=": "aot_ge_nlb_t"}
 
 # `<cvar>.field` where <cvar> is a C Value* name (a dict/buffer/generic local
 # or parameter, never a temporary) -> a BORROWED read: no ref is taken on the
@@ -3483,20 +3691,65 @@ define emit_val_borrow(node, nm, bt, sibling) as:
         return cv
     return emit_borrow_dot of [node, nm, bt]
 
+# #1637: a condition as a C int, without the statement-temporary wrapper
+# (emit_cond adds it once, around the whole test). A bool-shaped expression
+# never boxes here: a comparison of two doubles is the C comparison, `not` is
+# `!`, and `and`/`or` in condition position are && / || -- the VM's
+# short-circuit tests the same operands in the same order, and only the
+# truthiness of the operand it returns can reach a branch.
+define emit_cond_c(node, nm, bt) as:
+    if (is_num_expr of [node, nm, bt]) == 1:
+        return "(" + (emit_num of [node, nm, bt, 0]) + " != 0.0)"
+    local bc is emit_bool_c of [node, nm, bt]
+    if bc != "":
+        return bc
+    local cn1 is emit_slot_condition of [node, nm, bt]
+    if cn1 != "":
+        return cn1
+    local n is unwrap of node
+    if n[0] == "binop":
+        if n[1] == "and":
+            return "(" + (emit_cond_c of [n[2], nm, bt]) + " && " + (emit_cond_c of [n[3], nm, bt]) + ")"
+        if n[1] == "or":
+            return "(" + (emit_cond_c of [n[2], nm, bt]) + " || " + (emit_cond_c of [n[3], nm, bt]) + ")"
+    cn1 is emit_cmp_n of [node, nm, bt, 1]
+    if cn1 != "":
+        return cn1
+    return "aot_truthy(" + (emit_val of [node, nm, bt]) + ")"
+
+# #1637: the native C int of a bool-shaped expression, or "" when it has none
+# (a comparison with a boxed operand: its Value helper raises with the VM's
+# text and returns the bool singleton, so the caller boxes or tests that).
+define emit_bool_c(node, nm, bt) as:
+    local n is unwrap of node
+    local t is n[0]
+    if t == "bool":
+        if n[1] == 1:
+            return "1"
+        return "0"
+    if t == "predicate":
+        return "aot_predicate(" + (str of n[1]) + ")"
+    if t == "unary":
+        if n[1] == "not":
+            return "(!" + (emit_cond_c of [n[2], nm, bt]) + ")"
+        return ""
+    if t == "binop":
+        if CMP_OPS[n[1]] != 1:
+            return ""
+        if ((is_num_expr of [n[2], nm, bt]) == 0) or ((is_num_expr of [n[3], nm, bt]) == 0):
+            return ""
+        local l is emit_num of [n[2], nm, bt, 0]
+        local r is emit_num of [n[3], nm, bt, 0]
+        # (round 89) VM order under a call hazard: hoist both operands.
+        if ((has_call_node of n[2]) == 1) or ((has_call_node of n[3]) == 1):
+            return "({ double _sqbl = " + l + "; double _sqbr = " + r + "; (_sqbl " + n[1] + " _sqbr); })"
+        return "(" + l + " " + n[1] + " " + r + ")"
+    return ""
+
 define emit_cond(node, nm, bt) as:
     local _tu is g_stmt_tmp_used
     g_stmt_tmp_used is 0
-    local c is ""
-    if (is_num_expr of [node, nm, bt]) == 1:
-        c is "(" + (emit_num of [node, nm, bt, 0]) + " != 0.0)"
-    else:
-        local cn1 is emit_slot_condition of [node, nm, bt]
-        if cn1 == "":
-            cn1 is emit_cmp_n of [node, nm, bt, 1]
-        if cn1 != "":
-            c is cn1
-        else:
-            c is "aot_truthy(" + (emit_val of [node, nm, bt]) + ")"
+    local c is emit_cond_c of [node, nm, bt]
     if g_stmt_tmp_used == 1:
         # (round 171) a condition is evaluated per iteration: release its
         # temporaries as soon as it has been tested.
@@ -3722,7 +3975,7 @@ define emit_slot_condition(node, nm, bt) as:
         neg is "!"
     # Stage the READ, not just its index operands. The RHS is nonraising by
     # the explicit atom whitelist above, not merely because it is call-free.
-    return "({ AotScalarRead _scl = " + left_read + "; AotScalarRead _scr = " + right_read + "; " + neg + "aot_scalar_equal(_scl, _scr); })"
+    return "({ AotScalarRead _scl = " + left_read + "; AotScalarRead _scr = " + right_read + "; " + neg + "aot_scalar_equal(_scl, _scr, \"" + n[1] + "\"); })"
 
 define emit_stmt(node, ind, nm, bt, minits, gf) as:
     local emitted is emit_stmt_inner of [node, ind, nm, bt, minits, gf]
@@ -3908,6 +4161,14 @@ define emit_stmt_inner(node, ind, nm, bt, minits, gf) as:
                 _ilst is _ilst + " aot_trace_assign(\"" + name + "\", " + (cn of name) + "__loc);"
             return _ilst + " }\n"
         if nm[name] == 1:
+            # #1637: a C-numeric name (a parameter whose body uses it as a
+            # number) rebound to a CERTAIN bool. The VM stores the bool; a C
+            # double cannot hold one, and unboxing it would die where the VM
+            # runs. Refused by name, like the null/str rebind of a numeric
+            # parameter ("emit_num on non-numeric node null"), not compiled
+            # into a runtime death.
+            if (is_bool_expr of node[2]) == 1:
+                throw of ("AOT: '" + name + "' is a C number in " + (G_CUR_FN[0]) + " (its body uses it as a number) and this statement rebinds it to a bool (EigenScript#1637) -- the VM stores the bool, a C double cannot; bind the bool to a new name")
             # observed program: numeric assign goes through the runtime observer
             # (store in env + update the slot's entropy/dH + set last-observer).
             if (obs_name of name) == 1:
@@ -4055,20 +4316,18 @@ define emit_stmt_inner(node, ind, nm, bt, minits, gf) as:
             throw of "AOT: compound index assignment not supported yet"
         local tgt is unwrap of node[1]
         if tgt[0] == "ident":
-            if bt[tgt[1]] == 1:
-                # (round 99) a provably non-numeric RHS into a buffer element
-                # is refused BY NAME. The three paths used to speak in three
-                # voices -- an internal "emit_num on non-numeric node str" at
-                # module scope, a numeric-context death for an ident RHS, and
-                # "buffer elements must be numbers" on the boxed path -- and
-                # only the last named the construct. (The VM silently stores
-                # 0.0 here while raising in every other numeric context; that
-                # asymmetry is a fail-soft residual and is filed upstream, so
-                # the AOT stays loud rather than learning to coerce.)
-                if (is_num_expr of [node[3], nm, bt]) != 1:
-                    local rhk is unwrap of node[3]
-                    if (rhk[0] == "str") or (rhk[0] == "list") or (rhk[0] == "dict") or (rhk[0] == "null"):
-                        throw of ("AOT: buffer elements must be numbers -- '" + (cn of tgt[1]) + "' is assigned a " + rhk[0] + " (the VM silently stores 0.0 here; see the upstream fail-soft ledger)")
+            if (bt[tgt[1]] == 1) and ((num_store_ok of [node[2], nm, bt]) == 1) and ((num_store_ok of [node[3], nm, bt]) == 1):
+                # The C-buffer fast path takes only a proven-number index AND
+                # a proven-number value. Every other store -- a bool, str or
+                # null value, a bool index -- goes to the general boxed path
+                # below, which raises in OP_INDEX_SET's order (index integer,
+                # then range, then "cannot store <type> in a buffer (buffers
+                # hold numbers)"; a non-number index is "cannot index buffer
+                # for assignment"). Before #1637 this arm unboxed the value
+                # first and so reported the VALUE before an out-of-range or
+                # non-integer index (ouroboros#266 critic, p11), and refused a
+                # literal str/null RHS at build time while the VM (#1061)
+                # raises at run time.
                 if (is_int_expr of node[2]) == 1:
                     # (round 91) index before value, VM order (the boxed
                     # twins got this in round 88; this arm did not).
@@ -4080,9 +4339,9 @@ define emit_stmt_inner(node, ind, nm, bt, minits, gf) as:
                 return ind + "aot_buf_set(" + (cn of tgt[1]) + ", " + (emit_num of [node[2], nm, bt, 0]) + ", " + (emit_num of [node[3], nm, bt, 0]) + ");\n"
         # general boxed index-assign (#86): list / dict / buffer target as a
         # Value* — aot_index_set mirrors OP_INDEX_SET and consumes/adopts.
-        if (is_num_expr of [node[2], nm, bt]) == 1:
+        if (num_store_ok of [node[2], nm, bt]) == 1:
             local sib is emit_val_borrow of [node[1], nm, bt, [node[2], node[3]]]
-            if (sib != "") and ((is_num_expr of [node[3], nm, bt]) == 1):
+            if (sib != "") and ((num_store_ok of [node[3], nm, bt]) == 1):
                 # (round 169) a numeric store into a list element or a buffer
                 # slot without boxing (in place when the slot holds an
                 # exclusive number; DMG's `_exec_ctx[2] is op` and `mem.data[i]
@@ -4097,7 +4356,7 @@ define emit_stmt_inner(node, ind, nm, bt, minits, gf) as:
             # pushed before the rhs (VM 100, AOT 7, both rc 0). Temps in
             # VM push order (target, index, value) make the order a
             # sequence point, not a compiler mood.
-            if (is_num_expr of [node[3], nm, bt]) == 1:
+            if (num_store_ok of [node[3], nm, bt]) == 1:
                 # (round 176) the SEQUENCED store (a call somewhere in the
                 # operands, so the target is read owned) still stores the
                 # number in place: target, index, value in VM order, then
@@ -6365,6 +6624,9 @@ define is_boxed_node(node, fgen) as:
     local t is n[0]
     if (t == "list") or (t == "str") or (t == "dict") or (t == "null"):
         return 1
+    # #1637: a certain bool is never a number
+    if (is_bool_expr of n) == 1:
+        return 1
     if (t == "binop") and (n[1] == "+"):
         # a `+` chain carrying a string LITERAL is concatenation (f-strings
         # desugar to these): `return "a" + (str of n)` was invisible here, so
@@ -6655,16 +6917,27 @@ define return_node_is_num(rnode, rba, fbt, fgen, fdict, ftt, seen) as:
             G_RNN_OPT[0] is 1
         return _rv
     if t == "binop":
-        if (NUMONLY_OPS[re[1]] == 1) or (re[1] == "<") or (re[1] == ">") or (re[1] == "<=") or (re[1] == ">=") or (re[1] == "==") or (re[1] == "!=") or (re[1] == "and") or (re[1] == "or"):
+        # #1637: a comparison returns a bool, never a number; a numbers-only
+        # operator over a CERTAIN bool raises on every execution, so it stays
+        # boxed and the Value helper raises with the VM's text; and/or return
+        # an operand, numeric only when both are.
+        if (is_bool_expr of re) == 1:
+            return 0
+        if NUMONLY_OPS[re[1]] == 1:
+            if ((is_bool_expr of re[2]) == 1) or ((is_bool_expr of re[3]) == 1):
+                return 0
             return 1
-        if re[1] == "+":
+        if (re[1] == "+") or (re[1] == "and") or (re[1] == "or"):
             if (return_node_is_num of [re[2], rba, fbt, fgen, fdict, ftt, seen]) == 1:
                 if (return_node_is_num of [re[3], rba, fbt, fgen, fdict, ftt, seen]) == 1:
                     return 1
         return 0
     if t == "unary":
-        # `-x`, `~x`, `not x` all yield numbers (`return -1` was the shape
-        # that demoted DMG's cart_ram_offset in the first cut).
+        # `-x`, `~x` yield numbers (`return -1` was the shape that demoted
+        # DMG's cart_ram_offset in the first cut). #1637: `not x` is a bool,
+        # and `-`/`~` of a certain bool raises (boxed, the VM's text).
+        if (re[1] == "not") or ((is_bool_expr of re[2]) == 1):
+            return 0
         return 1
     if t == "dot":
         # (round 167) `return m.f` where the field map says f is "num"
@@ -6674,7 +6947,7 @@ define return_node_is_num(rnode, rba, fbt, fgen, fdict, ftt, seen) as:
         if dm[0] == "ident":
             local fl is g_ret_fmap[(dm[1]) + ".#fields"]
             if fl != null:
-                if fl[(re[2])] == "num":
+                if (field_cls of [fl, re[2]]) == "num":
                     return 1
         return 0
     if t == "call":
@@ -6698,6 +6971,8 @@ define return_node_is_num(rnode, rba, fbt, fgen, fdict, ftt, seen) as:
 
 g_cur_params_rt is {}
 g_mod_num_names is {}
+# module buffers as known before the ptypes build (param_rebind_nm's seed)
+G_MOD_BT0 is [{}]
 g_mod_assigned is {}
 g_mod_rba is {}
 # (round 173) module names some FUNCTION rebinds with a bare `is` (outward
@@ -6927,10 +7202,10 @@ define bufarg_is_buf(e, bt, ppt, pnames, fmap) as:
     if e[0] == "dot":
         local dm is unwrap of e[1]
         if dm[0] == "ident":
-            if g_field_class[(e[2])] == "buf":
+            if (g_field_class[(e[2])] == "buf") and (G_FIELD_ANY[0] == 0):
                 return 1
             local fl is fmap[(dm[1]) + ".#fields"]
-            if (fl != null) and (fl[(e[2])] == "buf"):
+            if (fl != null) and ((field_cls of [fl, e[2]]) == "buf"):
                 return 1
         return 0
     return 0
@@ -7046,11 +7321,19 @@ define uses_type_dispatch(node, name) as:
 # not a miscompile.
 #
 # Every name here was MEASURED against the pin with `type of`, not assumed
-# (`sign`/`trunc` were candidates and do not exist; log/sin/cos/tan and the
-# predicate-shaped ones -- contains, starts_with, ends_with, file_exists --
-# really do return num). The first six are exactly the set is_num_expr's
+# (`sign`/`trunc` were candidates and do not exist; log/sin/cos/tan really do
+# return num; since #1637 the predicate-shaped ones return a bool and live in
+# BOOL_RET_BUILTINS). The first six are exactly the set is_num_expr's
 # own call arm already lowers as numeric.
-NUM_RET_BUILTINS is {"len": 1, "sqrt": 1, "exp": 1, "dot": 1, "sum": 1, "norm": 1, "abs": 1, "floor": 1, "ceil": 1, "round": 1, "min": 1, "max": 1, "pow": 1, "log": 1, "sin": 1, "cos": 1, "tan": 1, "ord": 1, "index_of": 1, "contains": 1, "starts_with": 1, "ends_with": 1, "file_exists": 1, "monotonic_ns": 1, "random": 1, "num": 1, "buf_get": 1, "buf_len": 1, "write_text": 1}
+NUM_RET_BUILTINS is {"len": 1, "sqrt": 1, "exp": 1, "dot": 1, "sum": 1, "norm": 1, "abs": 1, "floor": 1, "ceil": 1, "round": 1, "min": 1, "max": 1, "pow": 1, "log": 1, "sin": 1, "cos": 1, "tan": 1, "ord": 1, "index_of": 1, "monotonic_ns": 1, "random": 1, "num": 1, "buf_get": 1, "buf_len": 1}
+
+# #1637 (EigenScript#1647): builtins whose result is ALWAYS a bool, each
+# measured on the pin with `type of` (the predicate-shaped names above --
+# contains, starts_with, ends_with, file_exists, write_text -- moved here from
+# NUM_RET_BUILTINS). Read by is_bool_expr: certain boxed evidence, never
+# numeric. An omission costs only precision (an unlisted builtin is "not
+# known numeric"), never a miscompile.
+BOOL_RET_BUILTINS is {"contains": 1, "starts_with": 1, "ends_with": 1, "has_key": 1, "list_contains": 1, "file_exists": 1, "is_dir": 1, "is_file": 1, "try_parse": 1, "secure_equals": 1, "write_text": 1, "remove_file": 1}
 
 # (round 111) the four observer special forms return str / str / dict /
 # list. They were absent, so `check of [tag, report_value of x, want]`
@@ -7191,6 +7474,9 @@ define scan_arg_overrides(node) as:
                 # either broke t51_nullcall / t54 / t56.
                 local nonnum is 0
                 if (e[0] == "str") or (e[0] == "dict"):
+                    nonnum is 1
+                if (is_bool_expr of e) == 1:
+                    # #1637: a bool argument is never a number
                     nonnum is 1
                 if (e[0] == "binop") and (e[1] == "+") and ((chain_has_str of e) == 1):
                     # a desugared f-string argument (lex-level desugar: a
@@ -7563,6 +7849,15 @@ define func_ptypes(fn) as:
             cls is "buf"
         elif (find_gen_param_use of [body, params[p]]) == 1:
             cls is "gen"
+        elif (param_default_nonnum of [fn, p]) == 1:
+            # (#1637, round-2 item 7) a parameter whose DEFAULT is a certain
+            # non-number (`define f(x is true)`, a str/null/list/dict
+            # literal) holds it whenever the caller omits the argument: a C
+            # double cannot, so the class is seeded boxed from the default
+            # as well as from the call sites. Before: a bool default went
+            # through emit_num and died at run time where the VM returns it;
+            # a str default was refused at build time.
+            cls is "gen"
         elif (param_assigned_nonnum of [body, params[p]]) == 1:
             # (round 130, #150) the body REBINDS the parameter to a
             # non-numeric literal -- `local n is null` in a zero-parameter
@@ -7576,6 +7871,219 @@ define func_ptypes(fn) as:
 
 # Does the body assign `name` (plain or `local`) a null/str/list/dict
 # literal anywhere? Assignment targets are bare strings at node[1].
+define param_default_nonnum(fn, p) as:
+    local dfs is fn_defaults of fn
+    if dfs == null:
+        return 0
+    if p >= (len of dfs):
+        return 0
+    if dfs[p] == null:
+        return 0
+    local r is unwrap of dfs[p]
+    if (len of r) == 0:
+        return 0
+    if (r[0] == "null") or (r[0] == "str") or (r[0] == "list") or (r[0] == "dict") or ((is_bool_expr of r) == 1):
+        return 1
+    return 0
+
+# A parameter the numeric pin may NOT hold to a C double: the body rebinds it
+# to a certain non-number (a bool comparison, a str/null literal, ...) or its
+# default is one. The VM stores that value in the parameter's slot; a boxed
+# slot is how locals and module names already take the switch (#1637).
+define param_unpinnable(fn, p) as:
+    if (param_default_nonnum of [fn, p]) == 1:
+        return 1
+    if (param_assigned_nonnum of [fn[3], (fn[2])[p]]) == 1:
+        return 1
+    # (#1637, round 3) the same proof param_proof_pass applies, so the pin
+    # cannot put back a parameter whose stores are not proven numeric.
+    local _upt is null
+    if g_funcs[fn[1]] != null:
+        _upt is (g_funcs[fn[1]])["ptypes"]
+    if _upt == null:
+        return 0
+    local _unm is param_rebind_nm of [fn, _upt]
+    if _unm == null:
+        return 0
+    return param_rebind_unproven of [fn, _unm, p]
+
+# (#1637, round 3) The numeric map of a function's body under its CURRENT
+# parameter classes `pt`, from the same inference emit_function runs for its
+# locals (infer_numeric_seeded over is_num_expr: a name is numeric iff every
+# assignment is). Each parameter's default is one more assignment (it is
+# evaluated into the parameter's slot when the caller omits it). Seed: the
+# numeric parameters and the module names with positive numeric evidence
+# (g_mod_num_names), minus every name a non-numeric parameter shadows.
+# Returns null when no parameter is stored to (nothing to prove).
+define param_rebind_nm(fn, pt) as:
+    local params is fn[2]
+    local dfs is fn_defaults of fn
+    local any is 0
+    if dfs != null:
+        for d in range of (len of dfs):
+            if dfs[d] != null:
+                any is 1
+    local rba is collect_assigns of [fn[3], {}]
+    for q in range of (len of params):
+        if rba[(params[q])] != null:
+            any is 1
+    if any == 0:
+        return null
+    return (fn_body_nm of [fn, pt, g_mod_num_names, G_MOD_BT0[0]])[0]
+
+# The numeric map (and buffer map) of a function body as emit_function will
+# classify it: module names numeric in `mnm` and buffers in `mbt` seed it
+# unless a parameter or a body assignment shadows them; parameters seed by
+# their class in `pt`; each default is one more assignment to its parameter.
+# Returns [nm, bt]. The is_num_expr context globals are this function's while
+# it runs, and restored after.
+define fn_body_nm(fn, pt, mnm, mbt) as:
+    local params is fn[2]
+    local body is fn[3]
+    local dfs is fn_defaults of fn
+    local stmts is []
+    if dfs != null:
+        for d in range of (len of dfs):
+            if (d < (len of params)) and (dfs[d] != null):
+                append of [stmts, ["assign", params[d], (unwrap of dfs[d])]]
+    for b in range of (len of body):
+        append of [stmts, body[b]]
+    local bt is {}
+    local mbk is keys of mbt
+    for m in range of (len of mbk):
+        if mbt[(mbk[m])] == 1:
+            bt[(mbk[m])] is 1
+    local ba is collect_assigns of [body, {}]
+    local bak is keys of ba
+    for m in range of (len of bak):
+        bt[(bak[m])] is 0
+    local lb is infer_buffers of body
+    local lbk is keys of lb
+    for m in range of (len of lbk):
+        if lb[(lbk[m])] == 1:
+            bt[(lbk[m])] is 1
+    local seed is {}
+    local mk is keys of mnm
+    for m in range of (len of mk):
+        if mnm[(mk[m])] == 1:
+            seed[(mk[m])] is 1
+    for q in range of (len of params):
+        bt[(params[q])] is 0
+        seed[(params[q])] is 0
+        if q < (len of pt):
+            if (pt[q]) == "num":
+                seed[(params[q])] is 1
+            if (pt[q]) == "buf":
+                bt[(params[q])] is 1
+    local _sfm is g_cur_fmap
+    local _scp is g_cur_params
+    local _stb is g_tensor_buf
+    g_cur_fmap is fmap_for_fn of fn
+    g_cur_params is {}
+    for q in range of (len of params):
+        g_cur_params[(params[q])] is 1
+    g_tensor_buf is {}
+    local nm is infer_numeric_seeded of [stmts, bt, seed]
+    g_cur_fmap is _sfm
+    g_cur_params is _scp
+    g_tensor_buf is _stb
+    return [nm, bt]
+
+# (#1637, round 3) the module half of the same proof. infer_numeric sees the
+# MODULE statements only, and the round-133 pass below it demotes a module
+# name for a function's outward write of a boxed parameter, a function or a
+# builtin name -- syntax again: `value is n > 0`, `m is t` (t a bool local),
+# `m is verdict of x`, `m is xs[0]` and `m is a and b` inside a function left
+# the name a C double, and the write was refused at build time ("is a C
+# number ... rebinds it to a bool") where the VM stores the bool. A module
+# name stays numeric only when every outward write is proven numeric by the
+# writing function's own map (fn_body_nm); a demotion re-runs the module
+# inference, since module statements may read the demoted name.
+define module_outward_demote(funcs, rest, bt, nm) as:
+    local excl is {}
+    local changed is 1
+    loop while changed == 1:
+        changed is 0
+        for k in range of (len of funcs):
+            local fn is funcs[k]
+            local fa is {}
+            collect_free_assign_rhs of [fn, {}, fa]
+            # a name the function also INTERROGATES binds function-local on
+            # the VM (#218): that write never reaches the module binding.
+            local fi is {}
+            collect_interrogated of [fn[3], fi]
+            local fak is keys of fa
+            local hit is 0
+            for v in range of (len of fak):
+                if fi[(fak[v])] == 1:
+                    fa[(fak[v])] is []
+                if nm[(fak[v])] == 1:
+                    hit is 1
+            if hit == 1:
+                local fm is fn_body_nm of [fn, (g_funcs[fn[1]])["ptypes"], nm, bt]
+                local _scp is g_cur_params
+                local _sfm is g_cur_fmap
+                g_cur_fmap is fmap_for_fn of fn
+                g_cur_params is {}
+                for q in range of (len of fn[2]):
+                    g_cur_params[((fn[2])[q])] is 1
+                for v in range of (len of fak):
+                    local name is fak[v]
+                    if nm[name] == 1:
+                        local rhss is fa[name]
+                        for j in range of (len of rhss):
+                            if (is_num_expr of [(unwrap of rhss[j]), fm[0], fm[1]]) == 0:
+                                excl[name] is 1
+                                changed is 1
+                g_cur_params is _scp
+                g_cur_fmap is _sfm
+        if changed == 1:
+            nm is infer_numeric_excl of [rest, bt, excl]
+    return nm
+
+# (#1637, round 3) A parameter keeps "num" only when EVERY value stored in
+# it -- each body assignment and its default -- is PROVEN numeric. The
+# syntactic arms (param_assigned_nonnum, param_default_nonnum) see `p is p >
+# 3` but not `local t is p > 3 / p is t`, `p is verdict of p` (a compiled
+# callee returning a bool), an element read or an and/or operand: those
+# stored a bool through the C double's checked unbox and died "non-numeric
+# value in a numeric context" where the VM returns the bool. Run where the
+# return types settle (a callee's return is part of the proof); boxes every
+# unproven "num" parameter and returns how many it boxed.
+define param_proof_pass(funcs) as:
+    local n is 0
+    for k in range of (len of funcs):
+        local fn is funcs[k]
+        local pt is (g_funcs[fn[1]])["ptypes"]
+        local nm is param_rebind_nm of [fn, pt]
+        if nm != null:
+            for p in range of (len of pt):
+                if ((pt[p]) == "num") and ((param_rebind_unproven of [fn, nm, p]) == 1):
+                    pt[p] is "gen"
+                    n is n + 1
+    return n
+
+define param_rebind_unproven(fn, nm, p) as:
+    local name is (fn[2])[p]
+    local dfs is fn_defaults of fn
+    local stored is 0
+    if dfs != null:
+        if p < (len of dfs):
+            if dfs[p] != null:
+                stored is 1
+    if stored == 0:
+        if (param_assigned_in of [fn[3], name]) == 0:
+            return 0
+    if nm[name] == 1:
+        return 0
+    return 1
+
+define param_assigned_in(body, name) as:
+    local rba is collect_assigns of [body, {}]
+    if rba[name] != null:
+        return 1
+    return 0
+
 define param_assigned_nonnum(node, name) as:
     if (type of node) != "list":
         return 0
@@ -7595,12 +8103,12 @@ define param_assigned_nonnum(node, name) as:
             for ek in range of (len of els):
                 local ee is unwrap of els[ek]
                 if (len of ee) > 0:
-                    if (ee[0] == "str") or (ee[0] == "list") or (ee[0] == "dict") or (ee[0] == "null"):
+                    if (ee[0] == "str") or (ee[0] == "list") or (ee[0] == "dict") or (ee[0] == "null") or ((is_bool_expr of ee) == 1):
                         return 1
     if (node[0] == "assign") and (node[1] == name):
         local r is unwrap of node[2]
         if (len of r) > 0:
-            if (r[0] == "null") or (r[0] == "str") or (r[0] == "list") or (r[0] == "dict"):
+            if (r[0] == "null") or (r[0] == "str") or (r[0] == "list") or (r[0] == "dict") or ((is_bool_expr of r) == 1):
                 return 1
     for k in range of (len of node):
         if (param_assigned_nonnum of [node[k], name]) == 1:
@@ -7649,6 +8157,9 @@ define arg_class(node, caller_pt, caller_params, caller_locals) as:
         return "gen"
     if t == "dict":
         return "gen"
+    # #1637: a certain bool is a boxed value, never a number
+    if (is_bool_expr of e) == 1:
+        return "gen"
     if t == "list":
         # Safe HERE (unlike a raw argument node): widen_scan passes only
         # already-unpacked elements, so a list node in this position is a
@@ -7670,7 +8181,7 @@ define arg_class(node, caller_pt, caller_params, caller_locals) as:
         if dtgt[0] == "ident":
             local flds is caller_locals[dtgt[1] + ".#fields"]
             if flds != null:
-                local fc is flds[e[2]]
+                local fc is field_cls of [flds, e[2]]
                 if fc != null:
                     return fc
         return "unknown"
@@ -7845,7 +8356,9 @@ define local_gen_map_seeded(body, seed) as:
         for j in range of (len of rhss):
             local r is unwrap of rhss[j]
             if (len of r) > 0:
-                if (r[0] == "str") or (r[0] == "dict") or (r[0] == "list") or (r[0] == "null"):
+                # #1637: a certain bool (comparison, `not`, predicate, literal)
+                # is boxed on every execution, the same grade as a literal.
+                if (r[0] == "str") or (r[0] == "dict") or (r[0] == "list") or (r[0] == "null") or ((is_bool_expr of r) == 1):
                     isgen_lit is 1
                     # `null` belongs in this list and its absence was the
                     # plainest instance of the whole boxed-value class:
@@ -7919,7 +8432,10 @@ define local_gen_map_seeded(body, seed) as:
         for j2 in range of (len of rhss):
             local r2 is unwrap of rhss[j2]
             if (len of r2) > 0:
-                if r2[0] == "dict":
+                if (r2[0] == "dict") and ((dict_lit_static of r2) == 0):
+                    # a computed key can name any field, at any position
+                    out[v + ".#fields"] is {"#unknown": 1}
+                elif r2[0] == "dict":
                     local fmap is {}
                     local nidx is 0
                     local prs is r2[1]
@@ -7951,6 +8467,8 @@ define local_gen_map_seeded(body, seed) as:
                                 # a "num" field's read -- checked at runtime
                                 # by the same borrowed index helper.
                                 fmap[kn] is "buf"
+                    if (dict_lit_shape of r2) != null:
+                        fmap["#o"] is dict_lit_shape of r2
                     out[v + ".#fields"] is fmap
             # ...or from a call to a function that RETURNS a dict literal
             # (EigenMiniSat's `cfg is parse_args of null`): adopt the
@@ -8157,6 +8675,8 @@ define widen_scan(node, caller_pt, caller_params, caller_locals, caller_fn) as:
 # ident built from a dict literal in its body. Recorded on g_funcs so a
 # caller's `cfg is parse_args of null` inherits the field types.
 define dict_literal_fields(dictnode, lm) as:
+    if (dict_lit_static of dictnode) == 0:
+        return {"#unknown": 1}
     local fmap is {}
     local nidx is 0
     local prs is dictnode[1]
@@ -8205,6 +8725,8 @@ define dict_literal_fields(dictnode, lm) as:
                 local ic is lm[pv[1]]
                 if ic == "gen":
                     fmap[kn] is "gen"
+    if (dict_lit_shape of dictnode) != null:
+        fmap["#o"] is dict_lit_shape of dictnode
     return fmap
 
 # Record, on each callee, the field map of any dict argument we can type
@@ -8273,7 +8795,7 @@ define pf_arg_dictlike(e, caller_locals) as:
         local dm is unwrap of e[1]
         if dm[0] == "ident":
             local fl is caller_locals[(dm[1]) + ".#fields"]
-            if (fl != null) and (fl[(e[2])] == "num"):
+            if (fl != null) and ((field_cls of [fl, e[2]]) == "num"):
                 return 0
         return 1
     if e[0] == "index":
@@ -8441,7 +8963,12 @@ define widen_ptypes(funcs, rest) as:
         local pins is {}
         for p0 in range of (len of fn0[2]):
             if (find_numeric_use_direct of [fn0[3], (fn0[2])[p0]]) == 1:
-                pins[(str of p0)] is 1
+                # (#1637, round-2 item 3) ...unless the body rebinds it to a
+                # bool, or its default is a non-number: numeric use on one
+                # path and a bool in the slot on another is the boxed case
+                # (`p is p > 3`, `p is not s`, a rebind in a dead branch).
+                if (param_unpinnable of [fn0, p0]) == 0:
+                    pins[(str of p0)] is 1
         g_pinned[fn0[1]] is pins
     local round is 0
     loop while round < 40:
@@ -10222,7 +10749,9 @@ define emit_function(fn, finfo, gnm, gbt) as:
     g_fsigs[name] is sig
     # tensor scope -> a per-call frame pool; flatten tensor params at entry.
     local tkeys is keys of g_tensor
-    local hasT is (len of tkeys) > 0
+    local hasT is 0
+    if (len of tkeys) > 0:
+        hasT is 1
     local decls is ""
     if hasT == 1:
         decls is decls + "    long _tmark = aot_tframe_enter();\n"
@@ -11336,12 +11865,12 @@ define index_of_buf_field(node, fmap) as:
     # (round 167) the assignment-site census names the field "buf" when
     # every write anywhere is a buffer (or `[]`): it overrides a literal's
     # `[]`, and a mixed field never reaches it.
-    if g_field_class[(tgt[2])] == "buf":
+    if (g_field_class[(tgt[2])] == "buf") and (G_FIELD_ANY[0] == 0):
         return 1
     local fl is fmap[(dm[1]) + ".#fields"]
     if fl == null:
         return 0
-    if fl[(tgt[2])] == "buf":
+    if (field_cls of [fl, tgt[2]]) == "buf":
         return 1
     return 0
 
@@ -11417,9 +11946,10 @@ define fc_walk(node, lb, pbuf, assigns, acc) as:
         local prs is node[1]
         for pk in range of (len of prs):
             local pr is prs[pk]
-            local kn is pr[0]
-            if (type of kn) == "list":
-                kn is kn[1]
+            local kn is dict_key_str of pr[0]
+            if kn == null:
+                fc_walk of [pr, lb, pbuf, assigns, acc]
+                continue
             if acc[kn] == null:
                 acc[kn] is [0, 0]
             local ck is acc[kn]
@@ -11434,11 +11964,6 @@ define fc_walk(node, lb, pbuf, assigns, acc) as:
     return 0
 
 define field_class_census(funcs, rest) as:
-    if (len of (keys of G_MODULE_ENVS)) > 0:
-        # Cross-record field names cannot identify a namespace reached through
-        # an arbitrary alias. Keep checked dynamic field reads in import code.
-        g_field_class is {}
-        return 0
     local acc is {}
     local mlb is infer_buffers of rest
     fc_walk of [rest, mlb, {}, (collect_assigns of [rest, {}]), acc]
@@ -11453,12 +11978,336 @@ define field_class_census(funcs, rest) as:
                     pbuf[((fn[2])[pi])] is 1
         fc_walk of [fn[3], lb, pbuf, (collect_assigns of [fn[3], {}]), acc]
     g_field_class is {}
+    G_FIELD_NOTBUF[0] is {}
     local fk is keys of acc
     for i in range of (len of fk):
         local c is acc[fk[i]]
+        # (#1637, round 4) a literal's buffer field written anything else
+        # (`d.b is "st"` then `d.b[0]`) is not a buffer field (field_cls).
+        if c[1] > 0:
+            local nb is G_FIELD_NOTBUF[0]
+            nb[(fk[i])] is 1
         if (c[0] > 0) and (c[1] == 0):
             g_field_class[(fk[i])] is "buf"
+    if (len of (keys of G_MODULE_ENVS)) > 0:
+        # Cross-record field names cannot identify a namespace reached through
+        # an arbitrary alias. Keep checked dynamic field reads in import code.
+        g_field_class is {}
     return 0
+
+# (#1637, round 4) FIELD CLASSES FROM EVERY WRITE. A field map's "num" came
+# from the dict LITERAL alone, and nothing re-derived it from later writes:
+#
+#   d is {"flag": 0} / d.flag is 1 > 0 / print of (d.flag)
+#   VM   true, rc 0
+#   AOT  "non-numeric value in a numeric context at <module>: .flag (type bool)"
+#
+# On v0.44.0 the comparison was a number, so "a field initialised to 0, later
+# set to a comparison" was sound by accident; str, list and null writes
+# diverged the same way all along. Every write -- a literal value for key f,
+# `x.f is v`, `x["f"] is v`, `dict_set of [x, "f", v]` -- must be PROVEN
+# numeric, by the inference round 3 uses for a parameter's stores
+# (is_num_expr over the writing scope's fn_body_nm map), or f's "num" reads
+# "gen". field_cls is the one reader of a map's class.
+#
+# Which records a demotion reaches. By default the field NAME, program-wide,
+# so aliases, parameters and other functions' writes need no alias analysis.
+# A write through a name whose map carries a record shape ("#o") the name
+# provably holds (fw_trusted) demotes that shape's field only: DMG's
+# `joy.a is pressed` (a boxed parameter) must not demote the CPU's `cpu.a`.
+# Readers already trust that same map for every "num" they read. A write
+# whose field cannot be named (a computed key, `dict_set` with one or as a
+# value) with an unproven value demotes every field of every record.
+G_FIELD_NOTNUM is [{}]
+G_FIELD_SHAPE is [{}]
+G_FIELD_SOMESHAPE is [{}]
+G_FIELD_ANY is [0]
+G_FIELD_NOTBUF is [{}]
+
+define field_cls(fl, f) as:
+    if fl == null:
+        return null
+    local c is fl[f]
+    if c == "num":
+        if (G_FIELD_ANY[0] == 1) or ((G_FIELD_NOTNUM[0])[f] == 1):
+            return "gen"
+        local sh is fl["#o"]
+        if sh == null:
+            # a merged map no longer names one shape: any shape's demotion
+            if (G_FIELD_SOMESHAPE[0])[f] == 1:
+                return "gen"
+        elif (G_FIELD_SHAPE[0])[sh + f] == 1:
+            return "gen"
+    if c == "buf":
+        if (G_FIELD_ANY[0] == 1) or ((G_FIELD_NOTBUF[0])[f] == 1):
+            return "gen"
+    return c
+
+# Field writes in one scope, as [field, value, keynode, target]: field is the
+# name, or null when the key is computed (keynode is then the key
+# expression); target is the written expression, or null for a literal's own
+# pair. A literal key that is not a string (`{5: 1}`, `{true: 1}`) is a raise
+# in the VM. Nested function bodies are their own scope.
+define fw_collect(node, out) as:
+    if (type of node) != "list":
+        return 0
+    if (len of node) == 0:
+        return 0
+    if node[0] == "func":
+        return 0
+    if node[0] == "dot_assign":
+        append of [out, [node[2], node[3], null, node[1]]]
+    if node[0] == "index_assign":
+        local ix is unwrap of node[2]
+        local iv is node[3]
+        if (len of node) > 4:
+            if node[4] != null:
+                iv is ["binop", node[4], ["index", node[1], node[2]], node[3]]
+        if ix[0] == "str":
+            append of [out, [ix[1], iv, null, node[1]]]
+        else:
+            append of [out, [null, iv, node[2], null]]
+    if node[0] == "dict":
+        local prs is node[1]
+        for pk in range of (len of prs):
+            local pr is prs[pk]
+            local ks is dict_key_str of pr[0]
+            if ks != null:
+                append of [out, [ks, pr[1], null, null]]
+            else:
+                append of [out, [null, pr[1], pr[0], null]]
+    if node[0] == "ident":
+        if node[1] == "dict_set":
+            # reached as a value, or as a callee the call arm below could not
+            # read: the field and the value are both unknown.
+            append of [out, [null, ["null"], ["null"], null]]
+        return 0
+    if node[0] == "call":
+        local dc is unwrap of node[1]
+        if (dc[0] == "ident") and (dc[1] == "dict_set"):
+            local da is unwrap of node[2]
+            if (da[0] == "list") and ((len of da) == 2):
+                if (len of (da[1])) == 3:
+                    local dk is unwrap of ((da[1])[1])
+                    if dk[0] == "str":
+                        append of [out, [dk[1], (da[1])[2], null, (da[1])[0]]]
+                    else:
+                        append of [out, [null, (da[1])[2], (da[1])[1], null]]
+                    fw_collect of [da[1], out]
+                    return 0
+    for k in range of (len of node):
+        fw_collect of [node[k], out]
+    return 0
+
+# Does deciding this write need the scope's numeric map? A numeric literal
+# is proven and a certain non-number is not, whatever the map says.
+define fw_cheap(v) as:
+    local u is unwrap of v
+    if u[0] == "num":
+        return 1
+    if (u[0] == "str") or (u[0] == "list") or (u[0] == "dict") or (u[0] == "null") or ((is_bool_expr of u) == 1):
+        return 0
+    return null
+
+# The shape a write's target provably holds, or null. The target must be a
+# name whose current map ("#o") names a shape, and the name must hold that
+# shape on every binding: a parameter the body never rebinds (its map is
+# the meet over every call site, pf_scan), or a name every assignment of
+# which is a literal of that shape or a call returning one.
+define fw_trusted(tgt, fn, assigns) as:
+    if tgt == null:
+        return null
+    local t is unwrap of tgt
+    if t[0] != "ident":
+        return null
+    local m is g_cur_fmap[(t[1]) + ".#fields"]
+    if m == null:
+        return null
+    if m["#unknown"] == 1:
+        return null
+    local sh is m["#o"]
+    if sh == null:
+        return null
+    local rhss is assigns[(t[1])]
+    if fn != null:
+        for q in range of (len of fn[2]):
+            if ((fn[2])[q]) == t[1]:
+                if rhss == null:
+                    return sh
+                return null
+    if rhss == null:
+        return null
+    for j in range of (len of rhss):
+        local r is unwrap of rhss[j]
+        local rs is null
+        if r[0] == "dict":
+            if (dict_lit_static of r) == 1:
+                rs is dict_lit_shape of r
+        if r[0] == "call":
+            local rc is unwrap of r[1]
+            if (rc[0] == "ident") and (g_funcs[rc[1]] != null):
+                local rf is (g_funcs[rc[1]])["retfields"]
+                if rf != null:
+                    rs is rf["#o"]
+        if rs != sh:
+            return null
+    return sh
+
+# The returns' positive-evidence classifier as a second prover for a write
+# whose value is_num_expr does not claim (it claims what emit_num can emit;
+# `rom_len is buf_len of bytes / mem.rom_len is rom_len` is a number by the
+# NUM_RET builtin, which only this one knows). Context as func_ret_type_inner
+# sets it, or the module census's (no parameters, no body walk).
+define fw_rnn(v, fn, bt, rba) as:
+    local _p0 is g_cur_params_rt
+    local _b0 is g_cur_ret_body
+    local _d0 is G_DBR_RET[0]
+    local _f0 is g_ret_fmap
+    local _m0 is G_RNN_MEMO[0]
+    G_RNN_MEMO[0] is null
+    g_ret_fmap is g_cur_fmap
+    g_cur_params_rt is {}
+    g_cur_ret_body is null
+    local fgen is {}
+    local fdict is {}
+    local ftt is {}
+    if fn != null:
+        g_cur_ret_body is fn[3]
+        G_DBR_RET[0] is def_before_reads_all of [fn[3], (keys of rba)]
+        ftt is infer_tensors of fn[3]
+        local pt is (g_funcs[fn[1]])["ptypes"]
+        for q in range of (len of fn[2]):
+            g_cur_params_rt[((fn[2])[q])] is 1
+            if q < (len of pt):
+                if (pt[q]) == "gen":
+                    fgen[((fn[2])[q])] is 1
+                if (pt[q]) == "dict":
+                    fdict[((fn[2])[q])] is 1
+                if (pt[q]) == "tensor":
+                    ftt[((fn[2])[q])] is 1
+    local r is return_node_is_num of [v, rba, bt, fgen, fdict, ftt, {}]
+    g_cur_params_rt is _p0
+    g_cur_ret_body is _b0
+    G_DBR_RET[0] is _d0
+    g_ret_fmap is _f0
+    G_RNN_MEMO[0] is _m0
+    return r
+
+# One pass over every scope's writes; returns how many demotions it made.
+# `fin` holds the final module maps [nm, bt] after the module inference has
+# settled, or null for the fixpoint passes (module maps re-derived here).
+define field_write_pass(scopes, fin) as:
+    local n is 0
+    for s in range of (len of scopes):
+        local sc is scopes[s]
+        local ws is sc[1]
+        local need is 0
+        for w in range of (len of ws):
+            local wr is ws[w]
+            if (fw_cheap of wr[1]) == null:
+                need is 1
+            if (wr[0] == null) and ((fw_cheap of wr[2]) != 1):
+                need is 1
+        if G_FIELD_ANY[0] == 1:
+            need is 0
+        local nm is {}
+        local bt is {}
+        local _sfm is g_cur_fmap
+        local _scp is g_cur_params
+        g_cur_params is {}
+        local fn is sc[0]
+        local body is sc[2]
+        if fn == null:
+            g_cur_fmap is local_gen_map_for of ["<module>", body]
+            if need == 1:
+                if fin == null:
+                    bt is infer_buffers of body
+                    nm is infer_numeric of [body, bt]
+                else:
+                    nm is fin[0]
+                    bt is fin[1]
+        else:
+            body is fn[3]
+            g_cur_fmap is fmap_for_fn of fn
+            for q in range of (len of fn[2]):
+                g_cur_params[((fn[2])[q])] is 1
+            if need == 1:
+                local mnm is g_mod_num_names
+                local mbt is G_MOD_BT0[0]
+                if fin != null:
+                    mnm is fin[0]
+                    mbt is fin[1]
+                local fm is fn_body_nm of [fn, (g_funcs[fn[1]])["ptypes"], mnm, mbt]
+                nm is fm[0]
+                bt is fm[1]
+        local assigns is collect_assigns of [body, {}]
+        for w in range of (len of ws):
+            local wr is ws[w]
+            local f is wr[0]
+            if G_FIELD_ANY[0] == 0:
+                local pv is fw_cheap of wr[1]
+                if pv == null:
+                    pv is is_num_expr of [(unwrap of wr[1]), nm, bt]
+                    if pv == 0:
+                        local rba is assigns
+                        if fn == null:
+                            rba is g_mod_rba
+                        pv is fw_rnn of [wr[1], fn, bt, rba]
+                if f == null:
+                    # a computed key the inference proves numeric is a list
+                    # or buffer store (a dict raises on it)
+                    local pk is fw_cheap of wr[2]
+                    if pk == null:
+                        pk is is_num_expr of [(unwrap of wr[2]), nm, bt]
+                    if (pv == 0) and (pk != 1):
+                        G_FIELD_ANY[0] is 1
+                        n is n + 1
+                elif (pv == 0) and ((G_FIELD_NOTNUM[0])[f] != 1):
+                    local sh is fw_trusted of [wr[3], fn, assigns]
+                    if sh == null:
+                        local nn is G_FIELD_NOTNUM[0]
+                        nn[f] is 1
+                        n is n + 1
+                    elif (G_FIELD_SHAPE[0])[sh + f] != 1:
+                        local ns is G_FIELD_SHAPE[0]
+                        ns[sh + f] is 1
+                        local na is G_FIELD_SOMESHAPE[0]
+                        na[f] is 1
+                        n is n + 1
+        g_cur_fmap is _sfm
+        g_cur_params is _scp
+    return n
+
+G_FW_SCOPES is [null]
+define field_write_scopes(funcs, rest) as:
+    if G_FW_SCOPES[0] == null:
+        local scopes is []
+        local mw is []
+        fw_collect of [rest, mw]
+        append of [scopes, [null, mw, rest]]
+        for k in range of (len of funcs):
+            local fn is funcs[k]
+            local fw is []
+            fw_collect of [fn[3], fw]
+            local dfs is fn_defaults of fn
+            if dfs != null:
+                fw_collect of [dfs, fw]
+            if (len of fw) > 0:
+                append of [scopes, [fn, fw, null]]
+        G_FW_SCOPES[0] is scopes
+    return G_FW_SCOPES[0]
+
+# The fixpoint: a demotion can unprove another write (`d.g is d.f`). Returns
+# how many demotions were made in all.
+define field_write_census(funcs, rest) as:
+    local scopes is field_write_scopes of [funcs, rest]
+    local total is 0
+    local more is 1
+    loop while more > 0:
+        more is field_write_pass of [scopes, null]
+        total is total + more
+    return total
+
 
 # (round 168, DMG lever 2, fourth step) ELEMENT MAPS. DMG hands its records
 # to the opcode handlers as elements of a module list (`_exec_ctx[0] is
@@ -12084,6 +12933,7 @@ define emit_program(ast) as:
             append of [_fdst, _fsrc[_fj]]
     g_mod_rba is _mrba
     local _mbt is infer_buffers of rest
+    G_MOD_BT0[0] is _mbt
     local _mnames is keys of _mrba
     G_RNN_MEMO[0] is {}
     for mi in range of (len of _mnames):
@@ -12459,6 +13309,23 @@ define emit_program(ast) as:
                 rchanged is 1
                 rentry["ret"] is newret
             rentry["retbuf"] is func_ret_buf of [rfn, rbt]
+        # (#1637, round 3) the parameter proof runs here, where returns
+        # settle last (the loop above reads the build-time ffgen maps; this
+        # one rebuilds them from the widened ptypes, so `relay`'s Value*
+        # return is first seen here). A changed return or a boxed parameter is an
+        # argument its callees were never widened for (`x is relay of flag /
+        # package of x`, `pass_on of p`): VM [true], AOT "non-numeric value in
+        # a numeric context". The widening runs again on the settled classes.
+        if (param_proof_pass of funcs) > 0:
+            rchanged is 1
+        # (#1637, round 4) the field-write census, on the same settled
+        # classes: a demoted field changes what reads of it are, so the
+        # returns and the widening run again.
+        if (field_write_census of [funcs, rest]) > 0:
+            rchanged is 1
+        if rchanged == 1:
+            G_LGM_CACHE[0] is {}
+            widen_ptypes of [funcs, rest]
         if rchanged == 0:
             rr is 6
         rr is rr + 1
@@ -12498,6 +13365,25 @@ define emit_program(ast) as:
                                 _boxed is 1
                             if _boxed == 1:
                                 nm[_dv] is 0
+    nm is module_outward_demote of [funcs, rest, bt, nm]
+    # (#1637, round 4) the field census ran on the early module seed too;
+    # a write it would demote on the FINAL maps is refused loudly rather
+    # than read through a checked unbox. (Not reached by any fixture.)
+    if (field_write_pass of [(field_write_scopes of [funcs, rest]), [nm, bt]]) > 0:
+        throw of "AOT internal: a dict field is a number on the early module maps, but a write to it is not proven numeric on the final ones (EigenScript#1637); its reads would die where the VM keeps the value"
+    # The parameter proof ran on the early module seed (g_mod_num_names,
+    # G_MOD_BT0); re-check every numeric parameter's stores against the
+    # FINAL module maps emit_function will seed from. A disagreement would
+    # store a non-number through a C double at run time: refuse it loudly.
+    # (Not reached by any fixture or by DMG: it guards the seed assumption.)
+    for k in range of (len of funcs):
+        local _cfn is funcs[k]
+        local _cpt is (g_funcs[_cfn[1]])["ptypes"]
+        local _cfm is (fn_body_nm of [_cfn, _cpt, nm, bt])[0]
+        for p in range of (len of _cpt):
+            if (_cpt[p]) == "num":
+                if (param_rebind_unproven of [_cfn, _cfm, p]) == 1:
+                    throw of ("AOT internal: parameter '" + ((_cfn[2])[p]) + "' of " + (_cfn[1]) + " is a C double, but a value stored in it is not proven numeric on the final module maps (EigenScript#1637); the store would die where the VM keeps the value")
     # Emit functions with EMPTY value-bounds (params/globals unbounded -> maps
     # inside them stay guarded, sound). Definitions are emitted FIRST (into a
     # buffer): emit_function computes the real signature — its int inference
@@ -12899,9 +13785,9 @@ define _lf_dirname(p) as:
 # resolver limitation. Module cache keys are canonicalised separately in
 # generated runtime code, matching the VM even for a lexical symlink path.
 define _lf_is_file(p) as:
-    if (file_exists of p) == 0:
+    if (not (file_exists of p)):
         return 0
-    if (is_dir of p) == 1:
+    if (is_dir of p):
         return 0
     return 1
 
@@ -12941,7 +13827,7 @@ define _lf_parent(d) as:
 define _lf_project_root(absdir) as:
     local cur is absdir
     loop while cur != null:
-        if (file_exists of (cur + "/eigs.json")) == 1:
+        if (file_exists of (cur + "/eigs.json")):
             return cur
         cur is _lf_parent of cur
     return null
@@ -12950,7 +13836,7 @@ define _lf_ends_with(s, suf) as:
     local n is len of s
     local m is len of suf
     if n < m:
-        return 0
+        return false
     return (substr of [s, n - m, m]) == suf
 
 # [full_path, "static"] to splice, [full_path, "stdlib"] to keep as a
@@ -12965,7 +13851,7 @@ define _lf_resolve(base, path) as:
     if (_lf_is_file of cand) == 1:
         return [cand, "static"]
     # (3) eigs_modules walk: bare <name>.eigs only, stops at the project root
-    if ((index_of of [path, "/"]) < 0) and ((_lf_ends_with of [path, ".eigs"]) == 1) and ((len of path) > 5):
+    if ((index_of of [path, "/"]) < 0) and ((_lf_ends_with of [path, ".eigs"])) and ((len of path) > 5):
         local mname is substr of [path, 0, (len of path) - 5]
         local cur is absdir
         local steps is 0
@@ -12973,7 +13859,7 @@ define _lf_resolve(base, path) as:
             cand is cur + "/eigs_modules/" + mname + "/" + mname + ".eigs"
             if (_lf_is_file of cand) == 1:
                 return [cand, "static"]
-            if (file_exists of (cur + "/eigs.json")) == 1:
+            if (file_exists of (cur + "/eigs.json")):
                 cur is null
             else:
                 cur is _lf_parent of cur
@@ -14106,12 +14992,12 @@ define splice_static_loads(blk, base, depth) as:
 # ---- driver ----
 argv is args of null
 src is read_text of argv[0]
-if (is_dir of (argv[0])) == 1:
+if (is_dir of (argv[0])):
     # see the self-host driver: a directory passes file_exists (fopen-based)
     # and reads as "", while the oracle refuses it -- is_dir separates it from
     # a genuinely empty file
     throw of ("AOT: cannot read source file '" + (argv[0]) + "' (is a directory)")
-if (file_exists of (argv[0])) == 0:
+if (not (file_exists of (argv[0]))):
     # read_text returns EMPTY STRING, not null, for a missing file -- the same
     # gotcha the import fallback hit -- so the driver once compiled a
     # NONEXISTENT source file into a valid empty program: full C skeleton,

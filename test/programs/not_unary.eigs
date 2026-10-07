@@ -1,12 +1,32 @@
 # #99 item 1: `not` binds at UNARY tightness (parser.c parse_unary_body),
 # tighter than every binary operator — NOT between `and` and comparison.
+# #1637 (EigenScript#1647): `not` returns a bool, and arithmetic or `==`
+# between a bool and a number raises -- so the arithmetic witnesses below are
+# now RAISES: `not x + 1` dies on `(not x) + 1`, where the wrong (looser)
+# binding `not (x + 1)` would print false. The message names the bool operand.
 x is 3
-print of (not x + 1)
-print of (not 2 == 1)
-print of (not 0 * 5)
-print of (not 0 + not 1)
+try:
+    print of (not x + 1)
+catch e:
+    print of e.message
+try:
+    print of (not 2 == 1)
+catch e:
+    print of e.message
+try:
+    print of (not 0 * 5)
+catch e:
+    print of e.message
+try:
+    print of (not 0 + not 1)
+catch e:
+    print of e.message
+try:
+    print of (- not 0)
+catch e:
+    print of e.message
+print of (not x == false)
 print of (not not x)
-print of (- not 0)
 print of (not -1)
 print of (not len of [1, 2])
 y is 0

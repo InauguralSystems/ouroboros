@@ -56,7 +56,13 @@ RUN apt-get update \
 # owned value unwinds on exit. EigenScript#1057: module namespaces are live
 # views, not import-time snapshots. EigenScript#1361: the strict default at
 # every AOT-owned stand-in.
-ARG EIGS_REF=v0.44.0
+# EigenScript main at the #1647 merge (#1637, the boolean type): a distinct
+# `bool` with `true`/`false` keywords; comparisons, `not` and predicate
+# builtins return it; arithmetic, ordering and bool-vs-num ==/!= raise;
+# OP_TRUE/OP_FALSE (95/96) appended; trace tape v6; the Value number member is
+# data.num_ (read through VAL_NUM_RAW on a type-proven path). Unreleased, so
+# the pin is the merge SHA (fetched by SHA above).
+ARG EIGS_REF=686d3b7d14837efb7e6e2b55882190d1dd20a332
 RUN mkdir -p /opt/eigenscript-src && cd /opt/eigenscript-src && git init -q \
  && git remote add origin https://github.com/InauguralSystems/EigenScript.git \
  && git fetch -q --depth 1 origin "${EIGS_REF}" && git checkout -q FETCH_HEAD \

@@ -1,0 +1,71 @@
+# EigenScript#1637, round 3: a numeric MODULE name rebound to a bool -- at
+# module level through an alias, a call, an element read and and/or, and from
+# inside a FUNCTION by an outward write (direct comparison, alias, call,
+# element read, and/or, if/else, a bool parameter). The module classifier saw
+# only module statements plus a syntactic outward-write check; the function's
+# write was refused at build time ("is a C number ... rebinds it to a bool").
+# A module statement reading a demoted name (`m6 is m1`) is demoted with it.
+define verdict(n) as:
+    return n > 3
+m is 5
+m is m + 2
+t is m > 3
+m is t
+print of m
+k is 3
+k is k * 2
+k is verdict of k
+print of k
+j is 1
+j is j + 1
+xs is [false, 2]
+j is xs[0]
+print of j
+h is 2
+h is h + 1
+h is (h > 1) and 9
+print of h
+value is 3
+m1 is 1
+m2 is 2
+m3 is 3
+m4 is 4
+m5 is 5
+m7 is 7
+define setflag(n) as:
+    value is n > 0
+    return value
+define w_alias(x) as:
+    local tb is x > 3
+    m1 is tb
+define w_call(x) as:
+    m2 is verdict of x
+define w_elem(x) as:
+    local ys is [x > 3]
+    m3 is ys[0]
+define w_andor(x) as:
+    m4 is (x > 3) and (x < 10)
+define w_param(x) as:
+    m5 is x
+define w_ternary(x) as:
+    if x > 3:
+        m7 is x > 4
+    else:
+        m7 is x + 1
+for i in range of 30:
+    m1 is m1 + 1
+    m2 is m2 + 1
+    m7 is m7 + 1
+print of [m1, m2, m7]
+print of (setflag of 2)
+print of [value, type of value]
+w_alias of 5
+w_call of 5
+w_elem of 5
+w_andor of 5
+w_param of (1 > 0)
+w_ternary of 2
+print of m7
+w_ternary of 5
+m6 is m1
+print of [m1, m2, m3, m4, m5, m6, m7]
