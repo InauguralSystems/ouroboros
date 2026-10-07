@@ -2484,6 +2484,11 @@ define name_site(key) as:
         return G_NUM_SITE[0]
     return "\"" + (c_escape of (G_CUR_FN[0])) + ": name " + (c_escape of key) + "\""
 
+define site_or(osite, default) as:
+    if osite != null:
+        return osite
+    return default
+
 # The VM's type name of an operand known at build time, or "" when unknown.
 define static_type_name(node, nm, bt) as:
     if (is_num_expr of [node, nm, bt]) == 1:
@@ -2506,7 +2511,7 @@ define emit_num_operand(node, nm, bt, raw, op, side, other) as:
     local applies is 0
     if (is_bool_expr of u) == 1:
         applies is 1
-    elif (u[0] == "ident") and ((is_num_expr of [u, nm, bt]) == 0):
+    elif (is_num_expr of [u, nm, bt]) == 0:
         applies is 1
     if (applies == 0) or (other == ""):
         return emit_num of [node, nm, bt, raw]
@@ -2529,6 +2534,13 @@ define emit_num(node, nm, bt, raw) as:
         local bexpr is emit_val of [node, nm, bt]
         G_NUM_SITE[0] is bsite
         return "aot_num_ck_at(" + bexpr + ", " + bsite + ")"
+    # An operand site set by emit_num_operand belongs to THIS node's own
+    # checked read. A name reads it through name_site; every other kind takes
+    # it here and clears it, so the reads nested inside (a target, an index,
+    # call arguments) keep their own wording.
+    local osite is G_NUM_SITE[0]
+    if (t != "ident") and (t != "_line"):
+        G_NUM_SITE[0] is null
     if t == "ident":
         if (g_cur_fresh_for[node[1]] == 1) and (g_cur_active_for[node[1]] != 1):
             return "aot_num_ck(aot_undefined_name(\"" + node[1] + "\"))"
@@ -2642,11 +2654,11 @@ define emit_num(node, nm, bt, raw) as:
             # goes too.
             local sfi is static_field_index of [node[1], node[2]]
             if sfi != null:
-                return "aot_dot_num_tb_si(" + ncv + ", \"" + (c_escape of node[2]) + "\", " + (str of sfi) + ", " + (ic_site of node[2]) + ")"
+                return "aot_dot_num_tb_si(" + ncv + ", \"" + (c_escape of node[2]) + "\", " + (str of sfi) + ", " + (site_or of [osite, (ic_site of node[2])]) + ")"
         local ic is ic_new of node[2]
         if ncv != "":
-            return "({ " + ic[0] + "aot_dot_num_tb_ic(" + ncv + ", \"" + (c_escape of node[2]) + "\", " + ic[1] + ", " + ic[2] + "); })"
-        return "({ " + ic[0] + "aot_dot_num_ic(" + (emit_val of [node[1], nm, bt]) + ", \"" + (c_escape of node[2]) + "\", " + ic[1] + ", " + ic[2] + "); })"
+            return "({ " + ic[0] + "aot_dot_num_tb_ic(" + ncv + ", \"" + (c_escape of node[2]) + "\", " + ic[1] + ", " + (site_or of [osite, ic[2]]) + "); })"
+        return "({ " + ic[0] + "aot_dot_num_ic(" + (emit_val of [node[1], nm, bt]) + ", \"" + (c_escape of node[2]) + "\", " + ic[1] + ", " + (site_or of [osite, ic[2]]) + "); })"
     if t == "index":
         local tgt is unwrap of node[1]
         if (tgt[0] == "ident") and (g_tensor_buf[tgt[1]] == 1) and (g_cur_params[tgt[1]] != 1) and ((is_num_expr of [node[2], nm, bt]) == 1):
@@ -2663,9 +2675,9 @@ define emit_num(node, nm, bt, raw) as:
             if (is_num_expr of [node[2], nm, bt]) == 1:
                 local nib is emit_val_borrow of [node[1], nm, bt, node[2]]
                 if nib != "":
-                    return "aot_index_num_ib(" + nib + ", " + (emit_num of [node[2], nm, bt, 0]) + ", \"" + (c_escape of (G_CUR_FN[0])) + ": index read\")"
-                return "aot_num_ck_at(" + (seq_call3 of ["aot_index_get_i", [[(emit_val of [node[1], nm, bt]), (has_call_node of node[1])], [(emit_num of [node[2], nm, bt, 0]), (has_call_node of node[2])]], ["Value*", "double"]]) + ", \"" + (c_escape of (G_CUR_FN[0])) + ": index read\")"
-            return "aot_num_ck_at(" + (seq_call3 of ["aot_index_get", [[(emit_val of [node[1], nm, bt]), (has_call_node of node[1])], [(emit_val of [node[2], nm, bt]), (has_call_node of node[2])]], ["Value*", "Value*"]]) + ", \"" + (c_escape of (G_CUR_FN[0])) + ": index read\")"
+                    return "aot_index_num_ib(" + nib + ", " + (emit_num of [node[2], nm, bt, 0]) + ", " + (site_or of [osite, "\"" + (c_escape of (G_CUR_FN[0])) + ": index read\""]) + ")"
+                return "aot_num_ck_at(" + (seq_call3 of ["aot_index_get_i", [[(emit_val of [node[1], nm, bt]), (has_call_node of node[1])], [(emit_num of [node[2], nm, bt, 0]), (has_call_node of node[2])]], ["Value*", "double"]]) + ", " + (site_or of [osite, "\"" + (c_escape of (G_CUR_FN[0])) + ": index read\""]) + ")"
+            return "aot_num_ck_at(" + (seq_call3 of ["aot_index_get", [[(emit_val of [node[1], nm, bt]), (has_call_node of node[1])], [(emit_val of [node[2], nm, bt]), (has_call_node of node[2])]], ["Value*", "Value*"]]) + ", " + (site_or of [osite, "\"" + (c_escape of (G_CUR_FN[0])) + ": index read\""]) + ")"
         if (is_int_expr of node[2]) == 1:
             if (has_call_node of node[2]) == 1:
                 return seq_buftgt_i of ["aot_buf_get_i", (cn of tgt[1]), (emit_int of node[2]), ""]
@@ -2793,7 +2805,7 @@ define emit_num(node, nm, bt, raw) as:
                     # read in numeric position (the message is the #148/#158
                     # family's, the VM's is "cannot apply ..." -- honest
                     # reason, ledgered divergence in wording only).
-                    return "aot_num_ck_at(" + (emit_val of [node, nm, bt]) + ", \"" + (c_escape of (G_CUR_FN[0])) + ": call " + (c_escape of callee[1]) + "\")"
+                    return "aot_num_ck_at(" + (emit_val of [node, nm, bt]) + ", " + (site_or of [osite, "\"" + (c_escape of (G_CUR_FN[0])) + ": call " + (c_escape of callee[1]) + "\""]) + ")"
                 return emit_call_num of [node, nm, bt]
             # builtin call in a numeric context (#65 inc. 2): emit the boxed
             # call (emit_val mirrors the VM's arg packing, incl. the one call
@@ -2819,12 +2831,12 @@ define emit_num(node, nm, bt, raw) as:
                         # (round 169) unboxed shadow dispatch: the three
                         # operands are evaluated in source order into temps.
                         return "({ Value* _dt = " + (emit_val of [(edarg[1])[0], nm, bt]) + "; Value* _dk = " + (emit_val of [(edarg[1])[1], nm, bt]) + "; Value* _dc = " + (emit_val of [(edarg[1])[2], nm, bt]) + "; aot_dispatch_sh_num_" + (cn of edt[1]) + "(_dt, _dk, _dc, \"" + (c_escape of (G_CUR_FN[0])) + ": dispatch\"); })"
-            return "aot_num_ck_at(" + (emit_val of [node, nm, bt]) + ", \"" + (c_escape of (G_CUR_FN[0])) + ": builtin " + (c_escape of callee[1]) + "\")"
+            return "aot_num_ck_at(" + (emit_val of [node, nm, bt]) + ", " + (site_or of [osite, "\"" + (c_escape of (G_CUR_FN[0])) + ": builtin " + (c_escape of callee[1]) + "\""]) + ")"
         # A callee that is an EXPRESSION, in a NUMERIC context (#121/#140):
         # `complex.mag of a` inside arithmetic. emit_val handles the boxed
         # form; here the result is REQUIRED numeric, exactly as the builtin
         # arm above requires it — the VM raises otherwise.
-        return "aot_num_ck_at(" + (emit_val of [node, nm, bt]) + ", \"" + (c_escape of (G_CUR_FN[0])) + ": value-callee call\")"
+        return "aot_num_ck_at(" + (emit_val of [node, nm, bt]) + ", " + (site_or of [osite, "\"" + (c_escape of (G_CUR_FN[0])) + ": value-callee call\""]) + ")"
     if t == "binop":
         # whole expression proven integer -> native long arithmetic, no guard.
         # (round 74) the result is CAST to double at this boundary: emit_num's
@@ -2842,7 +2854,9 @@ define emit_num(node, nm, bt, raw) as:
         local r is ""
         if (op == "+") or (NUMONLY_OPS[op] == 1):
             l is emit_num_operand of [node[2], nm, bt, raw, op, "L", (static_type_name of [node[3], nm, bt])]
-            r is emit_num_operand of [node[3], nm, bt, raw, op, "R", (static_type_name of [node[2], nm, bt])]
+            # The right operand is read only once the left one has unboxed,
+            # so when the right one fails the left WAS a number.
+            r is emit_num_operand of [node[3], nm, bt, raw, op, "R", "num"]
         else:
             l is emit_num of [node[2], nm, bt, raw]
             r is emit_num of [node[3], nm, bt, raw]
@@ -2913,7 +2927,7 @@ define emit_num(node, nm, bt, raw) as:
         # a non-number dies "non-numeric value in a numeric context" exactly
         # where the VM raises on the arithmetic. The three dynamics programs
         # refused "emit_num on non-numeric node interrogate" for this.
-        return "aot_num_ck_at(" + (emit_val of [node, nm, bt]) + ", \"" + (c_escape of (G_CUR_FN[0])) + ": interrogative\")"
+        return "aot_num_ck_at(" + (emit_val of [node, nm, bt]) + ", " + (site_or of [osite, "\"" + (c_escape of (G_CUR_FN[0])) + ": interrogative\""]) + ")"
     throw of ("AOT: emit_num on non-numeric node " + t)
 
 define emit_val(node, nm, bt) as:

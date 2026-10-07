@@ -2904,8 +2904,7 @@ static __attribute__((noinline)) double aot_dot_num_tb_slow(Value *target, const
     if (target && target->type == VAL_DICT) {
         Value *v = aot_dot_value_ic(target, key, ic, ick);
         if (v && v->type == VAL_NUM) return VAL_NUM_RAW(v);
-        rt_error(EK_TYPE, g_trace_current_line, "non-numeric value in a numeric context at %s (type %s)",
-                site, v ? val_type_name(v->type) : "null");
+        aot_nonnum_raise(site, v ? val_type_name(v->type) : "null");
     }
     if (target)
         rt_error(EK_TYPE, g_trace_current_line, "cannot access field '%s' on %s",
@@ -2949,8 +2948,7 @@ static double aot_dot_num_ic(Value *target, const char *key,
             val_decref(target);
             return d;
         }
-        rt_error(EK_TYPE, g_trace_current_line, "non-numeric value in a numeric context at %s (type %s)",
-                site, v ? val_type_name(v->type) : "null");
+        aot_nonnum_raise(site, v ? val_type_name(v->type) : "null");
     }
     if (target) {
         rt_error(EK_TYPE, g_trace_current_line, "cannot access field '%s' on %s",

@@ -10,6 +10,11 @@ define addb(a, b) as:
     return a + b
 define neg_of(v) as:
     return - v
+define ident(v) as:
+    return v
+flags is [true, false]
+rec is {"b": true, "n": 2}
+other is 4
 try:
     print of (flag + 1)
 catch e:
@@ -156,5 +161,33 @@ catch e:
     print of f"{e.message} @{e.line}"
 try:
     print of (neg_of of flag)
+catch e:
+    print of f"{e.message} @{e.line}"
+try:
+    print of (flags[0] + 1)
+catch e:
+    print of f"{e.message} @{e.line}"
+try:
+    print of (rec.b * 2)
+catch e:
+    print of f"{e.message} @{e.line}"
+try:
+    print of (2 - rec.b)
+catch e:
+    print of f"{e.message} @{e.line}"
+try:
+    print of ((ident of flag) - 1)
+catch e:
+    print of f"{e.message} @{e.line}"
+try:
+    print of (other + flag)
+catch e:
+    print of f"{e.message} @{e.line}"
+try:
+    print of (other * flags[1])
+catch e:
+    print of f"{e.message} @{e.line}"
+try:
+    print of (flags[0] % 2)
 catch e:
     print of f"{e.message} @{e.line}"
