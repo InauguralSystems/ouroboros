@@ -7953,9 +7953,15 @@ define module_outward_demote(funcs, rest, bt, nm) as:
             local fn is funcs[k]
             local fa is {}
             collect_free_assign_rhs of [fn, {}, fa]
+            # a name the function also INTERROGATES binds function-local on
+            # the VM (#218): that write never reaches the module binding.
+            local fi is {}
+            collect_interrogated of [fn[3], fi]
             local fak is keys of fa
             local hit is 0
             for v in range of (len of fak):
+                if fi[(fak[v])] == 1:
+                    fa[(fak[v])] is []
                 if nm[(fak[v])] == 1:
                     hit is 1
             if hit == 1:
