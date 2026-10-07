@@ -66,6 +66,14 @@ try:
     mz[x < 1] is (x > 1)
 catch e:
     print of f"m14 {e.message} @{e.line}"
+try:
+    print of mb[true]
+catch e:
+    print of f"m15 {e.message} @{e.line}"
+try:
+    mb[false] is 2
+catch e:
+    print of f"m16 {e.message} @{e.line}"
 for i in range of 3:
     mb[i] is mb[i] + i
 print of mb[2]
