@@ -61,8 +61,8 @@ RUN apt-get update \
 # builtins return it; arithmetic, ordering and bool-vs-num ==/!= raise;
 # OP_TRUE/OP_FALSE (95/96) appended; trace tape v6; the Value number member is
 # data.num_ (read through VAL_NUM_RAW on a type-proven path). Released as
-# v0.45.0 (the #1647 merge plus the release cut: VERSION + CHANGELOG only).
-ARG EIGS_REF=v0.45.0
+# v0.45.1 (v0.45.0 plus the #1661 use-after-free fix).
+ARG EIGS_REF=v0.45.1
 RUN mkdir -p /opt/eigenscript-src && cd /opt/eigenscript-src && git init -q \
  && git remote add origin https://github.com/InauguralSystems/EigenScript.git \
  && git fetch -q --depth 1 origin "${EIGS_REF}" && git checkout -q FETCH_HEAD \
