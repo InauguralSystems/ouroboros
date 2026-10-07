@@ -1889,24 +1889,22 @@ define eigen_eval(node, env) as:
 
     if ntype == "binop":
         op is node[1]
+        # #1637 (EigenScript#1647): value-returning short-circuit, as the C
+        # VM does (and lib/eigen.eigs): `a and b` is a when a is falsy, else
+        # b; `a or b` is a when a is truthy, else b. `if X:` is the host VM's
+        # own truthiness, so the falsy set matches exactly. The old arms
+        # collapsed the result to 1/0 and tested `left == 0`, which now
+        # raises on a bool left operand.
         if op == "and":
             left is eigen_eval of [node[2], env]
-            if left == 0:
-                return 0
-            if (left == null) or (left == ""):
-                return 0
-            right is eigen_eval of [node[3], env]
-            if right:
-                return 1
-            return 0
+            if left:
+                return eigen_eval of [node[3], env]
+            return left
         if op == "or":
             left is eigen_eval of [node[2], env]
             if left:
-                return 1
-            right is eigen_eval of [node[3], env]
-            if right:
-                return 1
-            return 0
+                return left
+            return eigen_eval of [node[3], env]
         left is eigen_eval of [node[2], env]
         right is eigen_eval of [node[3], env]
         if op == "+":
@@ -1927,39 +1925,27 @@ define eigen_eval(node, env) as:
             if right == 0:
                 return 0
             return left % right
+        # #1637: the host's own comparison -- a bool, with the C VM's raise on
+        # bool-vs-number equality and on ordering bools.
         if op == "==":
-            if left == right:
-                return 1
-            return 0
+            return left == right
         if op == "!=":
-            if left != right:
-                return 1
-            return 0
+            return left != right
         if op == "<":
-            if left < right:
-                return 1
-            return 0
+            return left < right
         if op == ">":
-            if left > right:
-                return 1
-            return 0
+            return left > right
         if op == "<=":
-            if left <= right:
-                return 1
-            return 0
+            return left <= right
         if op == ">=":
-            if left >= right:
-                return 1
-            return 0
+            return left >= right
 
     if ntype == "unary":
         operand is eigen_eval of [node[2], env]
         if node[1] == "-":
             return 0 - operand
         if node[1] == "not":
-            if operand:
-                return 0
-            return 1
+            return not operand
 
     if ntype == "call":
         # Reserved observer forms (E005, #1102): the parser only lets
@@ -2098,9 +2084,7 @@ define eigen_eval(node, env) as:
         running is 1
         loop while (max_iter > 0) and (running == 1):
             cond is eigen_eval of [node[1], env]
-            if cond == 0:
-                running is 0
-            elif cond == null:
+            if not cond:
                 running is 0
             else:
                 result is _eval_block of [node[2], env]
@@ -2227,9 +2211,7 @@ define eigen_eval(node, env) as:
             _env_set_local of [comp_env, var_name, iter[i]]
             if filter_node != null:
                 cond is eigen_eval of [filter_node, comp_env]
-                if cond == 0:
-                    continue
-                if cond == null:
+                if not cond:
                     continue
             val is eigen_eval of [expr_node, comp_env]
             append of [result, val]
@@ -2291,6 +2273,8 @@ define eigen_eval(node, env) as:
         return 0
 
     if ntype == "predicate":
+        # #1637: a verdict is a bool, as on the VM (the verdict VALUES here
+        # are this evaluator's own approximation, not the VM's observer).
         kind is node[1]
         # Look at last observer state
         # kind: 0=converged, 1=stable, 2=improving, 3=oscillating, 4=diverging, 5=equilibrium
@@ -2305,36 +2289,36 @@ define eigen_eval(node, env) as:
             # converged: low dH and low entropy
             if (abs of dh) < 0.001:
                 if h < 0.1:
-                    return 1
-            return 0
+                    return true
+            return false
         if kind == 1:
             # stable: low dH, moderate entropy
             if (abs of dh) < 0.01:
                 if h >= 0.1:
-                    return 1
-            return 0
+                    return true
+            return false
         if kind == 2:
             # improving: negative dH
             if dh < (0 - 0.001):
-                return 1
-            return 0
+                return true
+            return false
         if kind == 3:
             # oscillating: sign change in dH
             if (dh * prev_dh) < 0:
                 if (abs of dh) > 0.001:
-                    return 1
-            return 0
+                    return true
+            return false
         if kind == 4:
             # diverging: positive dH
             if dh > 0.001:
-                return 1
-            return 0
+                return true
+            return false
         if kind == 5:
             # equilibrium: very low dH
             if (abs of dh) < 0.001:
-                return 1
-            return 0
-        return 0
+                return true
+            return false
+        return false
 
     return null
 

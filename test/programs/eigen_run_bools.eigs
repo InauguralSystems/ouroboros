@@ -1,0 +1,48 @@
+# #1637 (EigenScript#1647): frontend.eigs's meta-evaluator (eigen_run) agrees
+# with the VM on bools -- comparisons and `not` give bools, `and`/`or` return
+# an operand (not 1/0), bool arithmetic raises, and loop / comprehension
+# conditions use truthiness. Each case runs the snippet through eigen_run and
+# the same expression natively; any disagreement THROWS, so the parity tier's
+# reference run dies (both sides print the same lines otherwise).
+load_file of "src/frontend.eigs"
+define meta(src) as:
+    try:
+        local v is eigen_run of src
+        return str of [type of v, v]
+    catch e:
+        return "raised " + e.kind
+define same(src, native) as:
+    local m is meta of src
+    if m != native:
+        throw of ("eigen_run disagrees on '" + src + "': " + m + " vs VM " + native)
+    print of (src + " -> " + m)
+define nat(v) as:
+    return str of [type of v, v]
+same of ["return 1 == 1", (nat of (1 == 1))]
+same of ["return 2 < 1", (nat of (2 < 1))]
+same of ["return \"a\" < \"b\"", (nat of ("a" < "b"))]
+same of ["return [1, 2] != [1, 2]", (nat of ([1, 2] != [1, 2]))]
+same of ["return not 0", (nat of (not 0))]
+same of ["return not 7", (nat of (not 7))]
+same of ["return not (1 < 2)", (nat of (not (1 < 2)))]
+same of ["return 0 and 5", (nat of (0 and 5))]
+same of ["return 2 and 5", (nat of (2 and 5))]
+same of ["return (1 < 2) and 5", (nat of ((1 < 2) and 5))]
+same of ["return (2 < 1) or 6", (nat of ((2 < 1) or 6))]
+same of ["return 0 or \"\"", (nat of (0 or ""))]
+same of ["return 3 or 4", (nat of (3 or 4))]
+same of ["return type of (1 < 2)", (nat of (type of (1 < 2)))]
+same of ["x is 0\nloop while x < 3:\n    x is x + 1\nreturn x", (nat of 3)]
+same of ["return [y for y in [1, 2, 3] if y > 1]", (nat of [2, 3])]
+try:
+    print of ((1 == 1) + 1)
+catch e:
+    same of ["return (1 == 1) + 1", ("raised " + e.kind)]
+try:
+    print of ((1 < 2) == 1)
+catch e:
+    same of ["return (1 < 2) == 1", ("raised " + e.kind)]
+try:
+    print of ((1 < 2) < (2 < 1))
+catch e:
+    same of ["return (1 < 2) < (2 < 1)", ("raised " + e.kind)]
