@@ -1,0 +1,76 @@
+# #1637 (EigenScript#1647): a parameter the body uses as a number AND
+# rebinds to a bool takes a boxed slot, like a local or a module name -- the
+# VM stores the bool. This was test/refuse/numeric_param_rebound_to_bool.eigs
+# (round 1 refused it at build time); the critic's three VM-valid shapes
+# (a rebind in a never-taken branch, `p is not s`, `p is (a) and (b)`) had
+# compiled before #1637 and are pinned here. Also (round-2 item 7): a
+# parameter whose DEFAULT is a bool or another non-number literal is boxed
+# from its default, so an omitted argument returns the default.
+define g(p) as:
+    p is p > 3
+    return p
+print of (g of 5)
+print of (g of 1)
+define g1() as:
+    local q is 5
+    q is q > 3
+    return q
+print of (g1 of null)
+define g3(p) as:
+    local r is p + 1
+    if r > 100:
+        p is p > 3
+    return r
+print of (g3 of 5)
+print of (g3 of 500)
+define g4(p) as:
+    local s is p + 1
+    p is not s
+    return p
+print of (g4 of 5)
+print of (g4 of -1)
+define g5(p) as:
+    local s is p * 2
+    p is (s > 3) and (s < 100)
+    return p
+print of (g5 of 5)
+print of (g5 of 1)
+print of (g5 of 80)
+define g6(p, k) as:
+    local t is 0
+    for i in range of k:
+        t is t + p
+        if i == 1:
+            p is t > 2
+    return [t, p]
+print of (g6 of [2, 1])
+try:
+    print of (g6 of [2, 3])
+catch e:
+    print of f"g6 {e.message}"
+define h(x is true) as:
+    return x
+print of (h of [])
+print of (h of [5])
+print of (h of [1 < 0])
+define hn(x is false, y is 2) as:
+    if x:
+        return y + 1
+    return y * 10
+print of (hn of [])
+print of (hn of [true])
+print of (hn of [true, 7])
+define hs(x is "s", n is 1) as:
+    return [x, n + 1]
+print of (hs of [])
+print of (hs of [4])
+define hl(x is [1, 2]) as:
+    return len of x
+print of (hl of [])
+print of (hl of ([3, 4, 5]))
+define hz(x is null) as:
+    if x == null:
+        return 0
+    return x + 1
+print of (hz of [])
+print of (hz of [41])

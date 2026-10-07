@@ -7785,6 +7785,15 @@ define func_ptypes(fn) as:
             cls is "buf"
         elif (find_gen_param_use of [body, params[p]]) == 1:
             cls is "gen"
+        elif (param_default_nonnum of [fn, p]) == 1:
+            # (#1637, round-2 item 7) a parameter whose DEFAULT is a certain
+            # non-number (`define f(x is true)`, a str/null/list/dict
+            # literal) holds it whenever the caller omits the argument: a C
+            # double cannot, so the class is seeded boxed from the default
+            # as well as from the call sites. Before: a bool default went
+            # through emit_num and died at run time where the VM returns it;
+            # a str default was refused at build time.
+            cls is "gen"
         elif (param_assigned_nonnum of [body, params[p]]) == 1:
             # (round 130, #150) the body REBINDS the parameter to a
             # non-numeric literal -- `local n is null` in a zero-parameter
@@ -7798,6 +7807,30 @@ define func_ptypes(fn) as:
 
 # Does the body assign `name` (plain or `local`) a null/str/list/dict
 # literal anywhere? Assignment targets are bare strings at node[1].
+define param_default_nonnum(fn, p) as:
+    local dfs is fn_defaults of fn
+    if dfs == null:
+        return 0
+    if p >= (len of dfs):
+        return 0
+    if dfs[p] == null:
+        return 0
+    local r is unwrap of dfs[p]
+    if (len of r) == 0:
+        return 0
+    if (r[0] == "null") or (r[0] == "str") or (r[0] == "list") or (r[0] == "dict") or ((is_bool_expr of r) == 1):
+        return 1
+    return 0
+
+# A parameter the numeric pin may NOT hold to a C double: the body rebinds it
+# to a certain non-number (a bool comparison, a str/null literal, ...) or its
+# default is one. The VM stores that value in the parameter's slot; a boxed
+# slot is how locals and module names already take the switch (#1637).
+define param_unpinnable(fn, p) as:
+    if (param_default_nonnum of [fn, p]) == 1:
+        return 1
+    return param_assigned_nonnum of [fn[3], (fn[2])[p]]
+
 define param_assigned_nonnum(node, name) as:
     if (type of node) != "list":
         return 0
@@ -8668,7 +8701,12 @@ define widen_ptypes(funcs, rest) as:
         local pins is {}
         for p0 in range of (len of fn0[2]):
             if (find_numeric_use_direct of [fn0[3], (fn0[2])[p0]]) == 1:
-                pins[(str of p0)] is 1
+                # (#1637, round-2 item 3) ...unless the body rebinds it to a
+                # bool, or its default is a non-number: numeric use on one
+                # path and a bool in the slot on another is the boxed case
+                # (`p is p > 3`, `p is not s`, a rebind in a dead branch).
+                if (param_unpinnable of [fn0, p0]) == 0:
+                    pins[(str of p0)] is 1
         g_pinned[fn0[1]] is pins
     local round is 0
     loop while round < 40:
