@@ -1,0 +1,166 @@
+# #1637 / #1061: a buffer element store raises in OP_INDEX_SET's order --
+# the index first (integer, then range), the value second ("cannot store
+# <type> in a buffer (buffers hold numbers)"). Every store shape below is
+# caught and its message printed, so the text is program data. Covers the
+# typed C-buffer path (module `buffer of` / `zeros of` names), the boxed path
+# (function locals), buffer parameters, and bool INDICES on reads and writes
+# ("cannot index buffer" / "cannot index buffer for assignment").
+x is 3
+mb is buffer of 3
+mz is zeros of 4
+mb[0] is 1
+try:
+    mb[0] is x > 1
+catch e:
+    print of f"m1 {e.message} @{e.line}"
+try:
+    mb[7] is x > 1
+catch e:
+    print of f"m2 {e.message} @{e.line}"
+try:
+    mb[7] is x + 1
+catch e:
+    print of f"m3 {e.message} @{e.line}"
+try:
+    mb[1.5] is not x
+catch e:
+    print of f"m4 {e.message} @{e.line}"
+try:
+    mb[1.5] is 2
+catch e:
+    print of f"m5 {e.message} @{e.line}"
+try:
+    mz[1] is "s"
+catch e:
+    print of f"m6 {e.message} @{e.line}"
+try:
+    mz[2] is null
+catch e:
+    print of f"m7 {e.message} @{e.line}"
+try:
+    mz[9] is "s"
+catch e:
+    print of f"m8 {e.message} @{e.line}"
+try:
+    mz[-9] is null
+catch e:
+    print of f"m9 {e.message} @{e.line}"
+mt is x > 1
+try:
+    mz[1] is mt
+catch e:
+    print of f"m10 {e.message} @{e.line}"
+try:
+    mz[mt] is 1
+catch e:
+    print of f"m11 {e.message} @{e.line}"
+try:
+    print of mz[mt]
+catch e:
+    print of f"m12 {e.message} @{e.line}"
+try:
+    print of (mz[x > 1] + 1)
+catch e:
+    print of f"m13 {e.message} @{e.line}"
+try:
+    mz[x < 1] is (x > 1)
+catch e:
+    print of f"m14 {e.message} @{e.line}"
+for i in range of 3:
+    mb[i] is mb[i] + i
+print of mb[2]
+print of [mz[0], mz[1]]
+
+define f(n) as:
+    local zs is zeros of 4
+    local a is n
+    try:
+        zs[1] is a < 3
+    catch e:
+        print of f"f1 {e.message} @{e.line}"
+    try:
+        zs[9] is a < 3
+    catch e:
+        print of f"f2 {e.message} @{e.line}"
+    try:
+        zs[9] is a
+    catch e:
+        print of f"f3 {e.message} @{e.line}"
+    try:
+        zs[0.5] is a > 1
+    catch e:
+        print of f"f4 {e.message} @{e.line}"
+    try:
+        zs[2] is "s"
+    catch e:
+        print of f"f5 {e.message} @{e.line}"
+    try:
+        zs[2] is null
+    catch e:
+        print of f"f6 {e.message} @{e.line}"
+    try:
+        zs[a > 1] is 4
+    catch e:
+        print of f"f7 {e.message} @{e.line}"
+    try:
+        print of zs[a > 1]
+    catch e:
+        print of f"f8 {e.message} @{e.line}"
+    local bb is buffer of 2
+    try:
+        bb[5] is null
+    catch e:
+        print of f"f9 {e.message} @{e.line}"
+    for i in range of 4:
+        zs[i] is zs[i] + i
+    return zs
+local_r is f of 2
+print of [local_r[0], local_r[3]]
+
+define put(buf, i, v) as:
+    buf[i] is v
+    return buf[0] + 1
+
+define put_t(buf, i) as:
+    buf[i] is i > 0
+    return buf[0]
+
+pb is zeros of 2
+print of (put of [pb, 0, 5])
+try:
+    print of (put of [pb, 1, true])
+catch e:
+    print of f"p1 {e.message} @{e.line}"
+try:
+    print of (put of [pb, 7, false])
+catch e:
+    print of f"p2 {e.message} @{e.line}"
+try:
+    print of (put of [pb, 7, 2])
+catch e:
+    print of f"p3 {e.message} @{e.line}"
+try:
+    print of (put of [pb, 0.5, 1])
+catch e:
+    print of f"p4 {e.message} @{e.line}"
+try:
+    print of (put of [pb, 0.5, "q"])
+catch e:
+    print of f"p5 {e.message} @{e.line}"
+try:
+    print of (put of [pb, 1, null])
+catch e:
+    print of f"p6 {e.message} @{e.line}"
+try:
+    print of (put of [pb, true, 1])
+catch e:
+    print of f"p7 {e.message} @{e.line}"
+try:
+    print of (put_t of [pb, 1])
+catch e:
+    print of f"pt1 {e.message} @{e.line}"
+try:
+    print of (put_t of [pb, 5])
+catch e:
+    print of f"pt2 {e.message} @{e.line}"
+print of [pb[0], pb[1], mb[0], mb[1], mb[2], mz[0], mz[1], mz[2], mz[3]]

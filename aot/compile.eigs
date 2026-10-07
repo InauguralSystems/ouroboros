@@ -2497,6 +2497,14 @@ define static_type_name(node, nm, bt) as:
         return "bool"
     return ""
 
+# #1637: an index or a stored value the C-buffer fast paths may unbox -- a
+# proven number that is not a bool. Anything else takes the boxed path, which
+# checks in the VM's order (OP_INDEX_GET / OP_INDEX_SET).
+define num_store_ok(node, nm, bt) as:
+    if (is_bool_expr of node) == 1:
+        return 0
+    return is_num_expr of [node, nm, bt]
+
 # The operand site for `side` ("L"/"R" of a binary op, "U" for `~`, "N" for
 # unary minus).
 define op_site(op, side, other) as:
@@ -2661,18 +2669,21 @@ define emit_num(node, nm, bt, raw) as:
         return "({ " + ic[0] + "aot_dot_num_ic(" + (emit_val of [node[1], nm, bt]) + ", \"" + (c_escape of node[2]) + "\", " + ic[1] + ", " + (site_or of [osite, ic[2]]) + "); })"
     if t == "index":
         local tgt is unwrap of node[1]
-        if (tgt[0] == "ident") and (g_tensor_buf[tgt[1]] == 1) and (g_cur_params[tgt[1]] != 1) and ((is_num_expr of [node[2], nm, bt]) == 1):
+        if (tgt[0] == "ident") and (g_tensor_buf[tgt[1]] == 1) and (g_cur_params[tgt[1]] != 1) and ((num_store_ok of [node[2], nm, bt]) == 1):
             # (round 187, #203) raw tensor element, see aot_tensor_num_at.
             return "aot_tensor_num_at(" + (cn of tgt[1]) + ", " + (emit_num of [node[2], nm, bt, 0]) + ", \"" + (c_escape of (G_CUR_FN[0])) + ": index read of " + (c_escape of tgt[1]) + "\")"
         # a buffer C var -> aot_buf_get; anything else (a boxed list local,
         # or a non-ident target like `store.offsets[ci]`, #86) -> boxed
         # index then extract the number.
-        if (tgt[0] != "ident") or (bt[tgt[1]] != 1):
+        # (#1637) a non-number index (a bool) reads through the boxed path
+        # too, so it raises the VM's "cannot index buffer", not a numeric-
+        # context error from unboxing the index.
+        if (tgt[0] != "ident") or (bt[tgt[1]] != 1) or ((num_store_ok of [node[2], nm, bt]) != 1):
             # the index is emitted as a VALUE, not forced numeric: a dict read
             # in a numeric context (`d["a"] + 5`) has a STRING index —
             # aot_index_get dispatches on the runtime types exactly like the
             # VM, and the RESULT is what must be numeric-or-raise here.
-            if (is_num_expr of [node[2], nm, bt]) == 1:
+            if (num_store_ok of [node[2], nm, bt]) == 1:
                 local nib is emit_val_borrow of [node[1], nm, bt, node[2]]
                 if nib != "":
                     return "aot_index_num_ib(" + nib + ", " + (emit_num of [node[2], nm, bt, 0]) + ", " + (site_or of [osite, "\"" + (c_escape of (G_CUR_FN[0])) + ": index read\""]) + ")"
@@ -3090,11 +3101,11 @@ define emit_val(node, nm, bt) as:
         # env), so aot_index_get(aot_get(...)) would fetch null — box the
         # aot_buf_get double instead (same VM index semantics, loud on error).
         local itgt is unwrap of node[1]
-        if (itgt[0] == "ident") and (bt[itgt[1]] == 1):
+        if (itgt[0] == "ident") and (bt[itgt[1]] == 1) and ((num_store_ok of [node[2], nm, bt]) == 1):
             if (has_call_node of node[2]) == 1:
                 return "make_num(" + (seq_buftgt of ["aot_buf_get", (cn of itgt[1]), (emit_num of [node[2], nm, bt, 0]), "", "double"]) + ")"
             return "make_num(aot_buf_get(" + (cn of itgt[1]) + ", " + (emit_num of [node[2], nm, bt, 0]) + "))"
-        if (is_num_expr of [node[2], nm, bt]) == 1:
+        if (num_store_ok of [node[2], nm, bt]) == 1:
             local bib is emit_val_borrow of [node[1], nm, bt, node[2]]
             if bib != "":
                 return "aot_index_get_ib(" + bib + ", " + (emit_num of [node[2], nm, bt, 0]) + ")"
@@ -4243,34 +4254,32 @@ define emit_stmt_inner(node, ind, nm, bt, minits, gf) as:
             throw of "AOT: compound index assignment not supported yet"
         local tgt is unwrap of node[1]
         if tgt[0] == "ident":
-            if bt[tgt[1]] == 1:
-                # (round 99) a provably non-numeric RHS into a buffer element
-                # is refused BY NAME. The three paths used to speak in three
-                # voices -- an internal "emit_num on non-numeric node str" at
-                # module scope, a numeric-context death for an ident RHS, and
-                # "buffer elements must be numbers" on the boxed path -- and
-                # only the last named the construct. (The VM silently stores
-                # 0.0 here while raising in every other numeric context; that
-                # asymmetry is a fail-soft residual and is filed upstream, so
-                # the AOT stays loud rather than learning to coerce.)
-                if (is_num_expr of [node[3], nm, bt]) != 1:
-                    local rhk is unwrap of node[3]
-                    if (rhk[0] == "str") or (rhk[0] == "list") or (rhk[0] == "dict") or (rhk[0] == "null"):
-                        throw of ("AOT: buffer elements must be numbers -- '" + (cn of tgt[1]) + "' is assigned a " + rhk[0] + " (the VM silently stores 0.0 here; see the upstream fail-soft ledger)")
+            if (bt[tgt[1]] == 1) and ((num_store_ok of [node[2], nm, bt]) == 1) and ((num_store_ok of [node[3], nm, bt]) == 1):
+                # The C-buffer fast path takes only a proven-number index AND
+                # a proven-number value. Every other store -- a bool, str or
+                # null value, a bool index -- goes to the general boxed path
+                # below, which raises in OP_INDEX_SET's order (index integer,
+                # then range, then "cannot store <type> in a buffer (buffers
+                # hold numbers)"; a non-number index is "cannot index buffer
+                # for assignment"). Before #1637 this arm unboxed the value
+                # first and so reported the VALUE before an out-of-range or
+                # non-integer index (ouroboros#266 critic, p11), and refused a
+                # literal str/null RHS at build time while the VM (#1061)
+                # raises at run time.
                 if (is_int_expr of node[2]) == 1:
                     # (round 91) index before value, VM order (the boxed
                     # twins got this in round 88; this arm did not).
                     if ((has_call_node of node[2]) == 1) or ((has_call_node of node[3]) == 1):
-                        return ind + (seq_buftgt_i of ["aot_buf_set_i", (cn of tgt[1]), (emit_int of node[2]), (emit_num_operand of [node[3], nm, bt, 0, "", "S", "-"])]) + "\n"
-                    return ind + "aot_buf_set_i(" + (cn of tgt[1]) + ", " + (emit_int of node[2]) + ", " + (emit_num_operand of [node[3], nm, bt, 0, "", "S", "-"]) + ");\n"
+                        return ind + (seq_buftgt_i of ["aot_buf_set_i", (cn of tgt[1]), (emit_int of node[2]), (emit_num of [node[3], nm, bt, 0])]) + "\n"
+                    return ind + "aot_buf_set_i(" + (cn of tgt[1]) + ", " + (emit_int of node[2]) + ", " + (emit_num of [node[3], nm, bt, 0]) + ");\n"
                 if ((has_call_node of node[2]) == 1) or ((has_call_node of node[3]) == 1):
-                    return ind + (seq_buftgt of ["aot_buf_set", (cn of tgt[1]), (emit_num of [node[2], nm, bt, 0]), (emit_num_operand of [node[3], nm, bt, 0, "", "S", "-"]), "double"]) + "\n"
-                return ind + "aot_buf_set(" + (cn of tgt[1]) + ", " + (emit_num of [node[2], nm, bt, 0]) + ", " + (emit_num_operand of [node[3], nm, bt, 0, "", "S", "-"]) + ");\n"
+                    return ind + (seq_buftgt of ["aot_buf_set", (cn of tgt[1]), (emit_num of [node[2], nm, bt, 0]), (emit_num of [node[3], nm, bt, 0]), "double"]) + "\n"
+                return ind + "aot_buf_set(" + (cn of tgt[1]) + ", " + (emit_num of [node[2], nm, bt, 0]) + ", " + (emit_num of [node[3], nm, bt, 0]) + ");\n"
         # general boxed index-assign (#86): list / dict / buffer target as a
         # Value* — aot_index_set mirrors OP_INDEX_SET and consumes/adopts.
-        if (is_num_expr of [node[2], nm, bt]) == 1:
+        if (num_store_ok of [node[2], nm, bt]) == 1:
             local sib is emit_val_borrow of [node[1], nm, bt, [node[2], node[3]]]
-            if (sib != "") and ((is_num_expr of [node[3], nm, bt]) == 1):
+            if (sib != "") and ((num_store_ok of [node[3], nm, bt]) == 1):
                 # (round 169) a numeric store into a list element or a buffer
                 # slot without boxing (in place when the slot holds an
                 # exclusive number; DMG's `_exec_ctx[2] is op` and `mem.data[i]
@@ -4285,7 +4294,7 @@ define emit_stmt_inner(node, ind, nm, bt, minits, gf) as:
             # pushed before the rhs (VM 100, AOT 7, both rc 0). Temps in
             # VM push order (target, index, value) make the order a
             # sequence point, not a compiler mood.
-            if (is_num_expr of [node[3], nm, bt]) == 1:
+            if (num_store_ok of [node[3], nm, bt]) == 1:
                 # (round 176) the SEQUENCED store (a call somewhere in the
                 # operands, so the target is read owned) still stores the
                 # number in place: target, index, value in VM order, then

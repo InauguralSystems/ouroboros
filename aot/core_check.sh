@@ -71,34 +71,59 @@ if [ -n "$lost" ]; then
     fail_n=1
 fi
 
-# #1637 (EigenScript#1647): a number is read through the runtime's macros.
-# The Value member is data.num_ and the slot member d_, so the old spellings
-# no longer compile -- but emitted C in compile.eigs compiles only when its
-# arm is exercised, and a data.num_/d_ spelling would compile and bypass the
-# review the macros stand for. So the AOT's C may name neither member: raw
-# reads are VAL_NUM_RAW / SLOT_NUM_RAW on a type-proven path, and every
-# builtin call goes through the bool gate (AOT_GATED), never a bare
-# `->data.builtin(`. Population: every .c/.h under aot/ plus compile.eigs
-# (the C it emits), derived by find, except the dated provenance directories
-# aot/bench/*-20??????/ -- frozen records of a measurement against the pin
-# they name (their recipes hash these inputs), counted below, not rewritten.
-nr_files=0; nr_raw=0; nr_bad=0; nr_prov=0
+# #1637 (EigenScript#1647): raw number reads. Since the bool type a Value's
+# number member (data.num_) and a slot's (d_) mean something only when the
+# type says number. The guarantee is STRUCTURAL: aot_rt.h's reader block is
+# the only code that names VAL_NUM_RAW / SLOT_NUM_RAW, and it ends by
+# redefining both macros and renaming both members out of reach, so a raw
+# read after it -- the rest of aot_rt.h, every program compile.eigs emits
+# (however its text was built), the test C that includes the header -- does
+# not compile. This checks what the compiler cannot:
+#   1. the block exists once and keeps its six poison lines;
+#   2. each raw read inside it is a DECLARED reader, one line, whose type
+#      test comes before the member (examined == declared > 0);
+#   3. no raw macro, member or bare builtin call (`->data.builtin(`, which
+#      must go through AOT_GATED) is named anywhere else: every .c/.h under
+#      aot/ and compile.eigs, derived by find, except the dated provenance
+#      dirs aot/bench/*-20??????/ (frozen records of a measurement).
+# Behavioural witness of 2: aot/test/t399_bool_raw_read.eigs.
+RT="$HERE/aot_rt.h"
+READERS="aot_num_if aot_num_or aot_num_proven aot_num_put aot_num_init aot_slot_num_if aot_slot_num_proven"
+b0=$(grep -n 'THE raw number readers' "$RT" | cut -d: -f1); b1=$(grep -n 'end of the raw number readers' "$RT" | cut -d: -f1)
+if [ "$(printf '%s\n' "$b0" | grep -c .)" -ne 1 ] || [ "$(printf '%s\n' "$b1" | grep -c .)" -ne 1 ] || [ "$b0" -ge "$b1" ]; then
+    echo "core_check: aot_rt.h's raw-number reader block is missing or duplicated (begin='$b0' end='$b1')"; fail_n=1; b0=0; b1=0
+fi
+block=$(sed -n "${b0},${b1}p" "$RT")
+n_poison=$(printf '%s\n' "$block" | grep -cE '^#(undef (VAL|SLOT)_NUM_RAW|define (VAL_NUM_RAW\(v\)|SLOT_NUM_RAW\(s\)|num_|d_)[[:space:]]+aot_raw_[a-z_]+)[[:space:]]*$')
+[ "$n_poison" -eq 6 ] || { echo "core_check: reader block has $n_poison of its 6 poison lines (#undef/#define of the two macros, the two members)"; fail_n=1; }
+seen=""; n_rd=0
+while IFS= read -r l; do
+    nm=$(printf '%s\n' "$l" | sed -nE 's/^static inline [a-z]+ (aot_[a-z_]+)\(.*/\1/p')
+    pre=${l%%_NUM_RAW(*}
+    case " $READERS " in *" $nm "*) ;; *) echo "core_check: raw read in the reader block outside a declared reader: $l"; fail_n=1; continue ;; esac
+    case "$pre" in
+        *'{ if (v && v->type == VAL_NUM) '*|*'{ if (slot_is_num(s)) '*|*'{ v->type = VAL_NUM; '*) ;;
+        *) echo "core_check: reader $nm reads the member before testing the type: $l"; fail_n=1 ;;
+    esac
+    seen="$seen $nm"; n_rd=$((n_rd+1))
+done < <(printf '%s\n' "$block" | grep -E '(VAL|SLOT)_NUM_RAW\(' | grep -vE '^#')
+n_decl=$(echo $READERS | wc -w)
+[ "$n_rd" -eq "$n_decl" ] && [ "$(echo $seen | tr ' ' '\n' | sort -u | wc -l)" -eq "$n_decl" ] ||
+    { echo "core_check: reader block has $n_rd raw-read line(s) [${seen# }], declared $n_decl [$READERS]"; fail_n=1; }
+nr_files=0; nr_bad=0; nr_prov=0
 while IFS= read -r f; do
     case "$f" in "$HERE"/bench/*-20[0-9][0-9][0-9][0-9][0-9][0-9]/*) nr_prov=$((nr_prov+1)); continue ;; esac
     nr_files=$((nr_files+1))
-    nr_raw=$((nr_raw + $(grep -cE '(VAL|SLOT)_NUM_RAW' "$f")))
-    bad=$(grep -nE 'data\.num|(\.|->)d_?([^A-Za-z0-9_(]|$)|->data\.builtin[[:space:]]*\(' "$f")
+    bad=$(grep -nE '(VAL|SLOT)_NUM_RAW|data\.num|(\.|->)d_?([^A-Za-z0-9_(]|$)|->data\.builtin[[:space:]]*\(' "$f")
+    [ "$f" = "$RT" ] && bad=$(printf '%s\n' "$bad" | awk -F: -v a="$b0" -v b="$b1" 'NF && ($1 < a || $1 > b)')
     if [ -n "$bad" ]; then
-        printf '%s\n' "$bad" | sed "s#^#core_check: raw number/builtin access in ${f#$HERE/}:#"
+        printf '%s\n' "$bad" | sed "s#^#core_check: raw number/builtin access outside the reader block in ${f#$HERE/}:#"
         nr_bad=$((nr_bad + $(printf '%s\n' "$bad" | grep -c .)))
     fi
 done < <(find "$HERE" -path "$HERE/build" -prune -o \( -name '*.c' -o -name '*.h' -o -name compile.eigs \) -type f -print | sort)
-if [ "$nr_files" -lt 3 ] || [ "$nr_raw" -eq 0 ]; then
-    echo "core_check: raw-read scan examined $nr_files file(s), $nr_raw macro read(s) -- expected aot_rt.h, compile.eigs and the test C at least; the scan is broken, not the tree"
-    fail_n=1
-fi
+[ "$nr_files" -ge 3 ] || { echo "core_check: raw-read scan examined $nr_files file(s) -- expected aot_rt.h, compile.eigs and the test C at least; the scan is broken, not the tree"; fail_n=1; }
 [ "$nr_bad" -eq 0 ] || fail_n=1
-echo "core_check: raw-read scan: files=$nr_files macro_reads=$nr_raw violations=$nr_bad provenance_skipped=$nr_prov"
+echo "core_check: raw-read scan: readers=$n_rd/$n_decl poison=$n_poison/6 files=$nr_files violations=$nr_bad provenance_skipped=$nr_prov"
 
 if [ "$fail_n" = 0 ]; then
     echo "core_check: build.sh derives CORE from $EIGS_DIR ($n_core TUs = SOURCES $n_src - CLI_ONLY $n_cli), no literal list"
