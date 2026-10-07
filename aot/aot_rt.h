@@ -812,6 +812,27 @@ static int aot_truthy(Value *v) { int t = is_truthy(v); val_decref(v); return t;
 static Value *aot_str(const char *s) { return make_str(s); }
 
 /* ---- arithmetic / compare: consume operands, return owned ---- */
+/* (#1637, round 4) a dict literal with a computed key, as vm.c's OP_DICT:
+ * every key and value is already evaluated (owned; key0, val0, key1, ...).
+ * A non-string key raises "dict key must be a string, got T" naming the
+ * LAST such key (OP_DICT's rt_error does not unwind, so the last message
+ * stands); otherwise the pairs are set in order. */
+static Value *aot_dict_lit_dyn(int n, Value **ks, Value **vs) {
+    Value *d = make_dict(n);
+    const char *bad = NULL;
+    for (int i = 0; i < n; i++) {
+        if (ks[i]->type != VAL_STR) bad = val_type_name(ks[i]->type);
+        else dict_set(d, ks[i]->data.str, vs[i]);
+    }
+    for (int i = 0; i < n; i++) { val_decref(ks[i]); val_decref(vs[i]); }
+    if (bad) {
+        val_decref(d);
+        rt_error(EK_TYPE, g_trace_current_line, "dict key must be a string, got %s", bad);
+        return make_null();
+    }
+    return d;
+}
+
 static Value *aot_add(Value *a, Value *b) {
     Value *r;
     if (a->type == VAL_NUM && b->type == VAL_NUM) {

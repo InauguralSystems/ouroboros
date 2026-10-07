@@ -1,0 +1,127 @@
+# (#1637, round 4) A dict field created numeric by its literal and later
+# written a bool, a str, a list or null. Every read below sits where the
+# literal's "num" made the AOT read through a checked numeric unbox (a
+# parenthesized print, a local, a return, an `if`); each must yield the
+# stored value, as the VM does. Module scope, a function, a dict passed as
+# a parameter, an alias, `d["f"] is`, `dict_set`, and a write from another
+# function all reach the field by name. No computed-key write here: it
+# demotes every field (t409), which would mask every narrower check below.
+
+# --- module scope: one field per value kind
+m is {"b": 0, "s": 1, "l": 2, "n": 3, "keep": 4}
+m.b is 1 > 0
+m.s is "x"
+m.l is [1, 2]
+m.n is null
+print of (m.b)
+print of (m.s)
+print of (m.l)
+print of (m.n)
+print of (m.keep + 1)
+mb is m.b
+if m.b:
+    print of "m.b is truthy"
+print of mb
+
+# --- the realistic form: a status dict, the flag set from a comparison
+state is {"done": 0, "n": 3}
+state.done is 5 >= state.n
+if state.done:
+    print of "finished"
+print of (state.done)
+
+# --- index-assign spelling and dict_set
+q is {"f": 0, "g": 0}
+q["f"] is 2 < 1
+dict_set of [q, "g", "via dict_set"]
+print of (q.f)
+print of (q.g)
+
+# --- through an alias
+a is {"v": 7}
+alias is a
+alias.v is "aliased"
+print of (a.v)
+
+# --- in a function: the literal and the writes local to it
+define local_kinds(k) as:
+    local r is {"x": 0}
+    if k == 0:
+        r.x is k == 0
+    elif k == 1:
+        r.x is "one"
+    elif k == 2:
+        r.x is [k, k]
+    else:
+        r.x is null
+    local got is r.x
+    print of got
+    return r.x
+
+for i in range of 4:
+    print of (local_kinds of i)
+
+# --- a dict passed as a parameter, rebound inside the callee
+define set_flag(rec, v) as:
+    rec.flag is v > 0
+    return rec.flag
+
+define read_flag(rec) as:
+    return rec.flag
+
+p is {"flag": 0, "count": 2}
+print of (set_flag of [p, 5])
+print of (read_flag of p)
+print of (p.flag)
+print of (p.count * 2)
+
+# --- written from a function that never names the literal's binding
+define poison(r) as:
+    r.w is "poisoned"
+    return 0
+
+w is {"w": 1}
+z is poison of w
+print of (w.w)
+
+# --- a field written from another field that was demoted
+c is {"a": 0, "b": 0}
+c.a is not 0
+c.b is c.a
+print of (c.b)
+
+# --- compound dot form keeps strings strings
+s is {"t": 0}
+s["t"] is "ab"
+s.t += "cd"
+print of (s.t)
+
+# --- the buffer-class sibling: a field created as a buffer, written a str
+# or a list, then indexed (the literal's "buf" read a typed element)
+bb is {"buf": buffer of 2, "n": 0}
+bb.buf is "st"
+print of (bb.buf[0])
+define rewrite(r) as:
+    r.cells is [7, "eight"]
+    return r.cells[1]
+cc is {"cells": buffer of 3}
+print of (rewrite of cc)
+print of (cc.cells[0])
+
+# --- shape narrowing must refuse a name that can hold another record: a
+# write through it demotes the field everywhere, not only in its literal's
+# shape. (Field names here are used nowhere else in this file, or another
+# section's by-name demotion would mask the check.)
+ra is {"rv": 0}
+rb is {"rv": 1, "w": 0}
+ra is rb
+ra.rv is "through a rebound name"
+print of (rb.rv)
+define rebind_param(r, other) as:
+    r is other
+    r.pv is "through a rebound param"
+    return 0
+rc is {"pv": 0, "z": 0}
+rd is {"pv": 2, "y": 0}
+zz is rebind_param of [rc, rd]
+print of (rd.pv)

@@ -1,0 +1,7 @@
+# (#1637, round 4) the numeric-key sibling of t405: the same VM raise, the
+# same compiler crash before the fix.
+define build(n) as:
+    return {n: 1}
+print of "before"
+d is {5: 1}
+print of "never"

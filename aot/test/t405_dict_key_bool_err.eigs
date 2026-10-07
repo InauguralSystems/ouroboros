@@ -1,0 +1,6 @@
+# (#1637, round 4) a bool dict-literal key is a run-time raise in the VM
+# ("dict key must be a string, got bool", at the literal's line); the AOT
+# compiler crashed on it ("'+' to str and num" in its field-map walk).
+print of "before"
+d is {"a": 1, true: 2}
+print of "never"

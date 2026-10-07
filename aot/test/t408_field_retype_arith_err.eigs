@@ -1,0 +1,7 @@
+# (#1637, round 4) arithmetic on a dict field the literal created numeric
+# and a later write made a bool raises the VM's operator text, at its line
+# (the AOT's checked field unbox named only "a numeric context").
+d is {"flag": 0}
+d.flag is 1 > 0
+print of "before"
+print of (d.flag - 1)

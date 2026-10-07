@@ -1151,6 +1151,43 @@ define unwrap(node) as:
         node is node[2]
     return node
 
+# A dict literal's key as a string, or null when it is not a string literal.
+# The parser takes any expression there (`{k: 1}` keys on k's VALUE, and
+# `{5: 1}` / `{true: 1}` raise "dict key must be a string" at run time), so
+# every walker that reads a key statically asks here first.
+define dict_key_str(kn) as:
+    if (type of kn) == "str":
+        return kn
+    local ku is unwrap of kn
+    if ku[0] == "str":
+        return ku[1]
+    return null
+
+# 1 when every key of the dict literal is a string literal.
+define dict_lit_static(dictnode) as:
+    local prs is dictnode[1]
+    for pk in range of (len of prs):
+        if (dict_key_str of ((prs[pk])[0])) == null:
+            return 0
+    return 1
+
+# (#1637, round 4) a record's SHAPE: its literal's distinct keys in order,
+# recorded in its field map as "#o" (pf_merge keeps it only where every
+# call site agrees). Writes through a map that names a shape demote that
+# shape's fields only (field_write_pass). null for `{}`.
+define dict_lit_shape(dictnode) as:
+    local prs is dictnode[1]
+    local seen is {}
+    local sh is ""
+    for pk in range of (len of prs):
+        local ks is dict_key_str of ((prs[pk])[0])
+        if seen[ks] == null:
+            seen[ks] is 1
+            sh is sh + ks + ","
+    if sh == "":
+        return null
+    return sh
+
 # ---- buffer-type inference: a var is a numeric buffer if every assignment is
 # `buffer of N` / `zeros of N`. ----
 define is_buf_create(rhs) as:
@@ -1257,7 +1294,7 @@ define is_num_expr(node, nm, bt) as:
         if dm[0] == "ident":
             local fl is g_cur_fmap[(dm[1]) + ".#fields"]
             if fl != null:
-                if fl[(node[2])] == "num":
+                if (field_cls of [fl, node[2]]) == "num":
                     return 1
         return 0
     if t == "binop":
@@ -3140,6 +3177,24 @@ define emit_val(node, nm, bt) as:
     if t == "dict":
         # dict literal {"k": v, ...} -> owned Value (GCC statement-expr).
         local pairs is node[1]
+        if (dict_lit_static of node) == 0:
+            # (#1637, round 4) a computed key -- `{k: 1}`, and the VM's
+            # raise for `{5: 1}` / `{true: 1}`: every key and value is
+            # evaluated in the VM's order (key0, val0, key1, ...), then
+            # aot_dict_lit_dyn builds the dict as OP_DICT does. The static
+            # arm below would have keyed `{k: 1}` on the identifier's NAME.
+            local np is str of (len of pairs)
+            local dd is "({ Value* _dk[" + np + "]; Value* _dv[" + np + "];"
+            for k in range of (len of pairs):
+                local dpr is pairs[k]
+                local dks is dict_key_str of dpr[0]
+                local dke is ""
+                if dks != null:
+                    dke is "make_str(\"" + (c_escape of dks) + "\")"
+                else:
+                    dke is emit_val of [dpr[0], nm, bt]
+                dd is dd + " _dk[" + (str of k) + "] = " + dke + "; _dv[" + (str of k) + "] = " + (emit_val of [dpr[1], nm, bt]) + ";"
+            return dd + " aot_dict_lit_dyn(" + np + ", _dk, _dv); })"
         local ds is "({ Value* _d = make_dict(" + (str of (len of pairs)) + ");"
         for k in range of (len of pairs):
             local pr is pairs[k]
@@ -6892,7 +6947,7 @@ define return_node_is_num(rnode, rba, fbt, fgen, fdict, ftt, seen) as:
         if dm[0] == "ident":
             local fl is g_ret_fmap[(dm[1]) + ".#fields"]
             if fl != null:
-                if fl[(re[2])] == "num":
+                if (field_cls of [fl, re[2]]) == "num":
                     return 1
         return 0
     if t == "call":
@@ -7147,10 +7202,10 @@ define bufarg_is_buf(e, bt, ppt, pnames, fmap) as:
     if e[0] == "dot":
         local dm is unwrap of e[1]
         if dm[0] == "ident":
-            if g_field_class[(e[2])] == "buf":
+            if (g_field_class[(e[2])] == "buf") and (G_FIELD_ANY[0] == 0):
                 return 1
             local fl is fmap[(dm[1]) + ".#fields"]
-            if (fl != null) and (fl[(e[2])] == "buf"):
+            if (fl != null) and ((field_cls of [fl, e[2]]) == "buf"):
                 return 1
         return 0
     return 0
@@ -8126,7 +8181,7 @@ define arg_class(node, caller_pt, caller_params, caller_locals) as:
         if dtgt[0] == "ident":
             local flds is caller_locals[dtgt[1] + ".#fields"]
             if flds != null:
-                local fc is flds[e[2]]
+                local fc is field_cls of [flds, e[2]]
                 if fc != null:
                     return fc
         return "unknown"
@@ -8377,7 +8432,10 @@ define local_gen_map_seeded(body, seed) as:
         for j2 in range of (len of rhss):
             local r2 is unwrap of rhss[j2]
             if (len of r2) > 0:
-                if r2[0] == "dict":
+                if (r2[0] == "dict") and ((dict_lit_static of r2) == 0):
+                    # a computed key can name any field, at any position
+                    out[v + ".#fields"] is {"#unknown": 1}
+                elif r2[0] == "dict":
                     local fmap is {}
                     local nidx is 0
                     local prs is r2[1]
@@ -8409,6 +8467,8 @@ define local_gen_map_seeded(body, seed) as:
                                 # a "num" field's read -- checked at runtime
                                 # by the same borrowed index helper.
                                 fmap[kn] is "buf"
+                    if (dict_lit_shape of r2) != null:
+                        fmap["#o"] is dict_lit_shape of r2
                     out[v + ".#fields"] is fmap
             # ...or from a call to a function that RETURNS a dict literal
             # (EigenMiniSat's `cfg is parse_args of null`): adopt the
@@ -8615,6 +8675,8 @@ define widen_scan(node, caller_pt, caller_params, caller_locals, caller_fn) as:
 # ident built from a dict literal in its body. Recorded on g_funcs so a
 # caller's `cfg is parse_args of null` inherits the field types.
 define dict_literal_fields(dictnode, lm) as:
+    if (dict_lit_static of dictnode) == 0:
+        return {"#unknown": 1}
     local fmap is {}
     local nidx is 0
     local prs is dictnode[1]
@@ -8663,6 +8725,8 @@ define dict_literal_fields(dictnode, lm) as:
                 local ic is lm[pv[1]]
                 if ic == "gen":
                     fmap[kn] is "gen"
+    if (dict_lit_shape of dictnode) != null:
+        fmap["#o"] is dict_lit_shape of dictnode
     return fmap
 
 # Record, on each callee, the field map of any dict argument we can type
@@ -8731,7 +8795,7 @@ define pf_arg_dictlike(e, caller_locals) as:
         local dm is unwrap of e[1]
         if dm[0] == "ident":
             local fl is caller_locals[(dm[1]) + ".#fields"]
-            if (fl != null) and (fl[(e[2])] == "num"):
+            if (fl != null) and ((field_cls of [fl, e[2]]) == "num"):
                 return 0
         return 1
     if e[0] == "index":
@@ -11801,12 +11865,12 @@ define index_of_buf_field(node, fmap) as:
     # (round 167) the assignment-site census names the field "buf" when
     # every write anywhere is a buffer (or `[]`): it overrides a literal's
     # `[]`, and a mixed field never reaches it.
-    if g_field_class[(tgt[2])] == "buf":
+    if (g_field_class[(tgt[2])] == "buf") and (G_FIELD_ANY[0] == 0):
         return 1
     local fl is fmap[(dm[1]) + ".#fields"]
     if fl == null:
         return 0
-    if fl[(tgt[2])] == "buf":
+    if (field_cls of [fl, tgt[2]]) == "buf":
         return 1
     return 0
 
@@ -11882,9 +11946,10 @@ define fc_walk(node, lb, pbuf, assigns, acc) as:
         local prs is node[1]
         for pk in range of (len of prs):
             local pr is prs[pk]
-            local kn is pr[0]
-            if (type of kn) == "list":
-                kn is kn[1]
+            local kn is dict_key_str of pr[0]
+            if kn == null:
+                fc_walk of [pr, lb, pbuf, assigns, acc]
+                continue
             if acc[kn] == null:
                 acc[kn] is [0, 0]
             local ck is acc[kn]
@@ -11899,11 +11964,6 @@ define fc_walk(node, lb, pbuf, assigns, acc) as:
     return 0
 
 define field_class_census(funcs, rest) as:
-    if (len of (keys of G_MODULE_ENVS)) > 0:
-        # Cross-record field names cannot identify a namespace reached through
-        # an arbitrary alias. Keep checked dynamic field reads in import code.
-        g_field_class is {}
-        return 0
     local acc is {}
     local mlb is infer_buffers of rest
     fc_walk of [rest, mlb, {}, (collect_assigns of [rest, {}]), acc]
@@ -11918,12 +11978,336 @@ define field_class_census(funcs, rest) as:
                     pbuf[((fn[2])[pi])] is 1
         fc_walk of [fn[3], lb, pbuf, (collect_assigns of [fn[3], {}]), acc]
     g_field_class is {}
+    G_FIELD_NOTBUF[0] is {}
     local fk is keys of acc
     for i in range of (len of fk):
         local c is acc[fk[i]]
+        # (#1637, round 4) a literal's buffer field written anything else
+        # (`d.b is "st"` then `d.b[0]`) is not a buffer field (field_cls).
+        if c[1] > 0:
+            local nb is G_FIELD_NOTBUF[0]
+            nb[(fk[i])] is 1
         if (c[0] > 0) and (c[1] == 0):
             g_field_class[(fk[i])] is "buf"
+    if (len of (keys of G_MODULE_ENVS)) > 0:
+        # Cross-record field names cannot identify a namespace reached through
+        # an arbitrary alias. Keep checked dynamic field reads in import code.
+        g_field_class is {}
     return 0
+
+# (#1637, round 4) FIELD CLASSES FROM EVERY WRITE. A field map's "num" came
+# from the dict LITERAL alone, and nothing re-derived it from later writes:
+#
+#   d is {"flag": 0} / d.flag is 1 > 0 / print of (d.flag)
+#   VM   true, rc 0
+#   AOT  "non-numeric value in a numeric context at <module>: .flag (type bool)"
+#
+# On v0.44.0 the comparison was a number, so "a field initialised to 0, later
+# set to a comparison" was sound by accident; str, list and null writes
+# diverged the same way all along. Every write -- a literal value for key f,
+# `x.f is v`, `x["f"] is v`, `dict_set of [x, "f", v]` -- must be PROVEN
+# numeric, by the inference round 3 uses for a parameter's stores
+# (is_num_expr over the writing scope's fn_body_nm map), or f's "num" reads
+# "gen". field_cls is the one reader of a map's class.
+#
+# Which records a demotion reaches. By default the field NAME, program-wide,
+# so aliases, parameters and other functions' writes need no alias analysis.
+# A write through a name whose map carries a record shape ("#o") the name
+# provably holds (fw_trusted) demotes that shape's field only: DMG's
+# `joy.a is pressed` (a boxed parameter) must not demote the CPU's `cpu.a`.
+# Readers already trust that same map for every "num" they read. A write
+# whose field cannot be named (a computed key, `dict_set` with one or as a
+# value) with an unproven value demotes every field of every record.
+G_FIELD_NOTNUM is [{}]
+G_FIELD_SHAPE is [{}]
+G_FIELD_SOMESHAPE is [{}]
+G_FIELD_ANY is [0]
+G_FIELD_NOTBUF is [{}]
+
+define field_cls(fl, f) as:
+    if fl == null:
+        return null
+    local c is fl[f]
+    if c == "num":
+        if (G_FIELD_ANY[0] == 1) or ((G_FIELD_NOTNUM[0])[f] == 1):
+            return "gen"
+        local sh is fl["#o"]
+        if sh == null:
+            # a merged map no longer names one shape: any shape's demotion
+            if (G_FIELD_SOMESHAPE[0])[f] == 1:
+                return "gen"
+        elif (G_FIELD_SHAPE[0])[sh + f] == 1:
+            return "gen"
+    if c == "buf":
+        if (G_FIELD_ANY[0] == 1) or ((G_FIELD_NOTBUF[0])[f] == 1):
+            return "gen"
+    return c
+
+# Field writes in one scope, as [field, value, keynode, target]: field is the
+# name, or null when the key is computed (keynode is then the key
+# expression); target is the written expression, or null for a literal's own
+# pair. A literal key that is not a string (`{5: 1}`, `{true: 1}`) is a raise
+# in the VM. Nested function bodies are their own scope.
+define fw_collect(node, out) as:
+    if (type of node) != "list":
+        return 0
+    if (len of node) == 0:
+        return 0
+    if node[0] == "func":
+        return 0
+    if node[0] == "dot_assign":
+        append of [out, [node[2], node[3], null, node[1]]]
+    if node[0] == "index_assign":
+        local ix is unwrap of node[2]
+        local iv is node[3]
+        if (len of node) > 4:
+            if node[4] != null:
+                iv is ["binop", node[4], ["index", node[1], node[2]], node[3]]
+        if ix[0] == "str":
+            append of [out, [ix[1], iv, null, node[1]]]
+        else:
+            append of [out, [null, iv, node[2], null]]
+    if node[0] == "dict":
+        local prs is node[1]
+        for pk in range of (len of prs):
+            local pr is prs[pk]
+            local ks is dict_key_str of pr[0]
+            if ks != null:
+                append of [out, [ks, pr[1], null, null]]
+            else:
+                append of [out, [null, pr[1], pr[0], null]]
+    if node[0] == "ident":
+        if node[1] == "dict_set":
+            # reached as a value, or as a callee the call arm below could not
+            # read: the field and the value are both unknown.
+            append of [out, [null, ["null"], ["null"], null]]
+        return 0
+    if node[0] == "call":
+        local dc is unwrap of node[1]
+        if (dc[0] == "ident") and (dc[1] == "dict_set"):
+            local da is unwrap of node[2]
+            if (da[0] == "list") and ((len of da) == 2):
+                if (len of (da[1])) == 3:
+                    local dk is unwrap of ((da[1])[1])
+                    if dk[0] == "str":
+                        append of [out, [dk[1], (da[1])[2], null, (da[1])[0]]]
+                    else:
+                        append of [out, [null, (da[1])[2], (da[1])[1], null]]
+                    fw_collect of [da[1], out]
+                    return 0
+    for k in range of (len of node):
+        fw_collect of [node[k], out]
+    return 0
+
+# Does deciding this write need the scope's numeric map? A numeric literal
+# is proven and a certain non-number is not, whatever the map says.
+define fw_cheap(v) as:
+    local u is unwrap of v
+    if u[0] == "num":
+        return 1
+    if (u[0] == "str") or (u[0] == "list") or (u[0] == "dict") or (u[0] == "null") or ((is_bool_expr of u) == 1):
+        return 0
+    return null
+
+# The shape a write's target provably holds, or null. The target must be a
+# name whose current map ("#o") names a shape, and the name must hold that
+# shape on every binding: a parameter the body never rebinds (its map is
+# the meet over every call site, pf_scan), or a name every assignment of
+# which is a literal of that shape or a call returning one.
+define fw_trusted(tgt, fn, assigns) as:
+    if tgt == null:
+        return null
+    local t is unwrap of tgt
+    if t[0] != "ident":
+        return null
+    local m is g_cur_fmap[(t[1]) + ".#fields"]
+    if m == null:
+        return null
+    if m["#unknown"] == 1:
+        return null
+    local sh is m["#o"]
+    if sh == null:
+        return null
+    local rhss is assigns[(t[1])]
+    if fn != null:
+        for q in range of (len of fn[2]):
+            if ((fn[2])[q]) == t[1]:
+                if rhss == null:
+                    return sh
+                return null
+    if rhss == null:
+        return null
+    for j in range of (len of rhss):
+        local r is unwrap of rhss[j]
+        local rs is null
+        if r[0] == "dict":
+            if (dict_lit_static of r) == 1:
+                rs is dict_lit_shape of r
+        if r[0] == "call":
+            local rc is unwrap of r[1]
+            if (rc[0] == "ident") and (g_funcs[rc[1]] != null):
+                local rf is (g_funcs[rc[1]])["retfields"]
+                if rf != null:
+                    rs is rf["#o"]
+        if rs != sh:
+            return null
+    return sh
+
+# The returns' positive-evidence classifier as a second prover for a write
+# whose value is_num_expr does not claim (it claims what emit_num can emit;
+# `rom_len is buf_len of bytes / mem.rom_len is rom_len` is a number by the
+# NUM_RET builtin, which only this one knows). Context as func_ret_type_inner
+# sets it, or the module census's (no parameters, no body walk).
+define fw_rnn(v, fn, bt, rba) as:
+    local _p0 is g_cur_params_rt
+    local _b0 is g_cur_ret_body
+    local _d0 is G_DBR_RET[0]
+    local _f0 is g_ret_fmap
+    local _m0 is G_RNN_MEMO[0]
+    G_RNN_MEMO[0] is null
+    g_ret_fmap is g_cur_fmap
+    g_cur_params_rt is {}
+    g_cur_ret_body is null
+    local fgen is {}
+    local fdict is {}
+    local ftt is {}
+    if fn != null:
+        g_cur_ret_body is fn[3]
+        G_DBR_RET[0] is def_before_reads_all of [fn[3], (keys of rba)]
+        ftt is infer_tensors of fn[3]
+        local pt is (g_funcs[fn[1]])["ptypes"]
+        for q in range of (len of fn[2]):
+            g_cur_params_rt[((fn[2])[q])] is 1
+            if q < (len of pt):
+                if (pt[q]) == "gen":
+                    fgen[((fn[2])[q])] is 1
+                if (pt[q]) == "dict":
+                    fdict[((fn[2])[q])] is 1
+                if (pt[q]) == "tensor":
+                    ftt[((fn[2])[q])] is 1
+    local r is return_node_is_num of [v, rba, bt, fgen, fdict, ftt, {}]
+    g_cur_params_rt is _p0
+    g_cur_ret_body is _b0
+    G_DBR_RET[0] is _d0
+    g_ret_fmap is _f0
+    G_RNN_MEMO[0] is _m0
+    return r
+
+# One pass over every scope's writes; returns how many demotions it made.
+# `fin` holds the final module maps [nm, bt] after the module inference has
+# settled, or null for the fixpoint passes (module maps re-derived here).
+define field_write_pass(scopes, fin) as:
+    local n is 0
+    for s in range of (len of scopes):
+        local sc is scopes[s]
+        local ws is sc[1]
+        local need is 0
+        for w in range of (len of ws):
+            local wr is ws[w]
+            if (fw_cheap of wr[1]) == null:
+                need is 1
+            if (wr[0] == null) and ((fw_cheap of wr[2]) != 1):
+                need is 1
+        if G_FIELD_ANY[0] == 1:
+            need is 0
+        local nm is {}
+        local bt is {}
+        local _sfm is g_cur_fmap
+        local _scp is g_cur_params
+        g_cur_params is {}
+        local fn is sc[0]
+        local body is sc[2]
+        if fn == null:
+            g_cur_fmap is local_gen_map_for of ["<module>", body]
+            if need == 1:
+                if fin == null:
+                    bt is infer_buffers of body
+                    nm is infer_numeric of [body, bt]
+                else:
+                    nm is fin[0]
+                    bt is fin[1]
+        else:
+            body is fn[3]
+            g_cur_fmap is fmap_for_fn of fn
+            for q in range of (len of fn[2]):
+                g_cur_params[((fn[2])[q])] is 1
+            if need == 1:
+                local mnm is g_mod_num_names
+                local mbt is G_MOD_BT0[0]
+                if fin != null:
+                    mnm is fin[0]
+                    mbt is fin[1]
+                local fm is fn_body_nm of [fn, (g_funcs[fn[1]])["ptypes"], mnm, mbt]
+                nm is fm[0]
+                bt is fm[1]
+        local assigns is collect_assigns of [body, {}]
+        for w in range of (len of ws):
+            local wr is ws[w]
+            local f is wr[0]
+            if G_FIELD_ANY[0] == 0:
+                local pv is fw_cheap of wr[1]
+                if pv == null:
+                    pv is is_num_expr of [(unwrap of wr[1]), nm, bt]
+                    if pv == 0:
+                        local rba is assigns
+                        if fn == null:
+                            rba is g_mod_rba
+                        pv is fw_rnn of [wr[1], fn, bt, rba]
+                if f == null:
+                    # a computed key the inference proves numeric is a list
+                    # or buffer store (a dict raises on it)
+                    local pk is fw_cheap of wr[2]
+                    if pk == null:
+                        pk is is_num_expr of [(unwrap of wr[2]), nm, bt]
+                    if (pv == 0) and (pk != 1):
+                        G_FIELD_ANY[0] is 1
+                        n is n + 1
+                elif (pv == 0) and ((G_FIELD_NOTNUM[0])[f] != 1):
+                    local sh is fw_trusted of [wr[3], fn, assigns]
+                    if sh == null:
+                        local nn is G_FIELD_NOTNUM[0]
+                        nn[f] is 1
+                        n is n + 1
+                    elif (G_FIELD_SHAPE[0])[sh + f] != 1:
+                        local ns is G_FIELD_SHAPE[0]
+                        ns[sh + f] is 1
+                        local na is G_FIELD_SOMESHAPE[0]
+                        na[f] is 1
+                        n is n + 1
+        g_cur_fmap is _sfm
+        g_cur_params is _scp
+    return n
+
+G_FW_SCOPES is [null]
+define field_write_scopes(funcs, rest) as:
+    if G_FW_SCOPES[0] == null:
+        local scopes is []
+        local mw is []
+        fw_collect of [rest, mw]
+        append of [scopes, [null, mw, rest]]
+        for k in range of (len of funcs):
+            local fn is funcs[k]
+            local fw is []
+            fw_collect of [fn[3], fw]
+            local dfs is fn_defaults of fn
+            if dfs != null:
+                fw_collect of [dfs, fw]
+            if (len of fw) > 0:
+                append of [scopes, [fn, fw, null]]
+        G_FW_SCOPES[0] is scopes
+    return G_FW_SCOPES[0]
+
+# The fixpoint: a demotion can unprove another write (`d.g is d.f`). Returns
+# how many demotions were made in all.
+define field_write_census(funcs, rest) as:
+    local scopes is field_write_scopes of [funcs, rest]
+    local total is 0
+    local more is 1
+    loop while more > 0:
+        more is field_write_pass of [scopes, null]
+        total is total + more
+    return total
+
 
 # (round 168, DMG lever 2, fourth step) ELEMENT MAPS. DMG hands its records
 # to the opcode handlers as elements of a module list (`_exec_ctx[0] is
@@ -12934,6 +13318,11 @@ define emit_program(ast) as:
         # a numeric context". The widening runs again on the settled classes.
         if (param_proof_pass of funcs) > 0:
             rchanged is 1
+        # (#1637, round 4) the field-write census, on the same settled
+        # classes: a demoted field changes what reads of it are, so the
+        # returns and the widening run again.
+        if (field_write_census of [funcs, rest]) > 0:
+            rchanged is 1
         if rchanged == 1:
             G_LGM_CACHE[0] is {}
             widen_ptypes of [funcs, rest]
@@ -12977,6 +13366,11 @@ define emit_program(ast) as:
                             if _boxed == 1:
                                 nm[_dv] is 0
     nm is module_outward_demote of [funcs, rest, bt, nm]
+    # (#1637, round 4) the field census ran on the early module seed too;
+    # a write it would demote on the FINAL maps is refused loudly rather
+    # than read through a checked unbox. (Not reached by any fixture.)
+    if (field_write_pass of [(field_write_scopes of [funcs, rest]), [nm, bt]]) > 0:
+        throw of "AOT internal: a dict field is a number on the early module maps, but a write to it is not proven numeric on the final ones (EigenScript#1637); its reads would die where the VM keeps the value"
     # The parameter proof ran on the early module seed (g_mod_num_names,
     # G_MOD_BT0); re-check every numeric parameter's stores against the
     # FINAL module maps emit_function will seed from. A disagreement would

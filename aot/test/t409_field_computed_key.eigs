@@ -1,0 +1,13 @@
+# (#1637, round 4) a write through a COMPUTED key can land on any field, so
+# with an unproven value it demotes every numeric field (t404 has none, so
+# its narrower checks are not masked by this one).
+dk is "kk"
+dd is {"kk": 0, "j": 1}
+dd[dk] is true
+print of (dd.kk)
+define put(r, key, v) as:
+    r[key] is v
+    return 0
+ee is {"m": 0}
+z is put of [ee, "m", "via a computed key in a function"]
+print of (ee.m)

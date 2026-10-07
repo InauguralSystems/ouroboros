@@ -1,0 +1,23 @@
+# (#1637, round 4) a dict literal key is an EXPRESSION. `{k: 1}` keys on k's
+# value; the AOT keyed it on the identifier's name and printed {"k": 1}.
+# Keys and values evaluate in order before the raise, and a caught raise
+# names the LAST bad key, as OP_DICT does.
+k is "zz"
+d is {k: 1, "b": 2}
+print of d
+print of (d.zz)
+define key_of(n) as:
+    return f"key{n}"
+e is {(key_of of 1): "one", (key_of of 2): (1 < 2)}
+print of e
+try:
+    bad is {5: 1, true: (print of "value evaluated"), "a": 2}
+    print of "not reached"
+catch err:
+    print of err.message
+    print of err.line
+try:
+    bad2 is {"a": (print of "first"), k: 2, 3: (print of "second")}
+catch err2:
+    print of err2.message
+print of "end"
