@@ -140,6 +140,12 @@ static Value *aot_take_error_value(void) {   /* vm_take_error_value's shape */
  *    after. aot/test/run.sh has gcc enumerate these calls (its call graph
  *    of this header) and fails on one outside AOT_FOREIGN (or on zero). */
 #define AOT_FOREIGN(call) ({ const int __aot_fl = g_trace_current_line; __auto_type __aot_fr = (call); g_trace_current_line = __aot_fl; __aot_fr; })
+/* #1637: every runtime builtin call passes the bool gate (eigs_bool_gate:
+ * a bool where the builtin's declared policy takes none raises, and the
+ * builtin is not called), exactly as the VM's eigs_call_builtin does. Spelled
+ * here rather than calling that header inline so the indirect call sits
+ * inside this file's AOT_FOREIGN, where test/run.sh's call-graph gate sees it. */
+#define AOT_GATED(fn, arg) (eigs_bool_gate((fn), (arg)) ? NULL : (fn)(arg))
 #define AOT_RESTAMP(call) ({ __auto_type __aot_r = (call); g_trace_current_line = __aot_ln; __aot_r; })
 #define AOT_RESTAMP_V(call) ({ (call); g_trace_current_line = __aot_ln; })
 static int aot_depth = 0;
@@ -715,7 +721,7 @@ static inline double aot_dot_num_tb_si(Value *target, const char *key,
     if (__builtin_expect(target != NULL && target->type == VAL_DICT
                          && !target->module_ns, 1)) {
         Value *v = target->data.dict.vals[idx];
-        if (__builtin_expect(v != NULL && v->type == VAL_NUM, 1)) return v->data.num;
+        if (__builtin_expect(v != NULL && v->type == VAL_NUM, 1)) return VAL_NUM_RAW(v);
     }
     return aot_dot_num_si_cold(target, key, site);
 }
@@ -728,7 +734,7 @@ static inline double aot_dot_num_tb_ic(Value *target, const char *key,
         if (__builtin_expect(i >= 0 && i < target->data.dict.count
                              && target->data.dict.keys[i] == *ick, 1)) {
             Value *v = target->data.dict.vals[i];
-            if (v && v->type == VAL_NUM) return v->data.num;
+            if (v && v->type == VAL_NUM) return VAL_NUM_RAW(v);
         }
     }
     return aot_dot_num_tb_slow(target, key, ic, ick, site);
@@ -742,7 +748,7 @@ static inline void aot_dot_set_num_tb_ic(Value *target, const char *key, double 
                              && target->data.dict.keys[i] == *ick, 1)) {
             Value *old = target->data.dict.vals[i];
             if (old && old->type == VAL_NUM && old->refcount == 1) {
-                old->data.num = num_guard(d);
+                VAL_NUM_RAW(old) = num_guard(d);
                 return;
             }
         }
@@ -779,7 +785,7 @@ static Value *aot_str(const char *s) { return make_str(s); }
 static Value *aot_add(Value *a, Value *b) {
     Value *r;
     if (a->type == VAL_NUM && b->type == VAL_NUM) {
-        r = make_num(num_guard(a->data.num + b->data.num));
+        r = make_num(num_guard(VAL_NUM_RAW(a) + VAL_NUM_RAW(b)));
     } else if (a->type == VAL_STR && b->type == VAL_STR) {
         size_t la = strlen(a->data.str), lb = strlen(b->data.str);
         char *s = (char *)malloc(la + lb + 1);
@@ -805,7 +811,7 @@ static Value *aot_add(Value *a, Value *b) {
         if (a->type != VAL_NUM || b->type != VAL_NUM) \
             rt_error(EK_TYPE, g_trace_current_line, "cannot apply '%s' to %s and %s", \
                      OPNAME, val_type_name(a->type), val_type_name(b->type)); \
-        double x = a->data.num, y = b->data.num; (void)x; (void)y; \
+        double x = VAL_NUM_RAW(a), y = VAL_NUM_RAW(b); (void)x; (void)y; \
         Value *r = make_num(num_guard(EXPR)); \
         val_decref(a); val_decref(b); return r; }
 AOT_NUMOP(aot_sub, x - y, "-")
@@ -874,21 +880,24 @@ static const char *aot_cmp_type_name(Value *v) {
     if (!v || v->type == VAL_NULL) return "none";
     return val_type_name(v->type);
 }
+/* #1637: the result is a bool (the VM pushes slot_from_bool), and a bool
+ * operand is neither a number nor a string, so ordering one raises
+ * "cannot compare bool and num with '<'" through the else arm. */
 #define AOT_CMP(NAME, OP, OPNAME) \
     static Value *NAME(Value *a, Value *b) { \
-        double res; \
+        int res = 0; \
         if (a->type == VAL_NUM && b->type == VAL_NUM) { \
-            res = (a->data.num OP b->data.num) ? 1.0 : 0.0; \
+            res = (VAL_NUM_RAW(a) OP VAL_NUM_RAW(b)); \
         } else if (a->type == VAL_STR && b->type == VAL_STR) { \
             int c = strcmp(a->data.str ? a->data.str : "", \
                            b->data.str ? b->data.str : ""); \
-            res = (c OP 0) ? 1.0 : 0.0; \
+            res = (c OP 0); \
         } else { \
             rt_error(EK_TYPE, g_trace_current_line, "cannot compare %s and %s with '%s'", \
                      aot_cmp_type_name(a), aot_cmp_type_name(b), OPNAME); \
         } \
         val_decref(a); val_decref(b); \
-        return make_num(res); }
+        return make_bool(res); }
 AOT_CMP(aot_lt, <,  "<")
 AOT_CMP(aot_gt, >,  ">")
 AOT_CMP(aot_le, <=, "<=")
@@ -911,25 +920,50 @@ AOT_CMP(aot_ge, >=, ">=")
  * fall back to the raising AOT_CMP path. A null or string field still
  * compares false rather than dying — which is why this is not simply
  * "treat dict fields as numeric". */
-static inline int aot_eq_n_t(Value *a, double b) {
-    if (a && a->type == VAL_NUM) { int e = (a->data.num == b); val_decref(a); return e; }
+/* #1637: equality is the VM's values_equal_op, which RAISES on a bool/number
+ * pair (at any depth of a list or dict) naming the operator it was asked
+ * with -- so `!=` passes "!=", and the raise is checked right after the
+ * runtime call (values_equal records the error; it cannot exit). */
+static inline int aot_veq_op(Value *a, Value *b, const char *op) {
+    int e = values_equal_op(a, b, op);
+    if (__builtin_expect(g_has_error, 0)) aot_error_exit();
+    return e;
+}
+static inline int aot_eq_op_n_t(Value *a, double b, const char *op) {
+    if (a && a->type == VAL_NUM) { int e = (VAL_NUM_RAW(a) == b); val_decref(a); return e; }
     Value bv; memset(&bv, 0, sizeof bv);
-    bv.type = VAL_NUM; bv.data.num = b; bv.arena = 1;
-    int e = values_equal(a, &bv);
+    bv.type = VAL_NUM; VAL_NUM_RAW(&bv) = b; bv.arena = 1;
+    int e = aot_veq_op(a, &bv, op);
     val_decref(a);
     return e;
 }
-static inline Value *aot_eq_n(Value *a, double b)  { return make_num(aot_eq_n_t(a, b) ? 1.0 : 0.0); }
-static inline int    aot_ne_n_t(Value *a, double b){ return !aot_eq_n_t(a, b); }
-static inline Value *aot_ne_n(Value *a, double b)  { return make_num(aot_eq_n_t(a, b) ? 0.0 : 1.0); }
+static inline int    aot_eq_n_t(Value *a, double b){ return aot_eq_op_n_t(a, b, "=="); }
+static inline Value *aot_eq_n(Value *a, double b)  { return make_bool(aot_eq_op_n_t(a, b, "==")); }
+static inline int    aot_ne_n_t(Value *a, double b){ return !aot_eq_op_n_t(a, b, "!="); }
+static inline Value *aot_ne_n(Value *a, double b)  { return make_bool(!aot_eq_op_n_t(a, b, "!=")); }
+/* The mirrored forms (`<numeric> == <expr>`): the raise names the operands in
+ * SOURCE order (`1 != flag` is "num and bool"), so the numeric side is the
+ * LEFT operand of the comparison. */
+static inline int aot_eq_op_nl_t(Value *b, double a, const char *op) {
+    if (b && b->type == VAL_NUM) { int e = (a == VAL_NUM_RAW(b)); val_decref(b); return e; }
+    Value av; memset(&av, 0, sizeof av);
+    av.type = VAL_NUM; VAL_NUM_RAW(&av) = a; av.arena = 1;
+    int e = aot_veq_op(&av, b, op);
+    val_decref(b);
+    return e;
+}
+static inline int    aot_eq_nl_t(Value *b, double a){ return aot_eq_op_nl_t(b, a, "=="); }
+static inline Value *aot_eq_nl(Value *b, double a)  { return make_bool(aot_eq_op_nl_t(b, a, "==")); }
+static inline int    aot_ne_nl_t(Value *b, double a){ return !aot_eq_op_nl_t(b, a, "!="); }
+static inline Value *aot_ne_nl(Value *b, double a)  { return make_bool(!aot_eq_op_nl_t(b, a, "!=")); }
 
 #define AOT_CMP_N(NAME, BASE, OP) \
     static inline int NAME##_t(Value *a, double b) { \
-        if (a && a->type == VAL_NUM) { int r = (a->data.num OP b) ? 1 : 0; val_decref(a); return r; } \
+        if (a && a->type == VAL_NUM) { int r = (VAL_NUM_RAW(a) OP b) ? 1 : 0; val_decref(a); return r; } \
         Value bv; memset(&bv, 0, sizeof bv); \
-        bv.type = VAL_NUM; bv.data.num = b; bv.arena = 1; \
+        bv.type = VAL_NUM; VAL_NUM_RAW(&bv) = b; bv.arena = 1; \
         return aot_truthy(BASE(a, &bv)); } \
-    static inline Value *NAME(Value *a, double b) { return make_num(NAME##_t(a, b) ? 1.0 : 0.0); }
+    static inline Value *NAME(Value *a, double b) { return make_bool(NAME##_t(a, b)); }
 AOT_CMP_N(aot_lt_n, aot_lt, <)
 AOT_CMP_N(aot_gt_n, aot_gt, >)
 AOT_CMP_N(aot_le_n, aot_le, <=)
@@ -942,11 +976,11 @@ AOT_CMP_N(aot_ge_n, aot_ge, >=)
  * (t65_cmp_mixed_err caught exactly that). Keep the order, keep the op. */
 #define AOT_CMP_NL(NAME, BASE, OP) \
     static inline int NAME##_t(Value *b, double a) { \
-        if (b && b->type == VAL_NUM) { int r = (a OP b->data.num) ? 1 : 0; val_decref(b); return r; } \
+        if (b && b->type == VAL_NUM) { int r = (a OP VAL_NUM_RAW(b)) ? 1 : 0; val_decref(b); return r; } \
         Value av; memset(&av, 0, sizeof av); \
-        av.type = VAL_NUM; av.data.num = a; av.arena = 1; \
+        av.type = VAL_NUM; VAL_NUM_RAW(&av) = a; av.arena = 1; \
         return aot_truthy(BASE(&av, b)); } \
-    static inline Value *NAME(Value *b, double a) { return make_num(NAME##_t(b, a) ? 1.0 : 0.0); }
+    static inline Value *NAME(Value *b, double a) { return make_bool(NAME##_t(b, a)); }
 AOT_CMP_NL(aot_lt_nl, aot_lt, <)
 AOT_CMP_NL(aot_gt_nl, aot_gt, >)
 AOT_CMP_NL(aot_le_nl, aot_le, <=)
@@ -966,28 +1000,38 @@ AOT_CMP_NL(aot_ge_nl, aot_ge, >=)
  * borrow both. A missing key borrows as C NULL; the helpers below substitute a
  * stack VAL_NULL so `null == 1` is false and `null < 1` raises naming "null",
  * exactly as the owned path does. */
-static inline int aot_eq_nb_t(Value *a, double b) {
-    if (a && a->type == VAL_NUM) return a->data.num == b;
+static inline int aot_eq_op_nb_t(Value *a, double b, const char *op) {
+    if (a && a->type == VAL_NUM) return VAL_NUM_RAW(a) == b;
     Value nv; memset(&nv, 0, sizeof nv); nv.type = VAL_NULL; nv.arena = 1;
     Value bv; memset(&bv, 0, sizeof bv);
-    bv.type = VAL_NUM; bv.data.num = b; bv.arena = 1;
-    return values_equal(a ? a : &nv, &bv);
+    bv.type = VAL_NUM; VAL_NUM_RAW(&bv) = b; bv.arena = 1;
+    return aot_veq_op(a ? a : &nv, &bv, op);
 }
-static inline int aot_ne_nb_t(Value *a, double b) { return !aot_eq_nb_t(a, b); }
+static inline int aot_eq_nb_t(Value *a, double b) { return aot_eq_op_nb_t(a, b, "=="); }
+static inline int aot_ne_nb_t(Value *a, double b) { return !aot_eq_op_nb_t(a, b, "!="); }
+static inline int aot_eq_op_nlb_t(Value *b, double a, const char *op) {
+    if (b && b->type == VAL_NUM) return a == VAL_NUM_RAW(b);
+    Value nv; memset(&nv, 0, sizeof nv); nv.type = VAL_NULL; nv.arena = 1;
+    Value av; memset(&av, 0, sizeof av);
+    av.type = VAL_NUM; VAL_NUM_RAW(&av) = a; av.arena = 1;
+    return aot_veq_op(&av, b ? b : &nv, op);
+}
+static inline int aot_eq_nlb_t(Value *b, double a) { return aot_eq_op_nlb_t(b, a, "=="); }
+static inline int aot_ne_nlb_t(Value *b, double a) { return !aot_eq_op_nlb_t(b, a, "!="); }
 
 #define AOT_CMP_NB(NAME, BASE, OP) \
     static inline int NAME(Value *a, double b) { \
-        if (a && a->type == VAL_NUM) return (a->data.num OP b) ? 1 : 0; \
+        if (a && a->type == VAL_NUM) return (VAL_NUM_RAW(a) OP b) ? 1 : 0; \
         Value nv; memset(&nv, 0, sizeof nv); nv.type = VAL_NULL; nv.arena = 1; \
         Value bv; memset(&bv, 0, sizeof bv); \
-        bv.type = VAL_NUM; bv.data.num = b; bv.arena = 1; \
+        bv.type = VAL_NUM; VAL_NUM_RAW(&bv) = b; bv.arena = 1; \
         return aot_truthy(BASE(a ? a : &nv, &bv)); }
 #define AOT_CMP_NBL(NAME, BASE, OP) \
     static inline int NAME(Value *b, double a) { \
-        if (b && b->type == VAL_NUM) return (a OP b->data.num) ? 1 : 0; \
+        if (b && b->type == VAL_NUM) return (a OP VAL_NUM_RAW(b)) ? 1 : 0; \
         Value nv; memset(&nv, 0, sizeof nv); nv.type = VAL_NULL; nv.arena = 1; \
         Value av; memset(&av, 0, sizeof av); \
-        av.type = VAL_NUM; av.data.num = a; av.arena = 1; \
+        av.type = VAL_NUM; VAL_NUM_RAW(&av) = a; av.arena = 1; \
         return aot_truthy(BASE(&av, b ? b : &nv)); }
 AOT_CMP_NB(aot_lt_nb_t, aot_lt, <)
 AOT_CMP_NB(aot_gt_nb_t, aot_gt, >)
@@ -999,12 +1043,12 @@ AOT_CMP_NBL(aot_le_nlb_t, aot_le, <=)
 AOT_CMP_NBL(aot_ge_nlb_t, aot_ge, >=)
 
 static Value *aot_eq(Value *a, Value *b) {
-    int e = values_equal(a, b); val_decref(a); val_decref(b);
-    return make_num(e ? 1.0 : 0.0);
+    int e = aot_veq_op(a, b, "=="); val_decref(a); val_decref(b);
+    return make_bool(e);
 }
 static Value *aot_ne(Value *a, Value *b) {
-    int e = values_equal(a, b); val_decref(a); val_decref(b);
-    return make_num(e ? 0.0 : 1.0);
+    int e = aot_veq_op(a, b, "!="); val_decref(a); val_decref(b);
+    return make_bool(!e);
 }
 
 /* ---- numeric buffers (VAL_BUFFER = double[] + count) ---- */
@@ -1075,7 +1119,7 @@ static double aot_list_num_at(Value *b, long i, const char *site) {
         rt_error(EK_TYPE, g_trace_current_line, "non-numeric element in `%s`[%ld] (%s)",
                 site, i, e ? val_type_name(e->type) : "null");
     }
-    return e->data.num;
+    return VAL_NUM_RAW(e);
 }
 static double aot_buf_get_at(Value *b, double idx, const char *site) {
     if (b && b->type == VAL_LIST) return aot_list_num_at(b, aot_idx_k(idx, b->data.list.count, 1), site);
@@ -1251,22 +1295,10 @@ static inline double aot_dot(Value *a, Value *b) {
  * construction at a cost only non-buffer shapes pay. */
 static Value *aot_call_name(Env *g, const char *name, Value *arg);
 static Value *aot_call_vm_builtin(Value *fn, Value *arg);   /* round 144, #191 */
-static inline long aot_any_len(Value *A) {
-    if (A && A->type == VAL_LIST) return A->data.list.count;
-    if (A && A->type == VAL_BUFFER) return A->data.buffer.count;
-    return 0;
-}
-static inline double aot_any_at(Value *A, long i) {
-    if (A && A->type == VAL_LIST) {
-        Value *e = A->data.list.items[i];
-        return (e && e->type == VAL_NUM) ? e->data.num : 0.0;
-    }
-    return A->data.buffer.data[i];
-}
 static double aot_reduce_poly1(Env *g, const char *name, Value *a) {
     if (a) val_incref(a);
     Value *r = aot_call_name(g, name, a);
-    double d = (r && r->type == VAL_NUM) ? r->data.num : 0.0;
+    double d = (r && r->type == VAL_NUM) ? VAL_NUM_RAW(r) : 0.0;
     if (r) val_decref(r);
     return d;
 }
@@ -1292,7 +1324,7 @@ static inline double aot_dot_v(Env *g, Value *a, Value *b) {
     if (b) val_incref(b);
     list_append_owned(l, b);
     Value *r = aot_call_name(g, "dot", l);
-    double d = (r && r->type == VAL_NUM) ? r->data.num : 0.0;
+    double d = (r && r->type == VAL_NUM) ? VAL_NUM_RAW(r) : 0.0;
     if (r) val_decref(r);
     return d;
 }
@@ -1370,16 +1402,17 @@ static inline double aot_norm_range(Value *A, double sa, double ea) {
  * value") fired first and made aot_slice_any unreachable for dicts/numbers
  * -- the mirror could not mirror. */
 static inline long aot_slice_len(Value *A) {
-    if (!A || A->type == VAL_NUM) { rt_error(EK_TYPE, g_trace_current_line, "cannot slice number"); return 0; }
+    /* #1637: the VM names an immediate by slot_type_name (num, bool, none) */
+    if (!A || A->type == VAL_NUM) { rt_error(EK_TYPE, g_trace_current_line, "cannot slice %s", aot_cmp_type_name(A)); return 0; }
     if (A->type == VAL_LIST)   return A->data.list.count;
     if (A->type == VAL_STR)    return (long)strlen(A->data.str);
     if (A->type == VAL_BUFFER) return A->data.buffer.count;
-    rt_error(EK_TYPE, g_trace_current_line, "cannot slice %s", val_type_name(A->type));
+    rt_error(EK_TYPE, g_trace_current_line, "cannot slice %s", aot_cmp_type_name(A));
     return 0;
 }
 static Value *aot_slice_any(Value *A, double sa, double ea) {
     if (!A || A->type == VAL_NUM) {
-        rt_error(EK_TYPE, g_trace_current_line, "cannot slice number");
+        rt_error(EK_TYPE, g_trace_current_line, "cannot slice %s", aot_cmp_type_name(A));
         return make_null();
     }
     int len;
@@ -1387,7 +1420,7 @@ static Value *aot_slice_any(Value *A, double sa, double ea) {
     else if (A->type == VAL_STR)    len = (int)strlen(A->data.str);
     else if (A->type == VAL_BUFFER) len = A->data.buffer.count;
     else {
-        rt_error(EK_TYPE, g_trace_current_line, "cannot slice %s", val_type_name(A->type));
+        rt_error(EK_TYPE, g_trace_current_line, "cannot slice %s", aot_cmp_type_name(A));
         return make_null();
     }
     int orig_start, orig_end;
@@ -1423,7 +1456,7 @@ static Value *aot_slice_any(Value *A, double sa, double ea) {
 }
 static inline double aot_range_poly(Env *g, const char *name, Value *A, double sa, double ea) {
     Value *r = aot_call_name(g, name, aot_slice_any(A, sa, ea));
-    double d = (r && r->type == VAL_NUM) ? r->data.num : 0.0;
+    double d = (r && r->type == VAL_NUM) ? VAL_NUM_RAW(r) : 0.0;
     if (r) val_decref(r);
     return d;
 }
@@ -1441,7 +1474,7 @@ static inline double aot_dot_range_v(Env *g, Value *A, double sa, double ea, Val
     list_append_owned(l, aot_slice_any(A, sa, ea));
     list_append_owned(l, aot_slice_any(B, sb, eb));
     Value *r = aot_call_name(g, "dot", l);
-    double d = (r && r->type == VAL_NUM) ? r->data.num : 0.0;
+    double d = (r && r->type == VAL_NUM) ? VAL_NUM_RAW(r) : 0.0;
     if (r) val_decref(r);
     return d;
 }
@@ -1744,11 +1777,11 @@ static Value *aot_observe_of(Env *e, const char *name, int band) {
  * slot_from_num, heap -> slot_from_heap (borrow, no incref), null -> null. */
 static void aot_trace_assign_val(const char *name, Value *val) {
     if (!val || val->type == VAL_NULL) { EigsSlot s0 = slot_null(); trace_assign(name, s0); return; }
-    if (val->type == VAL_NUM) { trace_assign(name, slot_from_num(val->data.num)); return; }
+    if (val->type == VAL_NUM) { trace_assign(name, slot_from_num(VAL_NUM_RAW(val))); return; }
     trace_assign(name, slot_from_heap(val));
 }
 static void aot_trace_assign(const char *name, double v) {
-    EigsSlot s; s.d = v;
+    EigsSlot s; SLOT_NUM_RAW(s) = v;
     trace_assign(name, s);
 }
 /* The query result is polymorphic — a number, a string (`who`), or `null` on a
@@ -1786,22 +1819,49 @@ static Value *aot_query_at_val(int kind, const char *name, int line) {
     }
     return make_null();
 }
-/* read an observed numeric var back out of the env (consumes the fetched ref) */
-static double aot_num(Value *v) {
-    double d = (v && v->type == VAL_NUM) ? v->data.num : 0.0;
-    val_decref(v);
-    return d;
+/* #1637: the one failure path of the checked unboxes. A plain site keeps the
+ * AOT's own wording. An OPERAND site -- "\001" op "\001" side "\001" other,
+ * built by compile.eigs's op_site when the other operand's type is known at
+ * build time -- words it as the VM's operator does: "cannot apply '+' to bool
+ * and num" (side L/R, with OP_ADD's two '+' hints), "cannot apply '~' to bool"
+ * (U), "cannot negate bool" (N), "slice bound must be an integer or null, got
+ * bool" (B), "cannot store bool in a buffer (buffers hold numbers)" (S). */
+static void __attribute__((noinline, cold)) aot_nonnum_raise(const char *site, const char *tn) {
+    if (site && site[0] == '\001') {
+        char op[8]; int i = 0; const char *p = site + 1;
+        while (*p && *p != '\001' && i < 7) op[i++] = *p++;
+        op[i] = 0;
+        char side = 0;
+        if (*p) { p++; side = *p; if (*p) p++; if (*p) p++; }
+        const char *other = p;
+        if (side == 'N') rt_error(EK_TYPE, g_trace_current_line, "cannot negate %s", tn);
+        /* B: a slice bound (OP_SLICE_GET's READ_SLICE_BOUND: an immediate bool
+         * is a type error, a heap non-number a value error) */
+        if (side == 'S') rt_error(EK_TYPE, g_trace_current_line,
+                                  "cannot store %s in a buffer (buffers hold numbers)", tn);
+        if (side == 'B') rt_error(strcmp(tn, "bool") == 0 ? EK_TYPE : EK_VALUE, g_trace_current_line,
+                                  "slice bound must be an integer or null, got %s", tn);
+        if (side == 'U') rt_error(EK_TYPE, g_trace_current_line, "cannot apply '%s' to %s", op, tn);
+        const char *ta = side == 'L' ? tn : other, *tb = side == 'L' ? other : tn;
+        if (op[0] == '+' && op[1] == 0) {
+            int sa = strcmp(ta, "str") == 0, sb = strcmp(tb, "str") == 0;
+            if (sa != sb)
+                rt_error(EK_TYPE, g_trace_current_line, "cannot apply '+' to %s and %s (use an f-string or 'str of' to concatenate)", ta, tb);
+            if (strcmp(ta, "list") == 0 || strcmp(tb, "list") == 0)
+                rt_error(EK_TYPE, g_trace_current_line, "cannot apply '+' to %s and %s (use 'append of [xs, v]' to add an element, or 'concat of [a, b]' to join two lists)", ta, tb);
+        }
+        rt_error(EK_TYPE, g_trace_current_line, "cannot apply '%s' to %s and %s", op, ta, tb);
+    }
+    rt_error(EK_TYPE, g_trace_current_line, "non-numeric value in a numeric context at %s (type %s)", site, tn);
 }
 /* CHECKED numeric read (consumes): a boxed value flowing into an arithmetic
  * context must be a number — the VM raises there ("cannot apply ... to ..."),
  * so a silent 0.0 would be the worst-outcome class (compiles, prints
  * garbage). Cold, predictable branch: in-envelope programs never take it. */
 static double aot_num_ck_at(Value *v, const char *site) {
-    if (!v || v->type != VAL_NUM) {
-        rt_error(EK_TYPE, g_trace_current_line, "non-numeric value in a numeric context at %s (type %s)",
-                site, v ? val_type_name(v->type) : "null");
-    }
-    double d = v->data.num;
+    if (!v || v->type != VAL_NUM)
+        aot_nonnum_raise(site, v ? val_type_name(v->type) : "null");
+    double d = VAL_NUM_RAW(v);
     val_decref(v);
     return d;
 }
@@ -1809,11 +1869,9 @@ static double aot_num_ck_at(Value *v, const char *site) {
 /* Checked unbox that does NOT consume — the boxed-wrapper argument convention
  * borrows __a. Same diagnostic as aot_num_ck_at. */
 static double aot_num_ck_bat(Value *v, const char *site) {
-    if (!v || v->type != VAL_NUM) {
-        rt_error(EK_TYPE, g_trace_current_line, "non-numeric value in a numeric context at %s (type %s)",
-                site, v ? val_type_name(v->type) : "null");
-    }
-    return v->data.num;
+    if (!v || v->type != VAL_NUM)
+        aot_nonnum_raise(site, v ? val_type_name(v->type) : "null");
+    return VAL_NUM_RAW(v);
 }
 
 static double aot_num_ck(Value *v) {
@@ -1821,7 +1879,7 @@ static double aot_num_ck(Value *v) {
         rt_error(EK_TYPE, g_trace_current_line, "non-numeric value in a numeric context (type %d; the VM raises here)",
                 v ? (int)v->type : -1);
     }
-    double d = v->data.num;
+    double d = VAL_NUM_RAW(v);
     val_decref(v);
     return d;
 }
@@ -1871,7 +1929,7 @@ static inline void aot_lv_set_num(EigsSlot *s, double d) {
     *s = slot_from_num(num_guard(d));
 }
 static inline double aot_lv_num(EigsSlot *s, const char *site) {
-    if (slot_is_num(*s)) return s->d;
+    if (slot_is_num(*s)) return SLOT_NUM_RAW(*s);
     return aot_num_ck_at(slot_to_value(*s), site);
 }
 
@@ -1903,13 +1961,13 @@ static inline double aot_lv_num(EigsSlot *s, const char *site) {
 static inline double aot_get_num_named_ic(Env *g, const char *name,
                                           AotNameIC *c, const char *site) {
     EigsSlot *sp = aot_name_slot(g, name, c);
-    if (sp && slot_is_num(*sp)) return sp->d;
+    if (sp && slot_is_num(*sp)) return SLOT_NUM_RAW(*sp);
     return aot_num_ck_at(aot_get_named_ic(g, name, c), site);
 }
 static inline double aot_get_num_local_ic(Env *l, const char *name,
                                           AotNameIC *c, const char *site) {
     EigsSlot *sp = aot_name_slot(l, name, c);
-    if (sp && slot_is_num(*sp)) return sp->d;
+    if (sp && slot_is_num(*sp)) return SLOT_NUM_RAW(*sp);
     return aot_num_ck_at(aot_get_ic(l, name, c), site);
 }
 static inline double aot_get_num_sh(Env *l, Env *g, const char *name,
@@ -1917,7 +1975,7 @@ static inline double aot_get_num_sh(Env *l, Env *g, const char *name,
     if (!*hc) *hc = env_hash_name(name);
     int found = 0;
     EigsSlot s = env_get_hashed_slot(l, name, *hc, &found);
-    if (found && slot_is_num(s)) return s.d;
+    if (found && slot_is_num(s)) return SLOT_NUM_RAW(s);
     return aot_num_ck_at(aot_get_sh(l, g, name), site);
 }
 
@@ -1990,8 +2048,8 @@ static inline void aot_set_num_sh(Env *l, Env *g, const char *name,
  * (#100 item 5). Consumes v, returns owned. */
 static Value *aot_neg(Value *v) {
     if (!v || v->type != VAL_NUM)
-        rt_error(EK_TYPE, g_trace_current_line, "cannot negate non-numeric");
-    double d = v->data.num;
+        rt_error(EK_TYPE, g_trace_current_line, "cannot negate %s", aot_cmp_type_name(v));   /* the VM's slot_type_name */
+    double d = VAL_NUM_RAW(v);
     val_decref(v);
     return make_num(-d);
 }
@@ -2051,7 +2109,7 @@ static AotTensor aot_tensor_from_value(Value *v) {
             t.data = (double*)calloc((size_t)t.cols, sizeof(double));
             for (long i = 0; i < t.cols; i++) {
                 Value *e = v->data.list.items[i];
-                t.data[i] = (e->type == VAL_NUM) ? e->data.num : 0.0;
+                t.data[i] = (e->type == VAL_NUM) ? VAL_NUM_RAW(e) : 0.0;
             }
         } else if (first->type == VAL_LIST) {
             t.rows = v->data.list.count; t.cols = first->data.list.count; t.is1d = 0;
@@ -2061,7 +2119,7 @@ static AotTensor aot_tensor_from_value(Value *v) {
                 long rc = (row->type == VAL_LIST) ? row->data.list.count : 0;
                 for (long c = 0; c < t.cols && c < rc; c++) {
                     Value *e = row->data.list.items[c];
-                    t.data[r * t.cols + c] = (e->type == VAL_NUM) ? e->data.num : 0.0;
+                    t.data[r * t.cols + c] = (e->type == VAL_NUM) ? VAL_NUM_RAW(e) : 0.0;
                 }
             }
         }
@@ -2281,12 +2339,12 @@ static inline double aot_index_num_ib(Value *target, double d, const char *site)
         } else if (target->type == VAL_LIST) {
             if (__builtin_expect((double)i == d && i >= 0 && i < (long)target->data.list.count, 1)) {
                 Value *r = target->data.list.items[i];
-                if (r && r->type == VAL_NUM) return r->data.num;
+                if (r && r->type == VAL_NUM) return VAL_NUM_RAW(r);
             }
         }
     }
     Value *v = aot_index_get_ib(target, d);
-    if (v && v->type == VAL_NUM) { double r = v->data.num; val_decref(v); return r; }
+    if (v && v->type == VAL_NUM) { double r = VAL_NUM_RAW(v); val_decref(v); return r; }
     return aot_num_ck_at(v, site);
 }
 
@@ -2350,7 +2408,7 @@ static inline void aot_index_set_num_ib(Value *target, double d, double v) {
             && aot_idx_resolve(&i, target->data.list.count)) {
             Value *old = target->data.list.items[i];
             if (old && old->type == VAL_NUM && old->refcount == 1 && !old->arena) {
-                old->data.num = num_guard(v);
+                VAL_NUM_RAW(old) = num_guard(v);
                 return;
             }
         }
@@ -2381,7 +2439,7 @@ static void aot_index_set_ib(Value *target, double d, Value *val) {
             if (!aot_idx_is_int(d, &i))
                 rt_error(EK_VALUE, g_trace_current_line, "index must be an integer, got %g", d);
             else if (aot_idx_resolve(&i, target->data.buffer.count))
-                target->data.buffer.data[i] = val->data.num;
+                target->data.buffer.data[i] = VAL_NUM_RAW(val);
             else
                 rt_error(EK_INDEX, g_trace_current_line, "buffer index %d out of range (length %d)", i, target->data.buffer.count);
         } else
@@ -2436,8 +2494,8 @@ static Value *aot_index_get(Value *target, Value *idx) {
     Value *result = NULL;
     if (target->type == VAL_LIST && idx->type == VAL_NUM) {
         int i;
-        if (!aot_idx_is_int(idx->data.num, &i))
-            rt_error(EK_VALUE, g_trace_current_line, "index must be an integer, got %g", idx->data.num);
+        if (!aot_idx_is_int(VAL_NUM_RAW(idx), &i))
+            rt_error(EK_VALUE, g_trace_current_line, "index must be an integer, got %g", VAL_NUM_RAW(idx));
         else if (aot_idx_resolve(&i, target->data.list.count)) {
             result = target->data.list.items[i]; val_incref(result);
         } else
@@ -2447,16 +2505,16 @@ static Value *aot_index_get(Value *target, Value *idx) {
         if (v) { result = v; val_incref(result); }
     } else if (target->type == VAL_STR && idx->type == VAL_NUM) {
         int i;
-        if (!aot_idx_is_int(idx->data.num, &i))
-            rt_error(EK_VALUE, g_trace_current_line, "index must be an integer, got %g", idx->data.num);
+        if (!aot_idx_is_int(VAL_NUM_RAW(idx), &i))
+            rt_error(EK_VALUE, g_trace_current_line, "index must be an integer, got %g", VAL_NUM_RAW(idx));
         else if (aot_idx_resolve(&i, (int)strlen(target->data.str))) {
             char b[2] = { target->data.str[i], 0 }; result = make_str(b);
         } else
             rt_error(EK_INDEX, g_trace_current_line, "string index %d out of range (length %d)", i, (int)strlen(target->data.str));
     } else if (target->type == VAL_BUFFER && idx->type == VAL_NUM) {
         int i;
-        if (!aot_idx_is_int(idx->data.num, &i))
-            rt_error(EK_VALUE, g_trace_current_line, "index must be an integer, got %g", idx->data.num);
+        if (!aot_idx_is_int(VAL_NUM_RAW(idx), &i))
+            rt_error(EK_VALUE, g_trace_current_line, "index must be an integer, got %g", VAL_NUM_RAW(idx));
         else if (aot_idx_resolve(&i, target->data.buffer.count))
             result = make_num(aot_buffer_read_num(target, i));
         else
@@ -2490,7 +2548,7 @@ static inline int aot_lv_index_fast(EigsSlot *dst, EigsSlot target, double d) {
                 /* Match slot_from_value's raw numeric copy, with no extra
                  * num_guard/math flags. Copy before releasing dst: it can own
                  * the target. Arena elements retain promotion below. */
-                EigsSlot result = slot_from_num(r->data.num);
+                EigsSlot result = slot_from_num(VAL_NUM_RAW(r));
                 slot_decref(*dst);
                 *dst = result;
                 return 1;
@@ -2523,7 +2581,7 @@ static inline void aot_lv_index_i(EigsSlot *dst, EigsSlot target, double index) 
 
 static inline void aot_lv_index_v(EigsSlot *dst, EigsSlot target, Value *index) {
     if (index && index->type == VAL_NUM &&
-        aot_lv_index_fast(dst, target, index->data.num)) {
+        aot_lv_index_fast(dst, target, VAL_NUM_RAW(index))) {
         val_decref(index);
         return;
     }
@@ -2533,11 +2591,10 @@ static inline void aot_lv_index_v(EigsSlot *dst, EigsSlot target, Value *index) 
 static inline void aot_lv_index_s(EigsSlot *dst, EigsSlot target, EigsSlot index) {
     double d;
     int numeric = 1;
-    if (slot_is_num(index)) d = index.d;
-    else if (slot_is_bool(index)) d = slot_as_bool(index) ? 1.0 : 0.0;
+    if (slot_is_num(index)) d = SLOT_NUM_RAW(index);
     else if (slot_is_ptr(index) && slot_as_ptr(index) &&
              slot_as_ptr(index)->type == VAL_NUM)
-        d = slot_as_ptr(index)->data.num; /* aot_lv_getb can box a local */
+        d = VAL_NUM_RAW(slot_as_ptr(index)); /* aot_lv_getb can box a local */
     else numeric = 0;
     if (numeric && aot_lv_index_fast(dst, target, d)) return;
     Value *t = slot_to_value(target);
@@ -2563,14 +2620,13 @@ static inline AotScalarRead aot_scalar_owned(Value *value) {
     return result;
 }
 static inline AotScalarRead aot_scalar_slot(EigsSlot slot) {
-    if (slot_is_num(slot)) return aot_scalar_number(num_guard(slot.d));
-    if (slot_is_bool(slot)) return aot_scalar_number(slot_as_bool(slot) ? 1 : 0);
+    if (slot_is_num(slot)) return aot_scalar_number(num_guard(SLOT_NUM_RAW(slot)));
     if (slot_is_ptr(slot)) {
         Value *value = slot_as_ptr(slot);
         /* Structural equality first checks pointer identity: the same heap
          * NaN equals itself there even though NaN == NaN is false. */
-        if (value && value->type == VAL_NUM && !isnan(value->data.num))
-            return aot_scalar_number(value->data.num);
+        if (value && value->type == VAL_NUM && !isnan(VAL_NUM_RAW(value)))
+            return aot_scalar_number(VAL_NUM_RAW(value));
     }
     return aot_scalar_owned(slot_to_value(slot));
 }
@@ -2578,7 +2634,7 @@ static inline Value *aot_scalar_view(AotScalarRead scalar, Value *scratch) {
     if (scalar.value) return scalar.value;
     memset(scratch, 0, sizeof(*scratch));
     scratch->type = VAL_NUM;
-    scratch->data.num = scalar.number;
+    VAL_NUM_RAW(scratch) = scalar.number;
     scratch->arena = 1; /* Existing consuming helpers may release this view. */
     return scratch;
 }
@@ -2594,7 +2650,7 @@ static inline AotScalarRead aot_scalar_index(EigsSlot target, AotScalarRead inde
     double number = index.number;
     int numeric = !index.value;
     if (index.value && index.value->type == VAL_NUM) {
-        number = index.value->data.num;
+        number = VAL_NUM_RAW(index.value);
         numeric = 1;
     }
     if (numeric && slot_is_ptr(target)) {
@@ -2602,8 +2658,8 @@ static inline AotScalarRead aot_scalar_index(EigsSlot target, AotScalarRead inde
         if (container && container->type == VAL_LIST && number >= 0 &&
             number < container->data.list.count && (double)(int)number == number) {
             Value *element = container->data.list.items[(int)number];
-            if (element && element->type == VAL_NUM && !isnan(element->data.num)) {
-                double result = element->data.num; /* raw even for arena nums */
+            if (element && element->type == VAL_NUM && !isnan(VAL_NUM_RAW(element))) {
+                double result = VAL_NUM_RAW(element); /* raw even for arena nums */
                 val_decref(index.value);
                 return aot_scalar_number(result);
             }
@@ -2617,10 +2673,10 @@ static inline AotScalarRead aot_scalar_index(EigsSlot target, AotScalarRead inde
     Value scratch;
     return aot_scalar_owned(aot_index_get(slot_to_value(target), aot_scalar_view(index, &scratch)));
 }
-static inline int aot_scalar_equal(AotScalarRead left, AotScalarRead right) {
+static inline int aot_scalar_equal(AotScalarRead left, AotScalarRead right, const char *op) {
     if (!left.value && !right.value) return left.number == right.number;
     Value lv, rv;
-    int equal = values_equal(aot_scalar_view(left, &lv), aot_scalar_view(right, &rv));
+    int equal = aot_veq_op(aot_scalar_view(left, &lv), aot_scalar_view(right, &rv), op);
     val_decref(left.value);
     val_decref(right.value);
     return equal;
@@ -2694,7 +2750,7 @@ static void aot_index_set_i(Value *target, double d, Value *val) {
             if (!aot_idx_is_int(d, &i))
                 rt_error(EK_VALUE, g_trace_current_line, "index must be an integer, got %g", d);
             else if (aot_idx_resolve(&i, target->data.buffer.count))
-                target->data.buffer.data[i] = val->data.num;
+                target->data.buffer.data[i] = VAL_NUM_RAW(val);
             else
                 rt_error(EK_INDEX, g_trace_current_line, "buffer index %d out of range (length %d)", i, target->data.buffer.count);
         } else
@@ -2710,8 +2766,8 @@ static void aot_index_set_i(Value *target, double d, Value *val) {
 static void aot_index_set(Value *target, Value *idx, Value *val) {
     if (target && target->type == VAL_LIST && idx && idx->type == VAL_NUM) {
         int i;
-        if (!aot_idx_is_int(idx->data.num, &i))
-            rt_error(EK_VALUE, g_trace_current_line, "index must be an integer, got %g", idx->data.num);
+        if (!aot_idx_is_int(VAL_NUM_RAW(idx), &i))
+            rt_error(EK_VALUE, g_trace_current_line, "index must be an integer, got %g", VAL_NUM_RAW(idx));
         else if (aot_idx_resolve(&i, target->data.list.count)) {
             Value *old = target->data.list.items[i];
             /* (round 107) #873: an arena value stored into a HEAP list must be
@@ -2731,10 +2787,10 @@ static void aot_index_set(Value *target, Value *idx, Value *val) {
     } else if (target && target->type == VAL_BUFFER && idx && idx->type == VAL_NUM) {
         if (val && val->type == VAL_NUM) {
             int i;
-            if (!aot_idx_is_int(idx->data.num, &i))
-                rt_error(EK_VALUE, g_trace_current_line, "index must be an integer, got %g", idx->data.num);
+            if (!aot_idx_is_int(VAL_NUM_RAW(idx), &i))
+                rt_error(EK_VALUE, g_trace_current_line, "index must be an integer, got %g", VAL_NUM_RAW(idx));
             else if (aot_idx_resolve(&i, target->data.buffer.count))
-                target->data.buffer.data[i] = val->data.num;
+                target->data.buffer.data[i] = VAL_NUM_RAW(val);
             else
                 rt_error(EK_INDEX, g_trace_current_line, "buffer index %d out of range (length %d)", i, target->data.buffer.count);
         } else
@@ -2847,7 +2903,7 @@ static __attribute__((noinline)) double aot_dot_num_tb_slow(Value *target, const
                                                            int *ic, const char **ick, const char *site) {
     if (target && target->type == VAL_DICT) {
         Value *v = aot_dot_value_ic(target, key, ic, ick);
-        if (v && v->type == VAL_NUM) return v->data.num;
+        if (v && v->type == VAL_NUM) return VAL_NUM_RAW(v);
         rt_error(EK_TYPE, g_trace_current_line, "non-numeric value in a numeric context at %s (type %s)",
                 site, v ? val_type_name(v->type) : "null");
     }
@@ -2869,7 +2925,7 @@ static __attribute__((noinline)) void aot_dot_set_num_tb_slow(Value *target, con
         if (i >= 0) {
             Value *old = target->data.dict.vals[i];
             if (old && old->type == VAL_NUM && old->refcount == 1) {
-                old->data.num = d;
+                VAL_NUM_RAW(old) = d;
             } else {
                 Value *nv = promote_if_arena(make_num(d));
                 val_decref(old);
@@ -2889,7 +2945,7 @@ static double aot_dot_num_ic(Value *target, const char *key,
     if (target && target->type == VAL_DICT) {
         Value *v = aot_dot_value_ic(target, key, ic, ick);
         if (v && v->type == VAL_NUM) {
-            double d = v->data.num;
+            double d = VAL_NUM_RAW(v);
             val_decref(target);
             return d;
         }
@@ -2949,7 +3005,7 @@ static void aot_dot_set_num_ic(Value *target, const char *key, double d,
         if (i >= 0) {
             Value *old = target->data.dict.vals[i];
             if (old && old->type == VAL_NUM && old->refcount == 1) {
-                old->data.num = d;
+                VAL_NUM_RAW(old) = d;
             } else {
                 Value *nv = promote_if_arena(make_num(d));
                 val_decref(old);
@@ -3069,7 +3125,7 @@ static Value *aot_dispatch_v(Value *table, Value *keyv, Value *ctx) {
     memset(&lst, 0, sizeof lst);
     lst.type = VAL_LIST; lst.arena = 1;
     lst.data.list.items = items; lst.data.list.count = 3; lst.data.list.capacity = 3;
-    Value *res = AOT_FOREIGN(builtin_dispatch(&lst));
+    Value *res = AOT_FOREIGN(AOT_GATED(builtin_dispatch, &lst));
     if (g_exit_requested) exit(g_exit_code);
     if (g_has_error) aot_error_exit();
     if (res == ctx || res == table || res == keyv) val_incref(res);
@@ -3089,7 +3145,7 @@ static Value *aot_dispatch_v(Value *table, Value *keyv, Value *ctx);
 static inline double aot_dispatch_sh_num(Value *table, Value *keyv, Value *ctx,
                                          double (**sh)(Value*), int shn, const char *site) {
     if (shn >= 0 && keyv && keyv->type == VAL_NUM && table && table->type == VAL_LIST) {
-        double d = keyv->data.num; int k = (int)d;
+        double d = VAL_NUM_RAW(keyv); int k = (int)d;
         if ((double)k == d && k >= 0 && k < shn && k < table->data.list.count && sh[k]) {
             double r = AOT_FOREIGN(sh[k](ctx));
             val_decref(keyv); val_decref(table); val_decref(ctx);
@@ -3102,7 +3158,7 @@ static inline double aot_dispatch_sh_num(Value *table, Value *keyv, Value *ctx,
      * consuming operator and raise that operator's own message; the kind
      * (type_mismatch) agrees, the text names this site instead (#202). */
     Value *r = aot_dispatch_v(table, keyv, ctx);
-    if (r && r->type == VAL_NUM) { double d = r->data.num; val_decref(r); return d; }
+    if (r && r->type == VAL_NUM) { double d = VAL_NUM_RAW(r); val_decref(r); return d; }
     rt_error(EK_TYPE, g_trace_current_line, "%s: dispatch answered %s where a number was needed",
              site, r ? val_type_name(r->type) : "null");
     if (r) val_decref(r);
@@ -3139,7 +3195,7 @@ static inline double aot_sign_extend(double val, double bitsd) {
 static inline Value *aot_dispatch_sh(Value *table, Value *keyv, Value *ctx,
                                      double (**sh)(Value*), int shn) {
     if (shn >= 0 && keyv && keyv->type == VAL_NUM && table && table->type == VAL_LIST) {
-        double d = keyv->data.num; int k = (int)d;
+        double d = VAL_NUM_RAW(keyv); int k = (int)d;
         if ((double)k == d && k >= 0 && k < shn && k < table->data.list.count && sh[k]) {
             double r = AOT_FOREIGN(sh[k](ctx));
             val_decref(keyv); val_decref(table); val_decref(ctx);
@@ -3151,7 +3207,7 @@ static inline Value *aot_dispatch_sh(Value *table, Value *keyv, Value *ctx,
 static Value *aot_dispatch(Value *table, double key, Value *ctx) {
     Value keyv;
     memset(&keyv, 0, sizeof keyv);
-    keyv.type = VAL_NUM; keyv.data.num = key; keyv.arena = 1;
+    keyv.type = VAL_NUM; VAL_NUM_RAW(&keyv) = key; keyv.arena = 1;
 
     Value *items[3] = { table, &keyv, ctx };
     Value lst;
@@ -3159,7 +3215,7 @@ static Value *aot_dispatch(Value *table, double key, Value *ctx) {
     lst.type = VAL_LIST; lst.arena = 1;
     lst.data.list.items = items; lst.data.list.count = 3; lst.data.list.capacity = 3;
 
-    Value *res = AOT_FOREIGN(builtin_dispatch(&lst));
+    Value *res = AOT_FOREIGN(AOT_GATED(builtin_dispatch, &lst));
     if (g_exit_requested) exit(g_exit_code);
     if (g_has_error) aot_error_exit();
     /* aot_call_name's direct-borrow compensation, verbatim: incref a result
@@ -3221,7 +3277,7 @@ static Value *aot_call_name(Env *g, const char *name, Value *arg) {
  * the SUBJECT is borrowed, because it is compared against every pattern in
  * turn and released once by the caller. */
 static inline int aot_match_eq(Value *subj, Value *pat) {
-    int e = values_equal(subj, pat);
+    int e = aot_veq_op(subj, pat, "==");
     val_decref(pat);
     return e;
 }
@@ -3386,7 +3442,7 @@ static Value *aot_call_vm_builtin(Value *fn, Value *arg) {
          * (g_vm.current_line, kept fresh by the host's OP_LINE); the AOT's
          * stamp is that line, so hand it to the VM before the run */
         if (eigs_current && eigs_current->vm) g_vm.current_line = g_trace_current_line;
-        Value *res = AOT_FOREIGN(fn->data.builtin(arg));
+        Value *res = AOT_FOREIGN(AOT_GATED(fn->data.builtin, arg));
         if (pushed && g_vm.frame_count > 0 && g_vm.frames[g_vm.frame_count - 1].chunk == &aot_host_chunk) g_vm.frame_count--;
         g_try_depth = 1;
         if (g_exit_requested) exit(g_exit_code);
@@ -3402,7 +3458,7 @@ static Value *aot_call_vm_builtin(Value *fn, Value *arg) {
         }
         return res;
     }
-    return AOT_FOREIGN(fn->data.builtin(arg));
+    return AOT_FOREIGN(AOT_GATED(fn->data.builtin, arg));   /* #1637 bool gate */
 }
 
 static Value *aot_call_dispatch(Value *fn, Value *arg) {

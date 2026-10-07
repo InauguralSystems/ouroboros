@@ -1,0 +1,20 @@
+# #1637 (EigenScript#1647): an OBSERVED bool binding -- the observer's entropy
+# band, report/predicates/observe/trajectory over a name that holds a bool,
+# at module scope and in a function -- VM vs AOT byte for byte.
+x is 0
+flag is false
+loop while x < 12:
+    flag is x > 6
+    x is x + 1
+print of (report of flag)
+print of (converged of flag)
+print of (stable of flag)
+print of (observe of flag)
+print of (report of x)
+define f(k) as:
+    local q is k > 1
+    local q2 is not q
+    print of (report of q2)
+    return q
+print of (f of 3)
+print of (trajectory of flag)

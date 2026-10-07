@@ -25,14 +25,18 @@ print of ("b.dive=" + (str of (diverging of b)))
 print of ("c.stab=" + (str of (stable of c)))
 print of ("c.osci=" + (str of (oscillating of c)))
 
-# the named form in a CONDITION and in arithmetic, not only as a print operand
+# the named form in a CONDITION and as a stored VALUE, not only as a print
+# operand. #1637: a verdict is a bool now, so `n + (stable of c)` raises on
+# both sides (t392_bool_raises pins that); the value form binds and branches.
 n is 0
 if diverging of a:
     n is n + 1
 if oscillating of b:
     n is n + 10
-n is n + (stable of c)
-print of ("n=" + (str of n))
+sc is stable of c
+if sc:
+    n is n + 1
+print of ("n=" + (str of n) + " sc=" + (str of sc))
 
 # A binding assigned once and never moved. This row pins that the answer is 0
 # rather than a confident verdict — but NOT, as an earlier version of this

@@ -63,11 +63,13 @@ gcc -O0 ${AOT_ARCH:--march=native} -fkeep-static-functions -fkeep-inline-functio
   -I"${EIGS_DIR:-../../EigenScript}/src" -c "$fxd/fx.c" -o "$fxd/fx.o" 2>"$fxd/err" && [ -s "$fxd/fx.ci" ] ||
   { cat "$fxd/err"; echo 'FAIL: line-restore: no call graph of aot_rt.h (gcc -fcallgraph-info)'; exit 1; }
 fx=$( { awk -v h="$PWD/aot_rt.h" 'NR == FNR { src[FNR] = $0; next }
+/^edge: .*sourcename: "[^"]*:eigs_call_builtin" .*targetname: "__indirect_call"/ { next }
 /^edge: .*targetname: "(__indirect_call|call_eigs_fn|builtin_[a-z_0-9]+)"/ {
   loc = $0; sub(/.*label: "/, "", loc); sub(/".*/, "", loc); split(loc, p, ":")
   n++; if (p[1] != h || substr(src[p[2]], p[3], 12) != "AOT_FOREIGN(") print "FAIL: call leaves compiled code outside AOT_FOREIGN: " loc ": " src[p[2]] }
 END { print n + 0 }' aot_rt.h "$fxd/fx.ci"
-  grep -nE '(data\.builtin|call_eigs_fn|(^|[^A-Za-z_0-9])builtin_[a-z_0-9]+)' compile.eigs | grep -vE '^[0-9]+:[[:space:]]*#' | sed 's/^/FAIL: compile.eigs names an exit from compiled code: /'; } )
+  grep -nE '(data\.builtin|call_eigs_fn|(^|[^A-Za-z_0-9])builtin_[a-z_0-9]+)' compile.eigs | grep -vE '^[0-9]+:[[:space:]]*#' | sed 's/^/FAIL: compile.eigs names an exit from compiled code: /'
+  grep -nE 'eigs_call_builtin[[:space:]]*\(' aot_rt.h compile.eigs | grep -vE '^[^:]+:[0-9]+:[[:space:]]*(#|/?\*)' | sed 's/^/FAIL: eigs_call_builtin called from the AOT (its body is exempt above; use AOT_GATED inside AOT_FOREIGN): /'; } )
 rm -rf "$fxd"; printf '%s\n' "$fx" | grep '^FAIL'; fxn=$(printf '%s\n' "$fx" | grep -v '^FAIL' | tail -1)
 fxb=$(printf '%s\n' "$fx" | grep -c '^FAIL'); [ "$fxn" -gt 0 ] && [ "$fxb" -eq 0 ] ||
   { echo "FAIL: line-restore sites: $fxn examined, $fxb outside AOT_FOREIGN"; exit 1; }

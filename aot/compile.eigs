@@ -1192,6 +1192,45 @@ define infer_buffers(stmts) as:
     return module_unclassify of bt
 
 # ---- numeric-scalar inference (now buffer-aware: buf[i] and len-of-buf are numeric) ----
+# #1637 (EigenScript#1647): an expression whose value is CERTAINLY a bool --
+# the literal, a comparison, `not`, a predicate verdict, a BOOL_RET builtin,
+# or and/or of two of these (and/or return an operand). Such a value is never
+# a number: it is not numeric to is_num_expr, it is CERTAIN boxed evidence to
+# the local classifiers, and an arithmetic or bitwise operator over it takes
+# the boxed path, whose helper raises with the VM's own text ("cannot apply
+# '+' to bool and num"). In condition position emit_cond keeps it a C int.
+define is_bool_expr(node) as:
+    local n is unwrap of node
+    if (type of n) != "list":
+        return 0
+    if (len of n) == 0:
+        return 0
+    local t is n[0]
+    if t == "bool":
+        return 1
+    if t == "predicate":
+        return 1
+    if t == "binop":
+        if CMP_OPS[n[1]] == 1:
+            return 1
+        if (n[1] == "and") or (n[1] == "or"):
+            if (is_bool_expr of n[2]) == 1:
+                return is_bool_expr of n[3]
+        return 0
+    if t == "unary":
+        if n[1] == "not":
+            return 1
+        return 0
+    if t == "call":
+        local bc is unwrap of n[1]
+        if bc[0] == "predicate":
+            return 1
+        if bc[0] == "ident":
+            if (BOOL_RET_BUILTINS[bc[1]] == 1) and (g_funcs[bc[1]] == null) and (g_cur_params[bc[1]] != 1) and ((module_public of bc[1]) == 0):
+                return 1
+        return 0
+    return 0
+
 define is_num_expr(node, nm, bt) as:
     local t is node[0]
     if t == "_line":
@@ -1199,7 +1238,8 @@ define is_num_expr(node, nm, bt) as:
     if t == "num":
         return 1
     if t == "predicate":
-        return 1
+        # #1637: a predicate verdict is a bool, not a number
+        return 0
     if t == "ident":
         if (module_public of node[1]) == 1:
             return 0
@@ -1225,6 +1265,13 @@ define is_num_expr(node, nm, bt) as:
         # inc. 2): claiming them numeric stops the greatest-fixpoint pass
         # demoting accumulators whose RHS reads a boxed name (the for-in
         # cascade, crc32's table read). Boxed operands emit via aot_num_ck.
+        # #1637: ...except a CERTAIN bool operand: that expression raises on
+        # every execution, and the boxed helper raises it with the VM's text
+        # (`cannot apply '-' to bool and num`), where a checked unbox names
+        # only "a numeric context".
+        if (NUMONLY_OPS[node[1]] == 1) or (node[1] == "+"):
+            if ((is_bool_expr of node[2]) == 1) or ((is_bool_expr of node[3]) == 1):
+                return 0
         if NUMONLY_OPS[node[1]] == 1:
             return 1
         # `+` is polymorphic (str+str concatenates) but the VM raises on any
@@ -1268,12 +1315,21 @@ define is_num_expr(node, nm, bt) as:
             return is_num_expr of [node[3], nm, bt]
         if ARITH_OPS[node[1]] == null:
             return 0
+        # #1637: a comparison yields a bool whatever its operands are.
+        if CMP_OPS[node[1]] == 1:
+            return 0
         if (is_num_expr of [node[2], nm, bt]) == 0:
             return 0
         if (is_num_expr of [node[3], nm, bt]) == 0:
             return 0
         return 1
     if t == "unary":
+        # #1637: `not` yields a bool; `-`/`~` of a certain bool raise, and the
+        # boxed helpers name the bool as the VM does.
+        if node[1] == "not":
+            return 0
+        if (is_bool_expr of node[2]) == 1:
+            return 0
         return is_num_expr of [node[2], nm, bt]
     if t == "index":
         local tgt is unwrap of node[1]
@@ -1297,9 +1353,9 @@ define is_num_expr(node, nm, bt) as:
         local callee is unwrap of node[1]
         if (callee[0] == "ident") and ((module_public of callee[1]) == 1):
             return 0
-        # a predicate verdict is a number (0/1), like the bare form above
+        # #1637: a predicate verdict is a bool, like the bare form above
         if callee[0] == "predicate":
-            return 1
+            return 0
         if callee[0] == "ident":
             # (round 169) a dispatch through a SHADOW table yields a double
             # (every handler is declared double): numeric.
@@ -2373,7 +2429,7 @@ define slice_arg_parts(argnode, nm, bt) as:
         local bnm is tgt[1]
         local lo is "0"
         if n[2] != null:
-            lo is emit_num of [n[2], nm, bt, 0]
+            lo is emit_num_operand of [n[2], nm, bt, 0, "", "B", "-"]
         # (round 92) a non-bt target is not a C variable -- a 2-D `zeros`
         # is a nested list and left the buf class this round, and emitting
         # its raw name gave gcc an undeclared identifier. Read it boxed
@@ -2394,7 +2450,7 @@ define slice_arg_parts(argnode, nm, bt) as:
         local hidef is 1
         local hi is "aot_slice_len(" + cbuf + ")"
         if n[3] != null:
-            hi is emit_num of [n[3], nm, bt, 0]
+            hi is emit_num_operand of [n[3], nm, bt, 0, "", "B", "-"]
             hidef is 0
         # [0] is a C NAME, so it is mangled like every other emitted name —
         # [2] already was, and the asymmetry meant every consumer emitted the
@@ -2416,8 +2472,63 @@ define slice_arg_parts(argnode, nm, bt) as:
         cb2 is env_readb of n[1]
     return [cb2, "0", "aot_slice_len(" + cb2 + ")", 0, 1]
 
+# #1637: the site string a checked unbox reports. Inside an operator whose
+# OTHER operand's type is known (op_site), it is an OPERAND site -- "\001" op
+# "\001" side "\001" other -- and aot_nonnum_raise words the failure as the
+# VM's operator does ("cannot apply '+' to bool and num", "cannot negate
+# bool"). Set only around one operand's emission and cleared before any
+# nested emission, so an inner read never borrows an outer operator's text.
+G_NUM_SITE is [null]
+define name_site(key) as:
+    if G_NUM_SITE[0] != null:
+        return G_NUM_SITE[0]
+    return "\"" + (c_escape of (G_CUR_FN[0])) + ": name " + (c_escape of key) + "\""
+
+# The VM's type name of an operand known at build time, or "" when unknown.
+define static_type_name(node, nm, bt) as:
+    if (is_num_expr of [node, nm, bt]) == 1:
+        return "num"
+    if (is_bool_expr of node) == 1:
+        return "bool"
+    return ""
+
+# The operand site for `side` ("L"/"R" of a binary op, "U" for `~`, "N" for
+# unary minus).
+define op_site(op, side, other) as:
+    return "\"\\001" + op + "\\001" + side + "\\001" + other + "\""
+
+# Emit one operand through emit_num with its operand site, when the operand is
+# a checked read (a boxed name or a certain bool) and the other side's type is
+# known: an operand of a numbers-only/`+` operator (L/R), of `~` (U) or unary
+# minus (N), a slice bound (B) or a buffer element store (S).
+define emit_num_operand(node, nm, bt, raw, op, side, other) as:
+    local u is unwrap of node
+    local applies is 0
+    if (is_bool_expr of u) == 1:
+        applies is 1
+    elif (u[0] == "ident") and ((is_num_expr of [u, nm, bt]) == 0):
+        applies is 1
+    if (applies == 0) or (other == ""):
+        return emit_num of [node, nm, bt, raw]
+    local _saved is G_NUM_SITE[0]
+    G_NUM_SITE[0] is op_site of [op, side, other]
+    local r is emit_num of [node, nm, bt, raw]
+    G_NUM_SITE[0] is _saved
+    return r
+
 define emit_num(node, nm, bt, raw) as:
     local t is node[0]
+    # #1637: a certain bool in a numeric position (an index, a bound, an
+    # operand the caller unboxes) is not a number on any execution. Box it
+    # and unbox CHECKED: loud where the VM raises, never a silent 0/1.
+    if (is_bool_expr of node) == 1:
+        local bsite is G_NUM_SITE[0]
+        G_NUM_SITE[0] is null
+        if bsite == null:
+            bsite is "\"" + (c_escape of (G_CUR_FN[0])) + ": bool\""
+        local bexpr is emit_val of [node, nm, bt]
+        G_NUM_SITE[0] is bsite
+        return "aot_num_ck_at(" + bexpr + ", " + bsite + ")"
     if t == "ident":
         if (g_cur_fresh_for[node[1]] == 1) and (g_cur_active_for[node[1]] != 1):
             return "aot_num_ck(aot_undefined_name(\"" + node[1] + "\"))"
@@ -2427,11 +2538,9 @@ define emit_num(node, nm, bt, raw) as:
         return emit_num of [node[2], nm, bt, raw]
     if t == "num":
         return str of node[1]
-    if t == "predicate":
-        return "((double)aot_predicate(" + (str of node[1]) + "))"
     if t == "ident":
         if (module_public of node[1]) == 1:
-            return env_read_num of [node[1], "\"" + (c_escape of (G_CUR_FN[0])) + ": name " + (c_escape of (module_key of node[1])) + "\""]
+            return env_read_num of [node[1], (name_site of (module_key of node[1]))]
         # (#218) an interrogated call-local: the call-local wins once bound
         # in this call; otherwise the read is whatever this regime's module
         # read is -- computed by re-entering with the mark cleared.
@@ -2445,7 +2554,7 @@ define emit_num(node, nm, bt, raw) as:
         # non-number read here is a VM raise ("cannot apply ... to str"),
         # and aot_num's silent 0.0 was the worst-outcome class.
         if (obs_name of node[1]) == 1:
-            return env_read_num of [node[1], "\"" + (c_escape of (G_CUR_FN[0])) + ": name " + (c_escape of node[1]) + "\""]
+            return env_read_num of [node[1], (name_site of node[1])]
         if nm[node[1]] == 1:
             # (round 74) an int-classified name in the DOUBLE path must be
             # CAST: C's promotion keeps `long * long` integral, so a
@@ -2497,27 +2606,25 @@ define emit_num(node, nm, bt, raw) as:
             # instead: correct when it holds a number, loud exactly where the
             # VM raises when it does not. Borrowed — a parameter is not ours
             # to consume.
-            return "aot_num_ck_bat(" + (cn of node[1]) + ", \"" + (c_escape of (G_CUR_FN[0])) + ": name " + (c_escape of node[1]) + "\")"
+            return "aot_num_ck_bat(" + (cn of node[1]) + ", " + (name_site of node[1]) + ")"
         # not a declared C numeric: an env-boxed name in a numeric context
         # (e.g. a for-in loop var indexing a buffer, #70) — read it boxed.
         # CHECKED (#65 inc. 2): the VM raises when a non-number reaches an
         # arithmetic context; aot_num's silent 0.0 was the worst-outcome
         # class.
-        return env_read_num of [node[1], "\"" + (c_escape of (G_CUR_FN[0])) + ": name " + (c_escape of node[1]) + "\""]
+        return env_read_num of [node[1], (name_site of node[1])]
     if t == "unary":
         local uop is node[1]
-        local uv is emit_num of [node[2], nm, bt, raw]
+        local uside is "N"
+        if uop == "~":
+            uside is "U"
+        local uv is emit_num_operand of [node[2], nm, bt, raw, uop, uside, "-"]
         if uop == "-":
             return "(-(" + uv + "))"
         if uop == "~":
             # OP_BNOT: int64 complement of the numeric value (#73 — this used
             # to fall into the `not` arm below, a silent wrong number).
             return "((double)(~(int64_t)(" + uv + ")))"
-        if uop == "not":
-            # Unary tightness since #99 item 1 (parse_unary_body): the operand
-            # is unary-or-tighter, so this numeric arm sees e.g. the `not x`
-            # inside `(not x) + 1` — position-independent either way.
-            return "((" + uv + " == 0.0) ? 1.0 : 0.0)"
         throw of ("AOT: emit_num unexpected unary '" + uop + "'")
     if t == "dot":
         # numeric read of a dict field (#86): box-read then checked unbox.
@@ -2648,7 +2755,7 @@ define emit_num(node, nm, bt, raw) as:
                 return "aot_sqrt(" + (emit_num of [node[2], nm, bt, 0]) + ")"
             # (round 172) floor/ceil/round/abs on a PROVABLY numeric argument
             # are the libm call the VM's builtin makes (builtins.c:
-            # `make_num(floor(arg->data.num))` and siblings; make_num guards,
+            # `make_num(floor(x))` on a number argument, and siblings; make_num guards,
             # so num_guard here matches). Before this, `floor of (addr / 0x4000)`
             # on DMG's every memory read was aot_call_resolve + make_num +
             # aot_call_dispatch + unbox. A boxed argument still takes the
@@ -2731,8 +2838,14 @@ define emit_num(node, nm, bt, raw) as:
         if (is_int_expr of node) == 1:
             return "((double)" + (emit_int of node) + ")"
         local op is node[1]
-        local l is emit_num of [node[2], nm, bt, raw]
-        local r is emit_num of [node[3], nm, bt, raw]
+        local l is ""
+        local r is ""
+        if (op == "+") or (NUMONLY_OPS[op] == 1):
+            l is emit_num_operand of [node[2], nm, bt, raw, op, "L", (static_type_name of [node[3], nm, bt])]
+            r is emit_num_operand of [node[3], nm, bt, raw, op, "R", (static_type_name of [node[2], nm, bt])]
+        else:
+            l is emit_num of [node[2], nm, bt, raw]
+            r is emit_num of [node[3], nm, bt, raw]
         # (round 89) sequence when either operand can CALL: bare C
         # operator operands evaluate in unspecified order while the VM is
         # left-then-right -- this arm had only matched by gcc mood. Both
@@ -2789,7 +2902,8 @@ define emit_num(node, nm, bt, raw) as:
             return "({ double _sc = " + l + "; _sc == 0.0 ? _sc : (" + r + "); })"
         if op == "or":
             return "({ double _sc = " + l + "; _sc != 0.0 ? _sc : (" + r + "); })"
-        return seqpre + ("((" + l + " " + op + " " + r + ") ? 1.0 : 0.0)") + seqpost
+        # #1637: a comparison is a bool -- is_bool_expr routed it away above.
+        throw of ("AOT: emit_num unexpected binop '" + op + "'")
     if t == "interrogate":
         # (round 194, #139) an interrogative in a NUMERIC context (dynamics:
         # `x is x * 0.9 + (prev of x) * 0.1`). Its value is polymorphic (a
@@ -2824,6 +2938,13 @@ define emit_val(node, nm, bt) as:
                     local _vt is unwrap of (_va[1])[0]
                     if (_vt[0] == "ident") and (g_shadow_tbl[(_vt[1])] == 1):
                         return seq_call3 of ["aot_dispatch_sh_" + (cn of _vt[1]), [[(emit_val of [(_va[1])[0], nm, bt]), (has_call_node of (_va[1])[0])], [(emit_val of [(_va[1])[1], nm, bt]), (has_call_node of (_va[1])[1])], [(emit_val of [(_va[1])[2], nm, bt]), (has_call_node of (_va[1])[2])]], ["Value*", "Value*", "Value*"]]
+    # #1637: a bool VALUE is one of the two immortal singletons; the C int
+    # comes from the condition emitter wherever it has a native form (the
+    # literal, a comparison of two doubles, `not`, a predicate verdict).
+    if (is_bool_expr of node) == 1:
+        local _bv is emit_bool_c of [node, nm, bt]
+        if _bv != "":
+            return "make_bool(" + _bv + ")"
     if (is_num_expr of [node, nm, bt]) == 1:
         return "make_num(" + (emit_num of [node, nm, bt, 0]) + ")"
     local t is node[0]
@@ -3000,13 +3121,9 @@ define emit_val(node, nm, bt) as:
     if t == "unary":
         local uop is node[1]
         if uop == "not":
-            # `not x` -> 1.0 if x is falsy else 0.0 (a number; matches the VM).
-            # aot_truthy consumes its operand, so no extra decref is needed.
-            # Since #99 item 1 the frontend parses `not` at UNARY tightness
-            # (parser.c parse_unary_body): `not x + 1` arrives as
-            # binop(+, unary(not, x), 1) — the not node's operand is always
-            # unary-or-tighter, and the emit is position-independent.
-            return "make_num(aot_truthy(" + (emit_val of [node[2], nm, bt]) + ") ? 0.0 : 1.0)"
+            # #1637: `not x` is a bool (emit_bool_c answers it above; this
+            # arm is the backstop). aot_truthy consumes its operand.
+            return "make_bool(!aot_truthy(" + (emit_val of [node[2], nm, bt]) + "))"
         if uop == "-":
             # OP_NEG exactly (#100 item 5): negate a number, raise the VM's
             # "cannot negate non-numeric" otherwise — the aot_num coercion
@@ -3055,7 +3172,7 @@ define emit_val(node, nm, bt) as:
             local pa is unwrap of node[2]
             if pa[0] == "ident":
                 if (module_public of pa[1]) == 1:
-                    return "make_num((double)aot_predicate_of(" + (module_env of pa[1]) + ", \"" + (module_key of pa[1]) + "\", " + (str of callee[1]) + ", 0))"
+                    return "make_bool(aot_predicate_of(" + (module_env of pa[1]) + ", \"" + (module_key of pa[1]) + "\", " + (str of callee[1]) + ", 0))"
                 local pfn is 0
                 if g_funcs[pa[1]] != null:
                     pfn is 1
@@ -3070,7 +3187,7 @@ define emit_val(node, nm, bt) as:
                 # buffer PARAM keeps the band -- see the bt assign arm.
                 if (((bt[pa[1]] == 1) or (g_btmap[pa[1]] == 1)) and (g_cur_params[pa[1]] == 1)) or (g_dict[pa[1]] == 1) or (g_tensor[pa[1]] == 1):
                     pfn is 1
-                return "make_num((double)aot_predicate_of(__eigs_g, \"" + pa[1] + "\", " + (str of callee[1]) + ", " + (str of pfn) + "))"
+                return "make_bool(aot_predicate_of(__eigs_g, \"" + pa[1] + "\", " + (str of callee[1]) + ", " + (str of pfn) + "))"
             # a non-name operand is `cannot call num` in the VM; refuse loudly
             # rather than emit something that answers about the wrong thing.
             throw of "AOT: a predicate operand must be a name"
@@ -3272,10 +3389,10 @@ define emit_val(node, nm, bt) as:
         # default hi is the target's own length by type.
         local sl_lo is "0"
         if node[2] != null:
-            sl_lo is emit_num of [node[2], nm, bt, 0]
+            sl_lo is emit_num_operand of [node[2], nm, bt, 0, "", "B", "-"]
         local sl_hi is "aot_slice_len(_sl)"
         if node[3] != null:
-            sl_hi is emit_num of [node[3], nm, bt, 0]
+            sl_hi is emit_num_operand of [node[3], nm, bt, 0, "", "B", "-"]
         return "({ Value* _sl = " + (emit_val of [node[1], nm, bt]) + "; double _slo = " + sl_lo + "; double _shi = " + sl_hi + "; Value* _sr = aot_slice_any(_sl, _slo, _shi); val_decref(_sl); _sr; })"
     throw of ("AOT: cannot emit value node '" + t + "'")
 
@@ -3343,9 +3460,9 @@ define emit_tensor(node, nm, bt) as:
 # handled by the fully numeric path; neither side is the general boxed path).
 CMP_OPS is {"==": 1, "!=": 1, "<": 1, ">": 1, "<=": 1, ">=": 1}
 CMPN_R is {"==": "aot_eq_n", "!=": "aot_ne_n", "<": "aot_lt_n", ">": "aot_gt_n", "<=": "aot_le_n", ">=": "aot_ge_n"}
-CMPN_L is {"==": "aot_eq_n", "!=": "aot_ne_n", "<": "aot_lt_nl", ">": "aot_gt_nl", "<=": "aot_le_nl", ">=": "aot_ge_nl"}
+CMPN_L is {"==": "aot_eq_nl", "!=": "aot_ne_nl", "<": "aot_lt_nl", ">": "aot_gt_nl", "<=": "aot_le_nl", ">=": "aot_ge_nl"}
 CMPNB_R is {"==": "aot_eq_nb_t", "!=": "aot_ne_nb_t", "<": "aot_lt_nb_t", ">": "aot_gt_nb_t", "<=": "aot_le_nb_t", ">=": "aot_ge_nb_t"}
-CMPNB_L is {"==": "aot_eq_nb_t", "!=": "aot_ne_nb_t", "<": "aot_lt_nlb_t", ">": "aot_gt_nlb_t", "<=": "aot_le_nlb_t", ">=": "aot_ge_nlb_t"}
+CMPNB_L is {"==": "aot_eq_nlb_t", "!=": "aot_ne_nlb_t", "<": "aot_lt_nlb_t", ">": "aot_gt_nlb_t", "<=": "aot_le_nlb_t", ">=": "aot_ge_nlb_t"}
 
 # `<cvar>.field` where <cvar> is a C Value* name (a dict/buffer/generic local
 # or parameter, never a temporary) -> a BORROWED read: no ref is taken on the
@@ -3487,20 +3604,65 @@ define emit_val_borrow(node, nm, bt, sibling) as:
         return cv
     return emit_borrow_dot of [node, nm, bt]
 
+# #1637: a condition as a C int, without the statement-temporary wrapper
+# (emit_cond adds it once, around the whole test). A bool-shaped expression
+# never boxes here: a comparison of two doubles is the C comparison, `not` is
+# `!`, and `and`/`or` in condition position are && / || -- the VM's
+# short-circuit tests the same operands in the same order, and only the
+# truthiness of the operand it returns can reach a branch.
+define emit_cond_c(node, nm, bt) as:
+    if (is_num_expr of [node, nm, bt]) == 1:
+        return "(" + (emit_num of [node, nm, bt, 0]) + " != 0.0)"
+    local bc is emit_bool_c of [node, nm, bt]
+    if bc != "":
+        return bc
+    local cn1 is emit_slot_condition of [node, nm, bt]
+    if cn1 != "":
+        return cn1
+    local n is unwrap of node
+    if n[0] == "binop":
+        if n[1] == "and":
+            return "(" + (emit_cond_c of [n[2], nm, bt]) + " && " + (emit_cond_c of [n[3], nm, bt]) + ")"
+        if n[1] == "or":
+            return "(" + (emit_cond_c of [n[2], nm, bt]) + " || " + (emit_cond_c of [n[3], nm, bt]) + ")"
+    cn1 is emit_cmp_n of [node, nm, bt, 1]
+    if cn1 != "":
+        return cn1
+    return "aot_truthy(" + (emit_val of [node, nm, bt]) + ")"
+
+# #1637: the native C int of a bool-shaped expression, or "" when it has none
+# (a comparison with a boxed operand: its Value helper raises with the VM's
+# text and returns the bool singleton, so the caller boxes or tests that).
+define emit_bool_c(node, nm, bt) as:
+    local n is unwrap of node
+    local t is n[0]
+    if t == "bool":
+        if n[1] == 1:
+            return "1"
+        return "0"
+    if t == "predicate":
+        return "aot_predicate(" + (str of n[1]) + ")"
+    if t == "unary":
+        if n[1] == "not":
+            return "(!" + (emit_cond_c of [n[2], nm, bt]) + ")"
+        return ""
+    if t == "binop":
+        if CMP_OPS[n[1]] != 1:
+            return ""
+        if ((is_num_expr of [n[2], nm, bt]) == 0) or ((is_num_expr of [n[3], nm, bt]) == 0):
+            return ""
+        local l is emit_num of [n[2], nm, bt, 0]
+        local r is emit_num of [n[3], nm, bt, 0]
+        # (round 89) VM order under a call hazard: hoist both operands.
+        if ((has_call_node of n[2]) == 1) or ((has_call_node of n[3]) == 1):
+            return "({ double _sqbl = " + l + "; double _sqbr = " + r + "; (_sqbl " + n[1] + " _sqbr); })"
+        return "(" + l + " " + n[1] + " " + r + ")"
+    return ""
+
 define emit_cond(node, nm, bt) as:
     local _tu is g_stmt_tmp_used
     g_stmt_tmp_used is 0
-    local c is ""
-    if (is_num_expr of [node, nm, bt]) == 1:
-        c is "(" + (emit_num of [node, nm, bt, 0]) + " != 0.0)"
-    else:
-        local cn1 is emit_slot_condition of [node, nm, bt]
-        if cn1 == "":
-            cn1 is emit_cmp_n of [node, nm, bt, 1]
-        if cn1 != "":
-            c is cn1
-        else:
-            c is "aot_truthy(" + (emit_val of [node, nm, bt]) + ")"
+    local c is emit_cond_c of [node, nm, bt]
     if g_stmt_tmp_used == 1:
         # (round 171) a condition is evaluated per iteration: release its
         # temporaries as soon as it has been tested.
@@ -3726,7 +3888,7 @@ define emit_slot_condition(node, nm, bt) as:
         neg is "!"
     # Stage the READ, not just its index operands. The RHS is nonraising by
     # the explicit atom whitelist above, not merely because it is call-free.
-    return "({ AotScalarRead _scl = " + left_read + "; AotScalarRead _scr = " + right_read + "; " + neg + "aot_scalar_equal(_scl, _scr); })"
+    return "({ AotScalarRead _scl = " + left_read + "; AotScalarRead _scr = " + right_read + "; " + neg + "aot_scalar_equal(_scl, _scr, \"" + n[1] + "\"); })"
 
 define emit_stmt(node, ind, nm, bt, minits, gf) as:
     local emitted is emit_stmt_inner of [node, ind, nm, bt, minits, gf]
@@ -3912,6 +4074,14 @@ define emit_stmt_inner(node, ind, nm, bt, minits, gf) as:
                 _ilst is _ilst + " aot_trace_assign(\"" + name + "\", " + (cn of name) + "__loc);"
             return _ilst + " }\n"
         if nm[name] == 1:
+            # #1637: a C-numeric name (a parameter whose body uses it as a
+            # number) rebound to a CERTAIN bool. The VM stores the bool; a C
+            # double cannot hold one, and unboxing it would die where the VM
+            # runs. Refused by name, like the null/str rebind of a numeric
+            # parameter ("emit_num on non-numeric node null"), not compiled
+            # into a runtime death.
+            if (is_bool_expr of node[2]) == 1:
+                throw of ("AOT: '" + name + "' is a C number in " + (G_CUR_FN[0]) + " (its body uses it as a number) and this statement rebinds it to a bool (EigenScript#1637) -- the VM stores the bool, a C double cannot; bind the bool to a new name")
             # observed program: numeric assign goes through the runtime observer
             # (store in env + update the slot's entropy/dH + set last-observer).
             if (obs_name of name) == 1:
@@ -4077,11 +4247,11 @@ define emit_stmt_inner(node, ind, nm, bt, minits, gf) as:
                     # (round 91) index before value, VM order (the boxed
                     # twins got this in round 88; this arm did not).
                     if ((has_call_node of node[2]) == 1) or ((has_call_node of node[3]) == 1):
-                        return ind + (seq_buftgt_i of ["aot_buf_set_i", (cn of tgt[1]), (emit_int of node[2]), (emit_num of [node[3], nm, bt, 0])]) + "\n"
-                    return ind + "aot_buf_set_i(" + (cn of tgt[1]) + ", " + (emit_int of node[2]) + ", " + (emit_num of [node[3], nm, bt, 0]) + ");\n"
+                        return ind + (seq_buftgt_i of ["aot_buf_set_i", (cn of tgt[1]), (emit_int of node[2]), (emit_num_operand of [node[3], nm, bt, 0, "", "S", "-"])]) + "\n"
+                    return ind + "aot_buf_set_i(" + (cn of tgt[1]) + ", " + (emit_int of node[2]) + ", " + (emit_num_operand of [node[3], nm, bt, 0, "", "S", "-"]) + ");\n"
                 if ((has_call_node of node[2]) == 1) or ((has_call_node of node[3]) == 1):
-                    return ind + (seq_buftgt of ["aot_buf_set", (cn of tgt[1]), (emit_num of [node[2], nm, bt, 0]), (emit_num of [node[3], nm, bt, 0]), "double"]) + "\n"
-                return ind + "aot_buf_set(" + (cn of tgt[1]) + ", " + (emit_num of [node[2], nm, bt, 0]) + ", " + (emit_num of [node[3], nm, bt, 0]) + ");\n"
+                    return ind + (seq_buftgt of ["aot_buf_set", (cn of tgt[1]), (emit_num of [node[2], nm, bt, 0]), (emit_num_operand of [node[3], nm, bt, 0, "", "S", "-"]), "double"]) + "\n"
+                return ind + "aot_buf_set(" + (cn of tgt[1]) + ", " + (emit_num of [node[2], nm, bt, 0]) + ", " + (emit_num_operand of [node[3], nm, bt, 0, "", "S", "-"]) + ");\n"
         # general boxed index-assign (#86): list / dict / buffer target as a
         # Value* — aot_index_set mirrors OP_INDEX_SET and consumes/adopts.
         if (is_num_expr of [node[2], nm, bt]) == 1:
@@ -6369,6 +6539,9 @@ define is_boxed_node(node, fgen) as:
     local t is n[0]
     if (t == "list") or (t == "str") or (t == "dict") or (t == "null"):
         return 1
+    # #1637: a certain bool is never a number
+    if (is_bool_expr of n) == 1:
+        return 1
     if (t == "binop") and (n[1] == "+"):
         # a `+` chain carrying a string LITERAL is concatenation (f-strings
         # desugar to these): `return "a" + (str of n)` was invisible here, so
@@ -6659,16 +6832,27 @@ define return_node_is_num(rnode, rba, fbt, fgen, fdict, ftt, seen) as:
             G_RNN_OPT[0] is 1
         return _rv
     if t == "binop":
-        if (NUMONLY_OPS[re[1]] == 1) or (re[1] == "<") or (re[1] == ">") or (re[1] == "<=") or (re[1] == ">=") or (re[1] == "==") or (re[1] == "!=") or (re[1] == "and") or (re[1] == "or"):
+        # #1637: a comparison returns a bool, never a number; a numbers-only
+        # operator over a CERTAIN bool raises on every execution, so it stays
+        # boxed and the Value helper raises with the VM's text; and/or return
+        # an operand, numeric only when both are.
+        if (is_bool_expr of re) == 1:
+            return 0
+        if NUMONLY_OPS[re[1]] == 1:
+            if ((is_bool_expr of re[2]) == 1) or ((is_bool_expr of re[3]) == 1):
+                return 0
             return 1
-        if re[1] == "+":
+        if (re[1] == "+") or (re[1] == "and") or (re[1] == "or"):
             if (return_node_is_num of [re[2], rba, fbt, fgen, fdict, ftt, seen]) == 1:
                 if (return_node_is_num of [re[3], rba, fbt, fgen, fdict, ftt, seen]) == 1:
                     return 1
         return 0
     if t == "unary":
-        # `-x`, `~x`, `not x` all yield numbers (`return -1` was the shape
-        # that demoted DMG's cart_ram_offset in the first cut).
+        # `-x`, `~x` yield numbers (`return -1` was the shape that demoted
+        # DMG's cart_ram_offset in the first cut). #1637: `not x` is a bool,
+        # and `-`/`~` of a certain bool raises (boxed, the VM's text).
+        if (re[1] == "not") or ((is_bool_expr of re[2]) == 1):
+            return 0
         return 1
     if t == "dot":
         # (round 167) `return m.f` where the field map says f is "num"
@@ -7050,11 +7234,19 @@ define uses_type_dispatch(node, name) as:
 # not a miscompile.
 #
 # Every name here was MEASURED against the pin with `type of`, not assumed
-# (`sign`/`trunc` were candidates and do not exist; log/sin/cos/tan and the
-# predicate-shaped ones -- contains, starts_with, ends_with, file_exists --
-# really do return num). The first six are exactly the set is_num_expr's
+# (`sign`/`trunc` were candidates and do not exist; log/sin/cos/tan really do
+# return num; since #1637 the predicate-shaped ones return a bool and live in
+# BOOL_RET_BUILTINS). The first six are exactly the set is_num_expr's
 # own call arm already lowers as numeric.
-NUM_RET_BUILTINS is {"len": 1, "sqrt": 1, "exp": 1, "dot": 1, "sum": 1, "norm": 1, "abs": 1, "floor": 1, "ceil": 1, "round": 1, "min": 1, "max": 1, "pow": 1, "log": 1, "sin": 1, "cos": 1, "tan": 1, "ord": 1, "index_of": 1, "contains": 1, "starts_with": 1, "ends_with": 1, "file_exists": 1, "monotonic_ns": 1, "random": 1, "num": 1, "buf_get": 1, "buf_len": 1, "write_text": 1}
+NUM_RET_BUILTINS is {"len": 1, "sqrt": 1, "exp": 1, "dot": 1, "sum": 1, "norm": 1, "abs": 1, "floor": 1, "ceil": 1, "round": 1, "min": 1, "max": 1, "pow": 1, "log": 1, "sin": 1, "cos": 1, "tan": 1, "ord": 1, "index_of": 1, "monotonic_ns": 1, "random": 1, "num": 1, "buf_get": 1, "buf_len": 1}
+
+# #1637 (EigenScript#1647): builtins whose result is ALWAYS a bool, each
+# measured on the pin with `type of` (the predicate-shaped names above --
+# contains, starts_with, ends_with, file_exists, write_text -- moved here from
+# NUM_RET_BUILTINS). Read by is_bool_expr: certain boxed evidence, never
+# numeric. An omission costs only precision (an unlisted builtin is "not
+# known numeric"), never a miscompile.
+BOOL_RET_BUILTINS is {"contains": 1, "starts_with": 1, "ends_with": 1, "has_key": 1, "list_contains": 1, "file_exists": 1, "is_dir": 1, "is_file": 1, "try_parse": 1, "secure_equals": 1, "write_text": 1, "remove_file": 1}
 
 # (round 111) the four observer special forms return str / str / dict /
 # list. They were absent, so `check of [tag, report_value of x, want]`
@@ -7195,6 +7387,9 @@ define scan_arg_overrides(node) as:
                 # either broke t51_nullcall / t54 / t56.
                 local nonnum is 0
                 if (e[0] == "str") or (e[0] == "dict"):
+                    nonnum is 1
+                if (is_bool_expr of e) == 1:
+                    # #1637: a bool argument is never a number
                     nonnum is 1
                 if (e[0] == "binop") and (e[1] == "+") and ((chain_has_str of e) == 1):
                     # a desugared f-string argument (lex-level desugar: a
@@ -7599,12 +7794,12 @@ define param_assigned_nonnum(node, name) as:
             for ek in range of (len of els):
                 local ee is unwrap of els[ek]
                 if (len of ee) > 0:
-                    if (ee[0] == "str") or (ee[0] == "list") or (ee[0] == "dict") or (ee[0] == "null"):
+                    if (ee[0] == "str") or (ee[0] == "list") or (ee[0] == "dict") or (ee[0] == "null") or ((is_bool_expr of ee) == 1):
                         return 1
     if (node[0] == "assign") and (node[1] == name):
         local r is unwrap of node[2]
         if (len of r) > 0:
-            if (r[0] == "null") or (r[0] == "str") or (r[0] == "list") or (r[0] == "dict"):
+            if (r[0] == "null") or (r[0] == "str") or (r[0] == "list") or (r[0] == "dict") or ((is_bool_expr of r) == 1):
                 return 1
     for k in range of (len of node):
         if (param_assigned_nonnum of [node[k], name]) == 1:
@@ -7652,6 +7847,9 @@ define arg_class(node, caller_pt, caller_params, caller_locals) as:
     if t == "str":
         return "gen"
     if t == "dict":
+        return "gen"
+    # #1637: a certain bool is a boxed value, never a number
+    if (is_bool_expr of e) == 1:
         return "gen"
     if t == "list":
         # Safe HERE (unlike a raw argument node): widen_scan passes only
@@ -7849,7 +8047,9 @@ define local_gen_map_seeded(body, seed) as:
         for j in range of (len of rhss):
             local r is unwrap of rhss[j]
             if (len of r) > 0:
-                if (r[0] == "str") or (r[0] == "dict") or (r[0] == "list") or (r[0] == "null"):
+                # #1637: a certain bool (comparison, `not`, predicate, literal)
+                # is boxed on every execution, the same grade as a literal.
+                if (r[0] == "str") or (r[0] == "dict") or (r[0] == "list") or (r[0] == "null") or ((is_bool_expr of r) == 1):
                     isgen_lit is 1
                     # `null` belongs in this list and its absence was the
                     # plainest instance of the whole boxed-value class:

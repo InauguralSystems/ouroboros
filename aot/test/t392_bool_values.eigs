@@ -1,0 +1,122 @@
+# #1637 (EigenScript#1647): the boolean type, VM vs AOT byte for byte --
+# printing, truthiness, `if` on a bool, bools in lists and dicts, JSON, the
+# interrogatives, predicate builtins, match/for over bools, and a bool
+# crossing between compiled and interpreted code in both directions.
+x is 3
+t is x > 1
+f is x < 1
+print of t
+print of f
+print of [t, f, true, false, not t, not 0, not ""]
+print of {"t": t, "f": f}
+print of (str of t)
+print of f"{t}/{f}"
+print of (type of t)
+print of (type of (x == 3))
+print of (type of false)
+# truthiness: false is falsy, true truthy; and/or return an operand
+if t:
+    print of "t truthy"
+if not f:
+    print of "f falsy"
+if f or t:
+    print of "or"
+if t and (x == 3):
+    print of "and"
+print of (t and 5)
+print of (f and 5)
+print of (f or "x")
+print of (t or 9)
+n is 0
+i is 0
+loop while i < 6:
+    if (i % 2) == 0 and i > 1:
+        n is n + 1
+    i is i + 1
+print of n
+# a bool stored, reloaded, branched on, in a list and a dict
+flags is []
+for k in range of 4:
+    append of [flags, k > 1]
+print of flags
+cnt is 0
+for b in flags:
+    if b:
+        cnt is cnt + 1
+print of cnt
+cfg is {"verbose": x > 2, "quiet": false}
+if cfg.verbose:
+    print of "verbose"
+if not cfg.quiet:
+    print of "not quiet"
+cfg.quiet is not cfg.quiet
+print of cfg
+print of flags[2]
+# JSON both ways
+print of (json_encode of [t, f, {"k": not t}])
+j is json_decode of "[true, false, {\"a\": true}]"
+print of j
+print of (type of j[0])
+print of (j[0] == true)
+if j[2].a:
+    print of "json a"
+# equality: bool/bool, and the unequal mixed pairs that do not raise
+print of (t == true)
+print of (t != f)
+print of (null == false)
+print of ("true" == true)
+print of ([t, 1] == [true, 1])
+print of ([1, t] == [2, 1])
+# predicate builtins return bools
+print of (contains of ["abc", "b"])
+print of (starts_with of ["abc", "z"])
+print of (ends_with of ["abc", "c"])
+print of (has_key of [cfg, "quiet"])
+print of (list_contains of [[true, false], false])
+print of (list_index_of of [[false, true], true])
+c is 0
+if contains of ["abc", "c"]:
+    c is c + 1
+if not (starts_with of ["abc", "q"]):
+    c is c + 10
+print of c
+# match and for over bools
+match t:
+    case true:
+        print of "m-true"
+    case false:
+        print of "m-false"
+for b in [true, false]:
+    if b:
+        print of "loop t"
+    else:
+        print of "loop f"
+# the interrogatives read a bool binding
+print of (what is t at 7)
+t is x == 4
+print of (prev of t)
+print of t
+# compiled -> interpreted -> compiled
+define is_big(v) as:
+    return v > 10
+define either(a, b) as:
+    if a or b:
+        return true
+    return false
+define flip(b) as:
+    return not b
+print of (is_big of 11)
+print of (is_big of 2)
+print of (either of [is_big of 1, is_big of 20])
+print of (flip of t)
+# interpreted code (an eval-defined function) receives a compiled callback
+# and a bool, calls back into compiled code, and returns a bool
+ev is eval of "define interp_apply(fn, v, neg) as:\n    local r is fn of v\n    if neg:\n        return not r\n    return r\n"
+g is interp_apply of [is_big, 50, false]
+print of g
+if g:
+    print of "g from interpreted"
+h is interp_apply of [flip, t, true]
+print of h
+print of (type of h)
+print of (either of [interp_apply of [is_big, 1, false], interp_apply of [is_big, 1, true]])

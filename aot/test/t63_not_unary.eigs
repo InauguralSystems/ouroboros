@@ -1,10 +1,23 @@
 # #99 items 1/7/8 at the AOT tier: the shared frontend now parses `not` at
 # UNARY tightness (parse_unary_body), lexes `%=`, and drops layout tokens
 # from f-string brace splices — the AOT consumes the same AST shapes.
+# #1637: `not` yields a bool and arithmetic or `==` between a bool and a
+# number raises, so the precedence witnesses are raises now: `not x + 1` dies
+# on `(not x) + 1`, where the looser binding `not (x + 1)` would print false.
 x is 3
-print of (not x + 1)
-print of (not 2 == 1)
-print of (not 0 * 5)
+try:
+    print of (not x + 1)
+catch e:
+    print of e.message
+try:
+    print of (not 2 == 1)
+catch e:
+    print of e.message
+try:
+    print of (not 0 * 5)
+catch e:
+    print of e.message
+print of (not x == false)
 print of (not not x)
 y is 9
 y %= 4
@@ -14,4 +27,7 @@ define pick(a, b) as:
     if not a + b:
         return 1
     return 0
-print of (pick of [0, -1])
+try:
+    print of (pick of [0, -1])
+catch e:
+    print of f"{e.message} @{e.line}"

@@ -1,0 +1,13 @@
+# EXPECT: rebinds it to a bool
+#
+# #1637 (EigenScript#1647): `p` is a C double in g (its body compares it
+# with a number, which is numeric evidence), and `p is p > 3` rebinds it to
+# a bool. The VM runs this (rc 0, prints true then false). Before the bool
+# type the comparison was a number and this compiled; now the AOT refuses
+# it by name at build time instead of compiling a runtime death -- the same
+# class as rebinding a numeric parameter to null or a string.
+define g(p) as:
+    p is p > 3
+    return p
+print of (g of 5)
+print of (g of 1)

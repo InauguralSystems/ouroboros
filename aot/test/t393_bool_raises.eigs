@@ -1,0 +1,160 @@
+# #1637 (EigenScript#1647): every raise a bool takes, VM vs AOT -- arithmetic,
+# bitwise and unary operators, bool/number equality (at depth too), ordering,
+# membership, numeric builtins and indexing. Each row is caught so the
+# message AND its line (e.line) are compared byte for byte; the operand is a
+# certain bool, a bool held in a name, or one inside a compiled function.
+x is 3
+flag is x > 1
+xs is [10, 20, 30]
+define addb(a, b) as:
+    return a + b
+define neg_of(v) as:
+    return - v
+try:
+    print of (flag + 1)
+catch e:
+    print of f"{e.message} @{e.line}"
+try:
+    print of (1 + flag)
+catch e:
+    print of f"{e.message} @{e.line}"
+try:
+    print of ((x < 4) + 1)
+catch e:
+    print of f"{e.message} @{e.line}"
+try:
+    print of (flag - x)
+catch e:
+    print of f"{e.message} @{e.line}"
+try:
+    print of (x * (not x))
+catch e:
+    print of f"{e.message} @{e.line}"
+try:
+    print of (- flag)
+catch e:
+    print of f"{e.message} @{e.line}"
+try:
+    print of (~ flag)
+catch e:
+    print of f"{e.message} @{e.line}"
+try:
+    print of (flag & 1)
+catch e:
+    print of f"{e.message} @{e.line}"
+try:
+    print of (2 << flag)
+catch e:
+    print of f"{e.message} @{e.line}"
+try:
+    print of (flag % 2)
+catch e:
+    print of f"{e.message} @{e.line}"
+try:
+    print of (flag == 1)
+catch e:
+    print of f"{e.message} @{e.line}"
+try:
+    print of (1 != flag)
+catch e:
+    print of f"{e.message} @{e.line}"
+try:
+    print of ((x < 4) == 1)
+catch e:
+    print of f"{e.message} @{e.line}"
+try:
+    print of (flag == x)
+catch e:
+    print of f"{e.message} @{e.line}"
+try:
+    print of (flag < true)
+catch e:
+    print of f"{e.message} @{e.line}"
+try:
+    print of (flag < 2)
+catch e:
+    print of f"{e.message} @{e.line}"
+try:
+    print of (2 >= flag)
+catch e:
+    print of f"{e.message} @{e.line}"
+try:
+    print of (flag > x)
+catch e:
+    print of f"{e.message} @{e.line}"
+try:
+    print of ([1, flag] == [1, 1])
+catch e:
+    print of f"{e.message} @{e.line}"
+try:
+    print of ({"a": flag} == {"a": 0})
+catch e:
+    print of f"{e.message} @{e.line}"
+try:
+    print of (list_contains of [[1, 2], flag])
+catch e:
+    print of f"{e.message} @{e.line}"
+try:
+    print of (list_index_of of [[true], 1])
+catch e:
+    print of f"{e.message} @{e.line}"
+try:
+    print of (sum of [1, flag])
+catch e:
+    print of f"{e.message} @{e.line}"
+try:
+    print of (max of [1, flag])
+catch e:
+    print of f"{e.message} @{e.line}"
+try:
+    print of (len of flag)
+catch e:
+    print of f"{e.message} @{e.line}"
+try:
+    print of (range of flag)
+catch e:
+    print of f"{e.message} @{e.line}"
+try:
+    print of ("a" + flag)
+catch e:
+    print of f"{e.message} @{e.line}"
+try:
+    print of (flag + "a")
+catch e:
+    print of f"{e.message} @{e.line}"
+try:
+    print of (xs[flag])
+catch e:
+    print of f"{e.message} @{e.line}"
+try:
+    print of (xs[0:flag])
+catch e:
+    print of f"{e.message} @{e.line}"
+try:
+    print of (sqrt of flag)
+catch e:
+    print of f"{e.message} @{e.line}"
+try:
+    print of (floor of (x > 1))
+catch e:
+    print of f"{e.message} @{e.line}"
+try:
+    print of (abs of flag)
+catch e:
+    print of f"{e.message} @{e.line}"
+try:
+    print of ((stable of x) + 1)
+catch e:
+    print of f"{e.message} @{e.line}"
+try:
+    print of (addb of [flag, 1])
+catch e:
+    print of f"{e.message} @{e.line}"
+try:
+    print of (addb of [1, x == 3])
+catch e:
+    print of f"{e.message} @{e.line}"
+try:
+    print of (neg_of of flag)
+catch e:
+    print of f"{e.message} @{e.line}"

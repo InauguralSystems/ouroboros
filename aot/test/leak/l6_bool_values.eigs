@@ -1,0 +1,25 @@
+# leak tier fixture (#1637): bools are two immortal singletons, so every
+# boxed comparison, `not`, predicate result, bool list element, bool dict
+# field and bool return in a loop must neither free a singleton (an ASan
+# error here) nor leak a box (a count above the floor). A make_num-boxed
+# result, the pre-#1637 shape, would be a per-iteration allocation instead.
+define pick(v) as:
+    local ok is v > 3
+    local inv is not ok
+    if inv:
+        return false
+    return ok
+define churn(n) as:
+    local flags is []
+    local rec is {"seen": false}
+    local i is 0
+    local hits is 0
+    loop while i < n:
+        local b is pick of i
+        flags is [b, not b, i == 2]
+        rec.seen is b or rec.seen
+        if contains of ["xyz", "y"]:
+            hits is hits + 1
+        i is i + 1
+    return [hits, flags, rec]
+print of (churn of 3000)
