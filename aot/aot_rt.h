@@ -1839,8 +1839,12 @@ static void __attribute__((noinline, cold)) aot_nonnum_raise(const char *site, c
          * is a type error, a heap non-number a value error) */
         if (side == 'S') rt_error(EK_TYPE, g_trace_current_line,
                                   "cannot store %s in a buffer (buffers hold numbers)", tn);
-        if (side == 'B') rt_error(strcmp(tn, "bool") == 0 ? EK_TYPE : EK_VALUE, g_trace_current_line,
+        /* (a null bound is the VM's DEFAULT bound, not an error; the AOT's
+         * numeric bound path cannot express that, so a null keeps the plain
+         * text below rather than this contradictory one) */
+        if (side == 'B' && strcmp(tn, "null") != 0) rt_error(strcmp(tn, "bool") == 0 ? EK_TYPE : EK_VALUE, g_trace_current_line,
                                   "slice bound must be an integer or null, got %s", tn);
+        if (side == 'B') rt_error(EK_TYPE, g_trace_current_line, "non-numeric value in a numeric context at a slice bound (type %s)", tn);
         if (side == 'U') rt_error(EK_TYPE, g_trace_current_line, "cannot apply '%s' to %s", op, tn);
         const char *ta = side == 'L' ? tn : other, *tb = side == 'L' ? other : tn;
         if (op[0] == '+' && op[1] == 0) {
