@@ -71,6 +71,35 @@ if [ -n "$lost" ]; then
     fail_n=1
 fi
 
+# #1637 (EigenScript#1647): a number is read through the runtime's macros.
+# The Value member is data.num_ and the slot member d_, so the old spellings
+# no longer compile -- but emitted C in compile.eigs compiles only when its
+# arm is exercised, and a data.num_/d_ spelling would compile and bypass the
+# review the macros stand for. So the AOT's C may name neither member: raw
+# reads are VAL_NUM_RAW / SLOT_NUM_RAW on a type-proven path, and every
+# builtin call goes through the bool gate (AOT_GATED), never a bare
+# `->data.builtin(`. Population: every .c/.h under aot/ plus compile.eigs
+# (the C it emits), derived by find, except the dated provenance directories
+# aot/bench/*-20??????/ -- frozen records of a measurement against the pin
+# they name (their recipes hash these inputs), counted below, not rewritten.
+nr_files=0; nr_raw=0; nr_bad=0; nr_prov=0
+while IFS= read -r f; do
+    case "$f" in "$HERE"/bench/*-20[0-9][0-9][0-9][0-9][0-9][0-9]/*) nr_prov=$((nr_prov+1)); continue ;; esac
+    nr_files=$((nr_files+1))
+    nr_raw=$((nr_raw + $(grep -cE '(VAL|SLOT)_NUM_RAW' "$f")))
+    bad=$(grep -nE 'data\.num|(\.|->)d_?([^A-Za-z0-9_(]|$)|->data\.builtin[[:space:]]*\(' "$f")
+    if [ -n "$bad" ]; then
+        printf '%s\n' "$bad" | sed "s#^#core_check: raw number/builtin access in ${f#$HERE/}:#"
+        nr_bad=$((nr_bad + $(printf '%s\n' "$bad" | grep -c .)))
+    fi
+done < <(find "$HERE" -path "$HERE/build" -prune -o \( -name '*.c' -o -name '*.h' -o -name compile.eigs \) -type f -print | sort)
+if [ "$nr_files" -lt 3 ] || [ "$nr_raw" -eq 0 ]; then
+    echo "core_check: raw-read scan examined $nr_files file(s), $nr_raw macro read(s) -- expected aot_rt.h, compile.eigs and the test C at least; the scan is broken, not the tree"
+    fail_n=1
+fi
+[ "$nr_bad" -eq 0 ] || fail_n=1
+echo "core_check: raw-read scan: files=$nr_files macro_reads=$nr_raw violations=$nr_bad provenance_skipped=$nr_prov"
+
 if [ "$fail_n" = 0 ]; then
     echo "core_check: build.sh derives CORE from $EIGS_DIR ($n_core TUs = SOURCES $n_src - CLI_ONLY $n_cli), no literal list"
     exit 0
