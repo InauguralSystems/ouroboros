@@ -1,0 +1,66 @@
+# EigenScript#1637, round 3: a numeric LOCAL later assigned a bool through an
+# alias, a compiled call, an element read, and/or, an if/else, or after a hot
+# numeric loop. A local is numeric only when every assignment is (the seeded
+# inference); each of these must take the boxed slot and print the bool.
+define verdict(n) as:
+    return n > 3
+define ident(n) as:
+    return n
+define l_alias(q) as:
+    local v is q + 2
+    local t is v > 3
+    v is t
+    return v
+define l_call(q) as:
+    local v is q + 2
+    v is verdict of v
+    return v
+define l_elem(q) as:
+    local v is q + 2
+    local xs is [true, 1]
+    v is xs[0]
+    return v
+define l_dict(q) as:
+    local v is q * 2
+    local d is {"a": false}
+    v is d["a"]
+    return v
+define l_andor(q) as:
+    local v is q + 2
+    v is (v > 3) or 0
+    return v
+define l_ternary(q) as:
+    local v is q + 1
+    if q > 2:
+        v is verdict of v
+    else:
+        v is v * 2
+    return v
+define l_hot(q) as:
+    local acc is 0
+    for i in range of 40:
+        acc is acc + i + q
+    local t is acc > 3
+    acc is t
+    return acc
+define l_late(q) as:
+    local v is q + 1
+    v is ident of (v > 1)
+    return v
+define l_num_ok(q) as:
+    local v is q + 1
+    local w is v * 2
+    v is w
+    return v + 1
+print of (l_alias of 5)
+print of (l_call of 5)
+print of (l_call of 0)
+print of (l_elem of 5)
+print of (l_dict of 5)
+print of (l_andor of 5)
+print of (l_andor of -5)
+print of (l_ternary of 5)
+print of (l_ternary of 1)
+print of (l_hot of 1)
+print of (l_late of 3)
+print of (l_num_ok of 3)

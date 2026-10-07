@@ -1,0 +1,118 @@
+# EigenScript#1637, round 3: a parameter keeps a C double only when EVERY value
+# stored in it (each assignment, and its default) is proven numeric by the
+# local-type inference. Each function below has numeric use of the parameter
+# and then stores a bool through a flow the syntactic check could not see; the
+# VM stores the bool, so the AOT must box the parameter, not die at the store
+# ("non-numeric value in a numeric context") or refuse at build time.
+define verdict(n) as:
+    return n > 3
+define ident(n) as:
+    return n
+define pass_on(m) as:
+    return m
+
+# the critic's two reproducers, verbatim shapes
+define choose(p) as:
+    p is p + 2
+    local testbit is p > 3
+    p is testbit
+    return p
+define choose_call(p) as:
+    p is p + 2
+    p is verdict of p
+    return p
+
+# element reads (list, dict), and/or, an if/else "ternary"
+define p_elem(p) as:
+    p is p * 2
+    local xs is [p > 3, 1]
+    p is xs[0]
+    return p
+define p_dict(p) as:
+    p is p + 1
+    local d is {"k": p < 0}
+    p is d["k"]
+    return p
+define p_andor(p) as:
+    p is p + 1
+    p is (p > 100) or (p < 50)
+    return p
+define p_and_num(p) as:
+    p is p + 1
+    p is (p > 2) and 17
+    return p
+define p_ternary(p) as:
+    p is p + 1
+    if p > 3:
+        p is p > 4
+    else:
+        p is 0
+    return p
+
+# a hot numeric loop before the rebind
+define p_hot(p) as:
+    local total is 0
+    for i in range of 50:
+        total is total + p
+        p is p + 1
+    local flag is p > 10
+    p is flag
+    return [total, p]
+
+# a bool builtin, another (boxed) parameter, a computed default
+define p_builtin(p, s) as:
+    p is p + 1
+    p is contains of [s, "a"]
+    return p
+define p_other(p, q) as:
+    q is q + 1
+    p is p + 1
+    q is p > 3
+    p is q
+    return p
+define p_default(p is verdict of 5) as:
+    if p:
+        return p
+    return p + 1
+
+# a return that only goes Value* after call-site widening (`ident` is called
+# with a bool), and a callee reached through the late-boxed parameter
+define p_late(p) as:
+    p is p + 2
+    p is ident of (p > 3)
+    return pass_on of p
+define p_chain(a) as:
+    a is a + 1
+    a is p_late of a
+    return a
+
+# control: every store numeric, the parameter stays a C double
+define p_num_ok(p) as:
+    p is p + 1
+    local t is p * 2
+    p is t
+    return p + 1
+
+print of (choose of 5)
+print of (choose of 0)
+print of (choose_call of 5)
+print of (choose_call of 0)
+print of (p_elem of 5)
+print of (p_dict of 5)
+print of (p_andor of 5)
+print of (p_andor of 70)
+print of (p_and_num of 0)
+print of (p_and_num of 5)
+print of (p_ternary of 5)
+print of (p_ternary of 1)
+print of (p_hot of 2)
+print of (p_builtin of [1, "abc"])
+print of (p_builtin of [1, "xyz"])
+print of (p_other of [5, 1])
+print of (p_default of [])
+print of (p_default of 0)
+print of (p_late of 5)
+print of (p_chain of 1)
+print of (pass_on of 7)
+print of (p_num_ok of 3)
+print of [type of (choose of 5), type of (p_elem of 5), type of (p_and_num of 5)]

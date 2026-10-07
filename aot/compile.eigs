@@ -2126,12 +2126,19 @@ define collect_uses_scoped(node, acc) as:
     return 0
 
 define infer_numeric(stmts, bt) as:
+    return infer_numeric_excl of [stmts, bt, {}]
+
+# ...with the names in `excl` held non-numeric (module names a function's
+# outward write proves are not numbers, module_outward_demote).
+define infer_numeric_excl(stmts, bt, excl) as:
     local assigns is collect_assigns of [stmts, {}]
     local names is keys of assigns
     local nm is {}
     for i in range of (len of names):
         nm[names[i]] is 1
         if (module_public of names[i]) == 1:
+            nm[names[i]] is 0
+        if excl[names[i]] == 1:
             nm[names[i]] is 0
     local changed is 1
     loop while changed == 1:
@@ -6909,6 +6916,8 @@ define return_node_is_num(rnode, rba, fbt, fgen, fdict, ftt, seen) as:
 
 g_cur_params_rt is {}
 g_mod_num_names is {}
+# module buffers as known before the ptypes build (param_rebind_nm's seed)
+G_MOD_BT0 is [{}]
 g_mod_assigned is {}
 g_mod_rba is {}
 # (round 173) module names some FUNCTION rebinds with a bare `is` (outward
@@ -7829,7 +7838,190 @@ define param_default_nonnum(fn, p) as:
 define param_unpinnable(fn, p) as:
     if (param_default_nonnum of [fn, p]) == 1:
         return 1
-    return param_assigned_nonnum of [fn[3], (fn[2])[p]]
+    if (param_assigned_nonnum of [fn[3], (fn[2])[p]]) == 1:
+        return 1
+    # (#1637, round 3) the same proof param_proof_pass applies, so the pin
+    # cannot put back a parameter whose stores are not proven numeric.
+    local _upt is null
+    if g_funcs[fn[1]] != null:
+        _upt is (g_funcs[fn[1]])["ptypes"]
+    if _upt == null:
+        return 0
+    local _unm is param_rebind_nm of [fn, _upt]
+    if _unm == null:
+        return 0
+    return param_rebind_unproven of [fn, _unm, p]
+
+# (#1637, round 3) The numeric map of a function's body under its CURRENT
+# parameter classes `pt`, from the same inference emit_function runs for its
+# locals (infer_numeric_seeded over is_num_expr: a name is numeric iff every
+# assignment is). Each parameter's default is one more assignment (it is
+# evaluated into the parameter's slot when the caller omits it). Seed: the
+# numeric parameters and the module names with positive numeric evidence
+# (g_mod_num_names), minus every name a non-numeric parameter shadows.
+# Returns null when no parameter is stored to (nothing to prove).
+define param_rebind_nm(fn, pt) as:
+    local params is fn[2]
+    local dfs is fn_defaults of fn
+    local any is 0
+    if dfs != null:
+        for d in range of (len of dfs):
+            if dfs[d] != null:
+                any is 1
+    local rba is collect_assigns of [fn[3], {}]
+    for q in range of (len of params):
+        if rba[(params[q])] != null:
+            any is 1
+    if any == 0:
+        return null
+    return (fn_body_nm of [fn, pt, g_mod_num_names, G_MOD_BT0[0]])[0]
+
+# The numeric map (and buffer map) of a function body as emit_function will
+# classify it: module names numeric in `mnm` and buffers in `mbt` seed it
+# unless a parameter or a body assignment shadows them; parameters seed by
+# their class in `pt`; each default is one more assignment to its parameter.
+# Returns [nm, bt]. The is_num_expr context globals are this function's while
+# it runs, and restored after.
+define fn_body_nm(fn, pt, mnm, mbt) as:
+    local params is fn[2]
+    local body is fn[3]
+    local dfs is fn_defaults of fn
+    local stmts is []
+    if dfs != null:
+        for d in range of (len of dfs):
+            if (d < (len of params)) and (dfs[d] != null):
+                append of [stmts, ["assign", params[d], (unwrap of dfs[d])]]
+    for b in range of (len of body):
+        append of [stmts, body[b]]
+    local bt is {}
+    local mbk is keys of mbt
+    for m in range of (len of mbk):
+        if mbt[(mbk[m])] == 1:
+            bt[(mbk[m])] is 1
+    local ba is collect_assigns of [body, {}]
+    local bak is keys of ba
+    for m in range of (len of bak):
+        bt[(bak[m])] is 0
+    local lb is infer_buffers of body
+    local lbk is keys of lb
+    for m in range of (len of lbk):
+        if lb[(lbk[m])] == 1:
+            bt[(lbk[m])] is 1
+    local seed is {}
+    local mk is keys of mnm
+    for m in range of (len of mk):
+        if mnm[(mk[m])] == 1:
+            seed[(mk[m])] is 1
+    for q in range of (len of params):
+        bt[(params[q])] is 0
+        seed[(params[q])] is 0
+        if q < (len of pt):
+            if (pt[q]) == "num":
+                seed[(params[q])] is 1
+            if (pt[q]) == "buf":
+                bt[(params[q])] is 1
+    local _sfm is g_cur_fmap
+    local _scp is g_cur_params
+    local _stb is g_tensor_buf
+    g_cur_fmap is fmap_for_fn of fn
+    g_cur_params is {}
+    for q in range of (len of params):
+        g_cur_params[(params[q])] is 1
+    g_tensor_buf is {}
+    local nm is infer_numeric_seeded of [stmts, bt, seed]
+    g_cur_fmap is _sfm
+    g_cur_params is _scp
+    g_tensor_buf is _stb
+    return [nm, bt]
+
+# (#1637, round 3) the module half of the same proof. infer_numeric sees the
+# MODULE statements only, and the round-133 pass below it demotes a module
+# name for a function's outward write of a boxed parameter, a function or a
+# builtin name -- syntax again: `value is n > 0`, `m is t` (t a bool local),
+# `m is verdict of x`, `m is xs[0]` and `m is a and b` inside a function left
+# the name a C double, and the write was refused at build time ("is a C
+# number ... rebinds it to a bool") where the VM stores the bool. A module
+# name stays numeric only when every outward write is proven numeric by the
+# writing function's own map (fn_body_nm); a demotion re-runs the module
+# inference, since module statements may read the demoted name.
+define module_outward_demote(funcs, rest, bt, nm) as:
+    local excl is {}
+    local changed is 1
+    loop while changed == 1:
+        changed is 0
+        for k in range of (len of funcs):
+            local fn is funcs[k]
+            local fa is {}
+            collect_free_assign_rhs of [fn, {}, fa]
+            local fak is keys of fa
+            local hit is 0
+            for v in range of (len of fak):
+                if nm[(fak[v])] == 1:
+                    hit is 1
+            if hit == 1:
+                local fm is fn_body_nm of [fn, (g_funcs[fn[1]])["ptypes"], nm, bt]
+                local _scp is g_cur_params
+                local _sfm is g_cur_fmap
+                g_cur_fmap is fmap_for_fn of fn
+                g_cur_params is {}
+                for q in range of (len of fn[2]):
+                    g_cur_params[((fn[2])[q])] is 1
+                for v in range of (len of fak):
+                    local name is fak[v]
+                    if nm[name] == 1:
+                        local rhss is fa[name]
+                        for j in range of (len of rhss):
+                            if (is_num_expr of [(unwrap of rhss[j]), fm[0], fm[1]]) == 0:
+                                excl[name] is 1
+                                changed is 1
+                g_cur_params is _scp
+                g_cur_fmap is _sfm
+        if changed == 1:
+            nm is infer_numeric_excl of [rest, bt, excl]
+    return nm
+
+# (#1637, round 3) A parameter keeps "num" only when EVERY value stored in
+# it -- each body assignment and its default -- is PROVEN numeric. The
+# syntactic arms (param_assigned_nonnum, param_default_nonnum) see `p is p >
+# 3` but not `local t is p > 3 / p is t`, `p is verdict of p` (a compiled
+# callee returning a bool), an element read or an and/or operand: those
+# stored a bool through the C double's checked unbox and died "non-numeric
+# value in a numeric context" where the VM returns the bool. Run where the
+# return types settle (a callee's return is part of the proof); boxes every
+# unproven "num" parameter and returns how many it boxed.
+define param_proof_pass(funcs) as:
+    local n is 0
+    for k in range of (len of funcs):
+        local fn is funcs[k]
+        local pt is (g_funcs[fn[1]])["ptypes"]
+        local nm is param_rebind_nm of [fn, pt]
+        if nm != null:
+            for p in range of (len of pt):
+                if ((pt[p]) == "num") and ((param_rebind_unproven of [fn, nm, p]) == 1):
+                    pt[p] is "gen"
+                    n is n + 1
+    return n
+
+define param_rebind_unproven(fn, nm, p) as:
+    local name is (fn[2])[p]
+    local dfs is fn_defaults of fn
+    local stored is 0
+    if dfs != null:
+        if p < (len of dfs):
+            if dfs[p] != null:
+                stored is 1
+    if stored == 0:
+        if (param_assigned_in of [fn[3], name]) == 0:
+            return 0
+    if nm[name] == 1:
+        return 0
+    return 1
+
+define param_assigned_in(body, name) as:
+    local rba is collect_assigns of [body, {}]
+    if rba[name] != null:
+        return 1
+    return 0
 
 define param_assigned_nonnum(node, name) as:
     if (type of node) != "list":
@@ -12351,6 +12543,7 @@ define emit_program(ast) as:
             append of [_fdst, _fsrc[_fj]]
     g_mod_rba is _mrba
     local _mbt is infer_buffers of rest
+    G_MOD_BT0[0] is _mbt
     local _mnames is keys of _mrba
     G_RNN_MEMO[0] is {}
     for mi in range of (len of _mnames):
@@ -12726,6 +12919,18 @@ define emit_program(ast) as:
                 rchanged is 1
                 rentry["ret"] is newret
             rentry["retbuf"] is func_ret_buf of [rfn, rbt]
+        # (#1637, round 3) the parameter proof runs here, where returns
+        # settle last (the loop above reads the build-time ffgen maps; this
+        # one rebuilds them from the widened ptypes, so `relay`'s Value*
+        # return is first seen here). A changed return or a boxed parameter is an
+        # argument its callees were never widened for (`x is relay of flag /
+        # package of x`, `pass_on of p`): VM [true], AOT "non-numeric value in
+        # a numeric context". The widening runs again on the settled classes.
+        if (param_proof_pass of funcs) > 0:
+            rchanged is 1
+        if rchanged == 1:
+            G_LGM_CACHE[0] is {}
+            widen_ptypes of [funcs, rest]
         if rchanged == 0:
             rr is 6
         rr is rr + 1
@@ -12765,6 +12970,20 @@ define emit_program(ast) as:
                                 _boxed is 1
                             if _boxed == 1:
                                 nm[_dv] is 0
+    nm is module_outward_demote of [funcs, rest, bt, nm]
+    # The parameter proof ran on the early module seed (g_mod_num_names,
+    # G_MOD_BT0); re-check every numeric parameter's stores against the
+    # FINAL module maps emit_function will seed from. A disagreement would
+    # store a non-number through a C double at run time: refuse it loudly.
+    # (Not reached by any fixture or by DMG: it guards the seed assumption.)
+    for k in range of (len of funcs):
+        local _cfn is funcs[k]
+        local _cpt is (g_funcs[_cfn[1]])["ptypes"]
+        local _cfm is (fn_body_nm of [_cfn, _cpt, nm, bt])[0]
+        for p in range of (len of _cpt):
+            if (_cpt[p]) == "num":
+                if (param_rebind_unproven of [_cfn, _cfm, p]) == 1:
+                    throw of ("AOT internal: parameter '" + ((_cfn[2])[p]) + "' of " + (_cfn[1]) + " is a C double, but a value stored in it is not proven numeric on the final module maps (EigenScript#1637); the store would die where the VM keeps the value")
     # Emit functions with EMPTY value-bounds (params/globals unbounded -> maps
     # inside them stay guarded, sound). Definitions are emitted FIRST (into a
     # buffer): emit_function computes the real signature — its int inference
