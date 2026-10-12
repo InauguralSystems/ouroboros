@@ -1,0 +1,13 @@
+# ouroboros#192, the divide half of t246 (split at the EigenScript v0.46.0
+# bump, which removed `clear_math_flags`; the flags are sticky, so each half
+# needs a fresh process). Controls first: a zero dividend and an exact
+# quotient must NOT flag; then a quotient of two nonzero operands that is
+# exactly zero must set EIGS_MATH_UNDERFLOW, on the VM and in the AOT.
+define uf() as:
+    return (math_flags of null)["underflow"]
+z is 0.0 / 5.0
+print of [z, uf of null]
+q is 6.0 / 3.0
+print of [q, uf of null]
+b is 1e-300 / 1e300
+print of [b, uf of null]

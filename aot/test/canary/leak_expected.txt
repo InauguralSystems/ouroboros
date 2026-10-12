@@ -1,12 +1,17 @@
 # leak tier allowances (ouroboros#136): <fixture> <max LSan allocations>
 # the measured shutdown floor per fixture; lower a row when the tier reports
 # a count below it, never raise one without naming the leak it admits.
-# Each row additionally admits nine named startup builtin Values introduced
-# after the published pin: see leak_startup_admission.md. This is an explicit
-# admission, not a measured historical pin-to-current floor delta or a fix.
-l1_boxed_local_reassign 262
-l2_boxed_slot_numeric_read 261
-l3_genp_rebind 264
-l4_genp_for_binder 264
-l5_owned_arg_temp 262
-l6_bool_values 262
+# Rows re-measured at the EigenScript v0.46.0 pin: v0.46.0 removed 36 unused
+# builtins and the arena builtins, so every fixture's floor fell by 36 to
+# 40 allocations (l1 262 -> 225, l2 261 -> 225, l3 264 -> 224, l4 264 -> 225,
+# l5 262 -> 224, l6 262 -> 225; measured twice on the dev box, identical). The nine-builtin admission in leak_startup_admission.md
+# applied to the v0.45.x rows and is superseded by these measurements (five of
+# its nine builtins no longer exist). l7/l8 were added at the same bump.
+l1_boxed_local_reassign 225
+l2_boxed_slot_numeric_read 225
+l3_genp_rebind 224
+l4_genp_for_binder 225
+l5_owned_arg_temp 224
+l6_bool_values 225
+l7_borrowed_numeric_slot_args 225
+l8_fresh_numeric_slot_reads 231

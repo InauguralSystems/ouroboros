@@ -2,8 +2,9 @@
 #
 # THE POINT OF THIS FIXTURE is that the AOT stopped heap-allocating the
 # argument vector for this call. builtin_dispatch reads items[0..2] and hands
-# the handler items[2] alone, so the AOT now passes a STACK vector carrying
-# the runtime's arena=1 "not refcount-managed" flag. That is an ownership
+# the handler items[2] alone, so the AOT now passes a STACK vector of
+# borrowed slots (it carried the arena=1 flag until EigenScript v0.46.0
+# removed the arena; the key is an immediate slot since #1665). That is an ownership
 # change on a hot path, and before this fixture existed NO AOT test called
 # `dispatch` at all — the whole path was outside the differential.
 #

@@ -2880,7 +2880,7 @@ define emit_num(node, nm, bt, raw) as:
                         local edc is (edarg[1])[2]
                         if ((is_num_expr of [edk, nm, bt]) == 1) and ((has_call_node of edk) == 0) and ((has_call_node of edc) == 0):
                             local edtb is borrowable_cvar of [(edarg[1])[0], nm, bt]
-                            local edcb is borrowable_cvar of [edc, nm, bt]
+                            local edcb is borrowable_cvar_v of [edc, nm, bt]
                             if (edtb != "") and (edcb != ""):
                                 return "aot_dispatch_sh_num_b_" + (cn of edt[1]) + "(" + edtb + ", " + (emit_num of [edk, nm, bt, 0]) + ", " + edcb + ", \"" + (c_escape of (G_CUR_FN[0])) + ": dispatch\")"
                         # (round 169) unboxed shadow dispatch: the three
@@ -3550,6 +3550,8 @@ CMPN_R is {"==": "aot_eq_n", "!=": "aot_ne_n", "<": "aot_lt_n", ">": "aot_gt_n",
 CMPN_L is {"==": "aot_eq_nl", "!=": "aot_ne_nl", "<": "aot_lt_nl", ">": "aot_gt_nl", "<=": "aot_le_nl", ">=": "aot_ge_nl"}
 CMPNB_R is {"==": "aot_eq_nb_t", "!=": "aot_ne_nb_t", "<": "aot_lt_nb_t", ">": "aot_gt_nb_t", "<=": "aot_le_nb_t", ">=": "aot_ge_nb_t"}
 CMPNB_L is {"==": "aot_eq_nlb_t", "!=": "aot_ne_nlb_t", "<": "aot_lt_nlb_t", ">": "aot_gt_nlb_t", "<=": "aot_le_nlb_t", ">=": "aot_ge_nlb_t"}
+CMPNBS_R is {"==": "aot_eq_nbs_t", "!=": "aot_ne_nbs_t", "<": "aot_lt_nbs_t", ">": "aot_gt_nbs_t", "<=": "aot_le_nbs_t", ">=": "aot_ge_nbs_t"}
+CMPNBS_L is {"==": "aot_eq_nlbs_t", "!=": "aot_ne_nlbs_t", "<": "aot_lt_nlbs_t", ">": "aot_gt_nlbs_t", "<=": "aot_le_nlbs_t", ">=": "aot_ge_nlbs_t"}
 
 # `<cvar>.field` where <cvar> is a C Value* name (a dict/buffer/generic local
 # or parameter, never a temporary) -> a BORROWED read: no ref is taken on the
@@ -3575,7 +3577,13 @@ define borrowable_cvar(node, nm, bt) as:
             local ib is unwrap of n[2]
             local bb is borrowable_cvar of [n[1], nm, bt]
             if bb != "":
-                return "aot_index_borrow_ib(" + bb + ", " + (str of ib[1]) + ")"
+                # (#1665 arm D) a BASE-position borrow: what this returns is
+                # only ever the target of an index or field operation, and
+                # every such operation on a number raises naming its type,
+                # so a numeric element reads as a numeric facade
+                # (aot_slot_base). A VALUE position (a compare operand, a
+                # call argument, a dispatch context) uses borrowable_cvar_v.
+                return "aot_index_borrow_base_ib(" + bb + ", " + (str of ib[1]) + ")"
         return ""
     if n[0] != "ident":
         return ""
@@ -3599,6 +3607,21 @@ define borrowable_cvar(node, nm, bt) as:
         return env_readb of n[1]
     return ""
 
+# (#1665 arm D) borrowable_cvar for a VALUE position: the borrowed pointer may
+# be read as a value or handed to a callee, which may keep it, so a numeric
+# element is a real box in the statement's temporary pool (the statement
+# drains). Same applicability as borrowable_cvar.
+define borrowable_cvar_v(node, nm, bt) as:
+    local n is unwrap of node
+    if n[0] == "index":
+        if (borrowable_cvar of [node, nm, bt]) == "":
+            return ""
+        local ib is unwrap of n[2]
+        g_stmt_tmp_used is 1
+        return "aot_index_borrow_ib(" + (borrowable_cvar of [n[1], nm, bt]) + ", " + (str of ib[1]) + ")"
+    return borrowable_cvar of [node, nm, bt]
+
+# A borrowed field read in a VALUE position (see borrowable_cvar_v).
 define emit_borrow_dot(node, nm, bt) as:
     local n is unwrap of node
     if n[0] != "dot":
@@ -3607,7 +3630,35 @@ define emit_borrow_dot(node, nm, bt) as:
     if cv == "":
         return ""
     local ic is ic_new of n[2]
+    # (#1665 arm D) a numeric field has no Value to lend: the helper boxes it
+    # into the statement's temporary pool, so the statement must drain.
+    g_stmt_tmp_used is 1
     return "({ " + ic[0] + "aot_dot_borrow_ic(" + cv + ", \"" + (c_escape of n[2]) + "\", " + ic[1] + "); })"
+
+# (#1665 arm D) a borrowed field read in a BASE position (see borrowable_cvar):
+# a numeric field reads as a numeric facade, never boxed.
+define emit_borrow_dot_base(node, nm, bt) as:
+    local n is unwrap of node
+    if n[0] != "dot":
+        return ""
+    local cv is borrowable_cvar of [n[1], nm, bt]
+    if cv == "":
+        return ""
+    local ic is ic_new of n[2]
+    return "({ " + ic[0] + "aot_dot_borrow_base_ic(" + cv + ", \"" + (c_escape of n[2]) + "\", " + ic[1] + "); })"
+
+# (#1665 arm D) the borrowed field read as a dict-value SLOT, for the borrowed
+# numeric compares (CMPNBS_*): a numeric field compares as a C double with no
+# box. Same applicability as emit_borrow_dot; "" when it does not apply.
+define emit_borrow_dot_slot(node, nm, bt) as:
+    local n is unwrap of node
+    if n[0] != "dot":
+        return ""
+    local cv is borrowable_cvar of [n[1], nm, bt]
+    if cv == "":
+        return ""
+    local ic is ic_new of n[2]
+    return "({ " + ic[0] + "aot_dot_borrow_slot_ic(" + cv + ", \"" + (c_escape of n[2]) + "\", " + ic[1] + "); })"
 define emit_cmp_n(node, nm, bt, want_bool) as:
     local n is unwrap of node
     if n[0] != "binop":
@@ -3632,11 +3683,25 @@ define emit_cmp_n(node, nm, bt, want_bool) as:
     if want_bool == 1:
         # condition position: if the boxed side is a field of a C variable,
         # borrow it and do no refcount work at all.
+        # (#1665 arm D) a field read borrows its SLOT: a numeric field is an
+        # immediate and compares with no box (emit_val_borrow's dot arm is
+        # emit_borrow_dot, so this is the same applicability).
+        local bslot is ""
+        if rnum == 1:
+            if (expr_has_call of n[3]) == 0:
+                bslot is emit_borrow_dot_slot of [n[2], nm, bt]
+        else:
+            if (expr_has_call of n[2]) == 0:
+                bslot is emit_borrow_dot_slot of [n[3], nm, bt]
+        if bslot != "":
+            if rnum == 1:
+                return CMPNBS_R[n[1]] + "(" + bslot + ", " + num + ")"
+            return CMPNBS_L[n[1]] + "(" + bslot + ", " + num + ")"
         local bexpr is ""
         if rnum == 1:
-            bexpr is emit_val_borrow of [n[2], nm, bt, n[3]]
+            bexpr is emit_val_borrow_v of [n[2], nm, bt, n[3]]
         else:
-            bexpr is emit_val_borrow of [n[3], nm, bt, n[2]]
+            bexpr is emit_val_borrow_v of [n[3], nm, bt, n[2]]
         if bexpr != "":
             local bfn is ""
             if rnum == 1:
@@ -3683,10 +3748,20 @@ define expr_has_call(node) as:
 # A BORROWED C expression for `node`, or "" when it cannot be borrowed: a plain
 # C Value* variable, or a field of one. `sibling` is the expression evaluated
 # alongside it; if that can call, the borrow is refused.
+# (#1665 arm D) this is the BASE-position form (the target of an index read or
+# store); emit_val_borrow_v is the VALUE-position form.
 define emit_val_borrow(node, nm, bt, sibling) as:
     if (expr_has_call of sibling) == 1:
         return ""
     local cv is borrowable_cvar of [node, nm, bt]
+    if cv != "":
+        return cv
+    return emit_borrow_dot_base of [node, nm, bt]
+
+define emit_val_borrow_v(node, nm, bt, sibling) as:
+    if (expr_has_call of sibling) == 1:
+        return ""
+    local cv is borrowable_cvar_v of [node, nm, bt]
     if cv != "":
         return cv
     return emit_borrow_dot of [node, nm, bt]
@@ -12480,7 +12555,7 @@ define elem_class_of(node, fmap) as:
 # a BORROWED emission for an argument, or "" when it must be owned: a C
 # variable, a dot read of a borrowable base, or `c[k]` on a proven list.
 define emit_borrow_arg(node, nm, bt, siblings) as:
-    local bw is emit_val_borrow of [node, nm, bt, siblings]
+    local bw is emit_val_borrow_v of [node, nm, bt, siblings]
     if bw != "":
         return bw
     local n is unwrap of node
@@ -12491,6 +12566,9 @@ define emit_borrow_arg(node, nm, bt, siblings) as:
             local i is unwrap of n[2]
             local bb is borrowable_cvar of [n[1], nm, bt]
             if bb != "":
+                # (#1665 arm D) see borrowable_cvar: a numeric element boxes
+                # into the statement's temporary pool.
+                g_stmt_tmp_used is 1
                 return "aot_index_borrow_ib(" + bb + ", " + (str of i[1]) + ")"
     return ""
 
@@ -13676,7 +13754,7 @@ define emit_program(ast) as:
                     throw of ("AOT: function '" + wn + "' used as a value takes a tensor parameter, which has no boxed calling convention")
                 local wexpr is ""
                 if (wpt[wk]) == "num":
-                    wexpr is "aot_num_ck_bat(aot_arg_at(__a, " + (str of wk) + "), \"" + (c_escape of (module_fn_name of wn)) + " parameter " + (str of wk) + "\")"
+                    wexpr is "aot_arg_num_at(__a, " + (str of wk) + ", \"" + (c_escape of (module_fn_name of wn)) + " parameter " + (str of wk) + "\")"
                 else:
                     wexpr is "aot_arg_at(__a, " + (str of wk) + ")"
                 if (whas == 1) and (wdefs[wk] != null):
@@ -13697,12 +13775,17 @@ define emit_program(ast) as:
             # line (t370 rows cbsort*, r7 removed it and they went red).
             local wcallm is (cn of wn) + "(" + wmulti + ")"
             wprotos is wprotos + "static Value* __wrap_" + (cn of wn) + "(Value* __a);\n"
+            # (#1665 arm D) aot_arg_at boxes a numeric element into the
+            # temporary pool (a list slot has no Value to lend), so the call
+            # is bracketed by a mark and a drain back to it. The callee keeps
+            # what it keeps with its own reference.
+            local wpre is "static Value* __wrap_" + (cn of wn) + "(Value* __a) { const int __aot_ln = g_trace_current_line; int __wtm = aot_tmp_mark(); "
             if (wi["ret"]) == "double":
-                wraps is wraps + "static Value* __wrap_" + (cn of wn) + "(Value* __a) { const int __aot_ln = g_trace_current_line; return make_num(" + wcallm + "); }\n"
+                wraps is wraps + wpre + "double __wr = " + wcallm + "; aot_tmp_drain_to(__wtm); return make_num(__wr); }\n"
             elif (wi["ret"]) == "Value*":
-                wraps is wraps + "static Value* __wrap_" + (cn of wn) + "(Value* __a) { const int __aot_ln = g_trace_current_line; return " + wcallm + "; }\n"
+                wraps is wraps + wpre + "Value* __wr = " + wcallm + "; aot_tmp_drain_to(__wtm); return __wr; }\n"
             else:
-                wraps is wraps + "static Value* __wrap_" + (cn of wn) + "(Value* __a) { const int __aot_ln = g_trace_current_line; " + wcallm + "; return make_null(); }\n"
+                wraps is wraps + wpre + wcallm + "; aot_tmp_drain_to(__wtm); return make_null(); }\n"
             continue
         local warg is "__a"
         if (wpt[0]) == "num":

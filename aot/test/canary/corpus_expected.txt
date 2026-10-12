@@ -10,7 +10,6 @@ test_closure_mutation.eigs REFUSE
 test_closures.eigs REFUSE
 test_concurrent.eigs DIVERGE
 test_control_flow_interactions.eigs REFUSE
-test_coverage_gaps.eigs REFUSE
 test_coverage_v2.eigs REFUSE
 test_default_params.eigs REFUSE
 test_desc_unrecorded_read.eigs DIVERGE
@@ -47,7 +46,6 @@ test_observer_interactions.eigs REFUSE
 test_observer_saturation.eigs REFUSE
 test_optimize.eigs REFUSE
 test_pipe_lambda.eigs REFUSE
-test_predicate_matrix.eigs REFUSE
 test_scope_semantics.eigs REFUSE
 test_simulation.eigs REFUSE
 test_soft_keyword_idents.eigs REFUSE

@@ -1,0 +1,89 @@
+# (#1665 arm D, EigenScript v0.46.0) borrowed reads of container SLOTS. A
+# number in a list or dict is an immediate with no Value to lend, so the AOT
+# reads a borrowed field of a C-variable dict three ways: as a slot in a
+# numeric compare (aot_*_nbs_t), as a numeric facade in a base position (the
+# target of an index or field op, which can only raise on a number), and as a
+# pooled box in a value position (a call argument). Each arm gets every slot
+# kind it can meet: number, string, null, bool, missing key, both operand
+# orders, plus in-place numeric stores over number and non-number slots.
+define cmp_all(d) as:
+    local out is []
+    if d.n > 2:
+        append of [out, "n>2"]
+    if 2 < d.n:
+        append of [out, "2<n"]
+    if d.n == 3:
+        append of [out, "n==3"]
+    if 3 != d.n:
+        append of [out, "3!=n"]
+    if d.z == 1:
+        append of [out, "z==1"]
+    if d.z != 1:
+        append of [out, "z!=1"]
+    if d.s == 1:
+        append of [out, "s==1"]
+    if 1 != d.s:
+        append of [out, "1!=s"]
+    if d.m > 2:
+        append of [out, "m>2"]
+    if 2 < d.m:
+        append of [out, "2<m"]
+    if 9 <= d.m:
+        append of [out, "9<=m"]
+    if d.m >= 5:
+        append of [out, "m>=5"]
+    if 5 == d.m:
+        append of [out, "5==m"]
+    if 1 != d.z:
+        append of [out, "1!=z"]
+    if d.missing == 0:
+        append of [out, "missing==0"]
+    return out
+define cmp_bool(d) as:
+    try:
+        if d.b == 1:
+            return "b==1"
+        return "no"
+    catch e:
+        return e.message
+define cmp_str(d) as:
+    try:
+        if d.s < 1:
+            return "s<1"
+        return "no"
+    catch e:
+        return e.message
+define keep(v) as:
+    local w is [v]
+    return w[0]
+define base_num(d) as:
+    try:
+        return d.n[0]
+    catch e:
+        return e.message
+define base_field(d) as:
+    try:
+        return d.n.k
+    catch e:
+        return e.message
+define stores(d, xs) as:
+    d.n is d.n + 1
+    d.s is 7
+    xs[0] is xs[0] + 1
+    xs[1] is 9
+    return [d, xs]
+define pair(a, b) as:
+    return [b, a]
+define run(d, xs) as:
+    d.m is 5
+    print of (cmp_all of d)
+    print of (cmp_bool of d)
+    print of (cmp_str of d)
+    print of [(keep of d.n), (keep of d.s), (keep of d.z), (keep of d.b)]
+    print of (base_num of d)
+    print of (base_field of d)
+    print of (stores of [d, xs])
+    local f is pair
+    print of (f of [d.n, d.s])
+    print of (f of [1.5, xs[1]])
+run of [{"n": 3, "s": "str", "z": null, "b": true, "m": "s"}, [41, "x", 2]]
