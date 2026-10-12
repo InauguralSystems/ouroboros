@@ -1,0 +1,30 @@
+# leak tier fixture (#1665 arm D, EigenScript v0.46.0): a NUMERIC container
+# slot read BORROWED for a compiled callee's boxed parameter. List items and
+# dict values are now NaN-boxed slots, so a number in one has no Value to
+# lend: aot_dot_borrow_ic (a field of a C-variable dict passed as an argument)
+# and aot_arg_at (an element of a value wrapper's argument list) box it into
+# the statement temporary pool, released when the statement (or the
+# wrapper's call) drains. Before the slot change both lent the container's
+# own box. The box is a FRESH allocation per call, so an unreleased one is a
+# per-iteration leak the ASan lane counts.
+define keep(v) as:
+    local w is [v]
+    return w[0]
+define pair(a, b) as:
+    return [a, b]
+define run(d, ctx, n) as:
+    local f is pair
+    local total is 0
+    local i is 0
+    loop while i < n:
+        d.x is i
+        local r is keep of d.x
+        total is total + r
+        ctx[0] is i
+        local q is keep of ctx[0]
+        total is total + q
+        local p is f of [i, i + 1]
+        total is total + p[1]
+        i is i + 1
+    return total
+print of (run of [{"x": 0, "s": "a"}, [{"y": 1}, 0], 3000])

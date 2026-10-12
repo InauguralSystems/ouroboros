@@ -1,0 +1,41 @@
+# (round 107) an indexed store into a HEAP list must leave the slot owning
+# what was stored. Originally an arena fixture: the VM (#873) heap-forced an
+# arena value at OP_INDEX_SET and the AOT's three list-store helpers adopted
+# the arena pointer as-is (silent wrong value AND type after arena_reset, rc
+# 0). EigenScript v0.46.0 removed the bump arena (#1665): arena_mark /
+# arena_reset no longer exist, so the arena calls are gone and the fixture
+# now pins the same store shapes against slot storage (#1665 arm D), where a
+# stored number becomes an immediate and a stored list is adopted as a heap
+# slot. `stomp` still churns fresh allocations after the stores, so a slot
+# left pointing at a released value reads the churn.
+# Varied: scalar vs list value, literal vs computed vs boxed index (the
+# three helpers), module vs function scope. Controls: dict store and append.
+define stomp() as:
+    local j1 is [8, 8, 8, 8, 8, 8, 8, 8]
+    local j2 is [8, 8, 8, 8, 8, 8, 8, 8]
+    local j3 is [8, 8, 8, 8, 8, 8, 8, 8]
+
+define fill(ys, k) as:
+    ys[k] is k * 100
+    ys[k + 1] is [k, k]
+    stomp of null
+    return ys
+
+xs is [1, 2, 3, 4, 5, 6]
+ks is [3, "k"]
+d is {"a": 0}
+xs[0] is 42
+xs[1] is [9, 9]
+xs[ks[0]] is 7
+d["a"] is 11
+append of [xs, 55]
+stomp of null
+print of xs
+print of (type of xs[0])
+print of (type of xs[1])
+print of (type of xs[3])
+print of d
+zs is fill of [[0, 0, 0, 0], 1]
+print of zs
+print of (type of zs[1])
+print of (type of zs[2])

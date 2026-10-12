@@ -1,0 +1,32 @@
+# leak tier fixture (#1665 arm D, EigenScript v0.46.0): OWNED reads of
+# numeric container slots into boxed locals. A number in a list or dict is
+# now an immediate, so every owned read of one (aot_index_get_ib's fast path,
+# aot_index_get's dict arm, aot_dot_get_tb_ic, aot_iter_get, a slice copy)
+# allocates a FRESH box where it used to incref the element's shared box; an
+# unreleased read is now a per-iteration leak rather than a refcount that
+# only grew. `d.k` starts as a string so its field class is not numeric and
+# the read stays boxed. (A C-double local passed to a boxed parameter --
+# `sink of b` with b numeric -- leaks one box per call on v0.45.1 and
+# v0.46.0 alike; it is a separate pre-existing defect and is kept out of
+# this fixture.)
+define sink(v) as:
+    local w is [v]
+    return len of w
+define run(lst, d, n) as:
+    local total is 0
+    local i is 0
+    loop while i < n:
+        lst[1] is i
+        d.k is i
+        local a is lst[1]
+        local b is d.k
+        local c is d["k"]
+        local e is (str of lst[1])
+        total is total + (sink of a) + (sink of b) + (sink of c) + (len of e)
+        for x in lst:
+            total is total + (sink of x)
+        local sl is lst[0:2]
+        total is total + (len of sl)
+        i is i + 1
+    return total
+print of (run of [["s", 0, "t"], {"k": "s", "z": "q"}, 3000])

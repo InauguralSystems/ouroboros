@@ -5,20 +5,17 @@
 # math_flags. Controls: a real zero factor and exact cancellation must NOT
 # flag; overflow still flags. (A product inside a FUNCTION does not set
 # the flag on the pinned VM at all -- filed upstream; not pinned here.)
+# EigenScript v0.46.0 removed `clear_math_flags`, and the flags are sticky,
+# so the controls now run FIRST (each must leave the flag clear) and the
+# multiply that must set it runs last; the divide half moved to
+# t410_math_underflow_div.eigs, which needs its own clear process.
 define uf() as:
     return (math_flags of null)["underflow"]
-clear_math_flags of null
-a is 1e-300 * 1e-300
-print of [a, uf of null]
-clear_math_flags of null
-b is 1e-300 / 1e300
-print of [b, uf of null]
-clear_math_flags of null
 c is 3.0 * 0.0
 print of [c, uf of null]
-clear_math_flags of null
 d is 5.0 - 5.0
 print of [d, uf of null]
-clear_math_flags of null
+a is 1e-300 * 1e-300
+print of [a, uf of null]
 e is 1e300 * 1e300
 print of [(math_flags of null)["overflow"], uf of null]

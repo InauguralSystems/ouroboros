@@ -38,7 +38,7 @@ static void check_aliases(void) {
         index_i(&parent, parent, 0);
         Value *result = slot_as_ptr(parent);
         assert(result->type == VAL_LIST && result->data.list.count == 1);
-        assert(strcmp(result->data.list.items[0]->data.str, "retained") == 0);
+        assert(strcmp(list_get_ref(result, 0)->data.str, "retained") == 0);
 
         EigsSlot index = slot_from_heap(make_num(0));
         /* Destination aliases a heap-number index, then contains a pointer. */
@@ -61,14 +61,16 @@ static void check_aliases(void) {
 }
 
 static void check_number_boundaries(void) {
-    EigsSlot numbers = one_item(make_num(0));
-    /* Raw runtime storage: the old list-read + slot_from_value does not
-     * guard a heap element. An added guard would change both value and flags. */
-    aot_num_put(slot_as_ptr(numbers)->data.list.items[0], INFINITY);
+    /* (#1665 arm D, EigenScript v0.46.0) A list element is a slot, and every
+     * stored number is num_guard'ed on the way in (container.h), so the old
+     * unguarded heap-number element (an INFINITY written through the box) can
+     * no longer be built. What remains of this boundary: the guarded
+     * immediate is read back raw, with no second guard and no flags. */
+    EigsSlot numbers = one_item(make_num(INFINITY));   /* stored as EIGS_NUM_MAX */
     EigsSlot result = slot_null();
     g_math_flags = 0;
     index_i(&result, numbers, 0);
-    assert(slot_is_num(result) && isinf(aot_slot_num_proven(result)));
+    assert(slot_is_num(result) && aot_slot_num_proven(result) == EIGS_NUM_MAX);
     assert(g_math_flags == 0);
     slot_decref(numbers);
 
@@ -98,42 +100,8 @@ static void check_number_boundaries(void) {
     slot_decref(result);
 }
 
-static void check_arena_elements(void) {
-    /* Construct the runtime's borrowed arena element boundary directly.
-     * Language list writes normally promote before this read can see it. */
-    Value *list = make_list(1);
-    list->data.list.count = 1;
-    EigsSlot target = slot_from_value(list);
-    EigsSlot result = slot_null();
-    arena_mark_pos();
-    list->data.list.items[0] = make_str("arena element");
-    assert(list->data.list.items[0]->arena);
-    index_i(&result, target, 0);
-    assert(slot_is_ptr(result) && !slot_as_ptr(result)->arena);
-    slot_decref(target);
-    arena_reset_to_mark();
-    arena_mark_pos();
-    (void)make_str("overwrite the released arena element");
-    assert(strcmp(slot_as_ptr(result)->data.str, "arena element") == 0);
-    arena_reset_to_mark();
-    slot_decref(result);
-
-    list = make_list(1);
-    list->data.list.count = 1;
-    target = slot_from_value(list);
-    result = slot_null();
-    arena_mark_pos();
-    list->data.list.items[0] = make_num(0);
-    aot_num_put(list->data.list.items[0], INFINITY);
-    g_math_flags = 0;
-    index_i(&result, target, 0);
-    /* Unlike a heap number, the old arena promotion calls num_guard. */
-    assert(slot_is_num(result) && aot_slot_num_proven(result) == EIGS_NUM_MAX);
-    assert(g_math_flags == EIGS_MATH_OVERFLOW);
-    slot_decref(target);
-    arena_reset_to_mark();
-    slot_decref(result);
-}
+/* check_arena_elements was removed with the bump arena (EigenScript v0.46.0,
+ * #1665): there are no arena values to promote. */
 
 static int scalar_index_eq(EigsSlot table, EigsSlot index, EigsSlot rhs) {
 #ifdef SLOT_INDEX_BASELINE
@@ -179,21 +147,15 @@ static void check_scalar_consumers(void) {
     g_math_flags = 0;
     assert(scalar_sum_eq_num(slot_from_num(-EIGS_NUM_MAX), slot_from_num(-EIGS_NUM_MAX), -EIGS_NUM_MAX));
     assert(g_math_flags == EIGS_MATH_OVERFLOW);
-    EigsSlot numbers = one_item(make_num(0));
-    Value *number = slot_as_ptr(numbers)->data.list.items[0];
-    aot_num_put(number, INFINITY);
+    /* (#1665 arm D) the heap INFINITY / heap-NaN element cases are gone with
+     * slot storage: a stored element is a guarded immediate (never inf or
+     * NaN). The guarded maximum still reads back raw, without flags. */
+    EigsSlot numbers = one_item(make_num(INFINITY));   /* stored as EIGS_NUM_MAX */
     g_math_flags = 0;
-    assert(scalar_index_eq_num(numbers, slot_from_num(0), INFINITY));
-    assert(g_math_flags == 0); /* heap list read is raw, not stored in a slot */
-    aot_num_put(number, NAN);
-    val_incref(number);
-    EigsSlot same = slot_from_heap(number);
-    g_math_flags = 0;
-    assert(scalar_index_eq(numbers, slot_from_num(0), same));
-    assert(!scalar_index_eq_num(numbers, slot_from_num(0), 0));
-    assert(g_math_flags == 0); /* heap NaN identity must survive */
-    slot_decref(same);
-    aot_num_put(number, 17);
+    assert(scalar_index_eq_num(numbers, slot_from_num(0), EIGS_NUM_MAX));
+    assert(g_math_flags == 0); /* list read is raw: no second guard */
+    slot_decref(numbers);
+    numbers = one_item(make_num(17));
     g_math_flags = 0;
     {
         /* Materializing the NaN index as zero explicitly requires soft mode. */
@@ -228,18 +190,6 @@ static void check_scalar_consumers(void) {
     }
     slot_decref(values);
 
-    Value *arena_list = make_list(1);
-    arena_list->data.list.count = 1;
-    EigsSlot arena_target = slot_from_value(arena_list);
-    arena_mark_pos();
-    arena_list->data.list.items[0] = make_num(0);
-    aot_num_put(arena_list->data.list.items[0], INFINITY);
-    g_math_flags = 0;
-    assert(scalar_index_eq_num(arena_target, slot_from_num(0), INFINITY));
-    assert(g_math_flags == 0); /* read does not promote an arena number */
-    slot_decref(arena_target);
-    arena_reset_to_mark();
-
     for (int k = 0; k < 300; ++k) {
         EigsSlot child = one_item(make_str("scalar retained"));
         EigsSlot parent = one_item(slot_as_ptr(child));
@@ -247,7 +197,7 @@ static void check_scalar_consumers(void) {
         assert(scalar_index_eq(parent, slot_from_num(0), right));
         slot_decref(right);
         scalar_sum_store(&parent, parent, slot_from_num(0), slot_from_num(0));
-        assert(strcmp(slot_as_ptr(parent)->data.list.items[0]->data.str, "scalar retained") == 0);
+        assert(strcmp(list_get_ref(slot_as_ptr(parent), 0)->data.str, "scalar retained") == 0);
         slot_decref(parent);
     }
 }
@@ -256,9 +206,8 @@ int main(void) {
     Env *env = aot_boot();
     check_aliases();
     check_number_boundaries();
-    check_arena_elements();
     check_scalar_consumers();
-    puts("slot index: 300 alias cycles; heap/buffer/arena boundaries OK; scalar consumers OK");
+    puts("slot index: 300 alias cycles; heap/buffer boundaries OK; scalar consumers OK");
     /* LSan's nonzero exit can bypass the normal stdio flush. */
     fflush(stdout);
     aot_shutdown(env);
