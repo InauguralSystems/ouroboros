@@ -1,0 +1,21 @@
+# The numeric arm of aot_index_borrow_ib / aot_index_borrow_base_ib: record-class
+# list elements that hold NUMBERS, read as call arguments, compared, then
+# restored to a record and read as a field base. Each argument must get its own
+# box (the shared base stand-in printed [3, 3, 6]; blind critic, v0.46.0 port).
+cpu is {"a": 1}
+mem is {"d": 2}
+X is [0, 0, 0]
+X[0] is cpu
+X[1] is mem
+define two(a, b) as:
+    return [a, b, a + b]
+define run(n) as:
+    X[0] is n
+    X[1] is n * 10
+    print of (two of [X[0], X[1]])
+    if X[0] == n:
+        print of "eq"
+    X[0] is cpu
+    print of (two of [X[0].a, X[1]])
+    return 0
+run of 3
