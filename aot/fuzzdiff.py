@@ -64,7 +64,7 @@ Usage:
     EIGS=<pinned-vm> python3 fuzzdiff.py [--count N] [--seed N]
                         [--findings-dir DIR] [--strict-gaps] [--quiet]
                         [--only gen_a,gen_b] [--known N,N]
-Exit status: nonzero if any DIVERGENCE or RUN_PAST (or any AOT_GAP under
+Exit status: nonzero if any DIVERGENCE, RUN_PAST or HANG (or any AOT_GAP under
 --strict-gaps).
 """
 import argparse, math, os, random, re, struct, subprocess, sys, tempfile
@@ -946,7 +946,7 @@ def main():
     print("  (oracle must match ouroboros's pinned EIGS_REF; a main checkout "
           "ahead of the pin yields non-actionable main-vs-pin 'drift')")
 
-    divergences, run_pasts, gaps = [], [], []
+    divergences, run_pasts, gaps, hangs = [], [], [], []
     tested, err_tested, err_rejected, err_both_die = 0, 0, 0, 0
     ulp_stats = {"ulp_n": 0, "max_ulp": 0}
     tmp = tempfile.mkdtemp(prefix="fuzzdiff.")
@@ -961,7 +961,13 @@ def main():
             os.remove(out_path)
         vm_out, vm_err, vm_rc = run_vm(prog_path)
         mark = "."
-        if vm_rc != 0:
+        if vm_rc == TIMEOUT_RC:
+            # Generators emit terminating programs, so a VM hang is a
+            # generator or VM bug, never an error-class match (a deadlock
+            # on both sides used to count as "both-die matched").
+            hangs.append((gen.__name__, prog, "VM"))
+            mark = "H"
+        elif vm_rc != 0:
             # Error-class case (#101 item 4): the VM rejects/raises. The AOT
             # must refuse to build it (loud build throw = pass) or die too,
             # with byte-exact pre-death stdout and _err-normalized stderr.
@@ -969,6 +975,9 @@ def main():
             aot_out, aot_err, aot_rc, _berr = run_aot(prog_path, out_path)
             if aot_out is None:
                 err_rejected += 1          # loud build-time reject: both sides refuse
+            elif aot_rc == TIMEOUT_RC:
+                hangs.append((gen.__name__, prog, "AOT"))
+                mark = "H"
             elif aot_rc == 0:
                 run_pasts.append((gen.__name__, prog, vm_out, vm_err, aot_out))
                 mark = "R"
@@ -986,6 +995,9 @@ def main():
             if aot_out is None:
                 gaps.append((gen.__name__, prog, err))
                 mark = "G"
+            elif aot_rc == TIMEOUT_RC:
+                hangs.append((gen.__name__, prog, "AOT"))
+                mark = "H"
             elif aot_rc != 0 or not (
                     ulp_match(vm_out, aot_out, ulp_stats) if gen is gen_buffer_reduce
                     else vm_out == aot_out):
@@ -1018,6 +1030,7 @@ def main():
     print(f"  DIVERGENCES (outputs/deaths differ):    {len(divergences)}")
     print(f"  RUN_PASTS   (VM rejects, AOT exits 0):  {len(run_pasts)}")
     print(f"  AOT_GAPS    (VM ok, AOT build failed):  {len(gaps)}")
+    print(f"  HANGS       (a side ran past 20s):      {len(hangs)}")
     def tag(prog):
         return " (known-#288 shape)" if "# fuzzdiff: known-#288" in prog else ""
     for name, prog, vm, aot in divergences[:5]:
@@ -1035,11 +1048,15 @@ def main():
         for ln in prog.strip().splitlines(): print("    | " + ln)
     save("DIVERGENCE", divergences)
     save("RUN_PAST", run_pasts)
+    for name, prog, side in hangs[:5]:
+        print(f"\n  [HANG in {name}] {side} ran past 20s")
+        for ln in prog.strip().splitlines(): print("    | " + ln)
     save("AOT_GAP", [(g[0], g[1]) for g in gaps])
-    if divergences or run_pasts or gaps:
+    save("HANG", hangs)
+    if divergences or run_pasts or gaps or hangs:
         print(f"\n  findings saved to {fd}/ (re-run with --seed {seed})")
 
-    sys.exit(1 if divergences or run_pasts or (args.strict_gaps and gaps) else 0)
+    sys.exit(1 if divergences or run_pasts or hangs or (args.strict_gaps and gaps) else 0)
 
 
 if __name__ == "__main__":
