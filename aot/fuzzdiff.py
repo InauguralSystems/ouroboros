@@ -11,9 +11,13 @@ accumulators, soft-keyword identifiers -- and asserts:
 
     eigenscript prog.eigs   ==   (aot-compiled prog).run()    byte for byte.
 
-Generation stays inside the AOT-supported, association-stable subset (scalar
-arithmetic, lists, dict indexing, for/while loops, recursion; no
-SIMD-reassociated buffer reductions), so any difference is a real finding:
+Generation stays inside the AOT-supported subset, so any difference is a real
+finding. Output is compared byte for byte, with ONE scoped exception:
+gen_buffer_reduce prints each association-unspecified reduction (`sum`, `dot`,
+`norm` of float buffers, which the AOT reassociates across SIMD lanes) right
+after a `~ulp` line, and only those values are compared within ULP_BOUND units
+in the last place (never an absolute epsilon); integer-data programs and every
+other line stay exact. The classes:
 
   * DIVERGENCE  -- both run, outputs differ  (the serious class: a silent
                    miscompile, exactly the bug a differential oracle exists for)
@@ -37,6 +41,11 @@ fuzzdiff is a manual tool, not CI. The #100 family (str-compare, recursion
 with boxed locals, mixed-compare run-past, builtin returns) is FIXED and
 these seeds must stay green; a red here is a new finding.
 
+Open AOT issues a generator can reach are GATED, not skipped silently: each
+gate cites its ouroboros issue, and `--known 288,292,...` lets the generators
+emit those shapes again (a lane that should be red while the issue is open).
+Remove a gate when its issue closes.
+
 Reproducible: every run prints its master seed; re-run with --seed N. Each
 finding's program text is saved under --findings-dir for a minimal repro.
 
@@ -54,10 +63,11 @@ EigenScript main flagged a "drift" the v0.19.0-pinned AOT shouldn't chase.)
 Usage:
     EIGS=<pinned-vm> python3 fuzzdiff.py [--count N] [--seed N]
                         [--findings-dir DIR] [--strict-gaps] [--quiet]
-Exit status: nonzero if any DIVERGENCE or RUN_PAST (or any AOT_GAP under
+                        [--only gen_a,gen_b] [--known N,N]
+Exit status: nonzero if any DIVERGENCE, RUN_PAST or HANG (or any AOT_GAP under
 --strict-gaps).
 """
-import argparse, os, random, re, subprocess, sys, tempfile
+import argparse, math, os, random, re, struct, subprocess, sys, tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 # Default oracle = the sibling working tree (dev convenience). For CI-relevant
@@ -341,18 +351,492 @@ def gen_observer_reads(r):
         lines += ["define peek() as:", f"    return report of {n}", "print of (peek of [])"]
     return "\n".join(lines) + "\n"
 
+# ---- widening (2026-10): the surfaces the first 17 arms deliberately avoid --
+# An HF pilot ran ~30,600 programs of the arms above with 0 findings, and the
+# v0.46.0 port's blind critic still found an unfixtured AOT borrow arm (the
+# numeric arm of aot_index_borrow_ib, now t412) that no arm could generate.
+# Each arm below varies what the AOT's inference BRANCHES on (aot-differential
+# invariant 22): result kind, container kind, numeric vs boxed, arity.
+
+# --known N[,N]: let the generators emit shapes of these OPEN ouroboros
+# issues (each gate below cites its number); empty by default so the lane
+# stays green while the issue is open. Remove a gate when its issue closes.
+KNOWN = set()
+
+def gen_container_borrow_args(r):
+    # Records (dicts) and numbers (and strings) stored in the SAME list/dict
+    # slots at different times, then passed as call arguments, compared, and
+    # used as field/index bases: the t412 family and its siblings. Slot kinds
+    # are tracked so field reads only touch records and arithmetic only
+    # numbers (the program stays VM-clean).
+    #
+    # ouroboros#288 (OPEN): a borrowed element beside a sibling argument whose
+    # call MUTATES the same container double-frees or reads a stale value.
+    # Off by default so the lane is not permanently red; `--known 288` turns
+    # the shape on (the `mut`/`mutr` sibling calls below) and marks each such
+    # program `# fuzzdiff: known-#288`, which the report carries. With the
+    # flag off the only sibling call is the pure `idn` (invariant 12 allows
+    # it) and the generator consumes the same random stream as before.
+    use_dict = r.random() < 0.4
+    if use_dict:
+        keys = ["p", "q", "s"]
+        decl = 'C is {"p": 0, "q": 0, "s": 0}'
+        # (#292 gate) the dot form misclassifies on its own; index form only
+        # unless --known 292
+        dot = r.random() < 0.4 and 292 in KNOWN
+        def slot(i):
+            return f"C.{keys[i]}" if dot and r.random() < 0.5 else f'C["{keys[i]}"]'
+    else:
+        decl = "C is [0, 0, 0]"
+        def slot(i):
+            return f"C[{i}]"
+    lines = ['cpu is {"a": 1, "d": 2}', 'mem is {"a": 5, "d": 6}', decl,
+             "define two(a, b) as:", "    return [a, b]",
+             "define fst(a, b) as:", "    return a",
+             "define three(a, b, c) as:", "    return [c, b, a]",
+             "define one(a) as:", "    return a",
+             "define kind(a) as:", "    return type of a",
+             "define add2(a, b) as:", "    return a + b",
+             "define fld(rec) as:", "    return rec.a",
+             "define idn(v) as:", "    return v"]
+    if 288 in KNOWN:
+        lines = ["# fuzzdiff: known-#288"] + lines + [
+            "define mut(c, k) as:", "    c[k] is 42", "    return 7",
+            "define mutr(c, k) as:", '    c[k] is {"a": 9, "d": 9}', "    return 8"]
+    kinds = ["num", "num", "num"]
+
+    # ouroboros#292 (OPEN): a slot that receives a number somewhere and a
+    # record/str only inside function bodies is classified numeric, so the
+    # function's read of its record dies "non-numeric value in a numeric
+    # context" where the VM runs. A MODULE-level store of a record in INDEX
+    # form (`C[0] is cpu`, `C["p"] is cpu`; the dot form does not count)
+    # makes the slot record-class, as t412 does. So unless `--known 292`,
+    # every slot gets that module store first, and no strings are stored.
+    if 292 not in KNOWN:
+        for i in range(3):
+            key = keys[i] if use_dict else i
+            lines.append(f"C[{key!r}] is {r.choice(['cpu', 'mem'])}".replace("'", '"'))
+    def ops(nv, ind):
+        # Every block opens by storing EVERY slot, so the tracked kinds hold
+        # on each call of run (a second call starts from the first's end).
+        out = []
+        # Numbers differ PER SLOT (`n + 10*i`, ...): a shared stand-in for two
+        # numeric arguments (the pre-t412 aot_index_borrow_ib) prints equal
+        # values only if the generator never gives two slots the same number.
+        def num(i):
+            return r.choice([f"{nv} + {10 * i}", f"{nv} * {i + 2}", f"{i}.5"])
+        for i in range(3):
+            k = r.choice(["num", "num", "rec"])
+            rec = r.choice(["cpu", "mem", f'{{"a": {nv}, "d": {i}}}'])
+            out.append(f"{slot(i)} is {num(i) if k == 'num' else rec}")
+            kinds[i] = k
+        for _ in range(r.randint(5, 9)):
+            i, j = r.randrange(3), r.randrange(3)
+            op = r.choice(["store", "store", "call2", "call2", "call1", "cmp",
+                           "field", "arith", "copy", "local"]
+                          + (["m288", "m288"] if 288 in KNOWN else []))
+            if op == "store":
+                k = r.choice(["num", "num", "rec", "rec", "str"] if 292 in KNOWN
+                             else ["num", "num", "rec", "rec"])
+                if k == "num":
+                    val = num(i)
+                elif k == "rec":
+                    val = r.choice(["cpu", "mem", f'{{"a": {nv}, "d": 0}}'])
+                else:
+                    val = f'"s{i}"'
+                out.append(f"{slot(i)} is {val}")
+                kinds[i] = k
+            elif op == "m288":
+                m = r.choice(["mut", "mutr"])
+                key = f'"{keys[i]}"' if use_dict else str(i)
+                out.append(f"print of (two of [{slot(i)}, {m} of [C, {key}]])")
+                kinds[i] = "num" if m == "mut" else "rec"
+            elif op == "call2":
+                f = r.choice(["two", "fst", "three"])
+                if f == "three":
+                    t = r.randrange(3)
+                    third = r.choice([nv, "idn of 4", '"z"', slot(t)])
+                    out.append(f"print of (three of [{slot(i)}, {slot(j)}, {third}])")
+                else:
+                    out.append(f"print of ({f} of [{slot(i)}, {slot(j)}])")
+                if kinds[i] == "num" and kinds[j] == "num":
+                    out.append(f"print of (add2 of [{slot(i)}, {slot(j)}])")
+            elif op == "call1":
+                out.append(f"print of ({r.choice(['one', 'kind'])} of {slot(i)})")
+            elif op == "cmp":
+                rhs = r.choice([slot(j), nv])
+                out += [f"if {slot(i)} == {rhs}:", '    print of "eq"', "else:",
+                        '    print of "ne"']
+            elif op == "field":
+                if kinds[i] == "rec":
+                    out.append(r.choice([f"print of {slot(i)}.a",
+                                         f'print of {slot(i)}["d"]',
+                                         f"print of (fld of {slot(i)})",
+                                         f"print of (two of [{slot(i)}.a, {slot(j)}])"]))
+                else:
+                    out.append(f"print of {slot(i)}")
+            elif op == "arith":
+                if kinds[i] == "num":
+                    out.append(f"print of ({slot(i)} + 1)")
+                else:
+                    out.append(f"print of (kind of {slot(i)})")
+            elif op == "copy":
+                out.append(f"{slot(i)} is {slot(j)}")
+                kinds[i] = kinds[j]
+            else:
+                pre = "local " if ind else ""
+                out += [f"{pre}v is {slot(i)}", "print of (one of v)"]
+        return ["    " * ind + ln for ln in out]
+
+    lines.append("define run(n) as:")
+    lines += ops("n", 1)
+    lines.append("    return 0")
+    for _ in range(r.randint(1, 2)):
+        lines.append(f"run of {_pint(r)}")
+    if r.random() < 0.5:
+        lines += ops(str(_pint(r)), 0)
+    lines.append("print of C")
+    return "\n".join(lines) + "\n"
+
+def gen_closures_values(r):
+    # Functions as values: passed, returned, stored in containers, called
+    # through a loop variable; closures capturing a for binder, a module name
+    # and an enclosing local. The callbacks' RETURN KINDS vary per program
+    # (str, null, void, list, dict, bool, number) -- t190's discriminator --
+    # with the numeric one sometimes last as the old path's control.
+    cbs = {
+        "cb_n": ["define cb_n(x) as:", "    return x * 3"],
+        "cb_s": ["define cb_s(x) as:", '    return "v" + (str of x)'],
+        "cb_l": ["define cb_l(x) as:", "    return [x, x + 1]"],
+        "cb_d": ["define cb_d(x) as:", '    return {"v": x}'],
+        "cb_z": ["define cb_z(x) as:", "    return null"],
+        "cb_p": ["define cb_p(x) as:", "    print of x"],
+        "cb_b": ["define cb_b(x) as:", "    return x > 2"],
+    }
+    names = list(cbs)
+    r.shuffle(names)
+    pick = names[:r.randint(3, 5)]
+    if r.random() < 0.5 and "cb_n" in pick:
+        pick.remove("cb_n")
+        pick.append("cb_n")
+    lines = []
+    for nm in pick:
+        lines += cbs[nm]
+    lines += ["define ap(fn, v) as:", "    return (fn of v)",
+              "define ap_local(fn, v) as:", "    local res is fn of v", "    return res"]
+    k = _pint(r)
+    shapes = ["ap", "table", "dict", "pick", "modcap", "loopcap", "localcap"]
+    r.shuffle(shapes)
+    for sh in shapes[:r.randint(3, 5)]:
+        if sh == "ap":
+            for nm in pick:
+                f = r.choice(["ap", "ap_local"])
+                lines.append(f"print of ({f} of [{nm}, {k}])")
+        elif sh == "table":
+            lines += [f"fs is [{', '.join(pick)}]", "for g in fs:",
+                      f"    print of (g of {k})"]
+        elif sh == "dict":
+            a, b = pick[0], pick[-1]
+            lines += [f'ops is {{"a": {a}, "b": {b}}}', 'h is ops["a"]',
+                      f"print of (h of {k})", "h is ops.b", f"print of (h of {k + 1})"]
+        elif sh == "pick":
+            lines += ["define chooser(c) as:"]
+            for idx, nm in enumerate(pick[:-1]):
+                lines += [f"    if c == {idx}:", f"        return {nm}"]
+            lines += [f"    return {pick[-1]}"]
+            for c in r.sample(range(len(pick)), min(3, len(pick))):
+                lines += [f"q is chooser of {c}", f"print of (q of {k})"]
+        elif sh == "modcap":
+            lines += [f"G is {_int(r)}", "define addg(d) as:", "    return d + G",
+                      f"print of (ap of [addg, {k}])", f"G is {_int(r)}",
+                      f"print of (addg of {k})", f"print of (ap of [addg, {k}])"]
+        elif sh == "loopcap":
+            vals = [_pint(r) for _ in range(3)]
+            lines += ["define mk() as:", "    local acc is []", "    local tot is 0",
+                      f"    for x in [{', '.join(map(str, vals))}]:",
+                      "        define inner(d) as:", "            return x + d",
+                      "        tot is tot + (inner of 10)", "        append of [acc, inner]",
+                      "    print of tot", "    return acc"]
+            # ouroboros#293 (OPEN): every closure escaped from the loop
+            # reads the LAST binder under the AOT (VM: per iteration),
+            # silent wrong. Calling them needs `--known 293`.
+            if 293 in KNOWN:
+                lines += ["for g in (mk of null):", f"    print of (g of {k})"]
+            else:
+                lines += ["print of (len of (mk of null))"]
+        else:
+            lines += ["define outer(y) as:", "    local base is y * 2",
+                      "    define inner2(d) as:", "        return base + d",
+                      f"    return ap of [inner2, {k}]",
+                      f"print of (outer of {_pint(r)})"]
+    return "\n".join(lines) + "\n"
+
+def gen_bool_values(r):
+    # v0.45+ bools: in lists, as dict values, stored into slots that held a
+    # number, returned from and passed to compiled functions, `==` with other
+    # bools. Sometimes a `bool == number` -- the VM RAISES "cannot compare
+    # bool and num with '=='": an error-class case (both must die, same text),
+    # or caught, with e.message printed.
+    x, a, b = _int(r), _int(r), _int(r)
+    # ouroboros#294 (OPEN): a dict field holding a bool LITERAL is classified
+    # numeric, so `D.q` handed to a compiled function dies. Bool fields are
+    # read through the index form unless `--known 294`.
+    DP, DQ = ("D.p", "D.q") if 294 in KNOWN else ('D["p"]', 'D["q"]')
+    lines = [f"x is {x}", f"t is x > {a}", f"f is x < {b}",
+             "L is [t, f, x == " + str(x) + ", 0]", 'D is {"p": t, "q": f}',
+             "define gt(u, w) as:", "    return u > w",
+             "define nb(v) as:", "    return not v",
+             "define same(u, w) as:", "    return u == w"]
+    for _ in range(r.randint(4, 8)):
+        op = r.choice(["eq", "eq", "slot", "ret", "arg", "branch", "count", "print"])
+        if op == "eq":
+            lhs = r.choice(["t", "f", "L[0]", "L[1]", 'D["p"]', DQ, "(gt of [x, 1])"])
+            rhs = r.choice(["t", "f", "true", "false", "L[2]", 'D["q"]', "(nb of t)"])
+            lines.append(f"print of ({lhs} {r.choice(['==', '!='])} {rhs})")
+        elif op == "slot":
+            lines += [f"L[3] is {r.choice(['(x > 1)', 'f', 'not t', '(gt of [x, 0])'])}",
+                      f"print of (L[3] == {r.choice(['L[0]', 't', 'false'])})"]
+        elif op == "ret":
+            lines += [f"g is gt of [x, {_int(r)}]", "print of g",
+                      f"print of (same of [g, {r.choice(['t', 'f', DP])}])"]
+        elif op == "arg":
+            lines.append(f"print of (nb of {r.choice(['t', 'L[1]', DQ, '(x == 3)'])})")
+        elif op == "branch":
+            lines += [f"if {r.choice(['t', 'L[1]', DP, '(t == f)'])}:", '    print of "y"',
+                      "else:", '    print of "n"']
+        elif op == "count":
+            lines += ["c is 0", f"for e in [t, f, true, {DP}]:", "    if e == true:",
+                      "        c is c + 1", "print of c"]
+        else:
+            lines += ["print of L", "print of D", 'D["q"] is not D["q"]', f"print of {DQ}"]
+    if r.random() < 0.35:
+        bad = f"print of ({r.choice(['t', 'L[0]', DP, '(gt of [x, 2])'])} == {_int(r)})"
+        if r.random() < 0.5:
+            lines += ["try:", "    " + bad, "catch e:", "    print of e.message",
+                      '    print of "caught"']
+        else:
+            lines += [bad, 'print of "UNREACHABLE"']
+    return "\n".join(lines) + "\n"
+
+def gen_try_messages(r):
+    # Errors raised at varied sites (index out of range on a list or buffer,
+    # operator type errors, a compare error, a field on a number, a division
+    # or modulo by zero, a user `throw` of a str or dict), caught, with the
+    # message PRINTED: under `catch` the error text is program data, so every
+    # AOT raise site must carry the VM's kind and text byte for byte.
+    k, w = _pint(r), _word(r)
+    sites = [
+        ("rt", ["xs is [1, 2, 3]", f"print of xs[{k + 2}]"]),
+        ("rt", ["bb is buffer of 3", f"print of bb[{k + 2}]"]),
+        ("rt", ["ys is [1]", f"ys[{k}] is 2"]),
+        # variable operands: a LITERAL str/list operand to `-` is a build-time
+        # stop under the AOT (ouroboros#259, OPEN), emitted only under
+        # `--known 259`
+        ("rt", [f'sv is "{w}"', f"print of (sv - {k})"]),
+        ("rt", [f"lv is [{k}]", "print of (lv - 1)"]),
+    ] + ([
+        ("rt", [f'print of ("{w}" - {k})']),
+        ("rt", [f"print of ([{k}] - 1)"]),
+    ] if 259 in KNOWN else []) + [
+        ("rt", [f"print of (len of {k})"]),
+        ("rt", [f"v is {k}", "print of v.f"]),
+        ("rt", [f'print of ({k} < "{w}")']),
+        ("rt", [f"print of ((x > 1) == {k})"]),
+        ("rt", [f"print of ({k} / (x - x))"]),
+        ("rt", [f"print of ({k} % 0)"]),
+        ("throw", [f'throw of "bad {w} {k}"']),
+        ("tdict", [f'throw of {{"code": {k}, "why": "{w}"}}']),
+    ]
+    def handler(kind, ind, name):
+        p = "    " * ind
+        if kind == "rt":
+            return [f"{p}print of {name}.kind", f"{p}print of {name}.message",
+                    f"{p}m is {name}.message", f"{p}print of (len of m)"]
+        if kind == "throw":
+            return [f"{p}print of {name}"]
+        return [f"{p}print of {name}.code", f"{p}print of {name}.why"]
+    lines = ["x is 2"]
+    for n in range(r.randint(2, 4)):
+        kind, body = r.choice(sites)
+        where = r.choice(["module", "fn", "loop", "nested"])
+        if where == "module":
+            lines += ["try:"] + ["    " + b for b in body] + ['    print of "not reached"',
+                      f"catch e{n}:"] + handler(kind, 1, f"e{n}")
+        elif where == "fn":
+            # `local`: a body write of a name another site binds at module
+            # scope is the by-name refused outward-write order shape
+            loc = [re.sub(r"^(\w+) is ", r"local \1 is ", b) for b in body]
+            lines += [f"define risky{n}(d) as:"] + ["    " + b for b in loc] + [
+                "    return d",
+                "try:", f"    print of (risky{n} of {k})", f"catch e{n}:"] + handler(kind, 1, f"e{n}")
+        elif where == "loop":
+            lines += ["for i in range of 4:", "    try:", f"        if i == {k % 4}:"] + \
+                     ["            " + b for b in body] + ["        print of i",
+                     f"    catch e{n}:"] + handler(kind, 2, f"e{n}")
+        else:
+            lines += ["try:", "    try:"] + ["        " + b for b in body] + [
+                f"    catch in{n}:"] + handler(kind, 2, f"in{n}") + [
+                f'        throw of "rethrown {n}"', f"catch e{n}:", f"    print of e{n}"]
+        lines.append(f'print of "after {n}"')
+    return "\n".join(lines) + "\n"
+
+def gen_buffer_elementwise(r):
+    # Buffer element reads/writes and ELEMENTWISE arithmetic loops -- the
+    # shapes the AOT's buffer/SIMD recognizers (vec_loop, outvec, the
+    # stencil path) take. Every operation is per-element (no reduction), so
+    # the result is association-free and the default byte-exact comparison
+    # stands; no tolerance is introduced. Loop forms, offsets, in-place
+    # writes, buffer parameters and both bound spellings vary.
+    n = r.randint(3, 12)
+    c0, c1, c2 = _int(r), r.choice(["1", "2", "0.5", "3"]), _pint(r)
+    loop_kind = r.choice(["while", "for"])
+    def loop(var, bound, body, ind=0):
+        p = "    " * ind
+        if loop_kind == "for":
+            return [f"{p}for {var} in range of {bound}:"] + [p + "    " + b for b in body]
+        return [f"{p}{var} is 0", f"{p}loop while {var} < {bound}:"] + \
+               [p + "    " + b for b in body] + [f"{p}    {var} is {var} + 1"]
+    lines = [f"n is {n}", "a is buffer of n", "b is buffer of n", "c is buffer of n"]
+    lines += loop("i", "n", [f"a[i] is i * {c1} + {c0}", f"b[i] is (n - i) * {c2}"])
+    k = _pint(r)
+    exprs = [f"a[i] + b[i]", f"a[i] - b[i]", f"a[i] * b[i]", f"a[i] / b[i]",
+             f"a[i] * {k}", f"{k} - a[i]", f"(a[i] - b[i]) * {k}", f"a[i] * b[i] + {k}",
+             f"b[i] / {k}"]
+    for _ in range(r.randint(1, 3)):
+        sh = r.choice(["ew", "ew", "stencil", "inplace", "fn", "two"])
+        if sh == "ew":
+            lines += loop("i", "n", [f"c[i] is {r.choice(exprs)}"])
+        elif sh == "stencil":
+            lines += ["m is n - 1"] + loop("i", "m", ["c[i] is a[i + 1] - a[i]"])
+        elif sh == "inplace":
+            lines += loop("i", "n", [f"a[i] is a[i] {r.choice(['*', '+', '-'])} {k}"])
+        elif sh == "two":
+            lines += loop("i", "n", [f"c[i] is {r.choice(exprs)}",
+                                     f"b[i] is c[i] {r.choice(['+', '*'])} {_pint(r)}"])
+        else:
+            # defined once: a second `define scale` is a by-name refusal
+            if "define scale(out, src, s) as:" not in lines:
+                lines += ["define scale(out, src, s) as:"] + \
+                         loop("j", "(len of out)", ["out[j] is src[j] * s"], 1) + \
+                         ["    return 0"]
+            lines += [f"scale of [c, {r.choice(['a', 'b'])}, {k}]"]
+    lines += loop("q", "n", ["print of c[q]"])
+    if r.random() < 0.5:
+        lines += loop("q", "n", ["print of (a[q] + b[q])"])
+    lines.append("print of (len of c)")
+    return "\n".join(lines) + "\n"
+
+ULP_MARK = "~ulp"   # gen_buffer_reduce prints this line before each reassociable value
+
+def gen_buffer_reduce(r):
+    # `sum`/`dot`/`norm` over buffers (whole and ranged): the builtins whose
+    # float association is UNSPECIFIED, which the AOT reassociates across SIMD
+    # lanes. Each such value is printed right after a `~ulp` line, and ONLY
+    # those lines are compared within ULP_BOUND units in the last place (never
+    # an absolute epsilon); every other line, and every value of an
+    # INTEGER-data program, stays byte-exact. Data are nonnegative, so a
+    # reassociated sum carries no cancellation and its error is bounded in
+    # ULPs of the result. A scalar `loop while` accumulation has a defined
+    # left-to-right order and is printed WITHOUT the mark: exact.
+    n = r.randint(5, 300)
+    floaty = r.random() < 0.7
+    if floaty:
+        ca, da = r.choice(["0.013", "0.1", "0.37", "1.5"]), r.choice(["0.4", "1.7", "0.05"])
+        cb, db = r.choice(["0.027", "0.3", "2.5"]), r.choice(["0.4", "0.01", "3.3"])
+    else:
+        ca, da, cb, db = str(_pint(r)), str(_pint(r)), str(_pint(r)), str(_int(r) + 10)
+    lo = r.randint(0, n // 2)
+    hi = r.randint(lo + 1, n)
+    lines = [f"n is {n}", "a is buffer of n", "b is buffer of n", "i is 0",
+             "loop while i < n:", f"    a[i] is i * {ca} + {da}",
+             f"    b[i] is i * {cb} + {db}", "    i is i + 1"]
+    reds = [f"sum of a", f"dot of [a, b]", f"norm of b", f"sum of a[{lo}:{hi}]",
+            f"dot of [a[{lo}:{hi}], b[{lo}:{hi}]]", f"norm of a[{lo}:{hi}]"]
+    r.shuffle(reds)
+    for e in reds[:r.randint(2, 5)]:
+        # The mark only on float data: integer data stay below 2^53
+        # (|a|,|b| <= ~2700, n <= 300, dot <= ~2.2e9), so every
+        # association gives the same bits and the compare must be exact.
+        if floaty:
+            lines += [f'print of "{ULP_MARK}"']
+        lines += [f"print of ({e})"]
+    if r.random() < 0.5:
+        lines += ["s is 0", "j is 0", "loop while j < n:", "    s is s + a[j]",
+                  "    j is j + 1", "print of s"]
+    lines += [f"print of a[{lo}]", f"print of b[{hi - 1}]"]
+    return "\n".join(lines) + "\n"
+
+def gen_spawn_join(r):
+    # OS-thread concurrency inside the AOT envelope: `spawn of [fn, args...]`
+    # over UNOBSERVED compiled workers whose results vary in kind, joined in
+    # spawn order, and channels. Output is deterministic by construction:
+    # joined values print in join order, and values that two producers
+    # interleave on one channel are reduced to a CONSERVED total, never
+    # printed in arrival order. (`task_spawn` is refused by name by
+    # compile.eigs -- no native scheduler, ouroboros#188 -- and an observed
+    # function anywhere refuses `spawn`, so neither is generated.)
+    ws = {
+        "w_n": ["define w_n(k) as:", "    local acc is 0", "    for i in range of 50:",
+                "        acc is acc + (i + k)", "    return acc"],
+        "w_s": ["define w_s(k) as:", '    return "w" + (str of k)'],
+        "w_l": ["define w_l(k) as:", "    return [k, k * 2]"],
+        "w_d": ["define w_d(k) as:", '    return {"k": k}'],
+        "w_z": ["define w_z(k) as:", "    return null"],
+    }
+    names = list(ws)
+    r.shuffle(names)
+    pick = names[:r.randint(2, 4)]
+    lines = []
+    for nm in pick:
+        lines += ws[nm]
+    nthr = r.randint(2, 5)
+    lines += ["hs is []", f"for k in range of {nthr}:"]
+    lines += [f"    append of [hs, spawn of [{pick[0]}, k]]"]
+    if len(pick) > 1:
+        lines += [f"h2 is spawn of [{pick[1]}, {_pint(r)}]"]
+    lines += ["for h in hs:", "    print of (thread_join of h)"]
+    if len(pick) > 1:
+        lines += ["print of (thread_join of h2)"]
+    if r.random() < 0.7:
+        cnt, nprod = r.randint(2, 6), r.randint(1, 3)
+        lines += ["define prod(c, m, base) as:", "    for i in range of m:",
+                  "        send of [c, base + i * 3]", "    return m",
+                  f"ch is channel of {r.randint(1, 8)}", "ps is []",
+                  f"for p in range of {nprod}:",
+                  f"    append of [ps, spawn of [prod, ch, {cnt}, p * 100]]",
+                  "tot is 0", f"for i in range of {cnt * nprod}:"]
+        if nprod == 1:
+            lines += ["    v is recv of ch", "    print of v", "    tot is tot + v"]
+        else:
+            lines += ["    tot is tot + (recv of ch)"]
+        lines += ["print of tot", "for p in ps:", "    print of (thread_join of p)"]
+    return "\n".join(lines) + "\n"
+
 GENERATORS = [gen_precedence, gen_sci_literals, gen_arith, gen_function_returns,
               gen_loop_accum, gen_fstring, gen_soft_keyword_idents, gen_list_ops,
               gen_str_compare, gen_dict_ops, gen_loop_while, gen_recursion_str,
               gen_null_death,
-              gen_outward_write, gen_type_demotion, gen_local_marker, gen_observer_reads]
+              gen_outward_write, gen_type_demotion, gen_local_marker, gen_observer_reads,
+              # appended LAST so `--only <the 17 above>` replays every old seed
+              gen_container_borrow_args, gen_closures_values, gen_bool_values,
+              gen_try_messages, gen_buffer_elementwise, gen_buffer_reduce,
+              gen_spawn_join]
 
 
 # ---- harness ---------------------------------------------------------------
 
+TIMEOUT_RC = 124   # a hung side is a named finding, never a harness crash
+
+def _run(cmd, **kw):
+    try:
+        p = subprocess.run(cmd, capture_output=True, text=True, timeout=20, **kw)
+        return p.stdout, p.stderr, p.returncode
+    except subprocess.TimeoutExpired as e:
+        out = e.stdout.decode() if isinstance(e.stdout, bytes) else (e.stdout or "")
+        return out, "<TIMEOUT after 20s>", TIMEOUT_RC
+
 def run_vm(path):
-    p = subprocess.run([EIGS, path], capture_output=True, text=True, timeout=20)
-    return p.stdout, p.stderr, p.returncode
+    return _run([EIGS, path])
 
 def run_aot(prog_path, out_path):
     b = subprocess.run(["bash", os.path.join(HERE, "build.sh"), prog_path, out_path],
@@ -369,8 +853,46 @@ def run_aot(prog_path, out_path):
                     if "rror" in ln or ln.lstrip().startswith("AOT:")),
                    lines[0] if lines else "")
         return None, None, None, [msg]
-    rp = subprocess.run([out_path], capture_output=True, text=True, timeout=20)
-    return rp.stdout, rp.stderr, rp.returncode, None
+    o, e, rc = _run([out_path])
+    return o, e, rc, None
+
+# Measured 2026-10-13 on the dev box (v0.46.0 pin, -march=native): seeds 201
+# and 202, 80 programs each, 529 reassociated values. Largest VM/AOT distance
+# 14 ulp (10 on the second seed). The bound is the next power of two. A plant
+# that drops or duplicates ONE lane moves a 5..300-term sum by thousands of ulp.
+ULP_BOUND = 16
+
+def _ulp_key(x):
+    i = struct.unpack("<q", struct.pack("<d", x))[0]
+    return i if i >= 0 else -(i & 0x7FFFFFFFFFFFFFFF)
+
+def ulp_match(vm, aot, stats):
+    """gen_buffer_reduce's comparator: byte-exact on every line EXCEPT the one
+    after a `~ulp` line, which must be a finite number on both sides within
+    ULP_BOUND units in the last place. Records the largest distance seen in
+    stats["max_ulp"] and the count compared in stats["ulp_n"]."""
+    v, a = vm.split("\n"), aot.split("\n")
+    if len(v) != len(a):
+        return False
+    for k, (x, y) in enumerate(zip(v, a)):
+        if k == 0 or v[k - 1] != ULP_MARK or x == y:
+            if x != y:
+                return False
+            if k and v[k - 1] == ULP_MARK:
+                stats["ulp_n"] += 1
+            continue
+        try:
+            fx, fy = float(x), float(y)
+        except ValueError:
+            return False
+        if not (math.isfinite(fx) and math.isfinite(fy)):
+            return False
+        d = abs(_ulp_key(fx) - _ulp_key(fy))
+        stats["ulp_n"] += 1
+        stats["max_ulp"] = max(stats["max_ulp"], d)
+        if d > ULP_BOUND:
+            return False
+    return True
 
 def norm_err(s):
     # The aot/test/run.sh _err normalization, verbatim: drop the VM-only source
@@ -396,7 +918,18 @@ def main():
                     help="comma-separated generator names (e.g. gen_outward_write,"
                          "gen_observer_reads): run one stratum alone instead of the "
                          "uniform mix, so a new arm gets its own seeds (#160)")
+    ap.add_argument("--known", default="",
+                    help="comma-separated OPEN ouroboros issue numbers whose shapes the "
+                         "generators may emit (259: a literal str/list operand to '-'; 288: borrowed element beside a sibling call "
+                         "that mutates the container; 292: module-level numeric store into "
+                         "a function-boxed slot; 293: calling closures escaped from a for "
+                         "body; 294: bool literal dict fields read with a dot); off by "
+                         "default so the lane stays green")
     args = ap.parse_args()
+    KNOWN.update(int(x) for x in args.known.split(",") if x)
+    unknown = KNOWN - {259, 288, 292, 293, 294}
+    if unknown:
+        sys.exit(f"fuzzdiff: no generator gate for issue(s): {sorted(unknown)}")
     gens = GENERATORS
     if args.only:
         wanted = set(args.only.split(","))
@@ -413,8 +946,9 @@ def main():
     print("  (oracle must match ouroboros's pinned EIGS_REF; a main checkout "
           "ahead of the pin yields non-actionable main-vs-pin 'drift')")
 
-    divergences, run_pasts, gaps = [], [], []
+    divergences, run_pasts, gaps, hangs = [], [], [], []
     tested, err_tested, err_rejected, err_both_die = 0, 0, 0, 0
+    ulp_stats = {"ulp_n": 0, "max_ulp": 0}
     tmp = tempfile.mkdtemp(prefix="fuzzdiff.")
     prog_path = os.path.join(tmp, "p.eigs")
     out_path = os.path.join(tmp, "p.bin")
@@ -427,7 +961,13 @@ def main():
             os.remove(out_path)
         vm_out, vm_err, vm_rc = run_vm(prog_path)
         mark = "."
-        if vm_rc != 0:
+        if vm_rc == TIMEOUT_RC:
+            # Generators emit terminating programs, so a VM hang is a
+            # generator or VM bug, never an error-class match (a deadlock
+            # on both sides used to count as "both-die matched").
+            hangs.append((gen.__name__, prog, "VM"))
+            mark = "H"
+        elif vm_rc != 0:
             # Error-class case (#101 item 4): the VM rejects/raises. The AOT
             # must refuse to build it (loud build throw = pass) or die too,
             # with byte-exact pre-death stdout and _err-normalized stderr.
@@ -435,6 +975,9 @@ def main():
             aot_out, aot_err, aot_rc, _berr = run_aot(prog_path, out_path)
             if aot_out is None:
                 err_rejected += 1          # loud build-time reject: both sides refuse
+            elif aot_rc == TIMEOUT_RC:
+                hangs.append((gen.__name__, prog, "AOT"))
+                mark = "H"
             elif aot_rc == 0:
                 run_pasts.append((gen.__name__, prog, vm_out, vm_err, aot_out))
                 mark = "R"
@@ -452,7 +995,12 @@ def main():
             if aot_out is None:
                 gaps.append((gen.__name__, prog, err))
                 mark = "G"
-            elif vm_out != aot_out or aot_rc != 0:
+            elif aot_rc == TIMEOUT_RC:
+                hangs.append((gen.__name__, prog, "AOT"))
+                mark = "H"
+            elif aot_rc != 0 or not (
+                    ulp_match(vm_out, aot_out, ulp_stats) if gen is gen_buffer_reduce
+                    else vm_out == aot_out):
                 divergences.append((gen.__name__, prog, vm_out,
                                     aot_out if aot_rc == 0
                                     else aot_out + f"<AOT died rc={aot_rc}> " + aot_err))
@@ -476,16 +1024,22 @@ def main():
     print(f"  generated {args.count} | VM-clean tested {tested} | "
           f"error-class tested {err_tested} "
           f"(both-reject {err_rejected}, both-die matched {err_both_die})")
+    if ulp_stats["ulp_n"]:
+        print(f"  ULP-compared reduction values: {ulp_stats['ulp_n']}, largest distance "
+              f"{ulp_stats['max_ulp']} ulp (bound {ULP_BOUND})")
     print(f"  DIVERGENCES (outputs/deaths differ):    {len(divergences)}")
     print(f"  RUN_PASTS   (VM rejects, AOT exits 0):  {len(run_pasts)}")
     print(f"  AOT_GAPS    (VM ok, AOT build failed):  {len(gaps)}")
+    print(f"  HANGS       (a side ran past 20s):      {len(hangs)}")
+    def tag(prog):
+        return " (known-#288 shape)" if "# fuzzdiff: known-#288" in prog else ""
     for name, prog, vm, aot in divergences[:5]:
-        print(f"\n  [DIVERGENCE in {name}]")
+        print(f"\n  [DIVERGENCE in {name}{tag(prog)}]")
         for ln in prog.strip().splitlines(): print("    | " + ln)
         print(f"    VM : {vm.strip()!r}")
         print(f"    AOT: {aot.strip()!r}")
     for name, prog, vm_out, vm_err, aot_out in run_pasts[:5]:
-        print(f"\n  [RUN_PAST in {name}] VM dies, AOT exits 0")
+        print(f"\n  [RUN_PAST in {name}{tag(prog)}] VM dies, AOT exits 0")
         for ln in prog.strip().splitlines(): print("    | " + ln)
         print(f"    VM : {(vm_out + vm_err).strip()!r}")
         print(f"    AOT: {aot_out.strip()!r}")
@@ -494,11 +1048,15 @@ def main():
         for ln in prog.strip().splitlines(): print("    | " + ln)
     save("DIVERGENCE", divergences)
     save("RUN_PAST", run_pasts)
+    for name, prog, side in hangs[:5]:
+        print(f"\n  [HANG in {name}] {side} ran past 20s")
+        for ln in prog.strip().splitlines(): print("    | " + ln)
     save("AOT_GAP", [(g[0], g[1]) for g in gaps])
-    if divergences or run_pasts or gaps:
+    save("HANG", hangs)
+    if divergences or run_pasts or gaps or hangs:
         print(f"\n  findings saved to {fd}/ (re-run with --seed {seed})")
 
-    sys.exit(1 if divergences or run_pasts or (args.strict_gaps and gaps) else 0)
+    sys.exit(1 if divergences or run_pasts or hangs or (args.strict_gaps and gaps) else 0)
 
 
 if __name__ == "__main__":
