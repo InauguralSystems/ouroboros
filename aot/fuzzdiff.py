@@ -754,7 +754,12 @@ def gen_buffer_reduce(r):
             f"dot of [a[{lo}:{hi}], b[{lo}:{hi}]]", f"norm of a[{lo}:{hi}]"]
     r.shuffle(reds)
     for e in reds[:r.randint(2, 5)]:
-        lines += [f'print of "{ULP_MARK}"', f"print of ({e})"]
+        # The mark only on float data: integer data stay below 2^53
+        # (|a|,|b| <= ~2700, n <= 300, dot <= ~2.2e9), so every
+        # association gives the same bits and the compare must be exact.
+        if floaty:
+            lines += [f'print of "{ULP_MARK}"']
+        lines += [f"print of ({e})"]
     if r.random() < 0.5:
         lines += ["s is 0", "j is 0", "loop while j < n:", "    s is s + a[j]",
                   "    j is j + 1", "print of s"]
