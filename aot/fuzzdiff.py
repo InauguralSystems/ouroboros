@@ -658,6 +658,10 @@ def gen_try_messages(r):
     lines = ["x is 2"]
     for n in range(r.randint(2, 4)):
         kind, body = r.choice(sites)
+        # Per-site names: two sites drawing `bb` put a module buffer and a
+        # `local bb` in one program, a refused AOT shape (19 of 19 gaps on
+        # the first HF aot lane, 2026-10-13). No RNG draw, so seeds stand.
+        body = [re.sub(r"\b(xs|bb|ys|sv|lv|v)\b", rf"\g<1>{n}", b) for b in body]
         where = r.choice(["module", "fn", "loop", "nested"])
         if where == "module":
             lines += ["try:"] + ["    " + b for b in body] + ['    print of "not reached"',
@@ -856,11 +860,13 @@ def run_aot(prog_path, out_path):
     o, e, rc = _run([out_path])
     return o, e, rc, None
 
-# Measured 2026-10-13 on the dev box (v0.46.0 pin, -march=native): seeds 201
-# and 202, 80 programs each, 529 reassociated values. Largest VM/AOT distance
-# 14 ulp (10 on the second seed). The bound is the next power of two. A plant
-# that drops or duplicates ONE lane moves a 5..300-term sum by thousands of ulp.
-ULP_BOUND = 16
+# Measured 2026-10-13 (v0.46.0 pin, -march=native). Dev box (no AVX2): seeds
+# 201/202, 529 reassociated values, largest VM/AOT distance 14 ulp. HF lane
+# aot-20261013T1006Z (AMD EPYC 7R13, AVX2): 61,200 programs, largest 31 ulp,
+# and all 50 lane divergences were reductions at 17..31 ulp (#295). The
+# bound is the next power of two above the AVX2 maximum. A plant that drops
+# or duplicates ONE lane moves a 5..300-term sum by ~1e14 ulp.
+ULP_BOUND = 32
 
 def _ulp_key(x):
     i = struct.unpack("<q", struct.pack("<d", x))[0]
