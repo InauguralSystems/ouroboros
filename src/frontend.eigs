@@ -2425,7 +2425,7 @@ define _make_default_env as:
     _env_set_local of [env, "path_ext", path_ext]
     _env_set_local of [env, "mkdir", mkdir]
     _env_set_local of [env, "ls", ls]
-    _env_set_local of [env, "rm", rm]
+    _env_set_local of [env, "remove_file", remove_file]
     _env_set_local of [env, "regex_match", regex_match]
     _env_set_local of [env, "regex_find", regex_find]
     _env_set_local of [env, "regex_replace", regex_replace]

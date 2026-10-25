@@ -65,7 +65,7 @@ RUN apt-get update \
 # v0.46.0 (#1665 arm D): list items and dict values are NaN-boxed EigsSlot
 # storage read through src/container.h (numbers are immediates), and the
 # bump arena (Value.arena, arena_mark/arena_reset) is removed.
-ARG EIGS_REF=v0.46.0
+ARG EIGS_REF=v0.47.0
 RUN mkdir -p /opt/eigenscript-src && cd /opt/eigenscript-src && git init -q \
  && git remote add origin https://github.com/InauguralSystems/EigenScript.git \
  && git fetch -q --depth 1 origin "${EIGS_REF}" && git checkout -q FETCH_HEAD \
