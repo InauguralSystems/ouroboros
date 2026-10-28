@@ -1,0 +1,1 @@
+- `not` now binds below comparisons and above `and`/`or`; parenthesize `(not x)` where the old unary-first grouping is intended (#307).

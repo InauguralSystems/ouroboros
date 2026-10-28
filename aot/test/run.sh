@@ -54,19 +54,25 @@ END { for (d in body) if (body[d] ~ /[^A-Za-z_0-9]g_strict[^A-Za-z_0-9]/) set[d]
 # exit is enumerated by gcc, not by spelling: the call graph of aot_rt.h
 # (every static and inline definition kept) lists each indirect call and each
 # direct call of call_eigs_fn or a runtime builtin_*, located at its outermost
-# macro expansion, and the source there must begin `AOT_FOREIGN(`. The C that
+# macro expansion. An exit attributed to AOT-owned aot_rt.h must begin
+# `AOT_FOREIGN(`; an exit attributed to an upstream runtime header is already
+# foreign (and cannot restore the compiled caller's line itself). The C that
 # compile.eigs emits reaches the runtime only through aot_rt.h, so its code
 # lines may not name an exit at all. Not seen: an exit inside a macro body
 # aot_rt.h never expands, and a direct call of a runtime entry named otherwise.
 fxd=$(mktemp -d); printf '#include "aot_rt.h"\n' > "$fxd/fx.c"
+rt_headers=$(cd "${EIGS_DIR:-../../EigenScript}/src" && pwd -P) ||
+  { echo 'FAIL: line-restore: cannot resolve EigenScript runtime headers'; exit 1; }
 gcc -O0 ${AOT_ARCH:--march=native} -fkeep-static-functions -fkeep-inline-functions -fcallgraph-info -I"$PWD" \
   -I"${EIGS_DIR:-../../EigenScript}/src" -c "$fxd/fx.c" -o "$fxd/fx.o" 2>"$fxd/err" && [ -s "$fxd/fx.ci" ] ||
   { cat "$fxd/err"; echo 'FAIL: line-restore: no call graph of aot_rt.h (gcc -fcallgraph-info)'; exit 1; }
-fx=$( { awk -v h="$PWD/aot_rt.h" 'NR == FNR { src[FNR] = $0; next }
+fx=$( { awk -v h="$PWD/aot_rt.h" -v rt="$rt_headers/" 'NR == FNR { src[FNR] = $0; next }
 /^edge: .*sourcename: "[^"]*:eigs_call_builtin" .*targetname: "__indirect_call"/ { next }
 /^edge: .*targetname: "(__indirect_call|call_eigs_fn|builtin_[a-z_0-9]+)"/ {
   loc = $0; sub(/.*label: "/, "", loc); sub(/".*/, "", loc); split(loc, p, ":")
-  n++; if (p[1] != h || substr(src[p[2]], p[3], 12) != "AOT_FOREIGN(") print "FAIL: call leaves compiled code outside AOT_FOREIGN: " loc ": " src[p[2]] }
+  n++; foreign_header = index(p[1], rt) == 1
+  if (!foreign_header && (p[1] != h || substr(src[p[2]], p[3], 12) != "AOT_FOREIGN("))
+    print "FAIL: call leaves compiled code outside AOT_FOREIGN: " loc ": " src[p[2]] }
 END { print n + 0 }' aot_rt.h "$fxd/fx.ci"
   grep -nE '(data\.builtin|call_eigs_fn|(^|[^A-Za-z_0-9])builtin_[a-z_0-9]+)' compile.eigs | grep -vE '^[0-9]+:[[:space:]]*#' | sed 's/^/FAIL: compile.eigs names an exit from compiled code: /'
   grep -nE 'eigs_call_builtin[[:space:]]*\(' aot_rt.h compile.eigs | grep -vE '^[^:]+:[0-9]+:[[:space:]]*(#|/?\*)' | sed 's/^/FAIL: eigs_call_builtin called from the AOT (its body is exempt above; use AOT_GATED inside AOT_FOREIGN): /'; } )
@@ -158,7 +164,7 @@ PY
       # silent-wrong-answer bug (ouroboros#96), and it is caught here.
       #
       # Normalization: drop the VM-only excerpt/caret/`at ...` lines and blank
-      # the line number in the `Error line N:` frame. Nothing else is touched,
+      # the line number in the `Error path:N:` frame. Nothing else is touched,
       # so a divergence in message text, error kind, ordering, or any stdout
       # line still fails. Diagnostic parity itself is tracked separately —
       # when the AOT can site its errors, delete this class and re-diff.
@@ -167,7 +173,7 @@ PY
       # per statement, every AOT helper reports through it, and since
       # EigenScript#1082 a builtin's line-0 raise with no live VM frame
       # reports that stamp too. The VM's source excerpt and its
-      # `at <frame> (line N)` trace lines are dropped (the AOT does not
+      # `at <frame> (path:N)` trace lines are dropped (the AOT does not
       # print them).
       norm() {
         printf '%s\n' "$1" \

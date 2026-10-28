@@ -12,9 +12,9 @@
 # so an un-named parameter is never keyed into the module env and there is
 # nothing to leak. Measured, base compiler vs this one:
 #
-#   VM    moving / Error line 28: undefined variable 'v'  rc 1
+#   VM    moving / Error t336_obs_param_leaks_after_call_err.eigs:28: undefined variable 'v'  rc 1
 #   base  moving / 8                                     rc 0   <- leak
-#   new   moving / Error line 28: undefined variable 'v' rc 1
+#   new   moving / Error t336_obs_param_leaks_after_call_err.eigs:28: undefined variable 'v' rc 1
 #
 # This fixture is also the ONLY thing that discriminates the seed's gate:
 # reverting it to the whole-program flag leaves every other observer fixture

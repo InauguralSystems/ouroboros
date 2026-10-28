@@ -4068,13 +4068,20 @@ define emit_stmt_inner(node, ind, nm, bt, minits, gf) as:
         # `what is x at L` history entries get the right line.
         # (round 140, #201) the line stamp is emitted for EVERY program, not
         # only traced ones: rt_error reads g_trace_current_line, so an
-        # unstamped program reported "Error line 0" where the VM names the
+        # unstamped program reported "Error <path>:0" where the VM names the
         # source line. One store per statement; the DMG canary measures it.
         # (#1361 r5) __aot_ln is the frame's own copy of the stamp: a C local,
         # so gcc folds it to a constant and it costs nothing. The call macro
         # (AOT_RESTAMP, aot_rt.h) writes it back after a compiled call
         # returns, which is the VM's frame line.
-        return ind + "g_trace_current_line = __aot_ln = " + (str of node[1]) + ";\n" + (emit_stmt of [node[2], ind, nm, bt, minits, gf])
+        local lf is "<embed>"
+        if (len of node) > 3:
+            lf is node[3]
+        return ind + "aot_set_location(\"" + (c_escape of lf) + "\", " + (str of node[1]) + "); __aot_ln = " + (str of node[1]) + ";\n" + (emit_stmt of [node[2], ind, nm, bt, minits, gf])
+    if t == "_aot_file_begin":
+        return ind + "aot_set_location(\"" + (c_escape of node[1]) + "\", " + (str of node[2]) + "); __aot_ln = " + (str of node[2]) + "; aot_frame_enter(\"<module>\");\n"
+    if t == "_aot_file_end":
+        return ind + "aot_frame_leave(NULL);\n"
     if t == "_module_begin":
         local mc is "__modcache_" + (cn of node[1])
         local me is "__modenv_" + (cn of node[1])
@@ -4530,9 +4537,11 @@ define emit_stmt_inner(node, ind, nm, bt, minits, gf) as:
         # is what the VM does too: its continue_target is loop_start, ahead of
         # the check.
         if g_observed == 1:
-            local chk is "eigs_loop_cap_step(__eigs_g)"
+            g_loop_seq is g_loop_seq + 1
+            local lid is str of g_loop_seq
+            local chk is "aot_loop_step(__eigs_g, &_loop_n_" + lid + ", 0)"
             if (has_predicate of node[1]) == 1:
-                chk is "eigs_loop_stall_step(__eigs_g)"
+                chk is "aot_loop_step(__eigs_g, &_loop_n_" + lid + ", 1)"
             elif (g_loopexit_gate == 0) and (g_obs_all == 0):
                 # (#126) The per-name gate reaches the loop safepoint too,
                 # because the safepoint is ITSELF a named env write. A
@@ -4552,22 +4561,28 @@ define emit_stmt_inner(node, ind, nm, bt, minits, gf) as:
                 # name `__loop_iterations__` where uses_ident cannot see it.
                 chk is ""
             local olg is loop_gf of [node, minits]
+            local old_cont is g_loop_continue_label
+            if chk != "":
+                g_loop_continue_label is "_loop_next_" + lid
+            local obody is emit_stmts of [node[2], ind + "    ", nm, bt, minits, olg]
+            g_loop_continue_label is old_cont
             if (g_loopexit_gate == 1) and ((G_CUR_FN[0]) == "<module>"):
                 # (round 134, #190) the observed arm ran the step (which
                 # stores "stalled"/"limit") but never stored "normal" on
                 # a condition-false exit, so a later normal exit read the
                 # stale reason (corpus test_loop_exit LE2: VM normal, AOT
                 # stalled). Same shape as the unobserved arm below.
-                local ogs is ind + "while (1) {\n"
+                local ogs is ind + "{ long long _loop_n_" + lid + " = 0; int _loop_first_" + lid + " = 1; while (1) {\n"
+                ogs is ogs + ind + "    _loop_next_" + lid + ": if (!_loop_first_" + lid + " && " + chk + ") break; _loop_first_" + lid + " = 0;\n"
                 ogs is ogs + ind + "    if (!(" + (emit_cond of [node[1], nm, bt]) + ")) { aot_set(__eigs_g, \"__loop_exit__\", make_str(\"normal\")); break; }\n"
-                ogs is ogs + (emit_stmts of [node[2], ind + "    ", nm, bt, minits, olg])
-                ogs is ogs + ind + "    if (" + chk + ") break;\n"
-                return ogs + ind + "}\n"
-            local os is ind + "while (" + (emit_cond of [node[1], nm, bt]) + ") {\n"
-            os is os + (emit_stmts of [node[2], ind + "    ", nm, bt, minits, olg])
+                ogs is ogs + obody
+                return ogs + ind + "}}\n"
+            local os is ind + "{ long long _loop_n_" + lid + " = 0; int _loop_first_" + lid + " = 1; while (1) {\n"
             if chk != "":
-                os is os + ind + "    if (" + chk + ") break;\n"
-            return os + ind + "}\n"
+                os is os + ind + "    _loop_next_" + lid + ": if (!_loop_first_" + lid + " && " + chk + ") break; _loop_first_" + lid + " = 0;\n"
+            os is os + ind + "    if (!(" + (emit_cond of [node[1], nm, bt]) + ")) break;\n"
+            os is os + obody
+            return os + ind + "}}\n"
         local vinfo is vec_loop of [node, nm, bt]
         if vinfo != null:
             return emit_vectorized of [node, vinfo, ind, nm, bt, minits]
@@ -4661,6 +4676,8 @@ define emit_stmt_inner(node, ind, nm, bt, minits, gf) as:
     if t == "continue":
         if g_cur_try_depth > 0:
             throw of ("AOT: `continue` inside a `try` body is not emitted yet -- the handler would stay pushed across the jump (round 153).")
+        if g_loop_continue_label != "":
+            return ind + "goto " + g_loop_continue_label + ";\n"
         return ind + "continue;\n"
     if t == "for":
         # `for var in iter` — materialize the iterable (a list/buffer; `range of`
@@ -4784,8 +4801,9 @@ define emit_stmt_inner(node, ind, nm, bt, minits, gf) as:
             # earlier conditional assignment did not execute.
             fo is fo + ind + "  Value* _fsv_" + (cn of fvar) + " = aot_get(" + (envc of fvar) + ", \"" + fvar + "\");\n"
         # Register only newly owned boxed storage/snapshots. Numeric loops
-        # retain their existing zero-allocation path. A caught exit drops
-        # references without restoring the saved binding value.
+        # retain their existing zero-allocation path. A caught exit restores
+        # an ordinary pre-loop local; active nested binders retain the VM's
+        # overwrite behavior.
         local own_record is ""
         if (slot_binder != "") or ((fsv_kind != "") and (fsv_kind != "num")):
             own_record is "_forown_" + (cn of fvar)
@@ -4793,6 +4811,11 @@ define emit_stmt_inner(node, ind, nm, bt, minits, gf) as:
             local own_saved is "NULL"
             if slot_binder != "":
                 own_slot is "&" + slot_binder
+            elif (fsv_kind == "lv") and (g_cur_active_for[fvar] != 1):
+                # A caught exit crosses the VM's lexical loop environment and
+                # restores the pre-loop local (#2044).  Give the unwind record
+                # the actual slot; normal exit nulls saved before dropping it.
+                own_slot is "&" + (lv of fvar)
             if (fsv_kind != "") and (fsv_kind != "num"):
                 own_saved is "_fsv_" + (cn of fvar)
                 if fsv_kind == "genp":
@@ -11090,7 +11113,7 @@ define emit_function(fn, finfo, gnm, gbt) as:
             tailret is tailret + "    aot_tframe_leave(_tmark);\n    return NULL;\n"
         else:
             tailret is tailret + "    return NULL;\n"
-    local _result is sig + " {\n" + "    int __aot_ln = g_trace_current_line; (void)__aot_ln;\n" + decls + bodyc + tailret + "}\n"
+    local _result is sig + " {\n" + "    int __aot_ln = g_trace_current_line; (void)__aot_ln; int __aot_frame __attribute__((cleanup(aot_frame_leave))) = (aot_frame_enter(\"" + (c_escape of name) + "\"), 0); (void)__aot_frame;\n" + decls + bodyc + tailret + "}\n"
     g_observed is _save_obs
     g_traced is _save_tr
     g_obs_traced is _save_otr
@@ -11120,6 +11143,8 @@ define emit_function(fn, finfo, gnm, gbt) as:
 # as a VALUE argument (emit_val emits make_builtin of a boxed wrapper).
 g_uf_gate is 0
 g_loopexit_gate is 0
+g_loop_seq is 0
+g_loop_continue_label is ""
 g_mod_tensor is {}
 G_LIFT_N is [0]
 # names registered by the lift itself (vs real top-level defines), so a
@@ -14996,9 +15021,24 @@ define _lf_rewrite_nested(node, base) as:
         _lf_rewrite_nested of [node[k], base]
     return 0
 
+define stamp_source_file(node, file) as:
+    if (type of node) != "list":
+        return 0
+    if (len of node) == 0:
+        return 0
+    if node[0] == "_line":
+        if (len of node) == 3:
+            append of [node, file]
+        else:
+            node[3] is file
+    for sk in range of (len of node):
+        stamp_source_file of [node[sk], file]
+    return 0
+
 define splice_static_loads(blk, base, depth) as:
     if depth > 16:
         throw of "AOT: load_file nesting deeper than 16 — cyclic load?"
+    stamp_source_file of [blk, base]
     local out is []
     local stmts is blk[1]
     for i in range of (len of stmts):
@@ -15068,8 +15108,13 @@ define splice_static_loads(blk, base, depth) as:
                         throw of ("AOT: load_file target '" + path + "' ends its own top level with a `return`. In the VM that ends only the loaded file and the caller continues; the AOT splices the target into the program, where it would end the WHOLE program. Refused rather than guessed (ouroboros#146).")
                     local sp is splice_static_loads of [cast, full, depth + 1]
                     local cs is sp[1]
+                    local loadline is 0
+                    if st[0] == "_line":
+                        loadline is st[1]
+                    append of [out, ["_aot_file_begin", base, loadline]]
                     for k in range of (len of cs):
                         append of [out, cs[k]]
+                    append of [out, ["_aot_file_end"]]
     return ["block", out]
 
 # ---- driver ----

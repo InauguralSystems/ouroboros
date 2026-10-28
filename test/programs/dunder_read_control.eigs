@@ -1,0 +1,4 @@
+# EigenScript#1908 reserves dunder bindings, not reads.
+if false:
+    print of __loop_iterations__
+print of "dunder read compiled"

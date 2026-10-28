@@ -1,0 +1,6 @@
+# Pin the source-bearing uncaught header and native traceback frames (#305).
+define error_leaf(v) as:
+    return v[4]
+define error_parent(v) as:
+    return error_leaf of v
+error_parent of [1]

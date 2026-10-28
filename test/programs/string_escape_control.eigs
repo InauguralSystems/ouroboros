@@ -1,0 +1,3 @@
+# Accepted escape controls for EigenScript#2108 / ouroboros#308.
+print of ("\n\t\r\\\"" == "\n\t\r\\\"")
+print of (f"\n\t\r\\\"\{\}" == "\n\t\r\\\"{}")
