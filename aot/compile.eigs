@@ -2112,6 +2112,34 @@ define has_call_node(node) as:
             return 1
     return 0
 
+# Conditions made only from literal/name atoms and C comparisons cannot enter
+# the runtime and therefore cannot raise.  This is the overwhelmingly common
+# hot-loop shape; do not charge it a source-line store on every back-edge.
+# Everything else stays conservative (indexing, calls, arithmetic guards,
+# boxed truth/equality, predicates, and unknown future expression forms).
+define loop_condition_can_raise(node) as:
+    local n is unwrap of node
+    local t is n[0]
+    if (t == "num") or (t == "bool") or (t == "ident"):
+        return 0
+    if t == "unary":
+        if n[1] == "not":
+            return loop_condition_can_raise of n[2]
+        return 1
+    if t == "binop":
+        if (n[1] == "and") or (n[1] == "or"):
+            if (loop_condition_can_raise of n[2]) == 1:
+                return 1
+            return loop_condition_can_raise of n[3]
+        if CMP_OPS[n[1]] == 1:
+            local l is unwrap of n[2]
+            local r is unwrap of n[3]
+            local la is (l[0] == "num") or (l[0] == "bool") or (l[0] == "ident")
+            local ra is (r[0] == "num") or (r[0] == "bool") or (r[0] == "ident")
+            if la and ra:
+                return 0
+    return 1
+
 define collect_uses_scoped(node, acc) as:
     # Idents USED at module scope under one top-level statement. Two scope
     # holes are deliberate and must stay: `func` bodies do not execute at the
@@ -4666,6 +4694,10 @@ define emit_stmt_inner(node, ind, nm, bt, minits, gf) as:
             s is s + " else {\n" + (emit_stmts of [node[3], ind + "    ", nm, bt, minits, gf]) + ind + "}"
         return s + "\n"
     if t == "loop":
+        local loop_source_line is str of g_emit_stmt_line[0]
+        local loop_restamp is ""
+        if (loop_condition_can_raise of node[1]) == 1:
+            loop_restamp is "g_trace_current_line = __aot_ln = " + loop_source_line + "; "
         # Observed programs: every loop carries the VM's per-iteration halting
         # (mirrors OP_LOOP_STALL_CHECK / OP_LOOP_CAP_CHECK). An observer-based
         # condition (contains a predicate) gets the stall check (can halt while
@@ -4718,11 +4750,13 @@ define emit_stmt_inner(node, ind, nm, bt, minits, gf) as:
                 # stale reason (corpus test_loop_exit LE2: VM normal, AOT
                 # stalled). Same shape as the unobserved arm below.
                 local ogs is ind + "{ long long _loop_n_" + lid + " = 0; int _loop_first_" + lid + " = 1; while (1) {\n"
+                ogs is ogs + ind + "    " + loop_restamp + "\n"
                 ogs is ogs + ind + "    _loop_next_" + lid + ": if (!_loop_first_" + lid + " && " + chk + ") break; _loop_first_" + lid + " = 0;\n"
                 ogs is ogs + ind + "    if (!(" + (emit_cond of [node[1], nm, bt]) + ")) { aot_set(__eigs_g, \"__loop_exit__\", make_str(\"normal\")); break; }\n"
                 ogs is ogs + obody
                 return ogs + ind + "}}\n"
             local os is ind + "{ long long _loop_n_" + lid + " = 0; int _loop_first_" + lid + " = 1; while (1) {\n"
+            os is os + ind + "    " + loop_restamp + "\n"
             if chk != "":
                 os is os + ind + "    _loop_next_" + lid + ": if (!_loop_first_" + lid + " && " + chk + ") break; _loop_first_" + lid + " = 0;\n"
             os is os + ind + "    if (!(" + (emit_cond of [node[1], nm, bt]) + ")) break;\n"
@@ -4754,11 +4788,17 @@ define emit_stmt_inner(node, ind, nm, bt, minits, gf) as:
             if (G_CUR_FN[0]) != "<module>":
                 throw of ("AOT: this program reads __loop_exit__ / __loop_iterations__ and function '" + (G_CUR_FN[0]) + "' contains a loop; on the VM a function's loop stores those names into its own frame, which the AOT's module-env store cannot mirror (ouroboros#190).")
             local gs is ind + "while (1) {\n"
+            gs is gs + ind + "    " + loop_restamp + "\n"
             gs is gs + ind + "    if (!(" + (emit_cond of [node[1], nm, bt]) + ")) { aot_set(__eigs_g, \"__loop_exit__\", make_str(\"normal\")); break; }\n"
             gs is gs + (emit_stmts of [node[2], ind + "    ", nm, bt, minits, lg])
             gs is gs + ind + "    if (eigs_loop_cap_step(__eigs_g)) break;\n"
             return gs + ind + "}\n"
-        local s is ind + "while (" + (emit_cond of [node[1], nm, bt]) + ") {\n"
+        # A comma expression executes on the initial test and every back-edge;
+        # unlike a body-tail store, `continue` cannot skip it.
+        local plain_condition is emit_cond of [node[1], nm, bt]
+        if loop_restamp != "":
+            plain_condition is "(g_trace_current_line = __aot_ln = " + loop_source_line + ", " + plain_condition + ")"
+        local s is ind + "while (" + plain_condition + ") {\n"
         s is s + (emit_stmts of [node[2], ind + "    ", nm, bt, minits, lg])
         return s + ind + "}\n"
     if t == "return":

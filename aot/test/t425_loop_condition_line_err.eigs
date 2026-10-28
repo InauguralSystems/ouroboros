@@ -1,0 +1,4 @@
+# Uncaught diagnostic must name the loop condition, not the body's last line.
+k is 0
+loop while [1][k] == 1:
+    k is k + 1

@@ -1,0 +1,1 @@
+- AOT errors raised while re-evaluating a loop condition now report the condition's source line (#256).
