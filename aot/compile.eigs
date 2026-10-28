@@ -4461,10 +4461,14 @@ define emit_stmt_inner(node, ind, nm, bt, minits, gf) as:
         # Value into the env under its mangled name (emit_val increfs; the
         # lifted body reads it as an env global — same Value, so mutation
         # through the capture stays live, matching the VM's closure).
-        local cbs is ""
+        # Repeated definitions need distinct function identities and capture
+        # environments; one global slot made escaped values read the last
+        # iteration's binder (ouroboros#293).
+        local fnc is cn of node[1]
+        local cbs is ind + "__fnv_" + fnc + " = make_native_fn(__wrap_" + fnc + ", \"" + (c_escape of (module_fn_name of node[1])) + "\"); aot_closure_begin(__fnv_" + fnc + ");\n"
         local cpairs is node[2]
         for ck in range of (len of cpairs):
-            cbs is cbs + ind + "aot_set(__eigs_g, \"" + (cpairs[ck])[1] + "\", " + (emit_val of [["ident", (cpairs[ck])[0]], nm, bt]) + ");\n"
+            cbs is cbs + ind + "aot_closure_bind(__fnv_" + fnc + ", \"" + (cpairs[ck])[1] + "\", " + (emit_val of [["ident", (cpairs[ck])[0]], nm, bt]) + ");\n"
         return cbs
     if t == "dot_assign":
         # ["dot_assign", target, field, rhs] (#86). The frontend desugars
@@ -11558,6 +11562,10 @@ define lift_nested_at(node, bound, out_funcs, outer_after) as:
                 append of [out_funcs, ["func", fname, fparams, fbody]]
                 g_func_names[fname] is 1
                 g_lifted_names[fname] is 1
+                # capbind materializes a native function Value even when the
+                # source only calls the nested name directly; its identity
+                # selects this definition's capture environment.
+                g_fn_as_value[fname] is 1
                 local cb is ["capbind", fname, caps]
                 if wrapped == 1:
                     st[2] is cb

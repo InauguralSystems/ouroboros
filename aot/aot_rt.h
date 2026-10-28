@@ -522,7 +522,9 @@ static Env *aot_boot(void) {
 #endif
     return g_global_env;
 }
-static void aot_shutdown(Env *g) { (void)g; /* process exit reclaims (slice 1) */ }
+static void aot_closure_cleanup(void);
+static Env *aot_capture_env(Env *, const char *);
+static void aot_shutdown(Env *g) { (void)g; aot_closure_cleanup(); }
 
 /* ---- variable access ----
  * Two tiers, mirroring the VM's two read opcodes:
@@ -630,6 +632,11 @@ static inline Value *aot_slot_value(EigsSlot *sp) {
 }
 
 static Value *aot_get_named_ic(Env *g, const char *name, AotNameIC *c) {
+    if (!strncmp(name, "__cap", 5)) {
+        Value *v = env_get(aot_capture_env(g, name), name);
+        if (!v) rt_error(EK_UNDEFINED_NAME, g_trace_current_line, "undefined variable '%s'", name);
+        val_incref(v); return v;
+    }
     EigsSlot *sp = aot_name_slot(g, name, c);
     if (!sp) rt_error(EK_UNDEFINED_NAME, g_trace_current_line, "undefined variable '%s'", name);
     Value *v = aot_slot_value(sp);
@@ -637,6 +644,11 @@ static Value *aot_get_named_ic(Env *g, const char *name, AotNameIC *c) {
     return v;
 }
 static Value *aot_getb_named_ic(Env *g, const char *name, AotNameIC *c) {
+    if (!strncmp(name, "__cap", 5)) {
+        Value *v = env_get(aot_capture_env(g, name), name);
+        if (!v) rt_error(EK_UNDEFINED_NAME, g_trace_current_line, "undefined variable '%s'", name);
+        return v;
+    }
     EigsSlot *sp = aot_name_slot(g, name, c);
     if (!sp) rt_error(EK_UNDEFINED_NAME, g_trace_current_line, "undefined variable '%s'", name);
     return aot_slot_value(sp);
@@ -660,6 +672,7 @@ static Value *aot_get(Env *g, const char *name) {
     return v;
 }
 static Value *aot_get_named(Env *g, const char *name) {
+    g = aot_capture_env(g, name);
     Value *v = env_get(g, name);
     if (!v) rt_error(EK_UNDEFINED_NAME, g_trace_current_line, "undefined variable '%s'", name);
     val_incref(v);
@@ -667,12 +680,41 @@ static Value *aot_get_named(Env *g, const char *name) {
 }
 /* borrowed variant (call-argument reads: no incref, callee doesn't consume) */
 static Value *aot_getb_named(Env *g, const char *name) {
+    g = aot_capture_env(g, name);
     Value *v = env_get(g, name);
     if (!v) rt_error(EK_UNDEFINED_NAME, g_trace_current_line, "undefined variable '%s'", name);
     return v;
 }
 static void aot_set(Env *g, const char *name, Value *val) {
     env_set_local_owned(g, name, val);     /* adopts val's birth ref */
+}
+
+typedef struct AotClosureCapture { Value *fn; Env *env; struct AotClosureCapture *next; } AotClosureCapture;
+static AotClosureCapture *aot_closures;
+static _Thread_local Env *aot_active_closure;
+static void aot_closure_begin(Value *fn) {
+    AotClosureCapture *c = calloc(1, sizeof *c); if (!c) abort();
+    c->fn = fn; val_incref(fn); c->env = env_new(g_builtin_env);
+    c->next = aot_closures; aot_closures = c;
+    /* A same-iteration call by the nested function's source name is emitted
+     * as a direct C call rather than through its function Value. */
+    aot_active_closure = c->env;
+}
+static void aot_closure_bind(Value *fn, const char *name, Value *v) {
+    for (AotClosureCapture *c = aot_closures; c; c = c->next)
+        if (c->fn == fn) { aot_set(c->env, name, v); return; }
+    abort();
+}
+static Env *aot_closure_for(Value *fn) {
+    for (AotClosureCapture *c = aot_closures; c; c = c->next) if (c->fn == fn) return c->env;
+    return NULL;
+}
+static void aot_closure_cleanup(void) {
+    while (aot_closures) { AotClosureCapture *c = aot_closures; aot_closures = c->next;
+        env_decref(c->env); val_decref(c->fn); free(c); }
+}
+static Env *aot_capture_env(Env *fallback, const char *name) {
+    return !strncmp(name, "__cap", 5) && aot_active_closure ? aot_active_closure : fallback;
 }
 
 /* A module namespace is an authoritative Env projection, exactly as IMPORT.
@@ -3638,6 +3680,9 @@ static EigsChunk aot_host_chunk;
 static uint8_t aot_host_code[2];
 static int aot_host_lines[1];
 static Value *aot_call_vm_builtin(Value *fn, Value *arg) {
+    Env *saved_closure = aot_active_closure;
+    Env *called_closure = aot_closure_for(fn);
+    if (called_closure) aot_active_closure = called_closure;
     if (fn->data.builtin == builtin_sandbox_run || fn->data.builtin == builtin_vm_run_bytecode || fn->data.builtin == builtin_eval) {
         int pushed = 0;
         /* The per-state VM is created by the first vm_execute (vm_init); a
@@ -3702,7 +3747,9 @@ static Value *aot_call_vm_builtin(Value *fn, Value *arg) {
         }
         return res;
     }
-    return AOT_FOREIGN(AOT_GATED(fn->data.builtin, arg));   /* #1637 bool gate */
+    Value *res = AOT_FOREIGN(AOT_GATED(fn->data.builtin, arg)); /* #1637 bool gate */
+    aot_active_closure = saved_closure;
+    return res;
 }
 
 static Value *aot_call_dispatch(Value *fn, Value *arg) {
