@@ -1229,15 +1229,25 @@ define _p_parse_or(p) as:
     return left
 
 define _p_parse_and(p) as:
-    left is _p_parse_comparison of p
+    left is _p_parse_not of p
     loop while (_p_peek_type of p) == "kw":
         if (_p_peek_val of p) == "and":
             _p_advance of p
-            right is _p_parse_comparison of p
+            right is _p_parse_not of p
             left is ["binop", "and", left, right]
         else:
             return left
     return left
+
+# Word-form `not` binds below every comparison and above `and`/`or`, matching
+# parser.c (#307 / EigenScript #1648).  Its operand recurses at this same
+# precedence so a prefix chain remains right-associated.
+define _p_parse_not(p) as:
+    if (_p_peek_type of p) == "kw":
+        if (_p_peek_val of p) == "not":
+            _p_advance of p
+            return ["unary", "not", _p_parse_not of p]
+    return _p_parse_comparison of p
 
 define _p_parse_comparison(p) as:
     left is _p_parse_bitor of p
@@ -1369,13 +1379,8 @@ define _p_parse_mul(p) as:
             return left
     return left
 
-# Prefix unary operators, mirroring the C parser's parse_unary_body: `-`,
-# `not` and `~` all sit at UNARY tightness (tighter than every binary op)
-# and recurse into parse_unary for the operand. `not` used to sit between
-# `and` and comparison (#99 item 1): `not x + 1` parsed as `not (x + 1)`
-# where the C parser reads `(not x) + 1`, and `not 2 == 1` as
-# `not (2 == 1)` where C reads `(not 2) == 1` — silent wrong values in
-# BOTH compilers (shared frontend).
+# Prefix arithmetic/bitwise unary operators mirror parse_unary_body. Word-form
+# `not` is handled by _p_parse_not above, below comparisons (#307).
 define _p_parse_unary(p) as:
     if (_p_peek_type of p) == "op":
         if (_p_peek_val of p) == "-":
@@ -1384,10 +1389,6 @@ define _p_parse_unary(p) as:
         if (_p_peek_val of p) == "~":
             _p_advance of p
             return ["unary", "~", _p_parse_unary of p]
-    if (_p_peek_type of p) == "kw":
-        if (_p_peek_val of p) == "not":
-            _p_advance of p
-            return ["unary", "not", _p_parse_unary of p]
     return _p_parse_call of p
 
 define _p_parse_call(p) as:
