@@ -1,0 +1,9 @@
+# ouroboros#289: caught errors make the exact message and kind program data.
+define set_first(xs) as:
+    xs[0].k is 2
+try:
+    set_first of [([1])]
+catch e:
+    print of e.message
+    print of e.kind
+set_first of [([1])]

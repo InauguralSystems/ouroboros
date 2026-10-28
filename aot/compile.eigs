@@ -4475,14 +4475,21 @@ define emit_stmt_inner(node, ind, nm, bt, minits, gf) as:
         # target before the rhs (see the index_assign note: C argument
         # order is unspecified and gcc ran the rebinding rhs first,
         # writing into the new dict where the VM writes into the old).
+        local dat is unwrap of node[1]
+        local dae is 0
+        # The pinned VM's LOCAL_IDX_DOT_SET diagnostic says "assign" while
+        # DOT_SET/LOCAL_DOT_SET say "set". Preserve that byte-exact split:
+        # caught error messages are language-visible program data.
+        if dat[0] == "index":
+            dae is 1
         if (is_num_expr of [node[3], nm, bt]) == 1:
             local icn is ic_new of node[2]
             local scv is borrowable_cvar of [node[1], nm, bt]
             if (scv != "") and ((has_call_node of node[3]) == 0):
                 return ind + "{ " + icn[0] + "aot_dot_set_num_tb_ic(" + scv + ", \"" + (c_escape of node[2]) + "\", " + (emit_num of [node[3], nm, bt, 0]) + ", " + icn[1] + "); }\n"
-            return ind + "{ " + icn[0] + "Value* _sat = " + (emit_val of [node[1], nm, bt]) + "; aot_dot_set_num_ic(_sat, \"" + (c_escape of node[2]) + "\", " + (emit_num of [node[3], nm, bt, 0]) + ", " + icn[1] + "); }\n"
+            return ind + "{ " + icn[0] + "Value* _sat = " + (emit_val of [node[1], nm, bt]) + "; aot_dot_set_num_ic(_sat, \"" + (c_escape of node[2]) + "\", " + (emit_num of [node[3], nm, bt, 0]) + ", " + icn[1] + ", " + (str of dae) + "); }\n"
         local icg is ic_new of node[2]
-        return ind + "{ " + icg[0] + "Value* _sat = " + (emit_val of [node[1], nm, bt]) + "; aot_dot_set_ic(_sat, \"" + (c_escape of node[2]) + "\", " + (emit_val of [node[3], nm, bt]) + ", " + icg[1] + "); }\n"
+        return ind + "{ " + icg[0] + "Value* _sat = " + (emit_val of [node[1], nm, bt]) + "; aot_dot_set_ic(_sat, \"" + (c_escape of node[2]) + "\", " + (emit_val of [node[3], nm, bt]) + ", " + icg[1] + ", " + (str of dae) + "); }\n"
     if t == "call":
         local callee is unwrap of node[1]
         # (round 186, #127) a nested literal load_file: mirror the module
@@ -7623,10 +7630,13 @@ define elem_has_numeric_use(node, name) as:
     # numeric thing is the CALL RESULT — that false positive kept six DMG
     # handlers on the unboxed read. The element itself must be the operand.
     if node[0] == "binop":
-        if (is_index_of of [node[2], name]) == 1:
-            return 1
-        if (is_index_of of [node[3], name]) == 1:
-            return 1
+        # Equality accepts values of every kind. Comparing x[i] to a literal
+        # proves only that x is indexable, not that its elements are numbers.
+        if (node[1] != "==") and (node[1] != "!="):
+            if (is_index_of of [node[2], name]) == 1:
+                return 1
+            if (is_index_of of [node[3], name]) == 1:
+                return 1
     if node[0] == "unop":
         if (is_index_of of [node[2], name]) == 1:
             return 1

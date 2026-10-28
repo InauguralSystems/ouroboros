@@ -1,0 +1,10 @@
+# ouroboros#290: equality is generic; arithmetic is the numeric control.
+define equal_first(xs) as:
+    return xs[0] == 3
+define unequal_first(xs) as:
+    return xs[0] != 3
+define add_first(xs) as:
+    return xs[0] + 1
+print of (equal_first of [(["three"])])
+print of (unequal_first of [(["three"])])
+print of (add_first of [([3])])
