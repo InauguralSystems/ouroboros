@@ -1,0 +1,1 @@
+- AOT field assignment diagnostics and equality-based list element inference now match the VM (#289, #290).

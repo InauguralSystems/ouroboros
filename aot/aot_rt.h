@@ -3231,7 +3231,7 @@ static Value *aot_dot_get_ic(Value *target, const char *key,
  * holding a shared or non-numeric value, and keys not present at all, fall
  * back to semantics identical to aot_dot_set. */
 static void aot_dot_set_num_ic(Value *target, const char *key, double d,
-                               int *ic, const char **ick) {
+                               int *ic, const char **ick, int assign_error) {
     d = num_guard(d);   /* make_num guards; this path must not depend on its
                          * caller having done so (emit_num does, today). */
     if (target && target->type == VAL_DICT) {
@@ -3248,7 +3248,9 @@ static void aot_dot_set_num_ic(Value *target, const char *key, double d,
             dict_set_owned(target, key, make_num(d));
         }
     } else if (target && target->type != VAL_NULL) {
-        rt_error(EK_TYPE, g_trace_current_line, "cannot set field '%s' on %s",
+        rt_error(EK_TYPE, g_trace_current_line,
+                 assign_error ? "cannot assign field '%s' on %s" :
+                                "cannot set field '%s' on %s",
                  key, val_type_name(target->type));
     }
     if (target) val_decref(target);
@@ -3258,7 +3260,7 @@ static void aot_dot_set_num_ic(Value *target, const char *key, double d,
  * (store, then release the old occupant) and then the owned-argument
  * convention of dict_set_owned. */
 static void aot_dot_set_ic(Value *target, const char *key, Value *val,
-                           int *ic, const char **ick) {
+                           int *ic, const char **ick, int assign_error) {
     if (target && target->type == VAL_DICT) {
         if (target->module_ns) {
             dict_set_owned(target, key, val);
@@ -3275,7 +3277,9 @@ static void aot_dot_set_ic(Value *target, const char *key, Value *val,
         }
     } else {
         if (target && target->type != VAL_NULL)
-            rt_error(EK_TYPE, g_trace_current_line, "cannot set field '%s' on %s",
+            rt_error(EK_TYPE, g_trace_current_line,
+                     assign_error ? "cannot assign field '%s' on %s" :
+                                    "cannot set field '%s' on %s",
                      key, val_type_name(target->type));
         if (val) val_decref(val);
     }
