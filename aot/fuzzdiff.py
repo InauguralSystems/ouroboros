@@ -68,7 +68,7 @@ Exit status: nonzero if any DIVERGENCE, RUN_PAST or HANG (or any AOT_GAP under
 --strict-gaps), if no VM-clean program reaches an AOT comparison, or if more
 than 25% of VM-clean programs are AOT gaps.
 """
-import argparse, json, math, os, random, re, struct, subprocess, sys, tempfile
+import argparse, json, math, os, random, re, shutil, struct, subprocess, sys, tempfile
 import urllib.error, urllib.request
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -950,6 +950,7 @@ def norm_err(s):
     return "\n".join(out)
 
 def main():
+    global EIGS
     ap = argparse.ArgumentParser(description="VM<->AOT differential fuzzer")
     ap.add_argument("--count", type=int, default=100)
     ap.add_argument("--seed", type=int, default=None)
@@ -986,6 +987,10 @@ def main():
 
     seed = args.seed if args.seed is not None else random.randrange(1 << 30)
     rng = random.Random(seed)
+    # A bare command name resolves through PATH, as in every other harness
+    # (`EIGS=eigenscript bash test/run.sh`); CI's devcontainer runs it that way.
+    if os.sep not in EIGS:
+        EIGS = shutil.which(EIGS) or EIGS
     if not os.path.exists(EIGS):
         sys.exit(f"VM binary not found: {EIGS} (set EIGS=...)")
     print(f"fuzzdiff: seed={seed} count={args.count} VM={EIGS}" + (f" only={args.only}" if args.only else ""))
