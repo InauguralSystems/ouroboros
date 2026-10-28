@@ -253,7 +253,9 @@ define eigen_tokenize(source) as:
                                 elif esc == "}":
                                     buf is buf + "}"
                                 else:
-                                    buf is buf + esc
+                                    # EigenScript#2108: unknown escapes are
+                                    # lexer errors, not quote-removing text.
+                                    throw of ("ouroboros: unknown escape in f-string at line " + (str of line))
                                 pos is pos + 1
                         elif fc == "{":
                             # Emit accumulated literal
@@ -374,7 +376,9 @@ define eigen_tokenize(source) as:
                         elif esc == "\"":
                             buf is buf + "\""
                         else:
-                            buf is buf + esc
+                            # Braces are accepted only by the f-string
+                            # decoder above; every other escape is an error.
+                            throw of ("ouroboros: unknown escape in string at line " + (str of line))
                         pos is pos + 1
                     else:
                         buf is buf + ch
@@ -685,6 +689,19 @@ define _p_report_error(tok, operand) as:
         why is "requires a variable name operand"
     throw of ("ouroboros: Parse error line " + (str of tok[2]) + ": '" + tok[1] + "' is a reserved observer form; " + why + " [E005]")
 
+# EigenScript#1908: names of the form __name__ are owned by the runtime at
+# every binder, but remain legal reads and dot keys. Keep the spelling rule in
+# one predicate so every binding path enforces exactly the same reservation.
+define _is_reserved_dunder(name) as:
+    local n is len of name
+    if n < 5:
+        return 0
+    return ((char_at of [name, 0]) == "_") and ((char_at of [name, 1]) == "_") and ((char_at of [name, n - 2]) == "_") and ((char_at of [name, n - 1]) == "_")
+
+define _p_dunder_error(tok) as:
+    if _is_reserved_dunder of tok[1]:
+        throw of ("ouroboros: Parse error line " + (str of tok[2]) + ": '" + tok[1] + "' is reserved for the runtime (names of the form __name__ are hidden from state_at and --step); choose another name [E006]")
+
 define _p_expect(p, ttype) as:
     tok is _p_cur of p
     if tok[0] != ttype:
@@ -740,6 +757,7 @@ define _p_expect_ident_like(p) as:
         if tok[0] == "report":
             _p_report_error of [tok, 0]
         throw of f"parse error: expected identifier, got {tok[0]} ('{tok[1]}') at line {tok[2]}"
+    _p_dunder_error of tok
     _p_advance of p
     return tok
 
@@ -859,6 +877,7 @@ define _p_parse_statement(p) as:
         if (_p_peek_val of p) == "define":
             _p_advance of p
             name_tok is _p_expect of [p, "ident"]
+            _p_dunder_error of name_tok
             name is name_tok[1]
             # Optional params; each may carry a trailing default
             # (`define f(a, b is 10)`), matching the C parser. A required
@@ -871,6 +890,7 @@ define _p_parse_statement(p) as:
                 loop while ((_tok_ident_like of (_p_cur of p)) == 1) or (((_p_cur of p)[0]) == "report"):
                     if ((_p_cur of p)[0]) == "report":
                         _p_report_error of [(_p_cur of p), 0]
+                    _p_dunder_error of (_p_cur of p)
                     append of [params, (_p_cur of p)[1]]
                     _p_advance of p
                     has_default is 0
@@ -974,6 +994,7 @@ define _p_parse_statement(p) as:
             _p_expect_kw of [p, "catch"]
             err_name is "err"
             if (_tok_ident_like of (_p_cur of p)) == 1:
+                _p_dunder_error of (_p_cur of p)
                 err_name is (_p_cur of p)[1]
                 _p_advance of p
             _p_expect of [p, "colon"]
@@ -997,6 +1018,7 @@ define _p_parse_statement(p) as:
         if (_p_peek_val of p) == "import":
             _p_advance of p
             name_tok is _p_expect of [p, "ident"]
+            _p_dunder_error of name_tok
             _p_end_statement of p
             return ["_line", _stmt_line, ["import", name_tok[1]]]
 
@@ -1073,6 +1095,7 @@ define _p_parse_statement(p) as:
                     if (_p_peek_type of p) == "report":
                         _p_report_error of [(_p_cur of p), 0]
                     throw of f"parse error: destructuring pattern requires identifiers at line {_stmt_line}"
+                _p_dunder_error of (_p_cur of p)
                 append of [d_names, (_p_cur of p)[1]]
                 _p_advance of p
                 if (_p_peek_type of p) == "rbracket":
@@ -1150,6 +1173,7 @@ define _p_parse_statement(p) as:
     peek1 is _p_peek_at of [p, 1]
     if (_tok_assign_name of cur_tok) == 1:
         if (peek1[0] == "kw") and (peek1[1] == "is"):
+            _p_dunder_error of cur_tok
             _p_advance of p
             _p_advance of p
             expr is _p_parse_expr of p
@@ -1159,6 +1183,7 @@ define _p_parse_statement(p) as:
         if peek1[0] == "op":
             cbase is _compound_base_op of peek1[1]
             if cbase != "":
+                _p_dunder_error of cur_tok
                 _p_advance of p
                 _p_advance of p
                 cexpr is _p_parse_expr of p
@@ -1612,6 +1637,7 @@ define _p_parse_primary(p) as:
             loop while ((_tok_ident_like of (_p_cur of p)) == 1) or (((_p_cur of p)[0]) == "report"):
                 if ((_p_cur of p)[0]) == "report":
                     _p_report_error of [(_p_cur of p), 0]
+                _p_dunder_error of (_p_cur of p)
                 append of [params, (_p_cur of p)[1]]
                 _p_advance of p
                 if (_p_peek_type of p) == "comma":

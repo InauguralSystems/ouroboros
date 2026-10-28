@@ -1,0 +1,1 @@
+- Unknown string escapes must be removed or replaced with `\\`, and escaped braces remain valid only in f-strings (#308).

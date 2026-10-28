@@ -1,0 +1,1 @@
+- Rename source bindings of the form `__name__`, which are now reserved for the runtime; reads remain legal (#304).

@@ -205,6 +205,37 @@ reject_one 'for false in [1]:
 reject_one 'print of true[0]'
 reject_one 'x is true.y'
 reject_one 'print of (report of converged)'
+# EigenScript#2108: only n/t/r/backslash/quote escapes are accepted in plain
+# strings; f-strings additionally accept escaped braces. Unknown escapes,
+# including a backslash immediately followed by a newline, are lexer errors.
+reject_one 'print of "plain\q"'
+reject_one 'print of "plain\0"'
+reject_one 'print of "plain\u"'
+reject_one 'print of "plain\
+continued"'
+reject_one 'print of f"fstr\q"'
+reject_one 'print of f"fstr\0"'
+reject_one 'print of f"fstr\u"'
+reject_one 'print of f"fstr\
+continued"'
+# EigenScript#1908: every source binder reserves __name__ forms as E006.
+reject_one 'f is (__lambda__) => __lambda__'
+reject_one 'x is [v for __comp__ in [1]]'
+reject_one 'define __function__ as:
+    return 1'
+reject_one 'define f(__parameter__) as:
+    return __parameter__'
+reject_one 'try:
+    print of 1
+catch __error__:
+    print of 2'
+reject_one 'for __item__ in [1]:
+    print of 1'
+reject_one 'import __module__'
+reject_one '[__first__, second] is [1, 2]'
+reject_one '__plain__ is 1'
+reject_one '__compound__ += 1'
+reject_one 'local __local__ is 1'
 
 # Inverse-direction rejects (#101): reject_one's population is parse/lex-time
 # errors the FRONT-END must refuse. This tier is the complement — programs the
