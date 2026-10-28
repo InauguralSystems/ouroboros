@@ -210,25 +210,33 @@ static void aot_error_exit(void) {
         aot_error_frame_n = aot_try_frame_n[aot_try_n - 1];
         longjmp(*aot_try_bufs[aot_try_n - 1], 1);
     }
-    fprintf(stderr, "Error %s:%d: %s\n", g_error_file[0] ? g_error_file : aot_current_file,
-            g_error_line, g_error_raw);
+    /* User `throw` preserves and prints its payload; ordinary structured
+     * runtime errors receive the location-bearing Error header. */
+    if (g_error_value) fprintf(stderr, "%s\n", g_error_msg);
+    else fprintf(stderr, "Error %s:%d: %s\n", g_error_file[0] ? g_error_file : aot_current_file,
+                 g_error_line, g_error_raw);
     for (int i = aot_error_frame_n - 1; i >= 0; i--)
         fprintf(stderr, "  at %s (%s:%d)\n", aot_error_frames[i].name,
                 aot_error_frames[i].file, aot_error_frames[i].line);
     exit(1);
 }
-typedef struct AotErrorSilence { VM *saved_vm; int frame_count; } AotErrorSilence;
+typedef struct AotErrorSilence { VM *saved_vm; int frame_count; int current_line; } AotErrorSilence;
 static VM aot_silence_vm;
 static EigsChunk aot_silence_chunk;
 static uint8_t aot_silence_code[1];
 static AotErrorSilence aot_error_silence_begin(void) {
-    AotErrorSilence s = {eigs_current->vm, 0};
+    AotErrorSilence s = {eigs_current->vm, 0, 0};
     if (!eigs_current->vm) {
         memset(&aot_silence_vm, 0, sizeof aot_silence_vm);
         aot_silence_vm.owner = eigs_current;
         eigs_current->vm = &aot_silence_vm;
     }
     s.frame_count = g_vm.frame_count;
+    s.current_line = g_vm.current_line;
+    /* Runtime builtins have no source token and raise at line 0.  The VM
+     * attributes those raises to its current bytecode line; the equivalent
+     * AOT call site is the statement stamp. */
+    g_vm.current_line = g_trace_current_line;
     if (g_vm.frame_count < VM_FRAMES_MAX) {
         CallFrame *f = &g_vm.frames[g_vm.frame_count++];
         memset(f, 0, sizeof *f);
@@ -242,6 +250,7 @@ static AotErrorSilence aot_error_silence_begin(void) {
 }
 static void aot_error_silence_end(const AotErrorSilence *s) {
     g_vm.frame_count = s->frame_count;
+    g_vm.current_line = s->current_line;
     eigs_current->vm = s->saved_vm;
 }
 /* Painting the name blue: the macro's inner rt_error is the real function;
@@ -281,7 +290,9 @@ static inline void aot_depth_leave(int *p) { (void)p; aot_depth--; }
  * A call that cannot return has no continuation to feed (92), and
  * num_guard's NaN test is marked unlikely (88). */
 static void __attribute__((noinline, cold, noreturn)) aot_strict_nan_raise(const char *who) {
+    AotErrorSilence __es = aot_error_silence_begin();
     eigs_strict_nan_raise(who);     /* the VM's text: "<who|arithmetic>: result is not a number ..." */
+    aot_error_silence_end(&__es);
     aot_error_exit();
     __builtin_unreachable();
 }
@@ -1062,7 +1073,9 @@ static inline Value *aot_num_view(EigsView *w, double d) {
     return &w->v;
 }
 static inline int aot_veq_op(Value *a, Value *b, const char *op) {
+    AotErrorSilence __es = aot_error_silence_begin();
     int e = values_equal_op(a, b, op);
+    aot_error_silence_end(&__es);
     if (__builtin_expect(g_has_error, 0)) aot_error_exit();
     return e;
 }

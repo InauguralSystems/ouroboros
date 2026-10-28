@@ -1,0 +1,1 @@
+- AOT errors now match the VM's caught-error silence and source-site attribution at the pinned runtime. (#309).
