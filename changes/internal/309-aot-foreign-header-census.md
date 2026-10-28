@@ -1,0 +1,1 @@
+- Classify pinned EigenScript runtime headers as foreign in the AOT line-restore census, without exempting unmarked AOT-owned exits (#309).
