@@ -1,0 +1,8 @@
+# ouroboros#293: the AOT deliberately refuses a define nested in a module loop.
+module_acc is []
+for module_x in [20, 30]:
+    define module_inner(d) as:
+        return module_x + d
+    append of [module_acc, module_inner]
+for module_g in module_acc:
+    print of (module_g of 3)

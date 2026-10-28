@@ -1,0 +1,15 @@
+# ouroboros#293: escaped closures capture a fresh for binder per iteration.
+define mk() as:
+    local acc is []
+    local last is null
+    for x in [6, 8]:
+        define inner(d) as:
+            return x + d
+        last is inner
+        append of [acc, inner]
+    # The single last closure is the t231 control shape.
+    print of (last of 2)
+    return acc
+for g in (mk of null):
+    print of (g of 2)
+

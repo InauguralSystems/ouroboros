@@ -364,7 +364,7 @@ def gen_observer_reads(r):
 # issues (each gate below cites its number); empty by default so the lane
 # stays green while the issue is open. Remove a gate when its issue closes.
 KNOWN = set()
-KNOWN_ISSUES = {288, 292, 293}
+KNOWN_ISSUES = {288, 292}
 
 def check_known_issues(offline):
     """Refuse expired generator gates; API failures are failures unless opted out."""
@@ -582,13 +582,7 @@ def gen_closures_values(r):
                       "        define inner(d) as:", "            return x + d",
                       "        tot is tot + (inner of 10)", "        append of [acc, inner]",
                       "    print of tot", "    return acc"]
-            # ouroboros#293 (OPEN): every closure escaped from the loop
-            # reads the LAST binder under the AOT (VM: per iteration),
-            # silent wrong. Calling them needs `--known 293`.
-            if 293 in KNOWN:
-                lines += ["for g in (mk of null):", f"    print of (g of {k})"]
-            else:
-                lines += ["print of (len of (mk of null))"]
+            lines += ["for g in (mk of null):", f"    print of (g of {k})"]
         else:
             lines += ["define outer(y) as:", "    local base is y * 2",
                       "    define inner2(d) as:", "        return base + d",
@@ -962,17 +956,20 @@ def main():
                     help="comma-separated OPEN ouroboros issue numbers whose shapes the "
                          "generators may emit (288: borrowed element beside a sibling call "
                          "that mutates the container; 292: module-level numeric store into "
-                         "a function-boxed slot; 293: calling closures escaped from a for "
-                         "body); off by "
+                         "a function-boxed slot); off by "
                          "default so the lane stays green")
     ap.add_argument("--offline", action="store_true",
                     help="explicitly skip the gated-issue GitHub API check")
     args = ap.parse_args()
     check_known_issues(args.offline)
-    KNOWN.update(int(x) for x in args.known.split(",") if x)
-    unknown = KNOWN - KNOWN_ISSUES
+    requested_known = {int(x) for x in args.known.split(",") if x}
+    # Fixed issue 293 remains accepted as a no-op for the documented repro
+    # command, but is no longer a generator gate or an API-polled known issue.
+    retired_fixed = {293}
+    unknown = requested_known - KNOWN_ISSUES - retired_fixed
     if unknown:
         sys.exit(f"fuzzdiff: no generator gate for issue(s): {sorted(unknown)}")
+    KNOWN.update(requested_known & KNOWN_ISSUES)
     gens = GENERATORS
     if args.only:
         wanted = set(args.only.split(","))
