@@ -158,7 +158,7 @@ PY
       # silent-wrong-answer bug (ouroboros#96), and it is caught here.
       #
       # Normalization: drop the VM-only excerpt/caret/`at ...` lines and blank
-      # the line number in the `Error line N:` frame. Nothing else is touched,
+      # the line number in the `Error path:N:` frame. Nothing else is touched,
       # so a divergence in message text, error kind, ordering, or any stdout
       # line still fails. Diagnostic parity itself is tracked separately —
       # when the AOT can site its errors, delete this class and re-diff.
@@ -167,7 +167,7 @@ PY
       # per statement, every AOT helper reports through it, and since
       # EigenScript#1082 a builtin's line-0 raise with no live VM frame
       # reports that stamp too. The VM's source excerpt and its
-      # `at <frame> (line N)` trace lines are dropped (the AOT does not
+      # `at <frame> (path:N)` trace lines are dropped (the AOT does not
       # print them).
       norm() {
         printf '%s\n' "$1" \

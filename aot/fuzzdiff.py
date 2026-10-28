@@ -33,7 +33,7 @@ skip made this class structurally unfindable): the AOT must either refuse to
 build it (a loud build-time reject is a pass) or die too, with byte-exact
 pre-death stdout and the same error kind/message on stderr under the SAME
 normalization contract as aot/test/run.sh's _err class (VM-only source
-excerpt / caret / `at ...` frames dropped, `Error line N:` blanked; since
+excerpt / caret / `at ...` frames dropped, `Error path:N:` blanked; since
 #103 death CODES are compared for equality -- the AOT exits cleanly with the
 VM's uncaught-error code).
 
@@ -848,7 +848,7 @@ def run_aot(prog_path, out_path):
     if b.returncode != 0 or not os.path.exists(out_path):
         # Surface the THROW message, not the last stack frame: the transpiler
         # dies with the message followed by excerpt/caret/`at ...` lines, and
-        # the old [-1:] reported "  at <module> (line 4222)" for every gap.
+        # the old [-1:] reported "  at <module> (<path>:4222)" for every gap.
         # Filter with the same discipline as norm_err, keep the first
         # substantive line (an Error/AOT: line when present).
         txt = norm_err((b.stderr or "") + "\n" + (b.stdout or ""))
@@ -909,7 +909,7 @@ def norm_err(s):
         if re.match(r'^\s+[0-9]+ \|', ln) or re.match(r'^\s+\|.*\^', ln) \
            or ln.startswith("  at "):
             continue
-        out.append(re.sub(r'^Error line [0-9]+:', 'Error line:', ln))
+        out.append(re.sub(r'^Error .*:[0-9]+:', 'Error <file>:', ln))
     return "\n".join(out)
 
 def main():

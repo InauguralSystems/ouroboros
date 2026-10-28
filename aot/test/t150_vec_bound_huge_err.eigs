@@ -5,7 +5,7 @@
 # tested AS A DOUBLE (> 0 && <= 9.2e18) before any cast; an
 # unrepresentable bound takes the scalar branch, which dies
 # byte-exactly. _err class: both die, equal codes. (These raise
-# sites also gained the 'Error line N:' frame the VM prints -- the
+# sites also gained the 'Error path:N:' frame the VM prints -- the
 # bare fprintf form failed normalization on the prefix alone.)
 b is buffer of 4
 i is 0

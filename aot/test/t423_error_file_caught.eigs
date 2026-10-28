@@ -1,0 +1,6 @@
+try:
+    x is 1[2]
+catch e:
+    print of e.message
+    print of e.file
+    print of e.line

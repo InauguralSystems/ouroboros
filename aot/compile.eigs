@@ -4068,13 +4068,20 @@ define emit_stmt_inner(node, ind, nm, bt, minits, gf) as:
         # `what is x at L` history entries get the right line.
         # (round 140, #201) the line stamp is emitted for EVERY program, not
         # only traced ones: rt_error reads g_trace_current_line, so an
-        # unstamped program reported "Error line 0" where the VM names the
+        # unstamped program reported "Error <path>:0" where the VM names the
         # source line. One store per statement; the DMG canary measures it.
         # (#1361 r5) __aot_ln is the frame's own copy of the stamp: a C local,
         # so gcc folds it to a constant and it costs nothing. The call macro
         # (AOT_RESTAMP, aot_rt.h) writes it back after a compiled call
         # returns, which is the VM's frame line.
-        return ind + "g_trace_current_line = __aot_ln = " + (str of node[1]) + ";\n" + (emit_stmt of [node[2], ind, nm, bt, minits, gf])
+        local lf is "<embed>"
+        if (len of node) > 3:
+            lf is node[3]
+        return ind + "aot_set_location(\"" + (c_escape of lf) + "\", " + (str of node[1]) + "); __aot_ln = " + (str of node[1]) + ";\n" + (emit_stmt of [node[2], ind, nm, bt, minits, gf])
+    if t == "_aot_file_begin":
+        return ind + "aot_set_location(\"" + (c_escape of node[1]) + "\", " + (str of node[2]) + "); __aot_ln = " + (str of node[2]) + "; aot_frame_enter(\"<module>\");\n"
+    if t == "_aot_file_end":
+        return ind + "aot_frame_leave(NULL);\n"
     if t == "_module_begin":
         local mc is "__modcache_" + (cn of node[1])
         local me is "__modenv_" + (cn of node[1])
@@ -11090,7 +11097,7 @@ define emit_function(fn, finfo, gnm, gbt) as:
             tailret is tailret + "    aot_tframe_leave(_tmark);\n    return NULL;\n"
         else:
             tailret is tailret + "    return NULL;\n"
-    local _result is sig + " {\n" + "    int __aot_ln = g_trace_current_line; (void)__aot_ln;\n" + decls + bodyc + tailret + "}\n"
+    local _result is sig + " {\n" + "    int __aot_ln = g_trace_current_line; (void)__aot_ln; int __aot_frame __attribute__((cleanup(aot_frame_leave))) = (aot_frame_enter(\"" + (c_escape of name) + "\"), 0); (void)__aot_frame;\n" + decls + bodyc + tailret + "}\n"
     g_observed is _save_obs
     g_traced is _save_tr
     g_obs_traced is _save_otr
@@ -14996,9 +15003,24 @@ define _lf_rewrite_nested(node, base) as:
         _lf_rewrite_nested of [node[k], base]
     return 0
 
+define stamp_source_file(node, file) as:
+    if (type of node) != "list":
+        return 0
+    if (len of node) == 0:
+        return 0
+    if node[0] == "_line":
+        if (len of node) == 3:
+            append of [node, file]
+        else:
+            node[3] is file
+    for sk in range of (len of node):
+        stamp_source_file of [node[sk], file]
+    return 0
+
 define splice_static_loads(blk, base, depth) as:
     if depth > 16:
         throw of "AOT: load_file nesting deeper than 16 — cyclic load?"
+    stamp_source_file of [blk, base]
     local out is []
     local stmts is blk[1]
     for i in range of (len of stmts):
@@ -15068,8 +15090,13 @@ define splice_static_loads(blk, base, depth) as:
                         throw of ("AOT: load_file target '" + path + "' ends its own top level with a `return`. In the VM that ends only the loaded file and the caller continues; the AOT splices the target into the program, where it would end the WHOLE program. Refused rather than guessed (ouroboros#146).")
                     local sp is splice_static_loads of [cast, full, depth + 1]
                     local cs is sp[1]
+                    local loadline is 0
+                    if st[0] == "_line":
+                        loadline is st[1]
+                    append of [out, ["_aot_file_begin", base, loadline]]
                     for k in range of (len of cs):
                         append of [out, cs[k]]
+                    append of [out, ["_aot_file_end"]]
     return ["block", out]
 
 # ---- driver ----

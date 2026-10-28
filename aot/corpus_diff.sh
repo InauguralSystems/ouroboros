@@ -25,7 +25,7 @@ BASE="$HERE/test/canary/corpus_expected.txt"
 EIG="$EIGDIR/src/eigenscript"
 [ -x "$EIG" ] || { echo "corpus: no VM at $EIG (set EIGS_ROOT)"; exit 2; }
 
-norm() { grep -vE '^\s+[0-9]+ \||^\s+\|.*\^|^  at ' "$1" | sed -E 's/^Error line [0-9]+:/Error line:/'; }
+norm() { grep -vE '^\s+[0-9]+ \||^\s+\|.*\^|^  at ' "$1" | sed -E 's/^Error .*:[0-9]+:/Error <file>:/'; }
 got=$(mktemp); n=0
 # (round 113) CDT (PID-scoped scratch, set at top with its cleanup trap)
 # replaced fixed /tmp/_cd_* names: a CONCURRENT corpus run -- a sibling

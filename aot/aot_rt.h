@@ -79,7 +79,27 @@ static inline double aot_slot_num_proven(EigsSlot s) { if (slot_is_num(s)) retur
  * so its C locals keep their values across the longjmp, which the C
  * standard guarantees only for volatile ones. */
 enum { AOT_TRY_MAX = 64 };
+enum { AOT_FRAMES_MAX = 4096 };
+typedef struct AotErrorFrame { const char *name; const char *file; int line; } AotErrorFrame;
+static AotErrorFrame aot_error_frames[AOT_FRAMES_MAX];
+static int aot_error_frame_n = 0;
+static const char *aot_current_file = "<embed>";
+static void aot_frame_enter(const char *name) {
+    if (aot_error_frame_n < AOT_FRAMES_MAX)
+        aot_error_frames[aot_error_frame_n++] = (AotErrorFrame){name, aot_current_file, g_trace_current_line};
+}
+static void aot_frame_leave(int *unused) { (void)unused; if (aot_error_frame_n > 0) aot_error_frame_n--; }
+static void aot_set_location(const char *file, int line) {
+    aot_current_file = file;
+    g_trace_current_line = line;
+    if (aot_error_frame_n > 0) {
+        aot_error_frames[aot_error_frame_n - 1].file = file;
+        aot_error_frames[aot_error_frame_n - 1].line = line;
+    }
+}
+
 static jmp_buf *aot_try_bufs[AOT_TRY_MAX];
+static int aot_try_frame_n[AOT_TRY_MAX];
 static int aot_try_n = 0;
 /* Only loop-created boxed storage and saved binder references are registered.
  * Ordinary expression temporaries keep their existing exception contract.
@@ -119,16 +139,18 @@ static inline void aot_for_owned_unwind(int handler_depth) {
 }
 static void aot_try_push(jmp_buf *b) {
     if (aot_try_n >= AOT_TRY_MAX) { fprintf(stderr, "Error: 'try' nested more than %d deep\n", AOT_TRY_MAX); exit(1); }
+    aot_try_frame_n[aot_try_n] = aot_error_frame_n;
     aot_try_bufs[aot_try_n++] = b;
 }
 static void aot_try_pop(void) { if (aot_try_n > 0) aot_try_n--; }
 static void aot_try_pop_to(int n) { if (n >= 0 && n < aot_try_n) aot_try_n = n; }
 static Value *aot_take_error_value(void) {   /* vm_take_error_value's shape */
     if (g_error_value) { Value *v = g_error_value; g_error_value = NULL; return v; }
-    Value *d = make_dict(3);
+    Value *d = make_dict(4);
     dict_set_owned(d, "kind", make_str(err_kind_name((ErrKind)g_error_kind)));
     dict_set_owned(d, "message", make_str(g_error_raw));
     dict_set_owned(d, "line", make_num((double)g_error_line));
+    dict_set_owned(d, "file", make_str(g_error_file));
     return d;
 }
 /* (round 154) the VM's call-depth cap is a semantic: the 4096th nested
@@ -175,19 +197,56 @@ static Value *aot_take_error_value(void) {   /* vm_take_error_value's shape */
  * builtin is not called), exactly as the VM's eigs_call_builtin does. Spelled
  * here rather than calling that header inline so the indirect call sits
  * inside this file's AOT_FOREIGN, where test/run.sh's call-graph gate sees it. */
-#define AOT_GATED(fn, arg) (eigs_bool_gate((fn), (arg)) ? NULL : (fn)(arg))
+#define AOT_GATED_VM(fn, arg) (eigs_bool_gate((fn), (arg)) ? NULL : (fn)(arg))
+#define AOT_GATED(fn, arg) ({ AotErrorSilence __es = aot_error_silence_begin(); Value *__gr = eigs_bool_gate((fn), (arg)) ? NULL : (fn)(arg); aot_error_silence_end(&__es); __gr; })
 #define AOT_RESTAMP(call) ({ __auto_type __aot_r = (call); g_trace_current_line = __aot_ln; __aot_r; })
 #define AOT_RESTAMP_V(call) ({ (call); g_trace_current_line = __aot_ln; })
 static int aot_depth = 0;
 static void aot_error_exit(void) {
+    if (!g_error_file[0] || strcmp(g_error_file, "<native>") == 0)
+        snprintf(g_error_file, sizeof g_error_file, "%s", aot_current_file);
     aot_for_owned_unwind(aot_try_n);
-    if (aot_try_n > 0) longjmp(*aot_try_bufs[aot_try_n - 1], 1);
-    fprintf(stderr, "%s\n", g_error_msg);
+    if (aot_try_n > 0) {
+        aot_error_frame_n = aot_try_frame_n[aot_try_n - 1];
+        longjmp(*aot_try_bufs[aot_try_n - 1], 1);
+    }
+    fprintf(stderr, "Error %s:%d: %s\n", g_error_file[0] ? g_error_file : aot_current_file,
+            g_error_line, g_error_raw);
+    for (int i = aot_error_frame_n - 1; i >= 0; i--)
+        fprintf(stderr, "  at %s (%s:%d)\n", aot_error_frames[i].name,
+                aot_error_frames[i].file, aot_error_frames[i].line);
     exit(1);
+}
+typedef struct AotErrorSilence { VM *saved_vm; int frame_count; } AotErrorSilence;
+static VM aot_silence_vm;
+static EigsChunk aot_silence_chunk;
+static uint8_t aot_silence_code[1];
+static AotErrorSilence aot_error_silence_begin(void) {
+    AotErrorSilence s = {eigs_current->vm, 0};
+    if (!eigs_current->vm) {
+        memset(&aot_silence_vm, 0, sizeof aot_silence_vm);
+        aot_silence_vm.owner = eigs_current;
+        eigs_current->vm = &aot_silence_vm;
+    }
+    s.frame_count = g_vm.frame_count;
+    if (g_vm.frame_count < VM_FRAMES_MAX) {
+        CallFrame *f = &g_vm.frames[g_vm.frame_count++];
+        memset(f, 0, sizeof *f);
+        aot_silence_chunk.name = "<module>";
+        aot_silence_chunk.code = aot_silence_code;
+        f->chunk = &aot_silence_chunk;
+        f->ip = aot_silence_code;
+        f->try_count = 1;
+    }
+    return s;
+}
+static void aot_error_silence_end(const AotErrorSilence *s) {
+    g_vm.frame_count = s->frame_count;
+    eigs_current->vm = s->saved_vm;
 }
 /* Painting the name blue: the macro's inner rt_error is the real function;
  * every call site in this header and in generated C dies cleanly after it. */
-#define rt_error(...) do { rt_error(__VA_ARGS__); aot_error_exit(); } while (0)
+#define rt_error(...) do { AotErrorSilence __es = aot_error_silence_begin(); rt_error(__VA_ARGS__); aot_error_silence_end(&__es); aot_error_exit(); } while (0)
 /* (round 154) below the macro on purpose: the first cut sat above it, so
  * its rt_error was the plain VM function -- the error went PENDING and the
  * program ran on (`down of 100000` printed 100000, then the message at
@@ -392,6 +451,7 @@ static Env *aot_boot(void) {
      * records without printing, so it can never walk the NULL VM; every
      * AOT error exit prints g_error_msg itself via aot_error_exit. */
     g_try_depth = 1;
+    aot_frame_enter("<module>");
     /* #915 (EigenScript v0.41.0): the runtime's observer gate is per-state
      * and armed by compile_ast — which an AOT binary never runs. Left at 0,
      * the LINKED bookkeeping (observer_slot_update et al.) returns early via
@@ -1166,7 +1226,7 @@ static void aot_buf_expect_at(Value *b, const char *site) {
     }
 }
 static void aot_buf_expect(Value *b) { aot_buf_expect_at(b, "?"); }
-/* (round 80) these deaths carry the "Error line N:" frame the VM's raises
+/* (round 80) these deaths carry the "Error path:N:" frame the VM's raises
  * print -- the bare fprintf form failed the _err tier's normalization on
  * the frame prefix alone (line number is blanked by the normalizer; the
  * prefix is semantics). Line is g_trace_current_line: 0 unless traced,
@@ -3518,7 +3578,7 @@ static Value *aot_call_resolve(Env *g, const char *name, AotNameIC *c) {
 /* (round 144, #191) Builtins that RUN THE VM (sandbox_run, vm_run_bytecode)
  * execute under the linked interpreter, where the VM's own error printing
  * is safe and is what the oracle prints: a descriptor's uncaught error
- * prints "Error line N: ..." (CHECK_ERROR's deferred flush) before
+ * prints "Error path:N: ..." (CHECK_ERROR's deferred flush) before
  * sandbox_run turns it into {ok: 0}. aot_boot's process-wide g_try_depth
  * = 1 (the pretend-caught that keeps rt_error off the NULL VM) silenced
  * those prints too -- 33 stderr lines missing on corpus test_sandbox_budget.
@@ -3530,7 +3590,7 @@ Value *builtin_vm_run_bytecode(Value *arg);
 Value *builtin_eval(Value *arg);
 /* (round 188, #203) the compiled caller of a VM builtin that runs a chunk has
  * no VM frame, so a child's uncaught error printed its own frames and
- * stopped: the VM prints the HOST frame too (`at <module> (line 100)`). A
+ * stopped: the VM prints the HOST frame too (`at <module> (<path>:100)`). A
  * synthetic frame -- a static chunk named after the compiled caller
  * (aot_host_fn, set at the call site by the emitter), one code byte and a
  * one-entry line table holding the call line -- is pushed around the call so
@@ -3541,7 +3601,7 @@ static EigsChunk aot_host_chunk;
 static uint8_t aot_host_code[2];
 static int aot_host_lines[1];
 static Value *aot_call_vm_builtin(Value *fn, Value *arg) {
-    if (fn->data.builtin == builtin_sandbox_run || fn->data.builtin == builtin_vm_run_bytecode) {
+    if (fn->data.builtin == builtin_sandbox_run || fn->data.builtin == builtin_vm_run_bytecode || fn->data.builtin == builtin_eval) {
         int pushed = 0;
         /* The per-state VM is created by the first vm_execute (vm_init); a
          * program whose FIRST VM entry is this call has eigs_current->vm ==
@@ -3565,6 +3625,7 @@ static Value *aot_call_vm_builtin(Value *fn, Value *arg) {
             CallFrame *hf = &g_vm.frames[g_vm.frame_count++];
             memset(hf, 0, sizeof *hf);
             aot_host_chunk.name = (char *)aot_host_fn;
+            aot_host_chunk.src = srcbuf_new("", aot_current_file);
             aot_host_chunk.code = aot_host_code;
             aot_host_chunk.lines = aot_host_lines;
             aot_host_chunk.lines_len = 1;
@@ -3584,8 +3645,12 @@ static Value *aot_call_vm_builtin(Value *fn, Value *arg) {
          * (g_vm.current_line, kept fresh by the host's OP_LINE); the AOT's
          * stamp is that line, so hand it to the VM before the run */
         if (eigs_current && eigs_current->vm) g_vm.current_line = g_trace_current_line;
-        Value *res = AOT_FOREIGN(AOT_GATED(fn->data.builtin, arg));
-        if (pushed && g_vm.frame_count > 0 && g_vm.frames[g_vm.frame_count - 1].chunk == &aot_host_chunk) g_vm.frame_count--;
+        Value *res = AOT_FOREIGN(AOT_GATED_VM(fn->data.builtin, arg));
+        if (pushed && g_vm.frame_count > 0 && g_vm.frames[g_vm.frame_count - 1].chunk == &aot_host_chunk) {
+            g_vm.frame_count--;
+            srcbuf_decref(aot_host_chunk.src);
+            aot_host_chunk.src = NULL;
+        }
         g_try_depth = 1;
         if (g_exit_requested) exit(g_exit_code);
         if (g_has_error) {
