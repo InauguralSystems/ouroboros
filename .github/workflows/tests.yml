@@ -24,6 +24,8 @@ jobs:
       # is now gated in CI at 4-wide, not just on the SSE2 dev box.
       - name: Build devcontainer and run suites (self-host parity + AOT)
         uses: devcontainers/ci@v0.3
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           # k_oracle --selftest is dispatched here deliberately. CI cannot
           # TAKE the K measurement -- a container has no perf access -- but
@@ -32,4 +34,4 @@ jobs:
           # An oracle that nothing dispatches is not a gate, and that was
           # the exact residual this repo shipped once already.
           # Compiler parity uses the bytecode VM, independent of the caller's JIT settings.
-          runCmd: export EIGS_JIT_OFF=1 && bash aot/core_check.sh && bash aot/k_oracle.sh --selftest && EIGS=eigenscript bash test/run.sh && EIGS=eigenscript bash aot/test/run.sh && EIGS=eigenscript bash aot/test/leak.sh
+          runCmd: export EIGS_JIT_OFF=1 && bash aot/core_check.sh && bash aot/k_oracle.sh --selftest && EIGS=eigenscript bash test/run.sh && EIGS=eigenscript bash aot/test/run.sh && EIGS=eigenscript bash aot/test/leak.sh && EIGS=eigenscript python3 aot/fuzzdiff.py --count 20 --seed 297

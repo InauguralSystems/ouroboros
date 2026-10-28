@@ -1,0 +1,1 @@
+- Fuzzdiff now rejects vacuous or gap-heavy runs and verifies that gated issues remain open (#297, #296).

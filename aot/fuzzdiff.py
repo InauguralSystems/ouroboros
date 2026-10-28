@@ -63,11 +63,13 @@ EigenScript main flagged a "drift" the v0.19.0-pinned AOT shouldn't chase.)
 Usage:
     EIGS=<pinned-vm> python3 fuzzdiff.py [--count N] [--seed N]
                         [--findings-dir DIR] [--strict-gaps] [--quiet]
-                        [--only gen_a,gen_b] [--known N,N]
+                        [--only gen_a,gen_b] [--known N,N] [--offline]
 Exit status: nonzero if any DIVERGENCE, RUN_PAST or HANG (or any AOT_GAP under
---strict-gaps).
+--strict-gaps), if no VM-clean program reaches an AOT comparison, or if more
+than 25% of VM-clean programs are AOT gaps.
 """
-import argparse, math, os, random, re, struct, subprocess, sys, tempfile
+import argparse, json, math, os, random, re, struct, subprocess, sys, tempfile
+import urllib.error, urllib.request
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 # Default oracle = the sibling working tree (dev convenience). For CI-relevant
@@ -362,6 +364,29 @@ def gen_observer_reads(r):
 # issues (each gate below cites its number); empty by default so the lane
 # stays green while the issue is open. Remove a gate when its issue closes.
 KNOWN = set()
+KNOWN_ISSUES = {259, 288, 292, 293, 294}
+
+def check_known_issues(offline):
+    """Refuse expired generator gates; API failures are failures unless opted out."""
+    if offline:
+        print("fuzzdiff: --offline: NOT verifying gated issue states")
+        return
+    headers = {"Accept": "application/vnd.github+json", "User-Agent": "ouroboros-fuzzdiff"}
+    token = os.environ.get("GITHUB_TOKEN")
+    if token:
+        headers["Authorization"] = "Bearer " + token
+    for number in sorted(KNOWN_ISSUES):
+        url = f"https://api.github.com/repos/InauguralSystems/ouroboros/issues/{number}"
+        try:
+            with urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=15) as response:
+                state = json.load(response).get("state")
+        except (OSError, ValueError, urllib.error.HTTPError) as exc:
+            sys.exit(f"fuzzdiff: cannot verify gated issue #{number}: {exc}; "
+                     "use --offline only for an explicit offline run")
+        if state != "open":
+            sys.exit(f"fuzzdiff: gated issue #{number} is {state or 'unverifiable'}; "
+                     "remove its KNOWN gate before fuzzing")
+    print(f"fuzzdiff: verified {len(KNOWN_ISSUES)} gated issues are open")
 
 def gen_container_borrow_args(r):
     # Records (dicts) and numbers (and strings) stored in the SAME list/dict
@@ -860,6 +885,18 @@ def run_aot(prog_path, out_path):
     o, e, rc = _run([out_path])
     return o, e, rc, None
 
+def prebuild_runtime(tmp):
+    """Build the cached runtime outside the per-program 120 second budget."""
+    source = os.path.join(tmp, "prebuild.eigs")
+    output = os.path.join(tmp, "prebuild.bin")
+    with open(source, "w") as f:
+        f.write('print of "fuzzdiff prebuild"\n')
+    print("fuzzdiff: building libeigsrt.a once before timed program builds")
+    result = subprocess.run(["bash", os.path.join(HERE, "build.sh"), source, output],
+                            cwd=HERE)
+    if result.returncode != 0:
+        sys.exit(f"fuzzdiff: runtime prebuild failed (rc={result.returncode})")
+
 # Measured 2026-10-13 (v0.46.0 pin, -march=native). Dev box (no AVX2): seeds
 # 201/202, 529 reassociated values, largest VM/AOT distance 14 ulp. HF lane
 # aot-20261013T1006Z (AMD EPYC 7R13, AVX2): 61,200 programs, largest 31 ulp,
@@ -931,9 +968,12 @@ def main():
                          "a function-boxed slot; 293: calling closures escaped from a for "
                          "body; 294: bool literal dict fields read with a dot); off by "
                          "default so the lane stays green")
+    ap.add_argument("--offline", action="store_true",
+                    help="explicitly skip the gated-issue GitHub API check")
     args = ap.parse_args()
+    check_known_issues(args.offline)
     KNOWN.update(int(x) for x in args.known.split(",") if x)
-    unknown = KNOWN - {259, 288, 292, 293, 294}
+    unknown = KNOWN - KNOWN_ISSUES
     if unknown:
         sys.exit(f"fuzzdiff: no generator gate for issue(s): {sorted(unknown)}")
     gens = GENERATORS
@@ -953,9 +993,10 @@ def main():
           "ahead of the pin yields non-actionable main-vs-pin 'drift')")
 
     divergences, run_pasts, gaps, hangs = [], [], [], []
-    tested, err_tested, err_rejected, err_both_die = 0, 0, 0, 0
+    tested, compared, err_tested, err_rejected, err_both_die = 0, 0, 0, 0, 0
     ulp_stats = {"ulp_n": 0, "max_ulp": 0}
     tmp = tempfile.mkdtemp(prefix="fuzzdiff.")
+    prebuild_runtime(tmp)
     prog_path = os.path.join(tmp, "p.eigs")
     out_path = os.path.join(tmp, "p.bin")
 
@@ -984,17 +1025,19 @@ def main():
             elif aot_rc == TIMEOUT_RC:
                 hangs.append((gen.__name__, prog, "AOT"))
                 mark = "H"
-            elif aot_rc == 0:
-                run_pasts.append((gen.__name__, prog, vm_out, vm_err, aot_out))
-                mark = "R"
-            elif (vm_out != aot_out or norm_err(vm_err) != norm_err(aot_err)
-                  or aot_rc != vm_rc):
-                divergences.append((gen.__name__, prog,
-                                    vm_out + vm_err + f"<rc={vm_rc}>",
-                                    aot_out + aot_err + f"<rc={aot_rc}>"))
-                mark = "D"
             else:
-                err_both_die += 1  # both died: stdout + normalized error + code match
+                compared += 1
+                if aot_rc == 0:
+                    run_pasts.append((gen.__name__, prog, vm_out, vm_err, aot_out))
+                    mark = "R"
+                elif (vm_out != aot_out or norm_err(vm_err) != norm_err(aot_err)
+                      or aot_rc != vm_rc):
+                    divergences.append((gen.__name__, prog,
+                                        vm_out + vm_err + f"<rc={vm_rc}>",
+                                        aot_out + aot_err + f"<rc={aot_rc}>"))
+                    mark = "D"
+                else:
+                    err_both_die += 1  # stdout + normalized error + code match
         else:
             tested += 1
             aot_out, aot_err, aot_rc, err = run_aot(prog_path, out_path)
@@ -1004,13 +1047,15 @@ def main():
             elif aot_rc == TIMEOUT_RC:
                 hangs.append((gen.__name__, prog, "AOT"))
                 mark = "H"
-            elif aot_rc != 0 or not (
-                    ulp_match(vm_out, aot_out, ulp_stats) if gen is gen_buffer_reduce
-                    else vm_out == aot_out):
-                divergences.append((gen.__name__, prog, vm_out,
-                                    aot_out if aot_rc == 0
-                                    else aot_out + f"<AOT died rc={aot_rc}> " + aot_err))
-                mark = "D"
+            else:
+                compared += 1
+                if aot_rc != 0 or not (
+                        ulp_match(vm_out, aot_out, ulp_stats) if gen is gen_buffer_reduce
+                        else vm_out == aot_out):
+                    divergences.append((gen.__name__, prog, vm_out,
+                                        aot_out if aot_rc == 0
+                                        else aot_out + f"<AOT died rc={aot_rc}> " + aot_err))
+                    mark = "D"
         if not args.quiet:
             sys.stdout.write(mark); sys.stdout.flush()
     if not args.quiet:
@@ -1027,7 +1072,7 @@ def main():
                 f.write(item[1])
 
     print(f"\n=== fuzzdiff results (seed {seed}) ===")
-    print(f"  generated {args.count} | VM-clean tested {tested} | "
+    print(f"  generated {args.count} | VM-clean tested {tested} | compared {compared} | "
           f"error-class tested {err_tested} "
           f"(both-reject {err_rejected}, both-die matched {err_both_die})")
     if ulp_stats["ulp_n"]:
@@ -1062,7 +1107,16 @@ def main():
     if divergences or run_pasts or gaps or hangs:
         print(f"\n  findings saved to {fd}/ (re-run with --seed {seed})")
 
-    sys.exit(1 if divergences or run_pasts or hangs or (args.strict_gaps and gaps) else 0)
+    too_many_gaps = tested > 0 and len(gaps) / tested > 0.25
+    vacuous = compared == 0
+    if vacuous:
+        print("\n  GATE FAILED: zero programs reached a VM<->AOT comparison")
+    if too_many_gaps:
+        print(f"\n  GATE FAILED: {len(gaps)}/{tested} VM-clean programs were AOT gaps "
+              "(more than 25%; allows isolated unsupported shapes but catches a broadly "
+              "broken runtime or emitter)")
+    sys.exit(1 if divergences or run_pasts or hangs or vacuous or too_many_gaps
+             or (args.strict_gaps and gaps) else 0)
 
 
 if __name__ == "__main__":
