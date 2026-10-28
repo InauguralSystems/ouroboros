@@ -1,0 +1,1 @@
+- AOT execution now mirrors the pinned VM for wide indices, loop bookkeeping, and callback line restoration (#309).

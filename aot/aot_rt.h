@@ -119,7 +119,11 @@ static inline void aot_for_owned_begin(AotForOwned *r, EigsSlot *slot, Value *sa
 static inline void aot_for_owned_drop(void) {
     AotForOwned *r = aot_for_owned_top;
     aot_for_owned_top = r->prev;
-    if (r->slot) { slot_decref(*r->slot); *r->slot = slot_null(); }
+    if (r->slot) {
+        slot_decref(*r->slot);
+        *r->slot = r->saved ? slot_from_value(r->saved) : slot_null();
+        r->saved = NULL;
+    }
     val_decref(r->saved);
     r->prev = NULL; r->slot = NULL; r->saved = NULL;
 }
@@ -136,6 +140,18 @@ static inline void aot_for_owned_drain_to(AotForOwned *mark) {
 static inline void aot_for_owned_unwind(int handler_depth) {
     while (aot_for_owned_top && aot_for_owned_top->handler_depth >= handler_depth)
         aot_for_owned_drop();
+}
+
+/* EigenScript b8c610ea/9e6d1541: each while loop owns its counter.  The
+ * exported runtime step still uses the publication global, so bracket it with
+ * the loop's native counter; nested/called loops can no longer contaminate it. */
+static inline int aot_loop_step(Env *e, long long *counter, int stalled) {
+    long long saved = g_loop_iterations;
+    g_loop_iterations = *counter;
+    int stop = stalled ? eigs_loop_stall_step(e) : eigs_loop_cap_step(e);
+    *counter = g_loop_iterations;
+    g_loop_iterations = saved;
+    return stop;
 }
 static void aot_try_push(jmp_buf *b) {
     if (aot_try_n >= AOT_TRY_MAX) { fprintf(stderr, "Error: 'try' nested more than %d deep\n", AOT_TRY_MAX); exit(1); }
@@ -1251,19 +1267,27 @@ static void aot_buf_expect(Value *b) { aot_buf_expect_at(b, "?"); }
  * "index 5 out of range (list length 3)". Same rc, different text -- and
  * the _err tier compares text. The generic aot_index_get family already
  * keeps the two apart; this one now takes the kind from its caller. */
+/* EigenScript af8f5194 (#2032): integral finite values outside int range are
+ * accepted and clamped, so callers produce their normal range diagnostic. */
+static inline int aot_idx_is_int(double d, int *out) {
+    if (d < (double)INT_MIN || d > (double)INT_MAX) {
+        if (!isfinite(d) || (fabs(d) < 4503599627370496.0 && (double)(long long)d != d)) return 0;
+        *out = d < 0.0 ? INT_MIN : INT_MAX;
+        return 1;
+    }
+    int i = (int)d;
+    if ((double)i != d) return 0;
+    *out = i;
+    return 1;
+}
 static long aot_idx_k(double d, int count, int is_list) {
-    /* (round 96) INT width, mirroring the VM's vm_index_is_int: its check
-     * is `int i = (int)d; (double)i != d`, so an index past INT_MAX fails
-     * the INTEGER test, not the bounds test -- `b[65536 * 65536]` says
-     * "index must be an integer, got 4.29497e+09" there while a long-width
-     * check here reported an out-of-range bound instead. */
-    int ii = (int)d;
-    if ((double)ii != d) rt_error(EK_VALUE, g_trace_current_line, "index must be an integer, got %g", d);
-    long i = (long)d;
+    int ii;
+    if (!aot_idx_is_int(d, &ii)) rt_error(EK_VALUE, g_trace_current_line, "index must be an integer, got %g", d);
+    long i = ii;
     if (i < 0) i += count;
     if (i < 0 || i >= count) {
-        if (is_list) rt_error(EK_INDEX, g_trace_current_line, "index %ld out of range (list length %d)", (long)d, count);
-        else         rt_error(EK_INDEX, g_trace_current_line, "buffer index %ld out of range (length %d)", (long)d, count);
+        if (is_list) rt_error(EK_INDEX, g_trace_current_line, "index %ld out of range (list length %d)", (long)ii, count);
+        else         rt_error(EK_INDEX, g_trace_current_line, "buffer index %ld out of range (length %d)", (long)ii, count);
     }
     return i;
 }
@@ -1304,10 +1328,8 @@ static void   aot_buf_set_at(Value *b, double idx, double v, const char *site) {
    (provably-integer induction vars + dimensions), so skip the float integer
    check. Negative-resolve + bounds-check still mirror the VM. */
 static long aot_idx_ik(long i, int count, int is_list) {
-    /* (round 96) the int-width integer test applies here too: this path is
-     * reached with a long computed by native integer arithmetic, and a
-     * value past INT_MAX is what the VM calls a non-integer index. */
-    if ((long)(int)i != i) rt_error(EK_VALUE, g_trace_current_line, "index must be an integer, got %g", (double)i);
+    if (i < INT_MIN) i = INT_MIN;
+    else if (i > INT_MAX) i = INT_MAX;
     if (i < 0) i += count;
     if (i < 0 || i >= count) {
         /* (round 97) name the container kind -- see aot_idx_k. */
@@ -1500,10 +1522,7 @@ static inline double aot_dot_v(Env *g, Value *a, Value *b) {
  * width and storing at another, which is why `xs[-4294967296 : 3]` printed
  * a plausible 60, rc 0, where the VM refuses the bound. */
 static inline int aot_sbound_is_int(double d, int *out) {
-    int i = (int)d;
-    if ((double)i != d) return 0;
-    *out = i;
-    return 1;
+    return aot_idx_is_int(d, out);
 }
 static inline long aot_sbound(double x, long len) {
     int i;
@@ -2319,15 +2338,17 @@ static Value *aot_make_buffer(int count, int rows, int cols, const double *src) 
  * raises a type error at the consuming operator, as does this. Out of range
  * takes the VM's text for the tensor's kind. */
 static inline double aot_tensor_num_at(AotTensor t, double d, const char *site) {
-    long i = (long)d;
+    int ii = 0;
+    int integral = aot_idx_is_int(d, &ii);
+    long i = ii;
     /* a BUFFER-kind tensor indexes flat whatever its shape (the VM's shaped
      * buffer is one flat buffer); a LIST-kind 2-D tensor's t[i] is a row. */
     long n = (t.kind == 1 || t.is1d) ? (t.is1d ? t.cols : t.rows * t.cols) : -1;
-    if (__builtin_expect(n >= 0 && (double)i == d && i >= 0 && i < n, 1))
+    if (__builtin_expect(n >= 0 && integral && i >= 0 && i < n, 1))
         return num_guard(t.data[i]);
     if (n < 0)
         rt_error(EK_TYPE, g_trace_current_line, "non-numeric value in a numeric context at %s (type list)", site);
-    if ((double)i != d)
+    if (!integral)
         rt_error(EK_VALUE, g_trace_current_line, "index must be an integer, got %g", d);
     if (t.kind == 1)
         rt_error(EK_INDEX, g_trace_current_line, "buffer index %ld out of range (length %ld)", i, n);
@@ -2445,7 +2466,6 @@ static AotTensor aot_tensor_relu(AotTensor a) {
  * Consumes both operands; returns an owned result (null on a dict miss). The
  * error line is 0 (the AOT doesn't track VM line numbers), but a valid index —
  * the only path the differential harness exercises — is byte-exact. */
-static int aot_idx_is_int(double d, int *out) { int i = (int)d; if ((double)i != d) return 0; *out = i; return 1; }
 static int aot_idx_resolve(int *i, int len) { int r = (*i < 0) ? *i + len : *i; if (r < 0 || r >= len) return 0; *i = r; return 1; }
 /* #1637/#1061: OP_INDEX_SET's buffer arm, in its order -- the index (an
  * integer, then in range), THEN the value. A bool/str/null value raises

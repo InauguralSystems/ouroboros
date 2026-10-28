@@ -4537,9 +4537,11 @@ define emit_stmt_inner(node, ind, nm, bt, minits, gf) as:
         # is what the VM does too: its continue_target is loop_start, ahead of
         # the check.
         if g_observed == 1:
-            local chk is "eigs_loop_cap_step(__eigs_g)"
+            g_loop_seq is g_loop_seq + 1
+            local lid is str of g_loop_seq
+            local chk is "aot_loop_step(__eigs_g, &_loop_n_" + lid + ", 0)"
             if (has_predicate of node[1]) == 1:
-                chk is "eigs_loop_stall_step(__eigs_g)"
+                chk is "aot_loop_step(__eigs_g, &_loop_n_" + lid + ", 1)"
             elif (g_loopexit_gate == 0) and (g_obs_all == 0):
                 # (#126) The per-name gate reaches the loop safepoint too,
                 # because the safepoint is ITSELF a named env write. A
@@ -4559,22 +4561,28 @@ define emit_stmt_inner(node, ind, nm, bt, minits, gf) as:
                 # name `__loop_iterations__` where uses_ident cannot see it.
                 chk is ""
             local olg is loop_gf of [node, minits]
+            local old_cont is g_loop_continue_label
+            if chk != "":
+                g_loop_continue_label is "_loop_next_" + lid
+            local obody is emit_stmts of [node[2], ind + "    ", nm, bt, minits, olg]
+            g_loop_continue_label is old_cont
             if (g_loopexit_gate == 1) and ((G_CUR_FN[0]) == "<module>"):
                 # (round 134, #190) the observed arm ran the step (which
                 # stores "stalled"/"limit") but never stored "normal" on
                 # a condition-false exit, so a later normal exit read the
                 # stale reason (corpus test_loop_exit LE2: VM normal, AOT
                 # stalled). Same shape as the unobserved arm below.
-                local ogs is ind + "while (1) {\n"
+                local ogs is ind + "{ long long _loop_n_" + lid + " = 0; int _loop_first_" + lid + " = 1; while (1) {\n"
+                ogs is ogs + ind + "    _loop_next_" + lid + ": if (!_loop_first_" + lid + " && " + chk + ") break; _loop_first_" + lid + " = 0;\n"
                 ogs is ogs + ind + "    if (!(" + (emit_cond of [node[1], nm, bt]) + ")) { aot_set(__eigs_g, \"__loop_exit__\", make_str(\"normal\")); break; }\n"
-                ogs is ogs + (emit_stmts of [node[2], ind + "    ", nm, bt, minits, olg])
-                ogs is ogs + ind + "    if (" + chk + ") break;\n"
-                return ogs + ind + "}\n"
-            local os is ind + "while (" + (emit_cond of [node[1], nm, bt]) + ") {\n"
-            os is os + (emit_stmts of [node[2], ind + "    ", nm, bt, minits, olg])
+                ogs is ogs + obody
+                return ogs + ind + "}}\n"
+            local os is ind + "{ long long _loop_n_" + lid + " = 0; int _loop_first_" + lid + " = 1; while (1) {\n"
             if chk != "":
-                os is os + ind + "    if (" + chk + ") break;\n"
-            return os + ind + "}\n"
+                os is os + ind + "    _loop_next_" + lid + ": if (!_loop_first_" + lid + " && " + chk + ") break; _loop_first_" + lid + " = 0;\n"
+            os is os + ind + "    if (!(" + (emit_cond of [node[1], nm, bt]) + ")) break;\n"
+            os is os + obody
+            return os + ind + "}}\n"
         local vinfo is vec_loop of [node, nm, bt]
         if vinfo != null:
             return emit_vectorized of [node, vinfo, ind, nm, bt, minits]
@@ -4668,6 +4676,8 @@ define emit_stmt_inner(node, ind, nm, bt, minits, gf) as:
     if t == "continue":
         if g_cur_try_depth > 0:
             throw of ("AOT: `continue` inside a `try` body is not emitted yet -- the handler would stay pushed across the jump (round 153).")
+        if g_loop_continue_label != "":
+            return ind + "goto " + g_loop_continue_label + ";\n"
         return ind + "continue;\n"
     if t == "for":
         # `for var in iter` — materialize the iterable (a list/buffer; `range of`
@@ -4791,8 +4801,9 @@ define emit_stmt_inner(node, ind, nm, bt, minits, gf) as:
             # earlier conditional assignment did not execute.
             fo is fo + ind + "  Value* _fsv_" + (cn of fvar) + " = aot_get(" + (envc of fvar) + ", \"" + fvar + "\");\n"
         # Register only newly owned boxed storage/snapshots. Numeric loops
-        # retain their existing zero-allocation path. A caught exit drops
-        # references without restoring the saved binding value.
+        # retain their existing zero-allocation path. A caught exit restores
+        # an ordinary pre-loop local; active nested binders retain the VM's
+        # overwrite behavior.
         local own_record is ""
         if (slot_binder != "") or ((fsv_kind != "") and (fsv_kind != "num")):
             own_record is "_forown_" + (cn of fvar)
@@ -4800,6 +4811,11 @@ define emit_stmt_inner(node, ind, nm, bt, minits, gf) as:
             local own_saved is "NULL"
             if slot_binder != "":
                 own_slot is "&" + slot_binder
+            elif (fsv_kind == "lv") and (g_cur_active_for[fvar] != 1):
+                # A caught exit crosses the VM's lexical loop environment and
+                # restores the pre-loop local (#2044).  Give the unwind record
+                # the actual slot; normal exit nulls saved before dropping it.
+                own_slot is "&" + (lv of fvar)
             if (fsv_kind != "") and (fsv_kind != "num"):
                 own_saved is "_fsv_" + (cn of fvar)
                 if fsv_kind == "genp":
@@ -11127,6 +11143,8 @@ define emit_function(fn, finfo, gnm, gbt) as:
 # as a VALUE argument (emit_val emits make_builtin of a boxed wrapper).
 g_uf_gate is 0
 g_loopexit_gate is 0
+g_loop_seq is 0
+g_loop_continue_label is ""
 g_mod_tensor is {}
 G_LIFT_N is [0]
 # names registered by the lift itself (vs real top-level defines), so a
