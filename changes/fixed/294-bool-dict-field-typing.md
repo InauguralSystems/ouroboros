@@ -1,0 +1,1 @@
+- AOT-compiled calls now preserve boolean values read from statically typed dict fields, while numeric fields remain unboxed. (#294)

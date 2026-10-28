@@ -8555,10 +8555,20 @@ define local_gen_map_seeded(body, seed) as:
                             nidx is nidx + 1
                         local pv is unwrap of (pr[1])
                         if (len of pv) > 0:
-                            if (pv[0] == "str") or (pv[0] == "list") or (pv[0] == "dict") or (pv[0] == "null"):
+                            # A bool literal or comparison is boxed evidence too.
+                            # Without this arm an absent field class falls back to
+                            # numeric at a dot-read call site (#294).
+                            if (pv[0] == "str") or (pv[0] == "list") or (pv[0] == "dict") or (pv[0] == "null") or ((is_bool_expr of pv) == 1):
                                 fmap[kn] is "gen"
                             elif pv[0] == "num":
                                 fmap[kn] is "num"
+                            elif pv[0] == "ident":
+                                # Module/local bool temporaries are already
+                                # classified gen by their comparison RHS.
+                                # Preserve that evidence when a literal stores
+                                # the temporary rather than the expression.
+                                if out[pv[1]] == "gen":
+                                    fmap[kn] is "gen"
                             elif (is_buf_create of (pr[1])) == 1:
                                 # (round 165, DMG lever 2) a field created as a
                                 # buffer: an index read of it is a number, like
@@ -8803,7 +8813,9 @@ define dict_literal_fields(dictnode, lm) as:
             nidx is nidx + 1
         local pv is unwrap of (pr[1])
         if (len of pv) > 0:
-            if (pv[0] == "str") or (pv[0] == "list") or (pv[0] == "dict") or (pv[0] == "null"):
+            # Keep returned-dict field typing identical to the local literal
+            # walk above: bools are boxed values, never C doubles (#294).
+            if (pv[0] == "str") or (pv[0] == "list") or (pv[0] == "dict") or (pv[0] == "null") or ((is_bool_expr of pv) == 1):
                 fmap[kn] is "gen"
             elif pv[0] == "num":
                 fmap[kn] is "num"

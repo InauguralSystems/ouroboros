@@ -1,0 +1,13 @@
+# ouroboros#294: dict fields whose initial value is certainly bool stay boxed
+# when passed to a compiled function.  The numeric field is the control: its
+# inferred "num" field class keeps the argument and parameter as C doubles.
+define identity(v) as:
+    return v
+define add_one(v) as:
+    return v + 1
+
+x is 3
+D is {"literal": true, "computed": x > 1, "number": 2.5}
+print of (identity of D.literal)
+print of (identity of D.computed)
+print of (add_one of D.number)

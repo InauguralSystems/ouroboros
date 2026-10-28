@@ -364,7 +364,7 @@ def gen_observer_reads(r):
 # issues (each gate below cites its number); empty by default so the lane
 # stays green while the issue is open. Remove a gate when its issue closes.
 KNOWN = set()
-KNOWN_ISSUES = {259, 288, 292, 293, 294}
+KNOWN_ISSUES = {259, 288, 292, 293}
 
 def check_known_issues(offline):
     """Refuse expired generator gates; API failures are failures unless opted out."""
@@ -603,10 +603,9 @@ def gen_bool_values(r):
     # bool and num with '=='": an error-class case (both must die, same text),
     # or caught, with e.message printed.
     x, a, b = _int(r), _int(r), _int(r)
-    # ouroboros#294 (OPEN): a dict field holding a bool LITERAL is classified
-    # numeric, so `D.q` handed to a compiled function dies. Bool fields are
-    # read through the index form unless `--known 294`.
-    DP, DQ = ("D.p", "D.q") if 294 in KNOWN else ('D["p"]', 'D["q"]')
+    # Dict bool fields deliberately use dot reads: ouroboros#294 used to gate
+    # these behind index syntax because the field map misclassified them.
+    DP, DQ = "D.p", "D.q"
     lines = [f"x is {x}", f"t is x > {a}", f"f is x < {b}",
              "L is [t, f, x == " + str(x) + ", 0]", 'D is {"p": t, "q": f}',
              "define gt(u, w) as:", "    return u > w",
@@ -967,7 +966,7 @@ def main():
                          "generators may emit (259: a literal str/list operand to '-'; 288: borrowed element beside a sibling call "
                          "that mutates the container; 292: module-level numeric store into "
                          "a function-boxed slot; 293: calling closures escaped from a for "
-                         "body; 294: bool literal dict fields read with a dot); off by "
+                         "body); off by "
                          "default so the lane stays green")
     ap.add_argument("--offline", action="store_true",
                     help="explicitly skip the gated-issue GitHub API check")
