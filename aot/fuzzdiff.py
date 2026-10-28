@@ -364,7 +364,7 @@ def gen_observer_reads(r):
 # issues (each gate below cites its number); empty by default so the lane
 # stays green while the issue is open. Remove a gate when its issue closes.
 KNOWN = set()
-KNOWN_ISSUES = {259, 288, 292, 293}
+KNOWN_ISSUES = {288, 292, 293}
 
 def check_known_issues(offline):
     """Refuse expired generator gates; API failures are failures unless opted out."""
@@ -653,15 +653,12 @@ def gen_try_messages(r):
         ("rt", ["xs is [1, 2, 3]", f"print of xs[{k + 2}]"]),
         ("rt", ["bb is buffer of 3", f"print of bb[{k + 2}]"]),
         ("rt", ["ys is [1]", f"ys[{k}] is 2"]),
-        # variable operands: a LITERAL str/list operand to `-` is a build-time
-        # stop under the AOT (ouroboros#259, OPEN), emitted only under
-        # `--known 259`
+        # Variable and literal non-number operands pin the runtime-error
+        # lowering (#259): neither may stop in the emitter.
         ("rt", [f'sv is "{w}"', f"print of (sv - {k})"]),
         ("rt", [f"lv is [{k}]", "print of (lv - 1)"]),
-    ] + ([
         ("rt", [f'print of ("{w}" - {k})']),
         ("rt", [f"print of ([{k}] - 1)"]),
-    ] if 259 in KNOWN else []) + [
         ("rt", [f"print of (len of {k})"]),
         ("rt", [f"v is {k}", "print of v.f"]),
         ("rt", [f'print of ({k} < "{w}")']),
@@ -963,7 +960,7 @@ def main():
                          "uniform mix, so a new arm gets its own seeds (#160)")
     ap.add_argument("--known", default="",
                     help="comma-separated OPEN ouroboros issue numbers whose shapes the "
-                         "generators may emit (259: a literal str/list operand to '-'; 288: borrowed element beside a sibling call "
+                         "generators may emit (288: borrowed element beside a sibling call "
                          "that mutates the container; 292: module-level numeric store into "
                          "a function-boxed slot; 293: calling closures escaped from a for "
                          "body); off by "

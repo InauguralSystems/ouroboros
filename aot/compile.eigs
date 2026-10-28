@@ -2983,6 +2983,14 @@ define emit_num(node, nm, bt, raw) as:
         # where the VM raises on the arithmetic. The three dynamics programs
         # refused "emit_num on non-numeric node interrogate" for this.
         return "aot_num_ck_at(" + (emit_val of [node, nm, bt]) + ", " + (site_or of [osite, "\"" + (c_escape of (G_CUR_FN[0])) + ": interrogative\""]) + ")"
+    # A numbers-only operator is numeric-or-raise even when one operand is a
+    # certain boxed value.  Preserve that value until run time and let the
+    # operator-site checked unbox reproduce the VM's type error.  Refusing
+    # here with an AST kind (the old `emit_num ... str` assertion) exposed an
+    # emitter implementation detail and incorrectly rejected valid programs
+    # whose bad operation was reachable only at run time (#259).
+    if (t == "str") or (t == "list") or (t == "dict") or (t == "null"):
+        return "aot_num_ck_at(" + (emit_val of [node, nm, bt]) + ", " + (site_or of [osite, "\"" + (c_escape of (G_CUR_FN[0])) + ": numeric operand\""]) + ")"
     throw of ("AOT: emit_num on non-numeric node " + t)
 
 define emit_val(node, nm, bt) as:

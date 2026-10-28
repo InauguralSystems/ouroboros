@@ -1,0 +1,44 @@
+# (#259) Every string shape reaching emit_num must become the VM's runtime
+# operator raise, never the emitter's internal `emit_num ... str` refusal.
+define left_literal(n) as:
+    return "a" - n
+
+define string_result() as:
+    return "a"
+
+define call_result(n) as:
+    return (string_result of []) - n
+
+define local_string(n) as:
+    local s is "a"
+    return s * n
+
+try:
+    print of (left_literal of 1)
+catch e:
+    print of e.kind
+    print of e.message
+
+try:
+    print of (1 - "a")
+catch e:
+    print of e.kind
+    print of e.message
+
+try:
+    print of ("a" * 2)
+catch e:
+    print of e.kind
+    print of e.message
+
+try:
+    print of (call_result of 1)
+catch e:
+    print of e.kind
+    print of e.message
+
+try:
+    print of (local_string of 2)
+catch e:
+    print of e.kind
+    print of e.message
