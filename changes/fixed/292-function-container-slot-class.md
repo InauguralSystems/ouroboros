@@ -1,0 +1,1 @@
+- Function-body non-number stores now keep mixed module container slots boxed in AOT code (#292).
