@@ -3015,7 +3015,7 @@ define emit_num(node, nm, bt, raw) as:
                 if binline != 0:
                     local _brhs is unwrap of node[3]
                     if (_brhs[0] != "binop") and (_brhs[0] != "call"):
-                        seqpre is seqpre + "aot_set_location(aot_current_file, " + (str of node[5]) + "); "
+                        seqpre is seqpre + "aot_set_location(aot_current_file, " + (str of node[5]) + "); __aot_ln = " + (str of node[5]) + "; "
                     seqpre is seqpre + "AOT_BINARY_LINE(" + (str of binline) + ", " + (str of node[5]) + ", "
                     seqpost is ")" + seqpost
         # bitwise: the VM's INT_BINOP — int64 two's-complement, shift counts
@@ -3358,7 +3358,7 @@ define emit_val(node, nm, bt) as:
             if vbline != 0:
                 local _vbrhs is unwrap of node[3]
                 if (_vbrhs[0] != "binop") and (_vbrhs[0] != "call"):
-                    vpre is "aot_set_location(aot_current_file, " + (str of node[5]) + "); "
+                    vpre is "aot_set_location(aot_current_file, " + (str of node[5]) + "); __aot_ln = " + (str of node[5]) + "; "
                 vop is "AOT_BINARY_LINE(" + (str of vbline) + ", " + (str of node[5]) + ", " + vop + ")"
             return "({ Value* _sql = " + (emit_val of [node[2], nm, bt]) + "; Value* _sqr = " + (emit_val of [node[3], nm, bt]) + "; " + vpre + vop + "; })"
         return (binfn of bop) + "(" + (emit_val of [node[2], nm, bt]) + ", " + (emit_val of [node[3], nm, bt]) + ")"
@@ -3578,17 +3578,9 @@ define emit_val(node, nm, bt) as:
             # name, and `nosuch of lst[7]` reported an out-of-range index,
             # where the VM names the callee. Same stdout and rc, wrong
             # message -- and the _err tier compares message text.
-            return "({ " + hc1[0] + "Value* _sqcf = aot_call_resolve(__eigs_g, \"" + callee[1] + "\", " + hc1[1] + "); Value* _sqca = " + (emit_val of [(barg[1])[0], nm, bt]) + "; " + (host_fn_stamp of callee[1]) + "aot_call_dispatch(_sqcf, _sqca)" + "; })"
+            return "({ " + hc1[0] + "Value* _sqcf = aot_call_resolve(" + (envc of callee[1]) + ", \"" + callee[1] + "\", " + hc1[1] + "); Value* _sqca = " + (emit_val of [(barg[1])[0], nm, bt]) + "; " + (host_fn_stamp of callee[1]) + "aot_call_dispatch(_sqcf, _sqca)" + "; })"
         local hc2 is ic_cache of 0
-        local cargstamp is ""
-        local cargnode is unwrap of node[2]
-        if cargnode[0] == "binop":
-            if len of cargnode > 5:
-                cargstamp is "aot_set_location(aot_current_file, " + (str of cargnode[5]) + "); __aot_ln = " + (str of cargnode[5]) + "; "
-        local dispatch_expr is "aot_call_dispatch(_sqcf, _sqca)"
-        if cargstamp != "":
-            dispatch_expr is "aot_call_dispatch_line(_sqcf, _sqca, " + (str of cargnode[5]) + ")"
-        return "({ " + hc2[0] + "Value* _sqcf = aot_call_resolve(__eigs_g, \"" + callee[1] + "\", " + hc2[1] + "); Value* _sqca = " + (emit_val of [node[2], nm, bt]) + "; " + cargstamp + (host_fn_stamp of callee[1]) + dispatch_expr + "; })"
+        return "({ " + hc2[0] + "Value* _sqcf = aot_call_resolve(" + (envc of callee[1]) + ", \"" + callee[1] + "\", " + hc2[1] + "); Value* _sqca = " + (emit_val of [node[2], nm, bt]) + "; " + (host_fn_stamp of callee[1]) + "aot_call_dispatch(_sqcf, _sqca); })"
     if t == "slice":
         # (round 129, #179) a slice in VALUE position. The runtime mirror of
         # OP_SLICE_GET (aot_slice_any: per-type length rule, negative
@@ -4434,7 +4426,11 @@ define emit_stmt_inner(node, ind, nm, bt, minits, gf) as:
                 asn is asn + ind + (cn of name) + "_b = 1;\n"
             # temporal: record the new value on the trace tape (prev / at-line)
             if (traced_name of name) == 1:
-                asn is asn + ind + "aot_trace_assign(\"" + name + "\", " + (cn of name) + ");\n"
+                # The VM's restamp_line runs after the RHS and before SET_NAME.
+                # A scoped multi-line binary restores its parent expression
+                # line, not the statement's filing line, so mirror that
+                # separate store boundary before recording history.
+                asn is asn + ind + "aot_set_location(aot_current_file, " + (str of g_emit_stmt_line[0]) + "); __aot_ln = " + (str of g_emit_stmt_line[0]) + "; aot_trace_assign(\"" + name + "\", " + (cn of name) + ");\n"
             return asn
         if (is_num_expr of [node[2], nm, bt]) == 1:
             if ((obs_name of name) == 1) or (g_outward_obs[name] == 1):
@@ -4453,7 +4449,7 @@ define emit_stmt_inner(node, ind, nm, bt, minits, gf) as:
                 # traced but UNOBSERVED: the numeric store to a demoted name
                 # still records on the tape (staged through a temp so the RHS
                 # is emitted once)
-                return ind + "{ double __tv = " + (emit_num of [node[2], nm, bt, 0]) + "; aot_trace_assign(\"" + name + "\", __tv); " + (env_write_num of [name, "__tv"]) + " }\n"
+                return ind + "{ double __tv = " + (emit_num of [node[2], nm, bt, 0]) + "; aot_set_location(aot_current_file, " + (str of g_emit_stmt_line[0]) + "); __aot_ln = " + (str of g_emit_stmt_line[0]) + "; aot_trace_assign(\"" + name + "\", __tv); " + (env_write_num of [name, "__tv"]) + " }\n"
             return ind + (env_write_num of [name, (emit_num of [node[2], nm, bt, 0])]) + "\n"
         if (g_lowerloc == 1) and (g_envloc[name] == 1):
             # No traced arm here, ON PURPOSE. One was added and reviewed dead:
