@@ -1,0 +1,1 @@
+- Fields reachable by interpreted or dynamically keyed writes remain boxed in AOT code, matching the VM (#275).
