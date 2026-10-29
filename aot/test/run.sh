@@ -95,6 +95,16 @@ for prog in test/*.eigs; do
   if ! bash build.sh "$prog" "$bin" >/tmp/aot_build.log 2>&1; then
     echo "BUILD FAIL: $name"; tail -3 /tmp/aot_build.log; fail=1; rm -f "$bin"; continue
   fi
+  # #256: atom-vs-atom scalar comparisons cannot raise. Keep this assertion
+  # against the C emitted by this compiler: runtime output alone cannot detect
+  # an unnecessary source-line store on every loop back-edge.
+  if [ "$name" = "t540_loop_scalar_no_restamp.eigs" ]; then
+    scalar_gen=$(timeout 120 "$EIG" compile.eigs "$prog" "${EIGS_DIR:-../../EigenScript}" 2>&1); scalar_gen_rc=$?
+    if [ "$scalar_gen_rc" -ne 0 ] || printf '%s\n' "$scalar_gen" | grep -E 'while \(\(g_trace_current_line = __aot_ln = [0-9]+,' >/dev/null; then
+      echo "FAIL: $name: non-raising scalar loop condition emitted a per-iteration line store"
+      fail=1; rm -f "$bin"; continue
+    fi
+  fi
   # BOTH sides run under a timeout. Neither did, and on 2026-08-23 a built
   # test binary hung and was still spinning a full core 3.8 days later --
   # orphaned to init, invisible to this harness, and slowing every other job
