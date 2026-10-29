@@ -1,7 +1,6 @@
 test_audio.eigs DIVERGE class:runtime-profile-builtins ouroboros#349
 test_audio_rate_limit.eigs DIVERGE class:runtime-profile-builtins ouroboros#349
 test_auth.eigs DIVERGE class:runtime-profile-builtins ouroboros#349
-test_bcd.eigs DIVERGE class:caught-error-output ouroboros#336
 test_bitwise.eigs DIVERGE class:harness-exit-status ouroboros#343
 test_bool.eigs REFUSE class:observer-scope ouroboros#347
 test_break_continue.eigs REFUSE class:list-argument-packing ouroboros#344
@@ -15,7 +14,6 @@ test_closure_mutation.eigs REFUSE class:closure-environment ouroboros#337
 test_closures.eigs REFUSE class:closure-environment ouroboros#337
 test_comprehension_scope_1737.eigs REFUSE class:unsupported-ast ouroboros#354
 test_concurrent.eigs DIVERGE class:harness-exit-status ouroboros#343
-test_contract.eigs DIVERGE class:caught-error-output ouroboros#336
 test_control_flow_interactions.eigs REFUSE class:list-argument-packing ouroboros#344
 test_coverage_v2.eigs REFUSE class:binding-order ouroboros#335
 test_data.eigs DIVERGE class:harness-exit-status ouroboros#343
@@ -90,7 +88,6 @@ test_temporal_param.eigs REFUSE class:native-task-scheduler ouroboros#345
 test_temporal_when.eigs REFUSE class:when-qualifier ouroboros#363
 test_tensor_buffer_inputs.eigs REFUSE class:unsupported-ast ouroboros#354
 test_tensor_buffer_ops.eigs REFUSE class:unsupported-ast ouroboros#354
-test_trajectory.eigs DIVERGE class:caught-error-output ouroboros#336
 test_transfer_copy.eigs REFUSE class:native-task-scheduler ouroboros#345
 test_trycatch.eigs REFUSE class:try-control-handler ouroboros#356
 test_ui.eigs REFUSE class:binding-order ouroboros#335

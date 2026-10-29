@@ -1,0 +1,5 @@
+load_file of "data/t530/load_bcd.eigs"
+try:
+    from_bcd of 0x1A
+catch err:
+    print of "caught"
