@@ -43,13 +43,20 @@ if [ ! -f "$BASE" ]; then
   echo "sweep: mint one deliberately with:  cp $got $BASE"
   exit 1
 fi
-if diff "$BASE" "$got" >/dev/null; then
+if ! awk 'NF < 3 || $3 !~ /^class:[a-z0-9-]+$/ {print "sweep: malformed ledger row: " $0 > "/dev/stderr"; bad=1} END {exit bad}' "$BASE"; then
+  echo "sweep: every ledger row needs a class:<root-cause> reason" >&2
+  exit 1
+fi
+base_outcomes=$(mktemp)
+awk '{print $1, $2}' "$BASE" >"$base_outcomes"
+if diff "$base_outcomes" "$got" >/dev/null; then
   echo "sweep: $((n - $(wc -l <"$got"))) / $n modules build; failures match the baseline"
-  rm -f "$got"; exit 0
+  rm -f "$got" "$base_outcomes"; exit 0
 fi
 echo "sweep: FAILURE SET CHANGED ($n modules examined)"
 echo "  '<' = expected to fail and now BUILDS (an improvement -- update the baseline)"
 echo "  '>' = newly failing (a REGRESSION)"
-diff "$BASE" "$got"
+diff "$base_outcomes" "$got"
 echo "sweep: observed set kept at $got"
+rm -f "$base_outcomes"
 exit 1
