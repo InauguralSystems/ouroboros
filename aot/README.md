@@ -387,7 +387,7 @@ doubles. They now call `obs_name`, the emitter's own predicate, and
 `test/dump_inference_gate.sh` (a tier of `test/run.sh`) joins the dump
 against the C of the same transpile so the two cannot drift apart again
 unnoticed; its header states which record fields it adjudicates. The audit joins those against the tape's
-`A name=value` records and ranks by assign count: **MISSED** = inference
+`A <stream> name=value` records and ranks by assign count: **MISSED** = inference
 boxed it, the tape proves every value was numeric (a specialization the
 compiler left on the table); OKBOXED / CONFIRMED / AMBIG / BLIND keep the
 report honest (tape `A` records carry locals name-only, so cross-scope

@@ -2,8 +2,10 @@
 #
 # Joins two artifacts:
 #   1. an EIGS_TRACE tape from a VM run of the program (the profile: byte-
-#      exact, replayable, committable — `A name=value` records are runtime
-#      evidence about every top-level binding, `L` records anchor lines), and
+#      exact, replayable, committable — `A <stream> name=value` records are runtime
+#      evidence about every top-level binding, `L` records anchor lines). Both
+#      record kinds carry the v5+ stream id before their payload, and line
+#      state is tracked per stream so interleaved tasks cannot borrow a line.
 #   2. the AOT's inference dump (`eigenscript compile.eigs PROG
 #      --dump-inference`): each name's inferred storage kind.
 #
@@ -45,7 +47,7 @@ dump_path is argv[1]
 # ---- parse the tape ----
 tape_text is read_text of tape_path
 tlines is split of [tape_text, "\n"]
-cur_line is 0 - 1
+tline is {}
 tnames is []
 acount is {}
 ncount is {}
@@ -57,18 +59,28 @@ loop while ti < (len of tlines):
     if (len of tl) > 2:
         tk is char_at of [tl, 0]
         if tk == "L":
-            cur_line is num of (substr of [tl, 2, (len of tl) - 2])
+            lrest is substr of [tl, 2, (len of tl) - 2]
+            lsp is index_of of [lrest, " "]
+            if lsp > 0:
+                lstream is substr of [lrest, 0, lsp]
+                tline[lstream] is num of (substr of [lrest, lsp + 1, (len of lrest) - lsp - 1])
         if tk == "A":
             arest is substr of [tl, 2, (len of tl) - 2]
-            eqp is index_of of [arest, "="]
+            asp is index_of of [arest, " "]
+            if asp > 0:
+                astream is substr of [arest, 0, asp]
+                apayload is substr of [arest, asp + 1, (len of arest) - asp - 1]
+                eqp is index_of of [apayload, "="]
+            else:
+                eqp is 0 - 1
             if eqp > 0:
-                an is substr of [arest, 0, eqp]
-                av is substr of [arest, eqp + 1, (len of arest) - eqp - 1]
+                an is substr of [apayload, 0, eqp]
+                av is substr of [apayload, eqp + 1, (len of apayload) - eqp - 1]
                 if acount[an] == null:
                     append of [tnames, an]
                     acount[an] is 0
                     ncount[an] is 0
-                    aline[an] is cur_line
+                    aline[an] is tline[astream]
                 acount[an] is acount[an] + 1
                 ncount[an] is ncount[an] + (is_numeric_val of av)
                 arecs is arecs + 1
