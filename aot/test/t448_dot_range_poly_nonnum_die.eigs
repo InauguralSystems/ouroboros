@@ -1,0 +1,6 @@
+define truth(x) as:
+    return true
+dot is truth
+a is [1, 2, 3]
+b is [4, 5, 6]
+print of ((dot of [a[0 : 2], b[0 : 2]]) + 1)

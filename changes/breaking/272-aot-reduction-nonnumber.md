@@ -1,0 +1,1 @@
+- AOT reduction fast paths now raise instead of silently substituting zero when a dynamically rebound reduction returns a non-number; programs must keep numeric reduction results in numeric contexts (#272).

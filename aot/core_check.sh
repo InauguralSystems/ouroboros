@@ -88,7 +88,7 @@ fi
 #      dirs aot/bench/*-20??????/ (frozen records of a measurement).
 # Behavioural witness of 2: aot/test/t399_bool_raw_read.eigs.
 RT="$HERE/aot_rt.h"
-READERS="aot_num_if aot_num_or aot_num_proven aot_num_put aot_num_init aot_slot_num_if aot_slot_num_proven"
+READERS="aot_num_if aot_num_proven aot_num_put aot_num_init aot_slot_num_if aot_slot_num_proven"
 b0=$(grep -n 'THE raw number readers' "$RT" | cut -d: -f1); b1=$(grep -n 'end of the raw number readers' "$RT" | cut -d: -f1)
 if [ "$(printf '%s\n' "$b0" | grep -c .)" -ne 1 ] || [ "$(printf '%s\n' "$b1" | grep -c .)" -ne 1 ] || [ "$b0" -ge "$b1" ]; then
     echo "core_check: aot_rt.h's raw-number reader block is missing or duplicated (begin='$b0' end='$b1')"; fail_n=1; b0=0; b1=0

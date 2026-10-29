@@ -2445,7 +2445,7 @@ define slice_hi(parts, tvar) as:
         return "aot_slice_bound(" + (parts[2]) + ", " + tvar + ", 1)"
     return parts[2]
 
-define seq_slice1(fn, parts) as:
+define seq_slice1(fn, parts, site) as:
     # (round 93) TARGET-FIRST sequencing. The round-91 hazard enumerated
     # bound-vs-bound and omitted target-vs-bound, while the VM's
     # OP_SLICE_GET pushes the TARGET, then start, then end -- so a bound
@@ -2460,7 +2460,7 @@ define seq_slice1(fn, parts) as:
     # incref) while the VM holds an owned reference on its stack across
     # the bound evaluation. Without it, a bound whose call rebinds the
     # name drops the last reference and the wrapper reads freed memory.
-    return "({ Value* _sqt = " + (parts[0]) + "; val_incref(_sqt); double _sq1 = " + (parts[1]) + "; double _sq2 = " + (slice_hi of [parts, "_sqt"]) + "; double _sqr = " + fn + "(__eigs_g, _sqt, _sq1, _sq2); val_decref(_sqt); _sqr; })"
+    return "({ Value* _sqt = " + (parts[0]) + "; val_incref(_sqt); double _sq1 = " + (parts[1]) + "; double _sq2 = " + (slice_hi of [parts, "_sqt"]) + "; double _sqr = " + fn + "(__eigs_g, _sqt, _sq1, _sq2, " + site + "); val_decref(_sqt); _sqr; })"
 
 define slice_arg_parts(argnode, nm, bt) as:
     local n is unwrap of argnode
@@ -2837,7 +2837,7 @@ define emit_num(node, nm, bt, raw) as:
                 local db is unwrap of delems[1]
                 if (da[0] == "ident") and (db[0] == "ident"):
                     if (bt[da[1]] == 1) and (bt[db[1]] == 1):
-                        return "aot_dot_v(__eigs_g, " + (cn of da[1]) + ", " + (cn of db[1]) + ")"
+                        return "aot_dot_v(__eigs_g, " + (cn of da[1]) + ", " + (cn of db[1]) + ", " + (site_or of [osite, "\"dot result\""]) + ")"
                 if (da[0] == "slice") or (db[0] == "slice"):
                     local pa is slice_arg_parts of [delems[0], nm, bt]
                     local pb is slice_arg_parts of [delems[1], nm, bt]
@@ -2846,26 +2846,26 @@ define emit_num(node, nm, bt, raw) as:
                         # then B's target, B's bounds.
                         local ha is slice_hi of [pa, "_sqt0"]
                         local hb is slice_hi of [pb, "_sqt1"]
-                        return "({ Value* _sqt0 = " + pa[0] + "; val_incref(_sqt0); double _sqa1 = " + pa[1] + "; double _sqa2 = " + ha + "; Value* _sqt1 = " + pb[0] + "; val_incref(_sqt1); double _sqb1 = " + pb[1] + "; double _sqb2 = " + hb + "; double _sqdr = aot_dot_range_v(__eigs_g, _sqt0, _sqa1, _sqa2, _sqt1, _sqb1, _sqb2); val_decref(_sqt0); val_decref(_sqt1); _sqdr; })"
-                    return "aot_dot_range_v(__eigs_g, " + pa[0] + ", " + pa[1] + ", " + pa[2] + ", " + pb[0] + ", " + pb[1] + ", " + pb[2] + ")"
+                        return "({ Value* _sqt0 = " + pa[0] + "; val_incref(_sqt0); double _sqa1 = " + pa[1] + "; double _sqa2 = " + ha + "; Value* _sqt1 = " + pb[0] + "; val_incref(_sqt1); double _sqb1 = " + pb[1] + "; double _sqb2 = " + hb + "; double _sqdr = aot_dot_range_v(__eigs_g, _sqt0, _sqa1, _sqa2, _sqt1, _sqb1, _sqb2, " + (site_or of [osite, "\"dot result\""]) + "); val_decref(_sqt0); val_decref(_sqt1); _sqdr; })"
+                    return "aot_dot_range_v(__eigs_g, " + pa[0] + ", " + pa[1] + ", " + pa[2] + ", " + pb[0] + ", " + pb[1] + ", " + pb[2] + ", " + (site_or of [osite, "\"dot result\""]) + ")"
             if (callee[1] == "sum") and (g_funcs["sum"] == null):
                 local sa is unwrap of node[2]
                 if (sa[0] == "ident") and (bt[sa[1]] == 1):
-                    return "aot_sum_v(__eigs_g, " + (cn of sa[1]) + ")"
+                    return "aot_sum_v(__eigs_g, " + (cn of sa[1]) + ", " + (site_or of [osite, "\"sum result\""]) + ")"
                 if sa[0] == "slice":
                     local ps is slice_arg_parts of [node[2], nm, bt]
                     if (ps[3]) == 1:
-                        return seq_slice1 of ["aot_sum_range_v", ps]
-                    return "aot_sum_range_v(__eigs_g, " + ps[0] + ", " + ps[1] + ", " + ps[2] + ")"
+                        return seq_slice1 of ["aot_sum_range_v", ps, (site_or of [osite, "\"sum result\""])]
+                    return "aot_sum_range_v(__eigs_g, " + ps[0] + ", " + ps[1] + ", " + ps[2] + ", " + (site_or of [osite, "\"sum result\""]) + ")"
             if (callee[1] == "norm") and (g_funcs["norm"] == null):
                 local na is unwrap of node[2]
                 if (na[0] == "ident") and (bt[na[1]] == 1):
-                    return "aot_norm_v(__eigs_g, " + (cn of na[1]) + ")"
+                    return "aot_norm_v(__eigs_g, " + (cn of na[1]) + ", " + (site_or of [osite, "\"norm result\""]) + ")"
                 if na[0] == "slice":
                     local pn is slice_arg_parts of [node[2], nm, bt]
                     if (pn[3]) == 1:
-                        return seq_slice1 of ["aot_norm_range_v", pn]
-                    return "aot_norm_range_v(__eigs_g, " + pn[0] + ", " + pn[1] + ", " + pn[2] + ")"
+                        return seq_slice1 of ["aot_norm_range_v", pn, (site_or of [osite, "\"norm result\""])]
+                    return "aot_norm_range_v(__eigs_g, " + pn[0] + ", " + pn[1] + ", " + pn[2] + ", " + (site_or of [osite, "\"norm result\""]) + ")"
             if (callee[1] == "exp") and (g_funcs["exp"] == null) and ((is_num_expr of [node[2], nm, bt]) == 1):
                 # VM exp guards the result (exp of 1000 -> 1e308), so match.
                 return "num_guard(exp(" + (emit_num of [node[2], nm, bt, 0]) + "))"
