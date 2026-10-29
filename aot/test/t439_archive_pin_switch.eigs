@@ -1,0 +1,5 @@
+# Archive rebuild regression fixture (#285). The byte-exact VM remains the
+# oracle while this allocation also keeps the replaced arena/alloc runtime
+# surface live in the native link.
+xs is [10, 20, 30]
+print of xs[1]
