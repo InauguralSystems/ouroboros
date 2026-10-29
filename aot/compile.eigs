@@ -3223,6 +3223,11 @@ define emit_val(node, nm, bt) as:
             # not the temporal tape.  Evaluating the subject through emit_val
             # preserves its single evaluation and its ordinary bound check.
             if ie[0] == "ident":
+                # The VM seeds a parameter slot's assignment count to one at
+                # call binding. A C parameter is not in the AOT Env, so read
+                # the per-activation mirror emitted by emit_function.
+                if (ik == 2) and ((g_cur_params[ie[1]] == 1) or (((G_CUR_FN[0]) != "<module>") and (g_module_names[ie[1]] != 1) and (nm[ie[1]] == 1))):
+                    return "make_num((double)" + (cn of ie[1]) + "__when)"
                 return "aot_interrogate_named(__eigs_g, \"" + (c_escape of ie[1]) + "\", " + (str of ik) + ", " + (emit_val of [node[2], nm, bt]) + ")"
             # The grammar admits expression operands.  Only `what` has a
             # value projection useful to the AOT; the other kinds receive the
@@ -4206,6 +4211,12 @@ define emit_stmt(node, ind, nm, bt, minits, gf) as:
     if node[0] == "assign":
         if g_cur_active_for[node[1]] != 1:
             g_cur_fresh_for[node[1]] is 0
+        # A parameter is already on assignment one when the call frame is
+        # created. The VM keeps that counter on the parameter's frame slot;
+        # the AOT's C parameter has no Env assign_counts entry, so mirror it
+        # beside the C value. Increment only after the completed store.
+        if (g_cur_interrogated[node[1]] == 1) and ((g_cur_params[node[1]] == 1) or (((G_CUR_FN[0]) != "<module>") and (g_module_names[node[1]] != 1) and (nm[node[1]] == 1))):
+            emitted is emitted + ind + (cn of node[1]) + "__when += 1;\n"
     return emitted + (assigned_bound_bit of [node, ind])
 
 define emit_stmt_inner(node, ind, nm, bt, minits, gf) as:
@@ -11254,6 +11265,16 @@ define emit_function(fn, finfo, gnm, gbt) as:
     local _ildk is keys of g_cur_interloc
     for _ildi in range of (len of _ildk):
         decls is decls + "    double " + (cn of (_ildk[_ildi])) + "__loc = 0; int " + (cn of (_ildk[_ildi])) + "__isloc = 0;   /* interrogated call-local (#218): OP_SET_FN_NAME_LOCAL's frame binding */\n"
+    # Parameter slots start at one; a local starts at zero until its first
+    # completed assignment. Mirror both beside queried function C values.
+    local _wkeys is keys of g_cur_interrogated
+    for _wpi in range of (len of _wkeys):
+        local _wpn is _wkeys[_wpi]
+        if (g_cur_params[_wpn] == 1) or ((g_module_names[_wpn] != 1) and (ba[_wpn] != null) and (fnm[_wpn] == 1)):
+            local _wseed is 0
+            if g_cur_params[_wpn] == 1:
+                _wseed is 1
+            decls is decls + "    long " + (cn of _wpn) + "__when = " + (str of _wseed) + ";\n"
     # unboxed for-in vars that are neither params, assigned locals, nor
     # globals still need a function-scope C decl (the VM's slot semantics:
     # post-loop reads see the last iterate).

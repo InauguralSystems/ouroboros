@@ -1,0 +1,1 @@
+- AOT-compiled `when` queries now count a parameter's call-time binding and later assignments like the VM (#362).

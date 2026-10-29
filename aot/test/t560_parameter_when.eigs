@@ -1,0 +1,4 @@
+define f(p) as:
+    return when is p
+
+print of f of 0

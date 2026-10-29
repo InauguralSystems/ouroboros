@@ -68,7 +68,6 @@ test_obs_mt_race.eigs REFUSE class:native-task-scheduler ouroboros#345
 test_observer_interactions.eigs DIVERGE class:promoted-name-report ouroboros#361
 test_observer_saturation.eigs REFUSE class:observer-scope ouroboros#347
 test_optimize.eigs DIVERGE class:float-algorithm ouroboros#340
-test_parameter_when_2016.eigs DIVERGE class:parameter-assignment-count ouroboros#362
 test_sandbox_budget.eigs AOT_GAP class:compile-timeout ouroboros#356
 test_scope_semantics.eigs REFUSE class:observer-scope ouroboros#347
 test_singleton_slot_rc.eigs DIVERGE class:runtime-gc-hang ouroboros#348
