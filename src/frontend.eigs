@@ -1847,22 +1847,16 @@ define _get_observer(name) as:
 # compound index-assignment desugar; mirrors the binop evaluation below).
 define _apply_binop(op, left, right) as:
     if op == "+":
-        if (type of left) == "str":
-            return left + (str of right)
-        if (type of right) == "str":
-            return (str of left) + right
+        # Delegate type checking to the byte-exact oracle.  In particular,
+        # mixed string addition raises instead of implicitly stringifying.
         return left + right
     if op == "-":
         return left - right
     if op == "*":
         return left * right
     if op == "/":
-        if right == 0:
-            return 0
         return left / right
     if op == "%":
-        if right == 0:
-            return 0
         return left % right
     if op == "&":
         return left & right
@@ -1935,22 +1929,14 @@ define eigen_eval(node, env) as:
         left is eigen_eval of [node[2], env]
         right is eigen_eval of [node[3], env]
         if op == "+":
-            if (type of left) == "str":
-                return left + (str of right)
-            if (type of right) == "str":
-                return (str of left) + right
             return left + right
         if op == "-":
             return left - right
         if op == "*":
             return left * right
         if op == "/":
-            if right == 0:
-                return 0
             return left / right
         if op == "%":
-            if right == 0:
-                return 0
             return left % right
         # #1637: the host's own comparison -- a bool, with the C VM's raise on
         # bool-vs-number equality and on ordering bools.
@@ -1975,6 +1961,13 @@ define eigen_eval(node, env) as:
             return not operand
 
     if ntype == "call":
+        # The parser deliberately represents the named predicate form as a
+        # call so codegen can select PREDICATE_NAME/SLOT.  Intercept it before
+        # evaluating the callee: a predicate node evaluates to a bool, which
+        # is not callable.
+        local _pcal is node[1]
+        if ((_pcal[0] == "predicate") and (node[2][0] == "ident")):
+            return (_pred_bridges[_pcal[1]]) of (eigen_eval of [node[2], env])
         # Reserved observer forms (E005, #1102): the parser only lets
         # `report`/`report_value` through as the callee of `of <ident>`, and
         # the C builtin can no longer be named as a value to bridge into
@@ -2299,53 +2292,12 @@ define eigen_eval(node, env) as:
             return 1.0
         return 0
 
+    # Ask the host observer predicates through fresh parameter bindings.  The
+    # meta-evaluator does not own a host trajectory, so this gives the VM's
+    # false verdict for the incomplete window rather than inventing entropy
+    # and dH values.  It also preserves the VM's distinct bool result type.
     if ntype == "predicate":
-        # #1637: a verdict is a bool, as on the VM (the verdict VALUES here
-        # are this evaluator's own approximation, not the VM's observer).
-        kind is node[1]
-        # Look at last observer state
-        # kind: 0=converged, 1=stable, 2=improving, 3=oscillating, 4=diverging, 5=equilibrium
-        h is 0
-        dh is 0
-        prev_dh is 0
-        # Try to get the latest observer state from __observer__ binding
-        last_obs is _env_get of [env, "__observer__"]
-        if last_obs != null:
-            h is _compute_entropy of last_obs
-        if kind == 0:
-            # converged: low dH and low entropy
-            if (abs of dh) < 0.001:
-                if h < 0.1:
-                    return true
-            return false
-        if kind == 1:
-            # stable: low dH, moderate entropy
-            if (abs of dh) < 0.01:
-                if h >= 0.1:
-                    return true
-            return false
-        if kind == 2:
-            # improving: negative dH
-            if dh < (0 - 0.001):
-                return true
-            return false
-        if kind == 3:
-            # oscillating: sign change in dH
-            if (dh * prev_dh) < 0:
-                if (abs of dh) > 0.001:
-                    return true
-            return false
-        if kind == 4:
-            # diverging: positive dH
-            if dh > 0.001:
-                return true
-            return false
-        if kind == 5:
-            # equilibrium: very low dH
-            if (abs of dh) < 0.001:
-                return true
-            return false
-        return false
+        return (_pred_bridges[node[1]]) of null
 
     return null
 
@@ -2374,6 +2326,11 @@ define _eval_block(stmts, env) as:
 # ============================================================
 # Built-in functions for the meta-circular environment
 # ============================================================
+
+# Value-only bridges for the six reserved observer forms, in _predicates
+# order.  Keeping them as syntax inside lambdas avoids treating a predicate
+# verdict as a first-class callable.
+_pred_bridges is [(v) => converged of v, (v) => stable of v, (v) => improving of v, (v) => oscillating of v, (v) => diverging of v, (v) => equilibrium of v]
 
 define _make_default_env as:
     env is _env_new of null

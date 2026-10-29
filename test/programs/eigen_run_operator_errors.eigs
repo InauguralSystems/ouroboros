@@ -1,0 +1,15 @@
+# ouroboros#273: eigen_run must raise exactly where the VM raises rather than
+# inventing zero or coercing mixed string operands.
+load_file of "src/frontend.eigs"
+define raises(src, kind) as:
+    try:
+        eigen_run of src
+    catch e:
+        assert of [e.kind == kind, src]
+        print of [src, e.kind]
+        return null
+    assert of [false, src + " did not raise"]
+raises of ["return 1 / 0", "value"]
+raises of ["return 1 % 0", "value"]
+raises of ["return \"x\" + 1", "type_mismatch"]
+raises of ["return 1 + \"x\"", "type_mismatch"]
