@@ -1,0 +1,4 @@
+try:
+    eval of "throw of \"caught marker\""
+catch e:
+    print of "caught"

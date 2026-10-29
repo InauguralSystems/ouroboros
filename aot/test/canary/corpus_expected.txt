@@ -114,7 +114,6 @@ test_underarity_1661_trycatch.eigs REFUSE class:underarity-null-binding ouroboro
 test_unobserved.eigs REFUSE class:temporal-query-envelope ouroboros#351 #267
 test_unobserved_binders.eigs REFUSE class:dynamic-load-state ouroboros#339
 test_unobserved_neutral.eigs REFUSE class:temporal-query-envelope ouroboros#351 #267
-test_vm_run_bytecode.eigs DIVERGE class:caught-error-output ouroboros#336
 test_walker_matrix.eigs REFUSE class:closure-environment ouroboros#337
 test_when_store_sites_2016.eigs REFUSE class:temporal-query-envelope ouroboros#351 #267
 test_worker_intern_escape.eigs DIVERGE class:worker-interning ouroboros#356

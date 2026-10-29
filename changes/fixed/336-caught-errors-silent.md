@@ -1,0 +1,1 @@
+- AOT-compiled `try` handlers now keep errors raised through VM-running builtins silent, while uncaught errors still print normally (#336).
