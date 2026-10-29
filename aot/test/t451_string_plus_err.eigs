@@ -1,0 +1,4 @@
+# Mixed string addition must stop instead of implicitly stringifying the num.
+print of "before addition"
+print of ("x" + 1)
+print of "unreachable"

@@ -1,0 +1,1 @@
+- `eigen_run` now matches the VM for observer predicates, zero division/modulo, and mixed string addition (#273).

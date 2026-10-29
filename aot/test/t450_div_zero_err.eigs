@@ -1,0 +1,4 @@
+# The VM is the byte-exact oracle: division by zero must stop, not produce 0.
+print of "before division"
+print of (1 / 0)
+print of "unreachable"
