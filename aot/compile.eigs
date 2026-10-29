@@ -2441,6 +2441,8 @@ define slice_hi(parts, tvar) as:
     # post-mutation (probe p18: VM 10, AOT 18).
     if (parts[4]) == 1:
         return "aot_slice_len(" + tvar + ")"
+    if (parts[4]) == 2:
+        return "aot_slice_bound(" + (parts[2]) + ", " + tvar + ", 1)"
     return parts[2]
 
 define seq_slice1(fn, parts) as:
@@ -2473,7 +2475,7 @@ define slice_arg_parts(argnode, nm, bt) as:
         local bnm is tgt[1]
         local lo is "0"
         if n[2] != null:
-            lo is emit_num_operand of [n[2], nm, bt, 0, "", "B", "-"]
+            lo is "aot_slice_bound(" + (emit_val of [n[2], nm, bt]) + ", NULL, 0)"
         # (round 92) a non-bt target is not a C variable -- a 2-D `zeros`
         # is a nested list and left the buf class this round, and emitting
         # its raw name gave gcc an undeclared identifier. Read it boxed
@@ -2494,8 +2496,8 @@ define slice_arg_parts(argnode, nm, bt) as:
         local hidef is 1
         local hi is "aot_slice_len(" + cbuf + ")"
         if n[3] != null:
-            hi is emit_num_operand of [n[3], nm, bt, 0, "", "B", "-"]
-            hidef is 0
+            hi is emit_val of [n[3], nm, bt]
+            hidef is 2
         # [0] is a C NAME, so it is mangled like every other emitted name —
         # [2] already was, and the asymmetry meant every consumer emitted the
         # raw buffer name (`aot_dot(a, b)` against a declared `eig_a`).
@@ -2505,11 +2507,11 @@ define slice_arg_parts(argnode, nm, bt) as:
         # VM is left-to-right (VM "LO HI", AOT "HI LO", rc 0 both).
         local slhaz is 0
         if n[2] != null:
-            if (has_call_node of n[2]) == 1:
-                slhaz is 1
+            # Explicit bounds are boxed so null can flow at runtime; sequence
+            # them with the hoisted target even when they contain no call.
+            slhaz is 1
         if n[3] != null:
-            if (has_call_node of n[3]) == 1:
-                slhaz is 1
+            slhaz is 1
         return [cbuf, lo, hi, slhaz, hidef]
     local cb2 is cn of n[1]
     if (bt[n[1]] != 1) and (g_btmap[n[1]] != 1) and (g_dict[n[1]] != 1) and (g_genp[n[1]] != 1) and (g_tensor[n[1]] != 1):
@@ -3543,10 +3545,10 @@ define emit_val(node, nm, bt) as:
         # default hi is the target's own length by type.
         local sl_lo is "0"
         if node[2] != null:
-            sl_lo is emit_num_operand of [node[2], nm, bt, 0, "", "B", "-"]
+            sl_lo is "aot_slice_bound(" + (emit_val of [node[2], nm, bt]) + ", NULL, 0)"
         local sl_hi is "aot_slice_len(_sl)"
         if node[3] != null:
-            sl_hi is emit_num_operand of [node[3], nm, bt, 0, "", "B", "-"]
+            sl_hi is "aot_slice_bound(" + (emit_val of [node[3], nm, bt]) + ", _sl, 1)"
         return "({ Value* _sl = " + (emit_val of [node[1], nm, bt]) + "; double _slo = " + sl_lo + "; double _shi = " + sl_hi + "; Value* _sr = aot_slice_any(_sl, _slo, _shi); val_decref(_sl); _sr; })"
     throw of ("AOT: cannot emit value node '" + t + "'")
 
