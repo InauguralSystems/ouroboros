@@ -1,0 +1,11 @@
+# #279: emitting a certain-bool numeric index must not leave its fallback
+# site behind for the checked name emitted later in the same function.  The
+# first arm is deliberately dead at runtime: it plants the compiler-state
+# transition without masking the later error, whose VM site is `b[x]`.
+define f(x) as:
+    local b is buffer of 2
+    if false:
+        print of b[true]
+    return b[x]
+
+print of (f of "not a number")

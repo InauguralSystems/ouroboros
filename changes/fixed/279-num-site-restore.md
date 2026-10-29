@@ -1,0 +1,1 @@
+- The AOT compiler now restores the original numeric operand diagnostic site after emitting a certain boolean, so later failures identify the correct operand (#279).
