@@ -1,0 +1,4 @@
+# EXPECT: AOT: eval code names compiled function 'add_scaled'. Native calls can return values, but an error raised in compiled code cannot unwind into a try/catch inside the VM eval; refusing at build time rather than exposing a partial registry (ouroboros#270).
+define add_scaled(x, y) as:
+    return x * 10 + y
+print of (eval of "add_scaled of [4, 2]")
