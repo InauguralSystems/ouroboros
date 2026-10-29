@@ -1630,6 +1630,26 @@ static inline long aot_slice_len(Value *A) {
     rt_error(EK_TYPE, g_trace_current_line, "cannot slice %s", aot_cmp_type_name(A));
     return 0;
 }
+static Value *aot_make_buffer(int count, int rows, int cols, const double *src);
+/* An explicit null bound has the same meaning as an omitted bound.  Bounds
+ * arrive boxed here because an AOT numeric slot cannot otherwise represent
+ * the VM's number-or-null union.  Consume the temporary on both successful
+ * paths; rt_error does not return on the invalid-type paths. */
+static double aot_slice_bound(Value *v, Value *target, int upper) {
+    if (!v || v->type == VAL_NULL) {
+        val_decref(v);
+        return upper ? (double)aot_slice_len(target) : 0.0;
+    }
+    if (v->type != VAL_NUM) {
+        const char *tn = val_type_name(v->type);
+        rt_error(v->type == VAL_BOOL ? EK_TYPE : EK_VALUE, g_trace_current_line,
+                 "slice bound must be an integer or null, got %s", tn);
+        return 0.0;
+    }
+    double d = aot_num_proven(v);
+    val_decref(v);
+    return d;
+}
 static Value *aot_slice_any(Value *A, double sa, double ea) {
     if (!A || A->type == VAL_NUM) {
         rt_error(EK_TYPE, g_trace_current_line, "cannot slice %s", aot_cmp_type_name(A));
@@ -1667,9 +1687,7 @@ static Value *aot_slice_any(Value *A, double sa, double ea) {
         buf[n] = '\0';
         return make_str_owned(buf);
     }
-    Value *r = make_list(n > 0 ? n : 1);
-    for (int i = 0; i < n; i++) list_append_owned(r, make_num(A->data.buffer.data[start + i]));
-    return r;
+    return aot_make_buffer(n, 0, 0, A->data.buffer.data + start);
 }
 static inline double aot_range_poly(Env *g, const char *name, Value *A, double sa, double ea) {
     Value *r = aot_call_name(g, name, aot_slice_any(A, sa, ea));

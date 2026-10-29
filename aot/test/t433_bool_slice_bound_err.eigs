@@ -1,0 +1,5 @@
+# Bool is distinct from number and retains the VM's kind and message.
+xs is [0, 1, 2, 3]
+bad is true
+print of "before"
+print of xs[null:bad]

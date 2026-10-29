@@ -1,0 +1,5 @@
+# Non-null, non-number bounds retain the VM's kind and message.
+xs is [0, 1, 2, 3]
+bad is "1"
+print of "before"
+print of xs[bad:null]
