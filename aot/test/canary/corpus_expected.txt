@@ -65,7 +65,6 @@ test_not_precedence.eigs REFUSE class:binding-order ouroboros#335
 test_numerical_grad_mutation_1719.eigs REFUSE class:closure-environment ouroboros#337
 test_numerics.eigs DIVERGE class:float-algorithm ouroboros#340
 test_obs_mt_race.eigs REFUSE class:native-task-scheduler ouroboros#345
-test_observer_interactions.eigs DIVERGE class:promoted-name-report ouroboros#361
 test_observer_saturation.eigs REFUSE class:observer-scope ouroboros#347
 test_optimize.eigs DIVERGE class:float-algorithm ouroboros#340
 test_sandbox_budget.eigs AOT_GAP class:compile-timeout ouroboros#356

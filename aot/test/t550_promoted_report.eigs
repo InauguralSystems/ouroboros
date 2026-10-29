@@ -1,0 +1,5 @@
+unobserved:
+    x is 9.0
+    x is x * 0.5
+    answer is report of x
+print of answer
