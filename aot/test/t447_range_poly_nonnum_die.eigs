@@ -1,0 +1,5 @@
+define truth(x) as:
+    return true
+norm is truth
+xs is [1, 2, 3]
+print of ((norm of xs[0 : 2]) + 1)
