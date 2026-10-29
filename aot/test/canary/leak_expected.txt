@@ -4,9 +4,9 @@
 # Rows re-measured at the EigenScript v0.46.0 pin: v0.46.0 removed 36 unused
 # builtins and the arena builtins, so every fixture's floor fell by 36 to
 # 40 allocations (l1 262 -> 225, l2 261 -> 225, l3 264 -> 224, l4 264 -> 225,
-# l5 262 -> 224, l6 262 -> 225; measured twice on the dev box, identical). The nine-builtin admission in leak_startup_admission.md
-# applied to the v0.45.x rows and is superseded by these measurements (five of
-# its nine builtins no longer exist). l7/l8 were added at the same bump.
+# l5 262 -> 224, l6 262 -> 225; measured twice on the dev box, identical).
+# These current-pin measurements supersede the v0.45.x allowances. l7/l8 were
+# added at the same bump.
 l1_boxed_local_reassign 225
 l2_boxed_slot_numeric_read 225
 l3_genp_rebind 224
