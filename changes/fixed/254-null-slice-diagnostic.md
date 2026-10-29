@@ -1,0 +1,1 @@
+- Kept AOT null-slice diagnostics truthful while recording the upstream VM wording bug (#254).
