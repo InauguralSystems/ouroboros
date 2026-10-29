@@ -1654,13 +1654,20 @@ static inline double aot_norm_range(Value *A, double sa, double ea) {
  * `hi` was aot_buf_len, whose own message ("buffer op on a non-buffer
  * value") fired first and made aot_slice_any unreachable for dicts/numbers
  * -- the mirror could not mirror. */
+/* #254: null is a source-language value spelled `null`.  The pinned VM's
+ * immediate-slot diagnostic calls it `none` (and the older VM called it
+ * `number`); neither is a truthful name for the rejected target.  Keep this
+ * narrow exception local to slicing while the upstream report recorded in
+ * `upstream-254.md` is filed. */
+static inline const char *aot_slice_type_name(Value *v) {
+    return v && v->type == VAL_NULL ? "null" : aot_cmp_type_name(v);
+}
 static inline long aot_slice_len(Value *A) {
-    /* #1637: the VM names an immediate by slot_type_name (num, bool, none) */
-    if (!A || A->type == VAL_NUM) { rt_error(EK_TYPE, g_trace_current_line, "cannot slice %s", aot_cmp_type_name(A)); return 0; }
+    if (!A || A->type == VAL_NUM || A->type == VAL_NULL) { rt_error(EK_TYPE, g_trace_current_line, "cannot slice %s", aot_slice_type_name(A)); return 0; }
     if (A->type == VAL_LIST)   return A->data.list.count;
     if (A->type == VAL_STR)    return (long)strlen(A->data.str);
     if (A->type == VAL_BUFFER) return A->data.buffer.count;
-    rt_error(EK_TYPE, g_trace_current_line, "cannot slice %s", aot_cmp_type_name(A));
+    rt_error(EK_TYPE, g_trace_current_line, "cannot slice %s", aot_slice_type_name(A));
     return 0;
 }
 static Value *aot_make_buffer(int count, int rows, int cols, const double *src);
@@ -1684,8 +1691,8 @@ static double aot_slice_bound(Value *v, Value *target, int upper) {
     return d;
 }
 static Value *aot_slice_any(Value *A, double sa, double ea) {
-    if (!A || A->type == VAL_NUM) {
-        rt_error(EK_TYPE, g_trace_current_line, "cannot slice %s", aot_cmp_type_name(A));
+    if (!A || A->type == VAL_NUM || A->type == VAL_NULL) {
+        rt_error(EK_TYPE, g_trace_current_line, "cannot slice %s", aot_slice_type_name(A));
         return make_null();
     }
     int len;
@@ -1693,7 +1700,7 @@ static Value *aot_slice_any(Value *A, double sa, double ea) {
     else if (A->type == VAL_STR)    len = (int)strlen(A->data.str);
     else if (A->type == VAL_BUFFER) len = A->data.buffer.count;
     else {
-        rt_error(EK_TYPE, g_trace_current_line, "cannot slice %s", aot_cmp_type_name(A));
+        rt_error(EK_TYPE, g_trace_current_line, "cannot slice %s", aot_slice_type_name(A));
         return make_null();
     }
     int orig_start, orig_end;

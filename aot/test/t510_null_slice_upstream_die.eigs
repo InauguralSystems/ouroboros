@@ -1,0 +1,7 @@
+# KNOWN upstream diagnostic mismatch: `upstream-254.md`.
+# The VM currently mislabels null as "none" (historically "number"); the AOT
+# deliberately keeps the language value name "null".  _die pins that both
+# implementations stop here without blessing the upstream message bytewise.
+a is null
+print of (sum of a[0:2])
+print of "unreachable"
