@@ -1,0 +1,4 @@
+# A null default does not relax range checking of its numeric companion.
+xs is [0, 1, 2, 3]
+print of "before"
+print of xs[null:5]

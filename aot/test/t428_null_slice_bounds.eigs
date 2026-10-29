@@ -1,0 +1,32 @@
+# ouroboros#271: an explicit null slice bound is the omitted/default bound.
+# Exercise literal and runtime-variable nulls on every sliceable VM type.
+xs is [0, 1, 2, 3]
+s is "abcd"
+b is buffer of 4
+b[0] is 0
+b[1] is 1
+b[2] is 2
+b[3] is 3
+n is null
+print of xs[null:2]
+print of xs[2:null]
+print of xs[null:null]
+print of xs[n:2]
+print of xs[2:n]
+print of xs[n:n]
+print of s[null:2]
+print of s[2:null]
+print of s[null:null]
+print of s[n:2]
+print of s[2:n]
+print of s[n:n]
+print of b[null:2]
+print of b[2:null]
+print of b[null:null]
+print of b[n:2]
+print of b[2:n]
+print of b[n:n]
+# Negative in-range companions still resolve from the container length.
+print of xs[-3:null]
+print of s[null:-1]
+print of b[-3:null]

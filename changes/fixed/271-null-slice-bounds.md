@@ -1,0 +1,1 @@
+- AOT-compiled slices now treat explicit null bounds as their default on lists, strings, and buffers, matching the VM (#271).
