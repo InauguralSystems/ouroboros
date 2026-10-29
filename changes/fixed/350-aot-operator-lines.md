@@ -1,0 +1,1 @@
+- AOT binary-operator failures now use the operator token's physical source line (#350).

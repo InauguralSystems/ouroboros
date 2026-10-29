@@ -261,14 +261,14 @@ define eigen_tokenize(source) as:
                             # Emit accumulated literal
                             if ((len of buf) > 0) or (has_segments == 0):
                                 if has_segments == 1:
-                                    append of [tokens, ["op", "+", line]]
+                                    append of [tokens, ["op", "+", line, "synthetic"]]
                                 append of [tokens, ["str", buf, line]]
                                 has_segments is 1
                             buf is ""
                             pos is pos + 1
                             # Emit + (str of (expr))
                             if has_segments == 1:
-                                append of [tokens, ["op", "+", line]]
+                                append of [tokens, ["op", "+", line, "synthetic"]]
                             else:
                                 has_segments is 1
                             append of [tokens, ["lparen", null, line]]
@@ -332,6 +332,7 @@ define eigen_tokenize(source) as:
                                     if itok[0] != "newline":
                                         if itok[0] != "indent":
                                             if itok[0] != "dedent":
+                                                itok[2] is itok[2] + line - 1
                                                 append of [tokens, itok]
                             append of [tokens, ["rparen", null, line]]
                             append of [tokens, ["rparen", null, line]]
@@ -345,7 +346,7 @@ define eigen_tokenize(source) as:
                     # Emit trailing literal
                     if (len of buf) > 0:
                         if has_segments == 1:
-                            append of [tokens, ["op", "+", line]]
+                            append of [tokens, ["op", "+", line, "synthetic"]]
                         append of [tokens, ["str", buf, line]]
                     elif has_segments == 0:
                         append of [tokens, ["str", "", line]]
@@ -623,7 +624,7 @@ define eigen_tokenize(source) as:
 #   ["str", "hello"]
 #   ["ident", "x"]
 #   ["assign", "x", expr]
-#   ["binop", "+", left, right]
+#   ["binop", "+", left, right, operator_line]
 #   ["call", fn_expr, arg_expr]
 #   ["if", cond, if_body, else_body]
 #   ["loop", cond, body]
@@ -672,6 +673,18 @@ define _p_peek_type(p) as:
 define _p_peek_val(p) as:
     tok is _p_cur of p
     return tok[1]
+
+define _p_op_line(p) as:
+    local tok is _p_cur of p
+    if len of tok > 3:
+        return 0
+    return tok[2]
+
+# The VM restores the line left by the evaluated RHS after a successful
+# operator. Capture the parser cursor after that RHS as the scoped-line end.
+define _p_finish_binop(node, p) as:
+    append of [node, (_p_cur of p)[2]]
+    return node
 
 define _p_peek_at(p, offset) as:
     idx is p[1] + offset
@@ -1140,11 +1153,12 @@ define _p_parse_statement(p) as:
                     if cbase != "":
                         _p_advance of p
                         cexpr is _p_parse_expr of p
+                        cop_line is (_p_cur of p)[2]
                         # obj.f += e  →  obj.f is obj.f + e (C clones the
                         # target subtree — it is evaluated twice). #351
                         # closed: terminator enforced (see dot_assign note).
                         _p_end_statement of p
-                        return ["_line", _stmt_line, ["dot_assign", target[1], target[2], ["binop", cbase, ["dot", target[1], target[2]], cexpr]]]
+                        return ["_line", _stmt_line, ["dot_assign", target[1], target[2], ["binop", cbase, ["dot", target[1], target[2]], cexpr, cop_line, cop_line]]]
             if target[0] == "index":
                 if (_p_peek_type of p) == "kw":
                     if (_p_peek_val of p) == "is":
@@ -1158,9 +1172,10 @@ define _p_parse_statement(p) as:
                     if cbase != "":
                         _p_advance of p
                         cexpr is _p_parse_expr of p
+                        cop_line is (_p_cur of p)[2]
                         # #351 closed: terminator enforced (see dot_assign note).
                         _p_end_statement of p
-                        return ["_line", _stmt_line, ["index_assign", target[1], target[2], cexpr, cbase]]
+                        return ["_line", _stmt_line, ["index_assign", target[1], target[2], cexpr, cbase, cop_line]]
             # Not an assignment — restore and fall through
             set_at of [p, 1, saved_pos]
 
@@ -1185,10 +1200,11 @@ define _p_parse_statement(p) as:
             if cbase != "":
                 _p_dunder_error of cur_tok
                 _p_advance of p
+                cop_line is _p_op_line of p
                 _p_advance of p
                 cexpr is _p_parse_expr of p
                 _p_end_statement of p
-                return ["_line", _stmt_line, ["assign", cur_tok[1], ["binop", cbase, ["ident", cur_tok[1]], cexpr]]]
+                return ["_line", _stmt_line, ["assign", cur_tok[1], ["binop", cbase, ["ident", cur_tok[1]], cexpr, cop_line, cop_line]]]
 
     # Expression statement
     expr is _p_parse_expr of p
@@ -1246,9 +1262,10 @@ define _p_parse_or(p) as:
     left is _p_parse_and of p
     loop while (_p_peek_type of p) == "kw":
         if (_p_peek_val of p) == "or":
+            op_line is _p_op_line of p
             _p_advance of p
             right is _p_parse_and of p
-            left is ["binop", "or", left, right]
+            left is _p_finish_binop of [["binop", "or", left, right, op_line], p]
         else:
             return left
     return left
@@ -1257,9 +1274,10 @@ define _p_parse_and(p) as:
     left is _p_parse_not of p
     loop while (_p_peek_type of p) == "kw":
         if (_p_peek_val of p) == "and":
+            op_line is _p_op_line of p
             _p_advance of p
             right is _p_parse_not of p
-            left is ["binop", "and", left, right]
+            left is _p_finish_binop of [["binop", "and", left, right, op_line], p]
         else:
             return left
     return left
@@ -1279,23 +1297,29 @@ define _p_parse_comparison(p) as:
     if (_p_peek_type of p) == "op":
         op is _p_peek_val of p
         if op == "==":
+            op_line is _p_op_line of p
             _p_advance of p
-            return ["binop", "==", left, _p_parse_bitor of p]
+            return _p_finish_binop of [["binop", "==", left, _p_parse_bitor of p, op_line], p]
         if op == "!=":
+            op_line is _p_op_line of p
             _p_advance of p
-            return ["binop", "!=", left, _p_parse_bitor of p]
+            return _p_finish_binop of [["binop", "!=", left, _p_parse_bitor of p, op_line], p]
         if op == "<":
+            op_line is _p_op_line of p
             _p_advance of p
-            return ["binop", "<", left, _p_parse_bitor of p]
+            return _p_finish_binop of [["binop", "<", left, _p_parse_bitor of p, op_line], p]
         if op == ">":
+            op_line is _p_op_line of p
             _p_advance of p
-            return ["binop", ">", left, _p_parse_bitor of p]
+            return _p_finish_binop of [["binop", ">", left, _p_parse_bitor of p, op_line], p]
         if op == "<=":
+            op_line is _p_op_line of p
             _p_advance of p
-            return ["binop", "<=", left, _p_parse_bitor of p]
+            return _p_finish_binop of [["binop", "<=", left, _p_parse_bitor of p, op_line], p]
         if op == ">=":
+            op_line is _p_op_line of p
             _p_advance of p
-            return ["binop", ">=", left, _p_parse_bitor of p]
+            return _p_finish_binop of [["binop", ">=", left, _p_parse_bitor of p, op_line], p]
     return left
 
 # Compound-assignment operator -> its base binary operator. "" for a
@@ -1331,8 +1355,9 @@ define _p_parse_bitor(p) as:
     loop while (_p_peek_type of p) == "op":
         op is _p_peek_val of p
         if op == "|":
+            op_line is _p_op_line of p
             _p_advance of p
-            left is ["binop", "|", left, _p_parse_bitxor of p]
+            left is _p_finish_binop of [["binop", "|", left, _p_parse_bitxor of p, op_line], p]
         else:
             return left
     return left
@@ -1342,8 +1367,9 @@ define _p_parse_bitxor(p) as:
     loop while (_p_peek_type of p) == "op":
         op is _p_peek_val of p
         if op == "^":
+            op_line is _p_op_line of p
             _p_advance of p
-            left is ["binop", "^", left, _p_parse_bitand of p]
+            left is _p_finish_binop of [["binop", "^", left, _p_parse_bitand of p, op_line], p]
         else:
             return left
     return left
@@ -1353,8 +1379,9 @@ define _p_parse_bitand(p) as:
     loop while (_p_peek_type of p) == "op":
         op is _p_peek_val of p
         if op == "&":
+            op_line is _p_op_line of p
             _p_advance of p
-            left is ["binop", "&", left, _p_parse_shift of p]
+            left is _p_finish_binop of [["binop", "&", left, _p_parse_shift of p, op_line], p]
         else:
             return left
     return left
@@ -1364,11 +1391,13 @@ define _p_parse_shift(p) as:
     loop while (_p_peek_type of p) == "op":
         op is _p_peek_val of p
         if op == "<<":
+            op_line is _p_op_line of p
             _p_advance of p
-            left is ["binop", "<<", left, _p_parse_add of p]
+            left is _p_finish_binop of [["binop", "<<", left, _p_parse_add of p, op_line], p]
         elif op == ">>":
+            op_line is _p_op_line of p
             _p_advance of p
-            left is ["binop", ">>", left, _p_parse_add of p]
+            left is _p_finish_binop of [["binop", ">>", left, _p_parse_add of p, op_line], p]
         else:
             return left
     return left
@@ -1378,11 +1407,13 @@ define _p_parse_add(p) as:
     loop while (_p_peek_type of p) == "op":
         op is _p_peek_val of p
         if op == "+":
+            op_line is _p_op_line of p
             _p_advance of p
-            left is ["binop", "+", left, _p_parse_mul of p]
+            left is _p_finish_binop of [["binop", "+", left, _p_parse_mul of p, op_line], p]
         elif op == "-":
+            op_line is _p_op_line of p
             _p_advance of p
-            left is ["binop", "-", left, _p_parse_mul of p]
+            left is _p_finish_binop of [["binop", "-", left, _p_parse_mul of p, op_line], p]
         else:
             return left
     return left
@@ -1392,14 +1423,17 @@ define _p_parse_mul(p) as:
     loop while (_p_peek_type of p) == "op":
         op is _p_peek_val of p
         if op == "*":
+            op_line is _p_op_line of p
             _p_advance of p
-            left is ["binop", "*", left, _p_parse_unary of p]
+            left is _p_finish_binop of [["binop", "*", left, _p_parse_unary of p, op_line], p]
         elif op == "/":
+            op_line is _p_op_line of p
             _p_advance of p
-            left is ["binop", "/", left, _p_parse_unary of p]
+            left is _p_finish_binop of [["binop", "/", left, _p_parse_unary of p, op_line], p]
         elif op == "%":
+            op_line is _p_op_line of p
             _p_advance of p
-            left is ["binop", "%", left, _p_parse_unary of p]
+            left is _p_finish_binop of [["binop", "%", left, _p_parse_unary of p, op_line], p]
         else:
             return left
     return left
