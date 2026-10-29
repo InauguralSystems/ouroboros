@@ -84,7 +84,6 @@ test_task_sleep_order.eigs REFUSE class:native-task-scheduler ouroboros#345
 test_tasks.eigs REFUSE class:native-task-scheduler ouroboros#345
 test_temporal_line_stamps.eigs REFUSE class:observer-scope ouroboros#347
 test_temporal_param.eigs REFUSE class:native-task-scheduler ouroboros#345
-test_temporal_when.eigs REFUSE class:when-qualifier ouroboros#363
 test_tensor_buffer_inputs.eigs REFUSE class:unsupported-ast ouroboros#354
 test_tensor_buffer_ops.eigs REFUSE class:unsupported-ast ouroboros#354
 test_transfer_copy.eigs REFUSE class:native-task-scheduler ouroboros#345
@@ -97,7 +96,6 @@ test_underarity_1661_dispatch_eval.eigs REFUSE class:closure-environment ourobor
 test_underarity_1661_jitcall.eigs REFUSE class:underarity-null-binding ouroboros#353
 test_underarity_1661_repro.eigs REFUSE class:underarity-null-binding ouroboros#353
 test_underarity_1661_trycatch.eigs REFUSE class:underarity-null-binding ouroboros#353
-test_unobserved.eigs REFUSE class:when-qualifier ouroboros#363
 test_unobserved_binders.eigs REFUSE class:dynamic-load-state ouroboros#339
 test_walker_matrix.eigs REFUSE class:closure-environment ouroboros#337
 test_when_store_sites_2016.eigs REFUSE class:destructure-statement ouroboros#365

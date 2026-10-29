@@ -118,6 +118,7 @@ static void aot_set_location(const char *file, int line) {
 })
 static jmp_buf *aot_try_bufs[AOT_TRY_MAX];
 static int aot_try_frame_n[AOT_TRY_MAX];
+static int aot_try_unobs_depth[AOT_TRY_MAX];
 static int aot_try_n = 0;
 /* Only loop-created boxed storage and saved binder references are registered.
  * Ordinary expression temporaries keep their existing exception contract.
@@ -174,6 +175,7 @@ static inline int aot_loop_step(Env *e, long long *counter, int stalled) {
 static void aot_try_push(jmp_buf *b) {
     if (aot_try_n >= AOT_TRY_MAX) { fprintf(stderr, "Error: 'try' nested more than %d deep\n", AOT_TRY_MAX); exit(1); }
     aot_try_frame_n[aot_try_n] = aot_error_frame_n;
+    aot_try_unobs_depth[aot_try_n] = g_unobserved_depth;
     aot_try_bufs[aot_try_n++] = b;
 }
 static void aot_try_pop(void) { if (aot_try_n > 0) aot_try_n--; }
@@ -242,6 +244,7 @@ static void aot_error_exit(void) {
     aot_for_owned_unwind(aot_try_n);
     if (aot_try_n > 0) {
         aot_error_frame_n = aot_try_frame_n[aot_try_n - 1];
+        g_unobserved_depth = aot_try_unobs_depth[aot_try_n - 1];
         longjmp(*aot_try_bufs[aot_try_n - 1], 1);
     }
     /* User `throw` preserves and prints its payload; ordinary structured
@@ -1788,6 +1791,12 @@ static void aot_observe_val(Env *e, const char *name, Value *val) {
     env_set_local_owned(e, name, val);
     int oidx = -1, odepth = 0;
     Env *oe = env_resolve_chain(e, name, env_hash_name(name), &oidx, &odepth);
+    if (g_unobserved_depth != 0) {
+        if (oe && oidx >= 0 && val && val->type != VAL_NULL)
+            observer_slot_sample_gated(oe, oidx, val);
+        val_decref(val);
+        return;
+    }
     if (oe && oidx >= 0) {
         if (g_unobserved_depth != 0) {
             observer_slot_sample(oe, oidx, val);
@@ -1828,10 +1837,46 @@ static void aot_obs_reset_name(Env *e, const char *name) {
         g_last_obs_slot_idx = -1;
     }
 }
+typedef struct AotAssignCount { const char *name; long long count; } AotAssignCount;
+static AotAssignCount *aot_assign_counts = NULL;
+static int aot_assign_counts_n = 0;
+static int aot_assign_counts_cap = 0;
+static long long *aot_assign_count_slot(const char *name) {
+    for (int i = 0; i < aot_assign_counts_n; i++)
+        if (strcmp(aot_assign_counts[i].name, name) == 0) return &aot_assign_counts[i].count;
+    if (aot_assign_counts_n >= aot_assign_counts_cap) {
+        int nc = aot_assign_counts_cap ? aot_assign_counts_cap * 2 : 8;
+        AotAssignCount *nn = realloc(aot_assign_counts, (size_t)nc * sizeof(*nn));
+        if (!nn) { fputs("AOT: assignment counter allocation failed\n", stderr); exit(1); }
+        aot_assign_counts = nn;
+        aot_assign_counts_cap = nc;
+    }
+    aot_assign_counts[aot_assign_counts_n].name = name;
+    aot_assign_counts[aot_assign_counts_n].count = 0;
+    return &aot_assign_counts[aot_assign_counts_n++].count;
+}
+static void aot_assign_count_note(const char *name) {
+    long long *p = aot_assign_count_slot(name);
+    if (p) (*p)++;
+}
+static void aot_assign_count_reset_name(Env *e, const char *name) {
+    long long *native_total = aot_assign_count_slot(name);
+    if (native_total) *native_total = 0;
+    int idx = -1, depth = 0;
+    Env *oe = env_resolve_chain(e, name, env_hash_name(name), &idx, &depth);
+    if (!oe || idx < 0) return;
+    env_dump_lock(oe);
+    if (idx < oe->count && oe->assign_counts) oe->assign_counts[idx] = 0;
+    env_dump_unlock(oe);
+}
 static void aot_observe_num(Env *e, const char *name, double val) {
     env_set_local_owned(e, name, make_num(val));
     int oidx = -1, odepth = 0;
     Env *oe = env_resolve_chain(e, name, env_hash_name(name), &oidx, &odepth);
+    if (g_unobserved_depth != 0) {
+        if (oe && oidx >= 0) observer_slot_sample_num_gated(oe, oidx, val);
+        return;
+    }
     if (oe && oidx >= 0) {
         if (g_unobserved_depth != 0) {
             observer_slot_sample_num(oe, oidx, val);
@@ -1959,6 +2004,7 @@ static int aot_slot_value_opaque(Env *e, int idx) {
  * OP_INTERROGATE / OP_INTERROGATE_NAMED: `what` projects the current value,
  * while the other five named forms query the binding's observer slot.  VAL is
  * owned, exactly like the VM stack value popped by those opcodes. */
+static double aot_when_count(Env *e, const char *name);
 static Value *aot_interrogate_named(Env *e, const char *name, int kind, Value *val) {
     Value *result = make_null();
     if (kind == 0) { /* what */
@@ -1986,7 +2032,7 @@ static Value *aot_interrogate_named(Env *e, const char *name, int kind, Value *v
                           val->type == VAL_NULL ? "none" : "unknown");
     } else if (kind == 2 && name) { /* named when */
         val_decref(result);
-        result = make_num(env_get_assign_count(e, name, env_hash_name(name)));
+        result = make_num(aot_when_count(e, name));
     } else if (kind >= 3 && kind <= 5 && name) {
         int idx = -1, depth = 0;
         Env *oe = env_resolve_chain(e, name, env_hash_name(name), &idx, &depth);
@@ -2120,11 +2166,13 @@ static Value *aot_observe_of(Env *e, const char *name, int band) {
  * Wrap by hand exactly as vm.c's dot-read does, per its own NOTE: num ->
  * slot_from_num, heap -> slot_from_heap (borrow, no incref), null -> null. */
 static void aot_trace_assign_val(const char *name, Value *val) {
+    aot_assign_count_note(name);
     if (!val || val->type == VAL_NULL) { EigsSlot s0 = slot_null(); trace_assign(name, s0); return; }
     if (val->type == VAL_NUM) { trace_assign(name, slot_from_num(aot_num_proven(val))); return; }
     trace_assign(name, slot_from_heap(val));
 }
 static void aot_trace_assign(const char *name, double v) {
+    aot_assign_count_note(name);
     EigsSlot s = slot_from_num(v);
     trace_assign(name, s);
 }
@@ -2162,6 +2210,58 @@ static Value *aot_query_at_val(int kind, const char *name, int line) {
         return v;
     }
     return make_null();
+}
+/* Native counterpart of OP_INTERROGATE_NAMED_WHEN. The linked runtime owns
+ * the occurrence ring and its MISS/EVICTED distinction; the AOT only mirrors
+ * the opcode's validation, ownership, and diagnostic surface. */
+static Value *aot_query_when_val(int kind, const char *name, Value *ord_v) {
+    double ord_d = 0.0;
+    if (!aot_num_if(ord_v, &ord_d)) {
+        val_decref(ord_v);
+        rt_error(EK_TYPE, g_trace_current_line, "'when' ordinal must be a number");
+        return make_null();
+    }
+    val_decref(ord_v);
+    if (ord_d != (double)(long long)ord_d) {
+        rt_error(EK_VALUE, g_trace_current_line,
+                 "'when' ordinal must be a whole number, got %g", ord_d);
+        return make_null();
+    }
+    long long ordinal = (long long)ord_d;
+    EigsSlot out;
+    long long total = 0, oldest = 0;
+    int r = trace_query_when(kind, name, ordinal, &out, &total, &oldest);
+    if (r == TRACE_WHEN_HIT) {
+        Value *v = slot_to_value(out);
+        slot_decref(out);
+        return v;
+    }
+    if (r == TRACE_WHEN_EVICTED) {
+        rt_error(EK_VALUE, g_trace_current_line,
+                 "assignment %lld of '%s' is outside the retained window "
+                 "(retaining %lld..%lld; raise EIGS_OCC_WINDOW, currently %d)",
+                 ordinal, name, oldest, total, trace_occ_window());
+    }
+    return make_null();
+}
+static double aot_when_count(Env *e, const char *name) {
+    long long *native_total = aot_assign_count_slot(name);
+    if (native_total && *native_total > 0) return (double)*native_total;
+    long long env_total = env_get_assign_count(e, name, env_hash_name(name));
+    if (env_total > 0) return (double)env_total;
+    EigsSlot unused;
+    long long total = 0, oldest = 0;
+    (void)trace_query_when(2, name, 0, &unused, &total, &oldest);
+    return (double)total;
+}
+
+/* A C cleanup attribute is the native equivalent of the VM's synthesized
+ * UNOBSERVED_END edges: it runs for fallthrough, return, break and continue.
+ * C longjmp does not run cleanups, so aot_try_push/aot_error_exit separately
+ * snapshot and restore the depth on a caught error. */
+typedef struct AotUnobservedGuard { int active; } AotUnobservedGuard;
+static void aot_unobserved_guard_end(AotUnobservedGuard *g) {
+    if (g->active) g_unobserved_depth--;
 }
 /* #1637: the one failure path of the checked unboxes. A plain site keeps the
  * AOT's own wording. An OPERAND site -- "\001" op "\001" side "\001" other,

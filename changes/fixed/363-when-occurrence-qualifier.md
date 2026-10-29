@@ -1,0 +1,1 @@
+- The AOT now compiles `when <n>` occurrence-qualified interrogatives with the VM's ordinal history semantics (#363).
