@@ -97,5 +97,4 @@ test_underarity_1661_repro.eigs REFUSE class:underarity-null-binding ouroboros#3
 test_underarity_1661_trycatch.eigs REFUSE class:underarity-null-binding ouroboros#353
 test_unobserved_binders.eigs REFUSE class:dynamic-load-state ouroboros#339
 test_walker_matrix.eigs REFUSE class:closure-environment ouroboros#337
-test_when_store_sites_2016.eigs REFUSE class:destructure-statement ouroboros#365
 test_worker_intern_escape.eigs DIVERGE class:worker-interning ouroboros#356
