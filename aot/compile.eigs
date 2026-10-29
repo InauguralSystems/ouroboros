@@ -4462,11 +4462,14 @@ define emit_stmt_inner(node, ind, nm, bt, minits, gf) as:
             return ind + "{ " + wc[0] + "Value* __tv = " + (emit_val of [node[2], nm, bt]) + "; aot_trace_assign_val(\"" + name + "\", __tv); aot_set_ic(" + (envc of name) + ", \"" + name + "\", " + wc[1] + ", __tv); }\n"
         return ind + "{ " + wc[0] + "aot_set_ic(" + (envc of name) + ", \"" + name + "\", " + wc[1] + ", " + (emit_val of [node[2], nm, bt]) + "); }\n"
     if t == "index_assign":
-        # Compound form (`l[i] += e`, 5th elem = base op) is not lowered here
-        # yet -- node[3] is the RAW rhs, so emitting it as a plain set would be
-        # a silent wrong-value. Fail loudly instead.
         if (len of node) >= 5:
-            throw of "AOT: compound index assignment not supported yet"
+            # The VM's OP_DUP2 evaluates target and key once, reads through
+            # those saved values, then evaluates the RHS and writes through
+            # the same pair. Keep owned target/key temps and lend the read an
+            # extra reference: both success and error ordering then follow
+            # index-get -> RHS -> operator -> index-set exactly.
+            local cop is binfn of node[4]
+            return ind + "{ Value* _cat = " + (emit_val of [node[1], nm, bt]) + "; Value* _cai = " + (emit_val of [node[2], nm, bt]) + "; val_incref(_cat); val_incref(_cai); Value* _cal = aot_index_get(_cat, _cai); Value* _car = " + (emit_val of [node[3], nm, bt]) + "; Value* _cav = " + cop + "(_cal, _car); aot_index_set(_cat, _cai, _cav); }\n"
         local tgt is unwrap of node[1]
         if tgt[0] == "ident":
             if (bt[tgt[1]] == 1) and ((num_store_ok of [node[2], nm, bt]) == 1) and ((num_store_ok of [node[3], nm, bt]) == 1):
