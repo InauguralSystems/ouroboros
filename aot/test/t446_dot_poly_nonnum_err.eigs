@@ -1,0 +1,6 @@
+define truth(x) as:
+    return true
+dot is truth
+a is zeros of 2
+b is zeros of 2
+print of ((dot of [a, b]) + 1)

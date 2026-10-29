@@ -1,0 +1,5 @@
+define truth(x) as:
+    return true
+sum is truth
+xs is zeros of 3
+print of ((sum of xs) + 1)

@@ -37,7 +37,6 @@ static void __attribute__((noinline, cold, noreturn)) aot_unproven_number(const 
     exit(1);
 }
 static inline int aot_num_if(const Value *v, double *d) { if (v && v->type == VAL_NUM) { *d = VAL_NUM_RAW(v); return 1; } return 0; }
-static inline double aot_num_or(const Value *v, double dflt) { if (v && v->type == VAL_NUM) return VAL_NUM_RAW(v); return dflt; }
 static inline double aot_num_proven(const Value *v) { if (v && v->type == VAL_NUM) return VAL_NUM_RAW(v); aot_unproven_number("a value", v ? (int)v->type : -1); }
 static inline void aot_num_put(Value *v, double d) { if (v && v->type == VAL_NUM) { VAL_NUM_RAW(v) = d; return; } aot_unproven_number("a store target", v ? (int)v->type : -1); }
 static inline void aot_num_init(Value *v, double d) { v->type = VAL_NUM; VAL_NUM_RAW(v) = d; }
@@ -1536,12 +1535,11 @@ static inline double aot_dot(Value *a, Value *b) {
  * construction at a cost only non-buffer shapes pay. */
 static Value *aot_call_name(Env *g, const char *name, Value *arg);
 static Value *aot_call_vm_builtin(Value *fn, Value *arg);   /* round 144, #191 */
-static double aot_reduce_poly1(Env *g, const char *name, Value *a) {
+static double aot_num_ck_at(Value *v, const char *site);
+static double aot_reduce_poly1(Env *g, const char *name, Value *a, const char *site) {
     if (a) val_incref(a);
     Value *r = aot_call_name(g, name, a);
-    double d = aot_num_or(r, 0.0);
-    if (r) val_decref(r);
-    return d;
+    return aot_num_ck_at(r, site);
 }
 
 /* sum of a / norm of a — sibling association-unspecified reductions (same
@@ -1549,15 +1547,15 @@ static double aot_reduce_poly1(Env *g, const char *name, Value *a) {
 static inline double aot_sum(Value *a) { return aot_sum_n(a->data.buffer.data, a->data.buffer.count); }
 static inline double aot_norm(Value *a) { return aot_norm_n(a->data.buffer.data, a->data.buffer.count); }
 
-static inline double aot_sum_v(Env *g, Value *a) {
+static inline double aot_sum_v(Env *g, Value *a, const char *site) {
     if (a && a->type == VAL_BUFFER) return aot_sum(a);
-    return aot_reduce_poly1(g, "sum", a);
+    return aot_reduce_poly1(g, "sum", a, site);
 }
-static inline double aot_norm_v(Env *g, Value *a) {
+static inline double aot_norm_v(Env *g, Value *a, const char *site) {
     if (a && a->type == VAL_BUFFER) return aot_norm(a);
-    return aot_reduce_poly1(g, "norm", a);
+    return aot_reduce_poly1(g, "norm", a, site);
 }
-static inline double aot_dot_v(Env *g, Value *a, Value *b) {
+static inline double aot_dot_v(Env *g, Value *a, Value *b, const char *site) {
     if (a && b && a->type == VAL_BUFFER && b->type == VAL_BUFFER) return aot_dot(a, b);
     Value *l = make_list(2);
     if (a) val_incref(a);
@@ -1565,9 +1563,7 @@ static inline double aot_dot_v(Env *g, Value *a, Value *b) {
     if (b) val_incref(b);
     list_append_owned(l, b);
     Value *r = aot_call_name(g, "dot", l);
-    double d = aot_num_or(r, 0.0);
-    if (r) val_decref(r);
-    return d;
+    return aot_num_ck_at(r, site);
 }
 
 /* ---- ranged reductions over a slice `buf[lo:hi]` (zero-copy) ----
@@ -1707,29 +1703,25 @@ static Value *aot_slice_any(Value *A, double sa, double ea) {
     }
     return aot_make_buffer(n, 0, 0, A->data.buffer.data + start);
 }
-static inline double aot_range_poly(Env *g, const char *name, Value *A, double sa, double ea) {
+static inline double aot_range_poly(Env *g, const char *name, Value *A, double sa, double ea, const char *site) {
     Value *r = aot_call_name(g, name, aot_slice_any(A, sa, ea));
-    double d = aot_num_or(r, 0.0);
-    if (r) val_decref(r);
-    return d;
+    return aot_num_ck_at(r, site);
 }
-static inline double aot_sum_range_v(Env *g, Value *A, double sa, double ea) {
+static inline double aot_sum_range_v(Env *g, Value *A, double sa, double ea, const char *site) {
     if (A && A->type == VAL_BUFFER) return aot_sum_range(A, sa, ea);
-    return aot_range_poly(g, "sum", A, sa, ea);
+    return aot_range_poly(g, "sum", A, sa, ea, site);
 }
-static inline double aot_norm_range_v(Env *g, Value *A, double sa, double ea) {
+static inline double aot_norm_range_v(Env *g, Value *A, double sa, double ea, const char *site) {
     if (A && A->type == VAL_BUFFER) return aot_norm_range(A, sa, ea);
-    return aot_range_poly(g, "norm", A, sa, ea);
+    return aot_range_poly(g, "norm", A, sa, ea, site);
 }
-static inline double aot_dot_range_v(Env *g, Value *A, double sa, double ea, Value *B, double sb, double eb) {
+static inline double aot_dot_range_v(Env *g, Value *A, double sa, double ea, Value *B, double sb, double eb, const char *site) {
     if (A && B && A->type == VAL_BUFFER && B->type == VAL_BUFFER) return aot_dot_range(A, sa, ea, B, sb, eb);
     Value *l = make_list(2);
     list_append_owned(l, aot_slice_any(A, sa, ea));
     list_append_owned(l, aot_slice_any(B, sb, eb));
     Value *r = aot_call_name(g, "dot", l);
-    double d = aot_num_or(r, 0.0);
-    if (r) val_decref(r);
-    return d;
+    return aot_num_ck_at(r, site);
 }
 
 /* ---- observer system ----
