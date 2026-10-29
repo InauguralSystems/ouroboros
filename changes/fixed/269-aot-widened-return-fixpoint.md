@@ -1,0 +1,1 @@
+- AOT return-type inference now propagates widened parameter types through the complete call graph fixed point (#269).
