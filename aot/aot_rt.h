@@ -287,6 +287,19 @@ static void aot_error_silence_end(const AotErrorSilence *s) {
     g_vm.current_line = s->current_line;
     eigs_current->vm = s->saved_vm;
 }
+/* A function loaded by load_file/import executes in the linked VM even when
+ * its caller is native.  builtin_throw/rt_error ask vm_error_has_handler(),
+ * which deliberately walks CallFrame.try_count rather than the process-wide
+ * g_try_depth.  Expose an enclosing AOT try through the same synthetic frame
+ * used for native runtime raises; without it a caught throw was deferred and
+ * printed by the interpreted function before control reached the AOT catch. */
+static Value *aot_call_eigs_fn(Value *fn, Value *arg) {
+    if (aot_try_n <= 0) return AOT_FOREIGN(call_eigs_fn(fn, arg));
+    AotErrorSilence s = aot_error_silence_begin();
+    Value *res = AOT_FOREIGN(call_eigs_fn(fn, arg));
+    aot_error_silence_end(&s);
+    return res;
+}
 /* Painting the name blue: the macro's inner rt_error is the real function;
  * every call site in this header and in generated C dies cleanly after it. */
 #define rt_error(...) do { AotErrorSilence __es = aot_error_silence_begin(); rt_error(__VA_ARGS__); aot_error_silence_end(&__es); aot_error_exit(); } while (0)
@@ -3622,7 +3635,7 @@ static Value *aot_call_name(Env *g, const char *name, Value *arg) {
                  val_type_name(fn->type));
     Value *res;
     if (fn->type == VAL_BUILTIN) res = aot_call_vm_builtin(fn, arg);
-    else                         res = AOT_FOREIGN(call_eigs_fn(fn, arg));
+    else                         res = AOT_FOREIGN(aot_call_eigs_fn(fn, arg));
     /* `exit of N` unwinds via g_has_error TOO (builtin_exit sets both flags);
      * it is a clean requested exit, not an error — honor the code, print
      * nothing (the VM's main clears g_has_error when g_exit_requested). */
@@ -3724,7 +3737,7 @@ static Value *aot_call_value(Value *fn, Value *arg) {
     }
     Value *res;
     if (fn->type == VAL_BUILTIN) res = aot_call_vm_builtin(fn, arg);
-    else                         res = AOT_FOREIGN(call_eigs_fn(fn, arg));
+    else                         res = AOT_FOREIGN(aot_call_eigs_fn(fn, arg));
     if (g_exit_requested) exit(g_exit_code);
     if (g_has_error) aot_error_exit();
     if (!res) { val_decref(arg); val_decref(fn); return make_null(); }
@@ -3869,7 +3882,7 @@ static Value *aot_call_dispatch(Value *fn, Value *arg) {
         rt_error(EK_TYPE, g_trace_current_line, "cannot call %s", val_type_name(fn->type));
     Value *res;
     if (fn->type == VAL_BUILTIN) res = aot_call_vm_builtin(fn, arg);
-    else                         res = AOT_FOREIGN(call_eigs_fn(fn, arg));
+    else                         res = AOT_FOREIGN(aot_call_eigs_fn(fn, arg));
     if (g_exit_requested) exit(g_exit_code);
     if (g_has_error) aot_error_exit();
     if (!res) { val_decref(arg); val_decref(fn); return make_null(); }
@@ -3893,7 +3906,7 @@ static Value *aot_call_name_ic(Env *g, const char *name, Value *arg, AotNameIC *
                  val_type_name(fn->type));
     Value *res;
     if (fn->type == VAL_BUILTIN) res = aot_call_vm_builtin(fn, arg);
-    else                         res = AOT_FOREIGN(call_eigs_fn(fn, arg));
+    else                         res = AOT_FOREIGN(aot_call_eigs_fn(fn, arg));
     /* `exit of N` unwinds via g_has_error TOO (builtin_exit sets both flags);
      * it is a clean requested exit, not an error — honor the code, print
      * nothing (the VM's main clears g_has_error when g_exit_requested). */
