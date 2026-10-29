@@ -1,0 +1,1 @@
+- AOT out-of-range index and slice errors now name the index the program supplied, spelled as `print of` spells it (`index 10000000000 out of range`), matching EigenScript v0.48.0; ouroboros is pinned to the v0.48.0 tag again (#334).

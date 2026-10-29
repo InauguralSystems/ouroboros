@@ -65,10 +65,14 @@ RUN apt-get update \
 # v0.46.0 (#1665 arm D): list items and dict values are NaN-boxed EigsSlot
 # storage read through src/container.h (numbers are immediates), and the
 # bump arena (Value.arena, arena_mark/arena_reset) is removed.
-# main c5630ffb (after v0.47.0): EigenScript#2108 (#1641) makes an unknown string
-# escape a lexer error. Pinned to the commit, ahead of the next tag, so ouroboros#308
-# can mirror it in frontend.eigs against this oracle.
-ARG EIGS_REF=c5630ffb6a6a9249039162609f316638e9b477cc
+# v0.48.0: back on a release tag after the temporary main-commit pin c5630ffb
+# (ouroboros#309), which let ouroboros#308 mirror EigenScript#2108 (#1641, an
+# unknown string escape is a lexer error) ahead of the tag; v0.48.0 contains it.
+# The tag adds EigenScript#2150 (#2136): out-of-range index, slice and dispatch
+# messages name the SUPPLIED value in `print of` spelling, not the clamped C
+# int -- mirrored in aot_rt.h (aot_raise_index_range/aot_raise_slice_range,
+# ouroboros#334).
+ARG EIGS_REF=v0.48.0
 RUN mkdir -p /opt/eigenscript-src && cd /opt/eigenscript-src && git init -q \
  && git remote add origin https://github.com/InauguralSystems/EigenScript.git \
  && git fetch -q --depth 1 origin "${EIGS_REF}" && git checkout -q FETCH_HEAD \
