@@ -1,0 +1,1 @@
+- AOT builds now refuse literal `eval` code that names a compiled function, rather than exposing a registry with broken caught-error semantics (#270).

@@ -13057,6 +13057,11 @@ define emit_program(ast) as:
                             if (uses_ident_skip_forbind of [stmts[r65j], r65b]) == 1:
                                 throw of ("AOT: module for binder '" + r65b + "' is used after its loop in an observed/traced program. The VM loop-scopes a binder with no pre-existing binding in every regime, but observed/traced module emission routes it through the env, where C block scoping cannot express the loop scope (see EigenScript#1056); refused rather than answering with the leaked value.")
             modfor_intra_check of [stmts[r65i], r65i, 0]
+    # ouroboros#270: a native wrapper can be called by the VM, but an error
+    # raised inside compiled code exits/longjmps through the AOT handler stack;
+    # it cannot unwind to a VM try frame inside eval. Publishing wrappers would
+    # make successful calls appear to work while caught-error semantics is
+    # observably wrong. Refuse such literal eval code until there is a bridge.
     # Partition top-level function definitions from the rest (main body).
     local funcs is []
     local rest is []
@@ -13073,6 +13078,8 @@ define emit_program(ast) as:
             funcs is (append of [funcs, u])
         else:
             rest is (append of [rest, stmts[k]])
+    for esi in range of (len of stmts):
+        eval_compiled_refusal_scan of [stmts[esi], funcs]
     # #278: anonymous functions are values. Lift them before names and
     # parameter classes are seeded so every later pass sees an ordinary
     # function value. Module captures remain live through the module env.
@@ -14387,6 +14394,23 @@ define module_public(name) as:
     return 0
 # A public binding can be replaced through aliases/index access invisible to
 # the AST. Its initial value is never evidence for a permanent storage class.
+define eval_compiled_refusal_scan(node, funcs) as:
+    if (type of node) != "list":
+        return 0
+    if (len of node) == 0:
+        return 0
+    if node[0] == "call":
+        local ec is unwrap of node[1]
+        local ea is unwrap of node[2]
+        if (ec[0] == "ident") and (ec[1] == "eval") and (ea[0] == "str"):
+            for efi in range of (len of funcs):
+                local efn is (funcs[efi])[1]
+                if contains of [ea[1], efn]:
+                    throw of ("AOT: eval code names compiled function '" + efn + "'. Native calls can return values, but an error raised in compiled code cannot unwind into a try/catch inside the VM eval; refusing at build time rather than exposing a partial registry (ouroboros#270).")
+    for eki in range of (len of node):
+        eval_compiled_refusal_scan of [node[eki], funcs]
+    return 0
+
 define module_unclassify(classes) as:
     local pub is keys of g_module_live
     for mi in range of (len of pub):
