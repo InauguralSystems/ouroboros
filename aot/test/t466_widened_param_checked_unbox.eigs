@@ -1,0 +1,36 @@
+# ouroboros#269: a stale numeric declaration at the end of a widening chain
+# made a boxed boolean cross a checked-unbox boundary and die.  The VM and AOT
+# must instead return the boolean all the way through.
+define truth(n) as:
+    return n == n
+
+define hop0(v) as:
+    v is v * 2
+    v is truth of v
+    return v
+define hop1(v) as:
+    v is v * 2
+    v is hop0 of v
+    return v
+define hop2(v) as:
+    v is v * 2
+    v is hop1 of v
+    return v
+define hop3(v) as:
+    v is v * 2
+    v is hop2 of v
+    return v
+define hop4(v) as:
+    v is v * 2
+    v is hop3 of v
+    return v
+define hop5(v) as:
+    v is v * 2
+    v is hop4 of v
+    return v
+define hop6(v) as:
+    v is v * 2
+    v is hop5 of v
+    return v
+
+print of [hop6 of 3, "survived"]

@@ -1,0 +1,43 @@
+# ouroboros#269: each layer becomes boxed only after the previous layer's
+# return settles.  Return inference must include that widening in the same
+# fixed point rather than stopping with the last return declared as double.
+define verdict(n) as:
+    return n > 0
+
+define layer0(p) as:
+    p is p + 1
+    p is verdict of p
+    return p
+
+define layer1(p) as:
+    p is p + 1
+    p is layer0 of p
+    return p
+
+define layer2(p) as:
+    p is p + 1
+    p is layer1 of p
+    return p
+
+define layer3(p) as:
+    p is p + 1
+    p is layer2 of p
+    return p
+
+define layer4(p) as:
+    p is p + 1
+    p is layer3 of p
+    return p
+
+define layer5(p) as:
+    p is p + 1
+    p is layer4 of p
+    return p
+
+define layer6(p) as:
+    p is p + 1
+    p is layer5 of p
+    return p
+
+print of (layer6 of 1)
+print of (type of (layer6 of 1))

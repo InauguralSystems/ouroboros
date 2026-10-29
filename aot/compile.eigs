@@ -13339,18 +13339,6 @@ define emit_program(ast) as:
         if fp_changed == 0:
             fp_round is 4
         fp_round is fp_round + 1
-    # (round 168) snapshot the evidence-only parameter classes: the return
-    # re-derivation after widening restores them before widening again,
-    # because a fresh func_ptypes still reads callees' WIDENED positions
-    # (find_gen_param_use) and a circular chain (write_r8 -> mem_write ->
-    # stat_write) never narrows on its own.
-    for k in range of (len of funcs):
-        local sfe is g_funcs[((funcs[k])[1])]
-        local snap is []
-        local spt is sfe["ptypes"]
-        for si in range of (len of spt):
-            append of [snap, spt[si]]
-        sfe["ptypes0"] is snap
     # (round 154) frame-depth bracket only when the call graph can recurse.
     g_need_depth is call_graph_cyclic of [funcs, rest]
     # (round 167) field classes from assignment sites, program-wide.
@@ -13532,57 +13520,23 @@ define emit_program(ast) as:
     # at the phase boundary.
     G_LGM_CACHE[0] is {}
     widen_ptypes of [funcs, rest]
-    # (round 165) return types were classified before the widen fixpoint
-    # recorded the parameters' field maps, so a `return m.data[a]` on a
-    # buffer field could not be numeric then. Re-derive every return type
-    # with the maps in hand; a change re-runs the widening once, because
-    # callers classify a call by the callee's declared return.
-    # (round 168) widening is monotonic -- a parameter widened to boxed
-    # because a callee's return was still Value* never narrows back -- so a
-    # changed return re-derives every parameter class from evidence
-    # (func_ptypes) before widening again; up to three rounds, since a
-    # narrowed parameter can make another return numeric (read_r8 -> the
-    # ALU family's `val`).
-    local _rt_round is 0
-    loop while _rt_round < 3:
-        local _rt_changed is 0
-        for k in range of (len of funcs):
-            local rfn is funcs[k]
-            local rfe is g_funcs[rfn[1]]
-            local nret is func_ret_type of [rfn, rfe["ffbt"], rfe["ffgen"], rfe["ffdict"]]
-            if nret != rfe["ret"]:
-                rfe["ret"] is nret
-                _rt_changed is 1
-        if _rt_changed == 0:
-            _rt_round is 3
-            # (round 170) the element census ran before the returns settled,
-            # so numeric slots fed from once-boxed callees were unmarked;
-            # recount and re-seed with the final classes.
-            G_LGM_CACHE[0] is {}
-            elem_maps_census of [funcs, rest]
-            seed_handler_elems of [funcs, rest]
-            # the seeded maps changed identity: drop the cached local maps
-            # so emission (fmap_for_fn) sees the re-seeded parameters.
-            G_LGM_CACHE[0] is {}
-        else:
-            G_LGM_CACHE[0] is {}
-            for k2 in range of (len of funcs):
-                local fe2 is g_funcs[((funcs[k2])[1])]
-                local rp is []
-                local sp is fe2["ptypes0"]
-                for ri in range of (len of sp):
-                    append of [rp, sp[ri]]
-                fe2["ptypes"] is rp
-            widen_ptypes of [funcs, rest]
-        _rt_round is _rt_round + 1
     # Return-type inference reads the param classes (a function returning a
     # param returns ITS type), so it must be re-derived after widening —
     # otherwise a widened param returned as `double` yields 0 (t58's
     # `takes_str`).
     # (a function returning another function's result depends on THAT
-    # function's recomputed return type, so iterate to a fixpoint)
+    # function's recomputed return type, so iterate to a fixpoint).
+    # ouroboros#269: an older, separate `_rt_round` re-derived returns from
+    # the build-time ffbt/ffgen/ffdict maps, which by construction could not
+    # contain later parameter widening.  Keep one owner for the coupled
+    # state: every iteration below rebuilds those maps from CURRENT ptypes,
+    # then runs parameter proof, field proof and call-site widening.  Forty
+    # rounds matches widen_ptypes' call-graph bound; unlike the old silent
+    # six-round exit, exhausting it is a named refusal rather than emitting
+    # C from non-converged types.
     local rr is 0
-    loop while rr < 6:
+    local rr_done is 0
+    loop while rr < 40:
         local rchanged is 0
         # module buffers, re-derived per fixpoint iteration because
         # infer_buffers itself consults g_funcs retbuf (a buffer-returning
@@ -13651,8 +13605,18 @@ define emit_program(ast) as:
             G_LGM_CACHE[0] is {}
             widen_ptypes of [funcs, rest]
         if rchanged == 0:
-            rr is 6
+            rr_done is 1
+            rr is 40
         rr is rr + 1
+    if rr_done == 0:
+        throw of "AOT: return/parameter type inference did not converge after 40 rounds (ouroboros#269); refusing to emit C with stale return types"
+    # (round 170) the element census originally ran before returns settled,
+    # so numeric slots fed from once-boxed callees were unmarked. Recount and
+    # re-seed only after the coupled return/parameter fixed point is final.
+    G_LGM_CACHE[0] is {}
+    elem_maps_census of [funcs, rest]
+    seed_handler_elems of [funcs, rest]
+    G_LGM_CACHE[0] is {}
     # Module globals are computed first so functions can READ them (they become
     # file-scope vars in C; a function's params/locals shadow same-named globals).
     local bt is infer_buffers of rest
