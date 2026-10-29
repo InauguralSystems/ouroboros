@@ -1,7 +1,10 @@
-concurrent.eigs REFUSE
-eigen.eigs REFUSE
-geometry.eigs REFUSE
-lab.eigs REFUSE
-numerics.eigs REFUSE
-supervise.eigs REFUSE
-test_runner.eigs REFUSE
+autograd.eigs REFUSE class:value-read-numeric-context
+concurrent.eigs REFUSE class:nested-capture-rebind
+eigen.eigs REFUSE class:global-builtin-clobber
+geometry.eigs REFUSE class:global-builtin-clobber
+lab.eigs REFUSE class:global-builtin-clobber
+numerics.eigs REFUSE class:global-builtin-clobber
+observer.eigs REFUSE class:observed-param-rebind
+simulation.eigs REFUSE class:observed-param-rebind
+supervise.eigs REFUSE class:native-task-scheduler
+test_runner.eigs REFUSE class:outward-write-order

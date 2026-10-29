@@ -46,15 +46,15 @@ for f in "$EIGDIR"/tests/test_*.eigs; do
       echo "$b DIVERGE" >>"$got"
     fi
   elif [ "$bst" -eq 124 ]; then
-    # (round 106) a TIMEOUT is not a crash: test_stmt_cap is an 8424-line
+    # (round 106) an AOT_GAP is not a crash: test_stmt_cap is an 8424-line
     # program and the compiler is superlinear in statement count (~n^1.8
     # measured), so it blows the budget without ever failing. Conflating
-    # the two under BUILDCRASH hid the perf finding behind a severity it
+    # the two under DIE hid the perf finding behind a severity it
     # does not have.
-    echo "$b TIMEOUT" >>"$got"
+    echo "$b AOT_GAP" >>"$got"
   else
     if grep -q 'AOT:' $CDT.blog; then echo "$b REFUSE" >>"$got"
-    else echo "$b BUILDCRASH" >>"$got"; fi
+    else echo "$b DIE" >>"$got"; fi
   fi
 done
 touch "$got"; sort -o "$got" "$got"
@@ -63,6 +63,10 @@ touch "$got"; sort -o "$got" "$got"
 if [ ! -f "$BASE" ]; then
   echo "corpus: NO BASELINE at $BASE -- refusing to self-baseline."
   echo "corpus: mint one deliberately with:  cp $got $BASE"
+  exit 1
+fi
+if ! awk 'NF < 3 || $3 !~ /^class:[a-z0-9-]+$/ {print "corpus: malformed ledger row: " $0 > "/dev/stderr"; bad=1} END {exit bad}' "$BASE"; then
+  echo "corpus: every ledger row needs a class:<root-cause> reason" >&2
   exit 1
 fi
 # (round 170) NONDET rows: a program whose AOT outcome is TIMING-DEPENDENT
@@ -76,9 +80,9 @@ fi
 # the outcome becomes deterministic (MATCH every run).
 nondet=$(awk '$2=="NONDET"{print $1}' "$BASE")
 basecmp=$(mktemp); gotcmp=$(mktemp)
-awk '$2!="NONDET"' "$BASE" >"$basecmp"
+awk '$2!="NONDET"{print $1, $2}' "$BASE" >"$basecmp"
 if [ -n "$nondet" ]; then
-  grep -vFx -f <(for x in $nondet; do echo "$x DIVERGE"; echo "$x REFUSE"; echo "$x BUILDCRASH"; echo "$x TIMEOUT"; done) "$got" >"$gotcmp" || true
+  grep -vFx -f <(for x in $nondet; do echo "$x DIVERGE"; echo "$x REFUSE"; echo "$x DIE"; echo "$x AOT_GAP"; done) "$got" >"$gotcmp" || true
 else
   cp "$got" "$gotcmp"
 fi
@@ -90,7 +94,7 @@ rm -f "$basecmp" "$gotcmp"
 echo "corpus: LEDGER CHANGED ($n programs examined)"
 echo "  '<' = ledgered and now MATCHES (an improvement -- remove it from the baseline)"
 echo "  '>' = newly diverging or refusing (a REGRESSION)"
-diff <(awk '$2!="NONDET"' "$BASE") "$got" | grep -vF -f <(for x in $nondet; do echo "$x "; done) || true
+diff <(awk '$2!="NONDET"{print $1, $2}' "$BASE") "$got" | grep -vF -f <(for x in $nondet; do echo "$x "; done) || true
 # (round 184) the kept set is what a `cp` onto the ledger would install, so it
 # must carry the base's NONDET rows in place of the run's outcome for those
 # programs: round 181 copied a raw observed set and silently turned
@@ -98,7 +102,7 @@ diff <(awk '$2!="NONDET"' "$BASE") "$got" | grep -vF -f <(for x in $nondet; do e
 # flagged as an "improvement".
 if [ -n "$nondet" ]; then
   keep=$(mktemp)
-  grep -vFx -f <(for x in $nondet; do echo "$x DIVERGE"; echo "$x REFUSE"; echo "$x BUILDCRASH"; echo "$x TIMEOUT"; done) "$got" > "$keep" || true
+  grep -vFx -f <(for x in $nondet; do echo "$x DIVERGE"; echo "$x REFUSE"; echo "$x DIE"; echo "$x AOT_GAP"; done) "$got" > "$keep" || true
   for x in $nondet; do echo "$x NONDET" >> "$keep"; done
   sort -o "$got" "$keep"; rm -f "$keep"
 fi
