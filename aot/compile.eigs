@@ -321,6 +321,10 @@ define obs_mod_name(n) as:
 # When set, every numeric assignment is recorded on the trace tape (independent
 # of the env, so temporal vars stay unboxed) and each source line is stamped.
 g_traced is 0
+# Source line of the statement currently being emitted. Binary nodes carry
+# their operator token line as element 4; a differing line needs the VM's
+# scoped OP_BINARY_LINE rule, while same-line operators retain zero overhead.
+g_emit_stmt_line is [0]
 # Program-wide temporal flag. The VM's tape is PROCESS-GLOBAL and name-keyed:
 # an assignment inside an interrogate-free function still lands in the same
 # name history a module-level `prev of` reads. Deriving g_traced per function
@@ -2959,8 +2963,16 @@ define emit_num(node, nm, bt, raw) as:
         # double. Direct emit_int consumers (index positions) are
         # unaffected.
         if (is_int_expr of node) == 1:
-            return "((double)" + (emit_int of node) + ")"
+            if (len of node) <= 5:
+                return "((double)" + (emit_int of node) + ")"
+            if node[4] == node[5]:
+                return "((double)" + (emit_int of node) + ")"
         local op is node[1]
+        local binline is 0
+        if len of node > 4:
+            if (len of node) > 5:
+                if (node[4] != node[5]) or (node[5] != g_emit_stmt_line[0]):
+                    binline is node[4]
         # #280: a checked unbox is itself observable when it raises.  Keep
         # both operands boxed until both have been evaluated in VM order, then
         # let the Value-level operator validate their types together.  Besides
@@ -2970,7 +2982,10 @@ define emit_num(node, nm, bt, raw) as:
         # unchanged double path below.
         if (op != "and") and (op != "or"):
             if (((has_checked_num_read of [node[2], nm, bt]) == 1) or ((has_checked_num_read of [node[3], nm, bt]) == 1)) and ((checked_num_can_box of [node[2], bt]) == 1) and ((checked_num_can_box of [node[3], bt]) == 1):
-                return "num_guard(aot_num_ck(({ Value* _sqvl = " + (emit_val of [node[2], nm, bt]) + "; Value* _sqvr = " + (emit_val of [node[3], nm, bt]) + "; " + (binfn of op) + "(_sqvl, _sqvr); })))"
+                local bop is (binfn of op) + "(_sqvl, _sqvr)"
+                if binline != 0:
+                    bop is "AOT_BINARY_LINE(" + (str of binline) + ", " + (str of node[5]) + ", " + bop + ")"
+                return "num_guard(aot_num_ck(({ Value* _sqvl = " + (emit_val of [node[2], nm, bt]) + "; Value* _sqvr = " + (emit_val of [node[3], nm, bt]) + "; " + bop + "; })))"
         local l is ""
         local r is ""
         if (op == "+") or (NUMONLY_OPS[op] == 1):
@@ -2992,11 +3007,17 @@ define emit_num(node, nm, bt, raw) as:
         local seqpre is ""
         local seqpost is ""
         if (op != "and") and (op != "or"):
-            if ((has_call_node of node[2]) == 1) or ((has_call_node of node[3]) == 1) or ((has_checked_num_read of [node[2], nm, bt]) == 1) or ((has_checked_num_read of [node[3], nm, bt]) == 1):
+            if (binline != 0) or ((has_call_node of node[2]) == 1) or ((has_call_node of node[3]) == 1) or ((has_checked_num_read of [node[2], nm, bt]) == 1) or ((has_checked_num_read of [node[3], nm, bt]) == 1):
                 seqpre is "({ double _sqbl = " + l + "; double _sqbr = " + r + "; "
                 seqpost is "; })"
                 l is "_sqbl"
                 r is "_sqbr"
+                if binline != 0:
+                    local _brhs is unwrap of node[3]
+                    if (_brhs[0] != "binop") and (_brhs[0] != "call"):
+                        seqpre is seqpre + "aot_set_location(aot_current_file, " + (str of node[5]) + "); "
+                    seqpre is seqpre + "AOT_BINARY_LINE(" + (str of binline) + ", " + (str of node[5]) + ", "
+                    seqpost is ")" + seqpost
         # bitwise: the VM's INT_BINOP — int64 two's-complement, shift counts
         # masked to 0..63 (defined for any count, matching hardware). The
         # final (double) cast is the VM's own last step (always finite), so
@@ -3034,9 +3055,9 @@ define emit_num(node, nm, bt, raw) as:
         # evaluates only the taken arm, preserving short-circuit; -0.0 == 0.0
         # is falsy on both sides, and returning _l keeps its sign bit exact.
         if op == "and":
-            return "({ double _sc = " + l + "; _sc == 0.0 ? _sc : (" + r + "); })"
+            return "({ double _sc = " + l + "; _sc == 0.0 ? AOT_RESTORE_LINE(" + (str of node[4]) + ", _sc) : AOT_RESTORE_LINE(" + (str of node[5]) + ", (" + r + ")); })"
         if op == "or":
-            return "({ double _sc = " + l + "; _sc != 0.0 ? _sc : (" + r + "); })"
+            return "({ double _sc = " + l + "; _sc != 0.0 ? AOT_RESTORE_LINE(" + (str of node[4]) + ", _sc) : AOT_RESTORE_LINE(" + (str of node[5]) + ", (" + r + ")); })"
         # #1637: a comparison is a bool -- is_bool_expr routed it away above.
         throw of ("AOT: emit_num unexpected binop '" + op + "'")
     if t == "interrogate":
@@ -3296,6 +3317,10 @@ define emit_val(node, nm, bt) as:
         throw of ("AOT: cannot emit value unary '" + uop + "'")
     if t == "binop":
         local bop is node[1]
+        local vbline is 0
+        if len of node > 5:
+            if (node[4] != node[5]) or (node[5] != g_emit_stmt_line[0]):
+                vbline is node[4]
         # bitwise on boxed operands (e.g. an env-boxed loop var): operands are
         # numbers at runtime (the VM errors otherwise), so emit through the
         # numeric path — emit_num reads boxed idents via aot_num(aot_get).
@@ -3307,17 +3332,26 @@ define emit_val(node, nm, bt) as:
         # only evaluated on the taken branch (C ?: short-circuits its arms),
         # matching the VM's short-circuit semantics.
         if bop == "and":
-            return "({ Value* _x = (" + (emit_val of [node[2], nm, bt]) + "); is_truthy(_x) ? ({ val_decref(_x); (" + (emit_val of [node[3], nm, bt]) + "); }) : _x; })"
+            local aand is "({ Value* _x = (" + (emit_val of [node[2], nm, bt]) + "); is_truthy(_x) ? ({ val_decref(_x); AOT_RESTORE_LINE(" + (str of node[5]) + ", (" + (emit_val of [node[3], nm, bt]) + ")); }) : AOT_RESTORE_LINE(" + (str of node[4]) + ", _x); })"
+            return aand
         if bop == "or":
-            return "({ Value* _x = (" + (emit_val of [node[2], nm, bt]) + "); is_truthy(_x) ? _x : ({ val_decref(_x); (" + (emit_val of [node[3], nm, bt]) + "); }); })"
+            local aor is "({ Value* _x = (" + (emit_val of [node[2], nm, bt]) + "); is_truthy(_x) ? AOT_RESTORE_LINE(" + (str of node[4]) + ", _x) : ({ val_decref(_x); AOT_RESTORE_LINE(" + (str of node[5]) + ", (" + (emit_val of [node[3], nm, bt]) + ")); }); })"
+            return aor
         local cn2 is emit_cmp_n of [node, nm, bt, 0]
         if cn2 != "":
             return cn2
         # (round 89) sequence when either operand can CALL -- string
         # concat and f-string chains evaluated right-to-left under this
         # gcc where the VM pushes left-to-right (VM 12, AOT 21).
-        if ((has_call_node of node[2]) == 1) or ((has_call_node of node[3]) == 1):
-            return "({ Value* _sql = " + (emit_val of [node[2], nm, bt]) + "; Value* _sqr = " + (emit_val of [node[3], nm, bt]) + "; " + (binfn of bop) + "(_sql, _sqr); })"
+        if (vbline != 0) or ((has_call_node of node[2]) == 1) or ((has_call_node of node[3]) == 1):
+            local vop is (binfn of bop) + "(_sql, _sqr)"
+            local vpre is ""
+            if vbline != 0:
+                local _vbrhs is unwrap of node[3]
+                if (_vbrhs[0] != "binop") and (_vbrhs[0] != "call"):
+                    vpre is "aot_set_location(aot_current_file, " + (str of node[5]) + "); "
+                vop is "AOT_BINARY_LINE(" + (str of vbline) + ", " + (str of node[5]) + ", " + vop + ")"
+            return "({ Value* _sql = " + (emit_val of [node[2], nm, bt]) + "; Value* _sqr = " + (emit_val of [node[3], nm, bt]) + "; " + vpre + vop + "; })"
         return (binfn of bop) + "(" + (emit_val of [node[2], nm, bt]) + ", " + (emit_val of [node[3], nm, bt]) + ")"
     if t == "call":
         local callee is unwrap of node[1]
@@ -3537,7 +3571,15 @@ define emit_val(node, nm, bt) as:
             # message -- and the _err tier compares message text.
             return "({ " + hc1[0] + "Value* _sqcf = aot_call_resolve(__eigs_g, \"" + callee[1] + "\", " + hc1[1] + "); Value* _sqca = " + (emit_val of [(barg[1])[0], nm, bt]) + "; " + (host_fn_stamp of callee[1]) + "aot_call_dispatch(_sqcf, _sqca)" + "; })"
         local hc2 is ic_cache of 0
-        return "({ " + hc2[0] + "Value* _sqcf = aot_call_resolve(__eigs_g, \"" + callee[1] + "\", " + hc2[1] + "); Value* _sqca = " + (emit_val of [node[2], nm, bt]) + "; " + (host_fn_stamp of callee[1]) + "aot_call_dispatch(_sqcf, _sqca)" + "; })"
+        local cargstamp is ""
+        local cargnode is unwrap of node[2]
+        if cargnode[0] == "binop":
+            if len of cargnode > 5:
+                cargstamp is "aot_set_location(aot_current_file, " + (str of cargnode[5]) + "); __aot_ln = " + (str of cargnode[5]) + "; "
+        local dispatch_expr is "aot_call_dispatch(_sqcf, _sqca)"
+        if cargstamp != "":
+            dispatch_expr is "aot_call_dispatch_line(_sqcf, _sqca, " + (str of cargnode[5]) + ")"
+        return "({ " + hc2[0] + "Value* _sqcf = aot_call_resolve(__eigs_g, \"" + callee[1] + "\", " + hc2[1] + "); Value* _sqca = " + (emit_val of [node[2], nm, bt]) + "; " + cargstamp + (host_fn_stamp of callee[1]) + dispatch_expr + "; })"
     if t == "slice":
         # (round 129, #179) a slice in VALUE position. The runtime mirror of
         # OP_SLICE_GET (aot_slice_any: per-type length rule, negative
@@ -4153,7 +4195,11 @@ define emit_stmt_inner(node, ind, nm, bt, minits, gf) as:
         local lf is "<embed>"
         if (len of node) > 3:
             lf is node[3]
-        return ind + "aot_set_location(\"" + (c_escape of lf) + "\", " + (str of node[1]) + "); __aot_ln = " + (str of node[1]) + ";\n" + (emit_stmt of [node[2], ind, nm, bt, minits, gf])
+        local saved_stmt_line is g_emit_stmt_line[0]
+        g_emit_stmt_line[0] is node[1]
+        local line_body is emit_stmt of [node[2], ind, nm, bt, minits, gf]
+        g_emit_stmt_line[0] is saved_stmt_line
+        return ind + "aot_set_location(\"" + (c_escape of lf) + "\", " + (str of node[1]) + "); __aot_ln = " + (str of node[1]) + ";\n" + line_body
     if t == "_aot_file_begin":
         return ind + "aot_set_location(\"" + (c_escape of node[1]) + "\", " + (str of node[2]) + "); __aot_ln = " + (str of node[2]) + "; aot_frame_enter(\"<module>\");\n"
     if t == "_aot_file_end":
@@ -4474,7 +4520,11 @@ define emit_stmt_inner(node, ind, nm, bt, minits, gf) as:
             # extra reference: both success and error ordering then follow
             # index-get -> RHS -> operator -> index-set exactly.
             local cop is binfn of node[4]
-            return ind + "{ Value* _cat = " + (emit_val of [node[1], nm, bt]) + "; Value* _cai = " + (emit_val of [node[2], nm, bt]) + "; val_incref(_cat); val_incref(_cai); Value* _cal = aot_index_get(_cat, _cai); Value* _car = " + (emit_val of [node[3], nm, bt]) + "; Value* _cav = " + cop + "(_cal, _car); aot_index_set(_cat, _cai, _cav); }\n"
+            local copexpr is cop + "(_cal, _car)"
+            if (len of node) > 5:
+                if node[5] != g_emit_stmt_line[0]:
+                    copexpr is "AOT_BINARY_LINE(" + (str of node[5]) + ", " + (str of node[5]) + ", " + copexpr + ")"
+            return ind + "{ Value* _cat = " + (emit_val of [node[1], nm, bt]) + "; Value* _cai = " + (emit_val of [node[2], nm, bt]) + "; val_incref(_cat); val_incref(_cai); Value* _cal = aot_index_get(_cat, _cai); Value* _car = " + (emit_val of [node[3], nm, bt]) + "; Value* _cav = " + copexpr + "; aot_index_set(_cat, _cai, _cav); }\n"
         local tgt is unwrap of node[1]
         if tgt[0] == "ident":
             if (bt[tgt[1]] == 1) and ((num_store_ok of [node[2], nm, bt]) == 1) and ((num_store_ok of [node[3], nm, bt]) == 1):

@@ -1,0 +1,10 @@
+define zero(n) as:
+    return 0
+x is 0
+got is 0
+try:
+    z is (zero of [
+        4]) / x
+catch e:
+    got is e.line
+print of got

@@ -1,0 +1,9 @@
+s is "bad"
+got is 0
+try:
+    z is (1 +
+        2 +
+        s)
+catch e:
+    got is e.line
+print of got
