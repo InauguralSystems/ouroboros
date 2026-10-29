@@ -1,0 +1,8 @@
+# A scalar comparison cannot raise, so its loop test needs no line re-stamp.
+define count_to(n) as:
+    i is 0
+    loop while i < n:
+        i is i + 1
+    return i
+
+print of (count_to of 3)

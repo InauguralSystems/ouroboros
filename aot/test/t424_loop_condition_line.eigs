@@ -1,0 +1,15 @@
+# A re-evaluated loop condition must retain the loop statement's source line.
+i is 0
+try:
+    loop while [1][i] == 1:
+        i is i + 1
+catch e:
+    print of f"caught {e.line}"
+# Force the observed-loop emitter and its explicit while(1) back-edge.
+j is 0
+observe of j
+try:
+    loop while [1][j] == 1:
+        j is j + 1
+catch oe:
+    print of f"observed {oe.line}"
