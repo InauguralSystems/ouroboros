@@ -1,120 +1,120 @@
-test_audio.eigs DIVERGE class:runtime-profile-builtins
-test_audio_rate_limit.eigs DIVERGE class:runtime-profile-builtins
-test_auth.eigs DIVERGE class:runtime-profile-builtins
-test_bcd.eigs DIVERGE class:caught-error-output
-test_bitwise.eigs DIVERGE class:harness-exit-status
-test_bool.eigs REFUSE class:observer-scope
-test_break_continue.eigs REFUSE class:list-argument-packing
-test_buffer_store_type.eigs REFUSE class:binding-order
-test_builtin_errors.eigs REFUSE class:dynamic-load-state
-test_by_name_binders.eigs REFUSE class:function-rebinding
-test_call_semantics.eigs REFUSE class:native-task-scheduler
-test_chunk_verify_stack.eigs DIVERGE class:compiler-acceptance-drift
-test_closure_cycles.eigs REFUSE class:closure-environment #324
-test_closure_mutation.eigs REFUSE class:closure-environment
-test_closures.eigs REFUSE class:closure-environment
-test_comprehension_scope_1737.eigs REFUSE class:unsupported-ast
-test_concurrent.eigs DIVERGE class:harness-exit-status
-test_contract.eigs DIVERGE class:caught-error-output
-test_control_flow_interactions.eigs REFUSE class:list-argument-packing
-test_coverage_v2.eigs REFUSE class:binding-order
-test_data.eigs DIVERGE class:harness-exit-status
-test_db.eigs DIVERGE class:runtime-profile-builtins
-test_default_params.eigs REFUSE class:underarity-null-binding
-test_desc_unrecorded_read.eigs DIVERGE class:observer-history
-test_destructuring.eigs REFUSE class:unsupported-ast
-test_dict.eigs REFUSE class:underarity-null-binding
-test_dict_write_keys.eigs REFUSE class:binding-order
-test_dispatch_rebind.eigs REFUSE class:function-rebinding
-test_dispatch_rebind_eval.eigs REFUSE class:eval-unwind-bridge #330
-test_dispatch_rebind_fn.eigs REFUSE class:global-builtin-clobber
-test_dot.eigs DIVERGE class:builtin-shadow-dispatch
-test_dot_assign.eigs DIVERGE class:harness-exit-status
-test_entropy_cycles.eigs REFUSE class:temporal-query-envelope #267
-test_entropy_query_time.eigs REFUSE class:temporal-query-envelope #267
-test_eval.eigs REFUSE class:unsupported-ast
-test_for_binder_fresh_loop_scoped.eigs REFUSE class:observer-scope
-test_for_binder_observer_tier.eigs REFUSE class:observer-scope
-test_for_binder_scoped_in_function.eigs REFUSE class:observer-scope
-test_for_in_mutation.eigs REFUSE class:unsupported-ast
-test_for_local_write_opcodes.eigs REFUSE class:closure-environment
-test_fstrings.eigs DIE class:fstring-parser-gap
-test_gc.eigs REFUSE class:value-read-numeric-context
-test_gc_dense_trigger.eigs DIVERGE class:runtime-gc-hang
-test_gc_trigger.eigs DIVERGE class:runtime-gc-hang
-test_gfx_argtypes.eigs DIVERGE class:runtime-profile-builtins
-test_gfx_text.eigs DIVERGE class:runtime-profile-builtins
-test_gfx_utf8_title.eigs DIVERGE class:runtime-profile-builtins
-test_halting_descent.eigs REFUSE class:temporal-query-envelope #267
-test_halting_stall.eigs REFUSE class:temporal-query-envelope #267
-test_http.eigs DIVERGE class:runtime-profile-builtins
-test_import.eigs REFUSE class:dynamic-import-fixture
-test_import_errors.eigs REFUSE class:dynamic-import-fixture
-test_import_toplevel_scope.eigs REFUSE class:dynamic-import-fixture
-test_interrogative_spec.eigs REFUSE class:temporal-query-envelope #267
-test_jit_paths.eigs REFUSE class:closure-environment
-test_json_merge.eigs DIVERGE class:harness-exit-status
-test_keyword_reservation.eigs REFUSE class:observer-scope
-test_leaf_call.eigs REFUSE class:closure-environment
-test_line_after_return.eigs REFUSE class:binding-order
-test_listcomp_interrogate.eigs REFUSE class:unsupported-ast
-test_loop_iterations_per_loop.eigs REFUSE class:loop-metadata-frame
-test_meta_fstr_host_str.eigs REFUSE class:binding-order
-test_meta_host_builtins.eigs REFUSE class:binding-order
-test_meta_parity.eigs REFUSE class:binding-order
-test_meta_reserved_dunder.eigs REFUSE class:binding-order
-test_meta_string_escapes.eigs REFUSE class:binding-order
-test_module_builtin_isolation.eigs REFUSE class:dynamic-import-fixture
-test_module_scope.eigs REFUSE class:dynamic-import-fixture
-test_multiline.eigs REFUSE class:list-argument-packing
-test_net.eigs DIVERGE class:runtime-profile-builtins
-test_not_precedence.eigs REFUSE class:binding-order
-test_numerical_grad_mutation_1719.eigs REFUSE class:closure-environment
-test_numerics.eigs DIVERGE class:float-algorithm
-test_obs_mt_race.eigs REFUSE class:native-task-scheduler
-test_observer_coherence.eigs REFUSE class:temporal-query-envelope #267
-test_observer_interactions.eigs REFUSE class:temporal-query-envelope #267
-test_observer_saturation.eigs REFUSE class:observer-scope
-test_operator_line.eigs DIVERGE class:source-line-reporting
-test_operator_line_parent.eigs DIVERGE class:source-line-reporting
-test_optimize.eigs DIVERGE class:float-algorithm
-test_parameter_when_2016.eigs REFUSE class:temporal-query-envelope #267
-test_sandbox_budget.eigs AOT_GAP class:compile-timeout
-test_scope_semantics.eigs REFUSE class:observer-scope
-test_singleton_slot_rc.eigs DIVERGE class:runtime-gc-hang
-test_soft_keyword_idents.eigs REFUSE class:observer-scope
-test_sort_stable.eigs REFUSE class:boxed-loop-binder
-test_spawn_gc.eigs NONDET class:thread-nondeterminism
-test_spawn_parallel.eigs NONDET class:thread-nondeterminism
-test_stable_band.eigs REFUSE class:temporal-query-envelope #267
-test_stdlib_fixes.eigs REFUSE class:binding-order
-test_stmt_terminator.eigs DIVERGE class:parse-diagnostic-output
-test_supervise.eigs DIVERGE class:harness-exit-status
-test_sync.eigs REFUSE class:native-task-scheduler
-test_task_osr.eigs REFUSE class:native-task-scheduler
-test_task_sleep_order.eigs REFUSE class:native-task-scheduler
-test_tasks.eigs REFUSE class:native-task-scheduler
-test_temporal.eigs REFUSE class:temporal-query-envelope #267
-test_temporal_line_stamps.eigs REFUSE class:observer-scope
-test_temporal_param.eigs REFUSE class:native-task-scheduler
-test_temporal_when.eigs REFUSE class:temporal-query-envelope #267
-test_tensor_buffer_inputs.eigs REFUSE class:unsupported-ast
-test_tensor_buffer_ops.eigs REFUSE class:unsupported-ast
-test_trajectory.eigs DIVERGE class:caught-error-output
-test_transfer_copy.eigs REFUSE class:native-task-scheduler
-test_trycatch.eigs REFUSE class:try-control-handler
-test_ui.eigs REFUSE class:binding-order
-test_ui_containment_gfx.eigs REFUSE class:builtin-call-envelope
-test_underarity_1661_bind.eigs REFUSE class:closure-environment #324
-test_underarity_1661_depth.eigs REFUSE class:underarity-null-binding
-test_underarity_1661_dispatch_eval.eigs REFUSE class:closure-environment #324
-test_underarity_1661_jitcall.eigs REFUSE class:underarity-null-binding
-test_underarity_1661_repro.eigs REFUSE class:underarity-null-binding
-test_underarity_1661_trycatch.eigs REFUSE class:underarity-null-binding
-test_unobserved.eigs REFUSE class:temporal-query-envelope #267
-test_unobserved_binders.eigs REFUSE class:dynamic-load-state
-test_unobserved_neutral.eigs REFUSE class:temporal-query-envelope #267
-test_vm_run_bytecode.eigs DIVERGE class:caught-error-output
-test_walker_matrix.eigs REFUSE class:closure-environment
-test_when_store_sites_2016.eigs REFUSE class:temporal-query-envelope #267
-test_worker_intern_escape.eigs DIVERGE class:worker-interning
+test_audio.eigs DIVERGE class:runtime-profile-builtins ouroboros#349
+test_audio_rate_limit.eigs DIVERGE class:runtime-profile-builtins ouroboros#349
+test_auth.eigs DIVERGE class:runtime-profile-builtins ouroboros#349
+test_bcd.eigs DIVERGE class:caught-error-output ouroboros#336
+test_bitwise.eigs DIVERGE class:harness-exit-status ouroboros#343
+test_bool.eigs REFUSE class:observer-scope ouroboros#347
+test_break_continue.eigs REFUSE class:list-argument-packing ouroboros#344
+test_buffer_store_type.eigs REFUSE class:binding-order ouroboros#335
+test_builtin_errors.eigs REFUSE class:dynamic-load-state ouroboros#339
+test_by_name_binders.eigs REFUSE class:function-rebinding ouroboros#341
+test_call_semantics.eigs REFUSE class:native-task-scheduler ouroboros#345
+test_chunk_verify_stack.eigs DIVERGE class:compiler-acceptance-drift ouroboros#356
+test_closure_cycles.eigs REFUSE class:closure-environment ouroboros#337 #324
+test_closure_mutation.eigs REFUSE class:closure-environment ouroboros#337
+test_closures.eigs REFUSE class:closure-environment ouroboros#337
+test_comprehension_scope_1737.eigs REFUSE class:unsupported-ast ouroboros#354
+test_concurrent.eigs DIVERGE class:harness-exit-status ouroboros#343
+test_contract.eigs DIVERGE class:caught-error-output ouroboros#336
+test_control_flow_interactions.eigs REFUSE class:list-argument-packing ouroboros#344
+test_coverage_v2.eigs REFUSE class:binding-order ouroboros#335
+test_data.eigs DIVERGE class:harness-exit-status ouroboros#343
+test_db.eigs DIVERGE class:runtime-profile-builtins ouroboros#349
+test_default_params.eigs REFUSE class:underarity-null-binding ouroboros#353
+test_desc_unrecorded_read.eigs DIVERGE class:observer-history ouroboros#356
+test_destructuring.eigs REFUSE class:unsupported-ast ouroboros#354
+test_dict.eigs REFUSE class:underarity-null-binding ouroboros#353
+test_dict_write_keys.eigs REFUSE class:binding-order ouroboros#335
+test_dispatch_rebind.eigs REFUSE class:function-rebinding ouroboros#341
+test_dispatch_rebind_eval.eigs REFUSE class:eval-unwind-bridge ouroboros#330 #330
+test_dispatch_rebind_fn.eigs REFUSE class:global-builtin-clobber ouroboros#342
+test_dot.eigs DIVERGE class:builtin-shadow-dispatch ouroboros#356
+test_dot_assign.eigs DIVERGE class:harness-exit-status ouroboros#343
+test_entropy_cycles.eigs REFUSE class:temporal-query-envelope ouroboros#351 #267
+test_entropy_query_time.eigs REFUSE class:temporal-query-envelope ouroboros#351 #267
+test_eval.eigs REFUSE class:unsupported-ast ouroboros#354
+test_for_binder_fresh_loop_scoped.eigs REFUSE class:observer-scope ouroboros#347
+test_for_binder_observer_tier.eigs REFUSE class:observer-scope ouroboros#347
+test_for_binder_scoped_in_function.eigs REFUSE class:observer-scope ouroboros#347
+test_for_in_mutation.eigs REFUSE class:unsupported-ast ouroboros#354
+test_for_local_write_opcodes.eigs REFUSE class:closure-environment ouroboros#337
+test_fstrings.eigs DIE class:fstring-parser-gap ouroboros#356
+test_gc.eigs REFUSE class:value-read-numeric-context ouroboros#355
+test_gc_dense_trigger.eigs DIVERGE class:runtime-gc-hang ouroboros#348
+test_gc_trigger.eigs DIVERGE class:runtime-gc-hang ouroboros#348
+test_gfx_argtypes.eigs DIVERGE class:runtime-profile-builtins ouroboros#349
+test_gfx_text.eigs DIVERGE class:runtime-profile-builtins ouroboros#349
+test_gfx_utf8_title.eigs DIVERGE class:runtime-profile-builtins ouroboros#349
+test_halting_descent.eigs REFUSE class:temporal-query-envelope ouroboros#351 #267
+test_halting_stall.eigs REFUSE class:temporal-query-envelope ouroboros#351 #267
+test_http.eigs DIVERGE class:runtime-profile-builtins ouroboros#349
+test_import.eigs REFUSE class:dynamic-import-fixture ouroboros#338
+test_import_errors.eigs REFUSE class:dynamic-import-fixture ouroboros#338
+test_import_toplevel_scope.eigs REFUSE class:dynamic-import-fixture ouroboros#338
+test_interrogative_spec.eigs REFUSE class:temporal-query-envelope ouroboros#351 #267
+test_jit_paths.eigs REFUSE class:closure-environment ouroboros#337
+test_json_merge.eigs DIVERGE class:harness-exit-status ouroboros#343
+test_keyword_reservation.eigs REFUSE class:observer-scope ouroboros#347
+test_leaf_call.eigs REFUSE class:closure-environment ouroboros#337
+test_line_after_return.eigs REFUSE class:binding-order ouroboros#335
+test_listcomp_interrogate.eigs REFUSE class:unsupported-ast ouroboros#354
+test_loop_iterations_per_loop.eigs REFUSE class:loop-metadata-frame ouroboros#356
+test_meta_fstr_host_str.eigs REFUSE class:binding-order ouroboros#335
+test_meta_host_builtins.eigs REFUSE class:binding-order ouroboros#335
+test_meta_parity.eigs REFUSE class:binding-order ouroboros#335
+test_meta_reserved_dunder.eigs REFUSE class:binding-order ouroboros#335
+test_meta_string_escapes.eigs REFUSE class:binding-order ouroboros#335
+test_module_builtin_isolation.eigs REFUSE class:dynamic-import-fixture ouroboros#338
+test_module_scope.eigs REFUSE class:dynamic-import-fixture ouroboros#338
+test_multiline.eigs REFUSE class:list-argument-packing ouroboros#344
+test_net.eigs DIVERGE class:runtime-profile-builtins ouroboros#349
+test_not_precedence.eigs REFUSE class:binding-order ouroboros#335
+test_numerical_grad_mutation_1719.eigs REFUSE class:closure-environment ouroboros#337
+test_numerics.eigs DIVERGE class:float-algorithm ouroboros#340
+test_obs_mt_race.eigs REFUSE class:native-task-scheduler ouroboros#345
+test_observer_coherence.eigs REFUSE class:temporal-query-envelope ouroboros#351 #267
+test_observer_interactions.eigs REFUSE class:temporal-query-envelope ouroboros#351 #267
+test_observer_saturation.eigs REFUSE class:observer-scope ouroboros#347
+test_operator_line.eigs DIVERGE class:source-line-reporting ouroboros#350
+test_operator_line_parent.eigs DIVERGE class:source-line-reporting ouroboros#350
+test_optimize.eigs DIVERGE class:float-algorithm ouroboros#340
+test_parameter_when_2016.eigs REFUSE class:temporal-query-envelope ouroboros#351 #267
+test_sandbox_budget.eigs AOT_GAP class:compile-timeout ouroboros#356
+test_scope_semantics.eigs REFUSE class:observer-scope ouroboros#347
+test_singleton_slot_rc.eigs DIVERGE class:runtime-gc-hang ouroboros#348
+test_soft_keyword_idents.eigs REFUSE class:observer-scope ouroboros#347
+test_sort_stable.eigs REFUSE class:boxed-loop-binder ouroboros#356
+test_spawn_gc.eigs NONDET class:thread-nondeterminism ouroboros#352
+test_spawn_parallel.eigs NONDET class:thread-nondeterminism ouroboros#352
+test_stable_band.eigs REFUSE class:temporal-query-envelope ouroboros#351 #267
+test_stdlib_fixes.eigs REFUSE class:binding-order ouroboros#335
+test_stmt_terminator.eigs DIVERGE class:parse-diagnostic-output ouroboros#356
+test_supervise.eigs DIVERGE class:harness-exit-status ouroboros#343
+test_sync.eigs REFUSE class:native-task-scheduler ouroboros#345
+test_task_osr.eigs REFUSE class:native-task-scheduler ouroboros#345
+test_task_sleep_order.eigs REFUSE class:native-task-scheduler ouroboros#345
+test_tasks.eigs REFUSE class:native-task-scheduler ouroboros#345
+test_temporal.eigs REFUSE class:temporal-query-envelope ouroboros#351 #267
+test_temporal_line_stamps.eigs REFUSE class:observer-scope ouroboros#347
+test_temporal_param.eigs REFUSE class:native-task-scheduler ouroboros#345
+test_temporal_when.eigs REFUSE class:temporal-query-envelope ouroboros#351 #267
+test_tensor_buffer_inputs.eigs REFUSE class:unsupported-ast ouroboros#354
+test_tensor_buffer_ops.eigs REFUSE class:unsupported-ast ouroboros#354
+test_trajectory.eigs DIVERGE class:caught-error-output ouroboros#336
+test_transfer_copy.eigs REFUSE class:native-task-scheduler ouroboros#345
+test_trycatch.eigs REFUSE class:try-control-handler ouroboros#356
+test_ui.eigs REFUSE class:binding-order ouroboros#335
+test_ui_containment_gfx.eigs REFUSE class:builtin-call-envelope ouroboros#356
+test_underarity_1661_bind.eigs REFUSE class:closure-environment ouroboros#337 #324
+test_underarity_1661_depth.eigs REFUSE class:underarity-null-binding ouroboros#353
+test_underarity_1661_dispatch_eval.eigs REFUSE class:closure-environment ouroboros#337 #324
+test_underarity_1661_jitcall.eigs REFUSE class:underarity-null-binding ouroboros#353
+test_underarity_1661_repro.eigs REFUSE class:underarity-null-binding ouroboros#353
+test_underarity_1661_trycatch.eigs REFUSE class:underarity-null-binding ouroboros#353
+test_unobserved.eigs REFUSE class:temporal-query-envelope ouroboros#351 #267
+test_unobserved_binders.eigs REFUSE class:dynamic-load-state ouroboros#339
+test_unobserved_neutral.eigs REFUSE class:temporal-query-envelope ouroboros#351 #267
+test_vm_run_bytecode.eigs DIVERGE class:caught-error-output ouroboros#336
+test_walker_matrix.eigs REFUSE class:closure-environment ouroboros#337
+test_when_store_sites_2016.eigs REFUSE class:temporal-query-envelope ouroboros#351 #267
+test_worker_intern_escape.eigs DIVERGE class:worker-interning ouroboros#356

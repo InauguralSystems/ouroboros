@@ -1,10 +1,10 @@
-autograd.eigs REFUSE class:value-read-numeric-context
-concurrent.eigs REFUSE class:nested-capture-rebind
-eigen.eigs REFUSE class:global-builtin-clobber
-geometry.eigs REFUSE class:global-builtin-clobber
-lab.eigs REFUSE class:global-builtin-clobber
-numerics.eigs REFUSE class:global-builtin-clobber
-observer.eigs REFUSE class:observed-param-rebind
-simulation.eigs REFUSE class:observed-param-rebind
-supervise.eigs REFUSE class:native-task-scheduler
-test_runner.eigs REFUSE class:outward-write-order
+autograd.eigs REFUSE class:value-read-numeric-context ouroboros#355
+concurrent.eigs REFUSE class:nested-capture-rebind ouroboros#356
+eigen.eigs REFUSE class:global-builtin-clobber ouroboros#342
+geometry.eigs REFUSE class:global-builtin-clobber ouroboros#342
+lab.eigs REFUSE class:global-builtin-clobber ouroboros#342
+numerics.eigs REFUSE class:global-builtin-clobber ouroboros#342
+observer.eigs REFUSE class:observed-param-rebind ouroboros#346
+simulation.eigs REFUSE class:observed-param-rebind ouroboros#346
+supervise.eigs REFUSE class:native-task-scheduler ouroboros#345
+test_runner.eigs REFUSE class:outward-write-order ouroboros#356
