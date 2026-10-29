@@ -1,0 +1,5 @@
+# ouroboros#275: the unseen unit may choose the field name dynamically.
+d is {"f": 0, "untouched": 7}
+eval of "k is \"f\"\nd[k] is \"boxed\""
+print of (d.f)
+print of (d.untouched + 1)
