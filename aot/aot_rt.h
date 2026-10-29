@@ -3764,6 +3764,11 @@ static Value *aot_call_vm_builtin(Value *fn, Value *arg) {
             hf->env = g_global_env;
             hf->fn_env = g_global_env;
             hf->bp = g_vm.sp;
+            /* The runtime now decides whether a user throw is caught by
+             * inspecting frame try_count (not the aggregate g_try_depth).
+             * This synthetic host frame represents the enclosing native
+             * try, so expose its handler just as the VM module frame does. */
+            hf->try_count = aot_try_n > 0 ? 1 : 0;
             pushed = 1;
         }
         /* (round 153) inside an AOT `try` the VM must not print either:
