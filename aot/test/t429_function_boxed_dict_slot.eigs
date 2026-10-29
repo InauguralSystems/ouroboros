@@ -1,0 +1,11 @@
+# ouroboros#292's dict-field twin. The field-write census must retain this
+# boxed function-body store alongside the numeric module store.
+C is {"field": 0}
+define identity(v) as:
+    return v
+define store_string() as:
+    C.field is "s"
+    print of (identity of C.field)
+store_string of []
+C.field is 7
+print of (identity of C.field)
