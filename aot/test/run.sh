@@ -9,6 +9,10 @@ if ! PYTHONDONTWRITEBYTECODE=1 python3 test/test_gate_tiers.py; then
   echo 'FAIL: seven-tier gate driver selftests' >&2
   exit 1
 fi
+if ! EIGS="$EIG" bash test/t460_spec_audit.sh; then
+  echo 'FAIL: spec_audit current-tape gate' >&2
+  exit 1
+fi
 if ! PYTHONDONTWRITEBYTECODE=1 python3 test/test_slot_index_gate.py; then
   echo 'FAIL: slot index ownership gate selftests' >&2
   exit 1
