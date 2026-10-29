@@ -1,0 +1,21 @@
+# #278: lambdas are ordinary values in every value-bearing position.
+assigned is (x) => x + 1
+print of (assigned of 4)
+
+define apply(f, x) as:
+    return f of x
+print of (apply of [(x) => x * 2, 6])
+
+items is [(x) => x + 10]
+print of ((items[0]) of 3)
+
+define make() as:
+    return (x) => x - 2
+returned is make of null
+print of (returned of 9)
+
+# The VM closure retains the module environment, not a value snapshot.
+captured is 40
+reader is (x) => x + captured
+captured is 100
+print of (reader of 7)
