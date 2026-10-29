@@ -35,7 +35,7 @@ BASELINE 0
 # survives a new instrument is the outcome this file is built for.
 #
 # row        declared  tol%   basis
-K_TOTAL      267.1     8     current DMG/current EigenScript pin re-measured for #274: 267.05 Ir/cycle at the declared 2M window; the former 182.1 predates the current tree and no longer describes this binary
+K_TOTAL      182.1     8     tier 1a read+WRITE paths LANDED 2026-09-19. 219.4 -> 194.4 (read) -> 182.1 (write). Each an A/B on one runtime with the arms asserted different and emulated output identical. 21.41 -> 24.59 MHz here, +14.9% over the day
 EIG          81.0      12    DMG's own compiled code (eig_*). 86.3 -> 80.3 (read path moved it by removing per-call static-address setup at the call sites) -> 81.0 (the write helper INLINED, which moves some of its cost into the caller's attribution)
 AOT_IC       78.6      12    inline-cache helpers (aot_*). 111.1 -> 91.5 (read) -> 78.6 (write). aot_dot_set_num_tb_ic 28.04 -> aot_dot_set_num_tb_si 15.58
 OTHER        22.1      20    guard / box / truthy / refcount. Unmoved by tier 1a, as intended
