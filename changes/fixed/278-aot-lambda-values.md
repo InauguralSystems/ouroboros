@@ -1,0 +1,1 @@
+- AOT-compiled programs can use lambdas as assigned, passed, listed, returned, and module-capturing values, with live by-reference module captures (#278).

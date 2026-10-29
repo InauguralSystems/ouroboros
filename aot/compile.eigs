@@ -11249,6 +11249,7 @@ g_loop_seq is 0
 g_loop_continue_label is ""
 g_mod_tensor is {}
 G_LIFT_N is [0]
+G_LAMBDA_N is [0]
 # names registered by the lift itself (vs real top-level defines), so a
 # second encloser's same-named private helper is renamed, not refused (#165)
 g_lifted_names is {}
@@ -11266,6 +11267,62 @@ define rename_idents(node, rmap) as:
         return 0
     for k in range of (len of node):
         rename_idents of [node[k], rmap]
+    return 0
+
+# Turn an anonymous expression function into an ordinary, uniquely named
+# function before function classification. The generated function then uses
+# the same native wrapper/value representation as a named function.
+#
+# A module lambda closes over __eigs_g, just like OP_CLOSURE closes over the
+# module environment, so later rebinding is deliberately visible (capture by
+# reference). A lambda inside a function needs a real per-instance closure
+# environment for params/locals. The named-function AOT closure is a capture
+# snapshot, so refuse that smaller shape rather than changing VM semantics.
+define lift_lambdas(node, enclosing, out_funcs) as:
+    if (type of node) != "list":
+        return 0
+    if (len of node) == 0:
+        return 0
+    if node[0] == "lambda":
+        local lparams is node[1]
+        local lbody is node[2]
+        local enames is keys of enclosing
+        for ei in range of (len of enames):
+            local en is enames[ei]
+            local isparam is 0
+            for pi in range of (len of lparams):
+                if lparams[pi] == en:
+                    isparam is 1
+            if (isparam == 0) and ((uses_ident of [lbody, en]) == 1):
+                throw of ("AOT: lambda capturing enclosing function binding '" + en + "' requires the VM's live closure environment (capture by reference); the AOT named-function closure is a value snapshot, so this construct is not supported")
+        lift_lambdas of [lbody, enclosing, out_funcs]
+        local lname is "__aot_lambda_" + (str of (G_LAMBDA_N[0]))
+        G_LAMBDA_N[0] is G_LAMBDA_N[0] + 1
+        local lcollision is 1
+        loop while lcollision == 1:
+            lcollision is 0
+            for lfi in range of (len of out_funcs):
+                if ((out_funcs[lfi])[1]) == lname:
+                    lcollision is 1
+            if lcollision == 1:
+                lname is "__aot_lambda_" + (str of (G_LAMBDA_N[0]))
+                G_LAMBDA_N[0] is G_LAMBDA_N[0] + 1
+        append of [out_funcs, ["func", lname, lparams, [["return", lbody]]]]
+        node[0] is "ident"
+        node[1] is lname
+        return 0
+    if node[0] == "func":
+        local fb is {}
+        for fp in range of (len of node[2]):
+            fb[((node[2])[fp])] is 1
+        local fa is collect_assigns of [node[3], {}]
+        local fan is keys of fa
+        for fi in range of (len of fan):
+            fb[(fan[fi])] is 1
+        lift_lambdas of [node[3], fb, out_funcs]
+        return 0
+    for li in range of (len of node):
+        lift_lambdas of [node[li], enclosing, out_funcs]
     return 0
 
 # (round 112) Scope-aware sibling of rename_idents for a `for` BINDER: rename
@@ -12997,6 +13054,22 @@ define emit_program(ast) as:
             funcs is (append of [funcs, u])
         else:
             rest is (append of [rest, stmts[k]])
+    # #278: anonymous functions are values. Lift them before names and
+    # parameter classes are seeded so every later pass sees an ordinary
+    # function value. Module captures remain live through the module env.
+    G_LAMBDA_N[0] is 0
+    for k in range of (len of rest):
+        lift_lambdas of [rest[k], {}, funcs]
+    local _lf_initial is len of funcs
+    for k in range of _lf_initial:
+        local _lfbound is {}
+        for p in range of (len of (funcs[k])[2]):
+            _lfbound[((funcs[k])[2])[p]] is 1
+        local _lfa is collect_assigns of [(funcs[k])[3], {}]
+        local _lfan is keys of _lfa
+        for j in range of (len of _lfan):
+            _lfbound[(_lfan[j])] is 1
+        lift_lambdas of [(funcs[k])[3], _lfbound, funcs]
     # Seed all user function NAMES first so is_tensor_call can tell a user-defined
     # matmul/add/relu (which shadows the tensor builtin) from the builtin —
     # regardless of definition order. (Names only: seeding full g_funcs entries
