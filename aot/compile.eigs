@@ -4659,6 +4659,23 @@ define emit_stmt_inner(node, ind, nm, bt, minits, gf) as:
                 return ind + "{ Value* _sat = " + (emit_val of [node[1], nm, bt]) + "; double _sai = " + (emit_num of [node[2], nm, bt, 0]) + "; double _sav = " + (emit_num of [node[3], nm, bt, 0]) + "; aot_index_set_num_ib(_sat, _sai, _sav); if (_sat) val_decref(_sat); }\n"
             return ind + "{ Value* _sat = " + (emit_val of [node[1], nm, bt]) + "; double _sai = " + (emit_num of [node[2], nm, bt, 0]) + "; aot_index_set_i(_sat, _sai, " + (emit_val of [node[3], nm, bt]) + "); }\n"
         return ind + "{ Value* _sat = " + (emit_val of [node[1], nm, bt]) + "; Value* _sai = " + (emit_val of [node[2], nm, bt]) + "; aot_index_set(_sat, _sai, " + (emit_val of [node[3], nm, bt]) + "); }\n"
+    if t == "destructure":
+        # DESTRUCTURE_UNPACK validates the complete RHS before its first store,
+        # then sends each element through the ordinary assignment opcode path.
+        # Keep one owned RHS and reuse emit_stmt for precisely the same routing
+        # (including #362's sole per-call assignment ordinal counter).
+        G_SH_N[0] is G_SH_N[0] + 1
+        local dn is "__aot_destructure_" + (str of (G_SH_N[0]))
+        local old_dict is g_dict[dn]
+        g_dict[dn] is 1
+        local ds is ind + "{ Value* " + (cn of dn) + " = " + (emit_val of [node[2], nm, bt]) + "; aot_destructure_check(" + (cn of dn) + ", " + (str of (len of node[1])) + ");\n"
+        local dnames is node[1]
+        for di in range of (len of dnames):
+            local delem is ["index", ["ident", dn], ["num", di]]
+            ds is ds + (emit_stmt of [["assign", dnames[di], delem], ind + "    ", nm, bt, minits, gf])
+        ds is ds + ind + "    val_decref(" + (cn of dn) + ");\n" + ind + "}\n"
+        g_dict[dn] is old_dict
+        return ds
     if t == "capbind":
         # (#86) bind a lifted nested-define's captures: alias each captured
         # Value into the env under its mangled name (emit_val increfs; the
@@ -5294,6 +5311,11 @@ define emit_stmt_inner(node, ind, nm, bt, minits, gf) as:
                     fo is fo + ind + "    { Value* __fv = aot_iter_get(" + itv + ", " + kv + "); aot_trace_assign_val(\"" + fvar + "\", __fv); aot_set(" + (envc of fvar) + ", \"" + fvar + "\", __fv); }\n"
                 else:
                     fo is fo + ind + "    aot_set(" + (envc of fvar) + ", \"" + fvar + "\", aot_iter_get(" + itv + ", " + kv + "));\n"
+        # A for binding is a user-visible assignment on every iteration.
+        # Reuse the one #362 counter; the internal post-loop restoration below
+        # deliberately does not advance it, matching SET_LOCAL_INTERNAL.
+        if (g_cur_interrogated[fvar] == 1) and ((g_cur_params[fvar] == 1) or ((lscope == 0) and ((G_CUR_FN[0]) != "<module>") and (g_module_names[fvar] != 1) and (nm[fvar] == 1))):
+            fo is fo + ind + "    " + (cn of fvar) + "__when += 1;\n"
         if g_cur_fresh_for[fvar] == 1:
             fo is fo + ind + "    " + (cn of fvar) + "_b = 1;\n"
         local _fa_prev is g_cur_active_for[fvar]
@@ -9422,10 +9444,10 @@ define emit_args(node, fname, nm, bt) as:
     local dead is 0
     if ((g_funcs[fname])["nullok"]) == 1:
         dead is 1
-    # (round 193) `f of []` when EVERY parameter has a default: argc 0,
-    # every default fires (the VM's `g of []` -> 4 for `x is 3`).
-    # `f of null` is a SUPPLIED null (argc 1) and keeps the rule below.
-    if (lit_list == 1) and ((len of elems) == 0) and ((fn_has_defaults of fname) == 1):
+    # (round 193) an empty spread (`f of []` or `f of null`) when EVERY
+    # parameter has a default: argc 0, every default fires.  The VM treats
+    # bare null as the zero-argument spread, not as one supplied null.
+    if ((len of elems) == 0) and ((fn_has_defaults of fname) == 1):
         local alld is 1
         local zdefs is (g_funcs[fname])["defaults"]
         for zk in range of (len of ptypes):

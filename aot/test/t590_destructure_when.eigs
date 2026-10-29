@@ -1,0 +1,5 @@
+define assignment_ordinal(p) as:
+    [p] is [7]
+    return [p, when is p]
+
+print of assignment_ordinal of 0

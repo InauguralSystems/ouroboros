@@ -1,0 +1,1 @@
+- AOT-compiled list destructuring now validates the whole right-hand side, performs each binding with ordinary assignment semantics, and counts destructuring and `for` binding ordinals like the VM (#365).

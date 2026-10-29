@@ -39,6 +39,20 @@ static void __attribute__((noinline, cold, noreturn)) aot_unproven_number(const 
 static inline int aot_num_if(const Value *v, double *d) { if (v && v->type == VAL_NUM) { *d = VAL_NUM_RAW(v); return 1; } return 0; }
 static inline double aot_num_proven(const Value *v) { if (v && v->type == VAL_NUM) return VAL_NUM_RAW(v); aot_unproven_number("a value", v ? (int)v->type : -1); }
 static inline void aot_num_put(Value *v, double d) { if (v && v->type == VAL_NUM) { VAL_NUM_RAW(v) = d; return; } aot_unproven_number("a store target", v ? (int)v->type : -1); }
+
+/* Validate a list-pattern RHS before any target is written.  The bytecode VM's
+ * DESTRUCTURE_UNPACK performs this check atomically, then exposes the elements
+ * to the ordinary assignment opcodes; the emitter follows the same ordering. */
+static inline void aot_destructure_check(Value *v, int n) {
+    if (!v || v->type != VAL_LIST)
+        rt_error(EK_TYPE, g_trace_current_line,
+                 "destructuring requires a list, got %s",
+                 v ? val_type_name(v->type) : "none");
+    if (v->data.list.count != n)
+        rt_error(EK_VALUE, g_trace_current_line,
+                 "destructuring expected list of length %d, got %d",
+                 n, v->data.list.count);
+}
 static inline void aot_num_init(Value *v, double d) { v->type = VAL_NUM; VAL_NUM_RAW(v) = d; }
 static inline int aot_slot_num_if(EigsSlot s, double *d) { if (slot_is_num(s)) { *d = SLOT_NUM_RAW(s); return 1; } return 0; }
 static inline double aot_slot_num_proven(EigsSlot s) { if (slot_is_num(s)) return SLOT_NUM_RAW(s); aot_unproven_number("a slot", -2); }
