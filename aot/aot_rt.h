@@ -1034,6 +1034,24 @@ static inline double aot_mod_zero_check(double y) {
 AOT_NUMOP(aot_div, x / aot_div_zero_check(y), "/")
 AOT_NUMOP(aot_mod, fmod(x, aot_mod_zero_check(y)), "%")
 
+/* Boxed siblings of the native-double bitwise fast paths.  They are used when
+ * either operand is a checked boxed read: keeping both Values until the
+ * operation has both dynamic types makes its error deterministic (#280). */
+#define AOT_INTOP(NAME, EXPR, OPNAME) \
+    static Value *NAME(Value *a, Value *b) { \
+        if (a->type != VAL_NUM || b->type != VAL_NUM) \
+            rt_error(EK_TYPE, g_trace_current_line, "cannot apply '%s' to %s and %s", \
+                     OPNAME, val_type_name(a->type), val_type_name(b->type)); \
+        int64_t x = (int64_t)aot_num_proven(a), y = (int64_t)aot_num_proven(b); \
+        Value *r = make_num((double)(EXPR)); \
+        val_decref(a); val_decref(b); return r; }
+AOT_INTOP(aot_band, x & y, "&")
+AOT_INTOP(aot_bor, x | y, "|")
+AOT_INTOP(aot_bxor, x ^ y, "^")
+AOT_INTOP(aot_bshl, x << (y & 63), "<<")
+AOT_INTOP(aot_bshr, x >> (y & 63), ">>")
+#undef AOT_INTOP
+
 /* Specialized (unboxed double) div/mod. Single-eval helpers so the emitter
    doesn't have to duplicate the operand expressions. */
 static inline double aot_ddiv(double a, double b) { return num_guard(a / aot_div_zero_check(b)); }
