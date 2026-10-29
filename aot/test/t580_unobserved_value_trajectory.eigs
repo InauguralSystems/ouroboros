@@ -1,0 +1,4 @@
+x is 0
+unobserved:
+    x is 1
+print of (trajectory of x).raw

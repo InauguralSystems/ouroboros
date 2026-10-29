@@ -1786,10 +1786,14 @@ static void aot_observe_val(Env *e, const char *name, Value *val) {
      * like a plausible number. */
     val_incref(val);
     env_set_local_owned(e, name, val);
-    if (g_unobserved_depth != 0) { val_decref(val); return; }
     int oidx = -1, odepth = 0;
     Env *oe = env_resolve_chain(e, name, env_hash_name(name), &oidx, &odepth);
     if (oe && oidx >= 0) {
+        if (g_unobserved_depth != 0) {
+            observer_slot_sample(oe, oidx, val);
+            val_decref(val);
+            return;
+        }
         observer_slot_update(oe, oidx, val);
         g_last_obs_slot_env = oe;
         g_last_obs_slot_idx = oidx;
@@ -1826,10 +1830,13 @@ static void aot_obs_reset_name(Env *e, const char *name) {
 }
 static void aot_observe_num(Env *e, const char *name, double val) {
     env_set_local_owned(e, name, make_num(val));
-    if (g_unobserved_depth != 0) return;
     int oidx = -1, odepth = 0;
     Env *oe = env_resolve_chain(e, name, env_hash_name(name), &oidx, &odepth);
     if (oe && oidx >= 0) {
+        if (g_unobserved_depth != 0) {
+            observer_slot_sample_num(oe, oidx, val);
+            return;
+        }
         observer_slot_update_num(oe, oidx, val);
         g_last_obs_slot_env = oe;
         g_last_obs_slot_idx = oidx;

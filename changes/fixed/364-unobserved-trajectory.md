@@ -1,0 +1,1 @@
+- Assignments inside `unobserved:` now preserve the value trajectory while continuing to skip entropy bookkeeping (#364).
