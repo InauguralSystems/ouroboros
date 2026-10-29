@@ -102,7 +102,7 @@ static void aot_set_location(const char *file, int line) {
  * its token line.  A raise leaves that line installed; success restores the
  * enclosing expression's line. */
 #define AOT_BINARY_LINE(line, restore_line, expr) ({                                      \
-    int _aot_bl_prev = g_trace_current_line; int _aot_bl_stmt = __aot_ln;                                \
+    int _aot_bl_prev = g_trace_current_line; int _aot_bl_stmt = __aot_ln;                \
     aot_set_location(aot_current_file, (line));                             \
     __auto_type _aot_bl_result = (expr);                                    \
     int _aot_bl_restore = g_trace_enabled ? _aot_bl_stmt : _aot_bl_prev;     \
@@ -3883,14 +3883,6 @@ static Value *aot_call_dispatch(Value *fn, Value *arg) {
     val_decref(fn);
     return res;
 }
-static Value *aot_call_dispatch_line(Value *fn, Value *arg, int line) {
-    if (fn->type != VAL_BUILTIN && fn->type != VAL_FN) {
-        aot_set_location(aot_current_file, line);
-        rt_error(EK_TYPE, line, "cannot call %s", val_type_name(fn->type));
-    }
-    return aot_call_dispatch(fn, arg);
-}
-
 static Value *aot_call_name_ic(Env *g, const char *name, Value *arg, AotNameIC *c) {
     EigsSlot *sp = aot_name_slot(g, name, c);
     Value *fn = sp ? aot_slot_value(sp) : NULL;

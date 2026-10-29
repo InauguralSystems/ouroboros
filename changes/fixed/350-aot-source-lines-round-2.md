@@ -1,0 +1,1 @@
+- The AOT now matches VM source-line filing after multi-line binary assignments and dynamic calls (#350).
