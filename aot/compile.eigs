@@ -2630,12 +2630,17 @@ define emit_num(node, nm, bt, raw) as:
     # operand the caller unboxes) is not a number on any execution. Box it
     # and unbox CHECKED: loud where the VM raises, never a silent 0/1.
     if (is_bool_expr of node) == 1:
-        local bsite is G_NUM_SITE[0]
+        # Keep the ambient site distinct from the fallback used for this
+        # check.  In particular, a null ambient site must be restored as
+        # null: restoring the fallback would mis-site the next checked read
+        # emitted in this function (#279).
+        local _saved_site is G_NUM_SITE[0]
+        local bsite is _saved_site
         G_NUM_SITE[0] is null
         if bsite == null:
             bsite is "\"" + (c_escape of (G_CUR_FN[0])) + ": bool\""
         local bexpr is emit_val of [node, nm, bt]
-        G_NUM_SITE[0] is bsite
+        G_NUM_SITE[0] is _saved_site
         return "aot_num_ck_at(" + bexpr + ", " + bsite + ")"
     # An operand site set by emit_num_operand belongs to THIS node's own
     # checked read. A name reads it through name_site; every other kind takes
