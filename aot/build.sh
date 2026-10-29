@@ -132,7 +132,19 @@ if [ ! -f "$LIB" ] || [ "$SIG" != "$(cat "$STAMP" 2>/dev/null)" ]; then
         eval gcc $CFLAGS $DEFS -I"$SRC" -c "$SRC/$f.c" -o "$BDIR/$f.o"
         objs="$objs $BDIR/$f.o"
     done
-    ar rcs "$LIB" $objs
+    # `ar r` replaces named members but does not remove members which are no
+    # longer named.  That matters when EIGS_DIR moves across a runtime change
+    # such as arena.c -> alloc.c: updating the old archive retains arena.o and
+    # can give both implementations to the linker (#285).  Construct a fresh
+    # archive beside the destination, then atomically publish it.  Besides
+    # making its members exactly CORE, the rename means an interrupted `ar`
+    # cannot leave a partial cache at $LIB.
+    LIB_TMP=$(mktemp "$BDIR/.libeigsrt.a.XXXXXX")
+    rm -f "$LIB_TMP"                 # ar must create, not update, the archive
+    trap 'rm -f "$LIB_TMP"' EXIT HUP INT TERM
+    ar rcs "$LIB_TMP" $objs
+    mv -f "$LIB_TMP" "$LIB"
+    trap - EXIT HUP INT TERM
     printf '%s' "$SIG" > "$STAMP"
 fi
 
