@@ -34,7 +34,7 @@ define c_escape(s) as:
     return out
 
 define binfn(op) as:
-    local m is {"+": "aot_add", "-": "aot_sub", "*": "aot_mul", "/": "aot_div", "%": "aot_mod", "==": "aot_eq", "!=": "aot_ne", "<": "aot_lt", ">": "aot_gt", "<=": "aot_le", ">=": "aot_ge"}
+    local m is {"+": "aot_add", "-": "aot_sub", "*": "aot_mul", "/": "aot_div", "%": "aot_mod", "&": "aot_band", "|": "aot_bor", "^": "aot_bxor", "<<": "aot_bshl", ">>": "aot_bshr", "==": "aot_eq", "!=": "aot_ne", "<": "aot_lt", ">": "aot_gt", "<=": "aot_le", ">=": "aot_ge"}
     local r is m[op]
     if r == null:
         throw of ("AOT: unsupported binop " + op)
@@ -2573,6 +2573,55 @@ define emit_num_operand(node, nm, bt, raw, op, side, other) as:
     G_NUM_SITE[0] is _saved
     return r
 
+# Whether evaluating a numeric expression can perform a checked read from a
+# boxed Value/slot.  C does not sequence operator operands or call arguments;
+# this is therefore a sequencing hazard even when the expression contains no
+# call.  Keep this source-level (rather than searching emitted C spellings) so
+# every checked accessor remains covered when its runtime helper is renamed.
+define has_checked_num_read(node, nm, bt) as:
+    local n is unwrap of node
+    local t is n[0]
+    if (t == "bool") or (t == "str") or (t == "list") or (t == "dict") or (t == "null"):
+        return 1
+    if t == "_line":
+        return has_checked_num_read of [n[2], nm, bt]
+    if t == "ident":
+        if g_cur_for_slot[n[1]] != null:
+            return 1
+        if (module_public of n[1]) == 1:
+            return 1
+        if (obs_name of n[1]) == 1:
+            return 1
+        if g_genp[n[1]] == 1:
+            return 1
+        if nm[n[1]] == 1:
+            return 0
+        return 1
+    if (t == "dot") or (t == "index"):
+        return 1
+    if t == "call":
+        # Calls were already sequenced by has_call_node; their checked result
+        # reads stay classified here so callers can use this predicate alone.
+        return 1
+    if t == "unary":
+        return has_checked_num_read of [n[2], nm, bt]
+    if t == "binop":
+        if (has_checked_num_read of [n[2], nm, bt]) == 1:
+            return 1
+        return has_checked_num_read of [n[3], nm, bt]
+    return 0
+
+# A checked operand may be staged as a Value only if emit_num would not reject
+# its storage class outright.  Function/buffer/dict/tensor C names are never
+# numbers; preserving those compile-time refusals keeps dead bad code loud.
+define checked_num_can_box(node, bt) as:
+    local n is unwrap of node
+    if n[0] != "ident":
+        return 1
+    if (g_func_names[n[1]] == 1) or (bt[n[1]] == 1) or (g_dict[n[1]] == 1) or (g_tensor[n[1]] == 1):
+        return 0
+    return 1
+
 define emit_num(node, nm, bt, raw) as:
     local t is node[0]
     # #1637: a certain bool in a numeric position (an index, a bound, an
@@ -2905,6 +2954,16 @@ define emit_num(node, nm, bt, raw) as:
         if (is_int_expr of node) == 1:
             return "((double)" + (emit_int of node) + ")"
         local op is node[1]
+        # #280: a checked unbox is itself observable when it raises.  Keep
+        # both operands boxed until both have been evaluated in VM order, then
+        # let the Value-level operator validate their types together.  Besides
+        # imposing sequence points, this preserves the VM's diagnostic with
+        # both dynamic type names (rather than whichever checked read C chose
+        # to evaluate first).  Proven all-numeric expressions stay on the
+        # unchanged double path below.
+        if (op != "and") and (op != "or"):
+            if (((has_checked_num_read of [node[2], nm, bt]) == 1) or ((has_checked_num_read of [node[3], nm, bt]) == 1)) and ((checked_num_can_box of [node[2], bt]) == 1) and ((checked_num_can_box of [node[3], bt]) == 1):
+                return "num_guard(aot_num_ck(({ Value* _sqvl = " + (emit_val of [node[2], nm, bt]) + "; Value* _sqvr = " + (emit_val of [node[3], nm, bt]) + "; " + (binfn of op) + "(_sqvl, _sqvr); })))"
         local l is ""
         local r is ""
         if (op == "+") or (NUMONLY_OPS[op] == 1):
@@ -2915,9 +2974,9 @@ define emit_num(node, nm, bt, raw) as:
         else:
             l is emit_num of [node[2], nm, bt, raw]
             r is emit_num of [node[3], nm, bt, raw]
-        # (round 89) sequence when either operand can CALL: bare C
-        # operator operands evaluate in unspecified order while the VM is
-        # left-then-right -- this arm had only matched by gcc mood. Both
+        # (round 89/#280) sequence when either operand can CALL or performs a
+        # checked boxed read: bare C operator operands evaluate in unspecified
+        # order while the VM is left-then-right. Both
         # operands hoist into temps in VM order inside one statement
         # expression; every return in the arm carries the pre/post pair.
         # The and/or ternary forms keep seqpre empty on purpose: their l
@@ -2926,7 +2985,7 @@ define emit_num(node, nm, bt, raw) as:
         local seqpre is ""
         local seqpost is ""
         if (op != "and") and (op != "or"):
-            if ((has_call_node of node[2]) == 1) or ((has_call_node of node[3]) == 1):
+            if ((has_call_node of node[2]) == 1) or ((has_call_node of node[3]) == 1) or ((has_checked_num_read of [node[2], nm, bt]) == 1) or ((has_checked_num_read of [node[3], nm, bt]) == 1):
                 seqpre is "({ double _sqbl = " + l + "; double _sqbr = " + r + "; "
                 seqpost is "; })"
                 l is "_sqbl"
@@ -3725,13 +3784,13 @@ define emit_cmp_n(node, nm, bt, want_bool) as:
         # this gcc (VM c=12, AOT c=3, both rc 0). The helper's operand
         # slots are (boxed, num) regardless of which was LEFT in source,
         # so the temps hoist in source order and the call uses the temps.
-        if ((has_call_node of n[2]) == 1) or ((has_call_node of n[3]) == 1):
+        if ((has_call_node of n[2]) == 1) or ((has_call_node of n[3]) == 1) or ((has_checked_num_read of [n[2], nm, bt]) == 1) or ((has_checked_num_read of [n[3], nm, bt]) == 1):
             if rnum == 1:
                 return "({ Value* _sqcb = " + boxed + "; double _sqcn = " + num + "; " + fn + "_t(_sqcb, _sqcn); })"
             return "({ double _sqcn = " + num + "; Value* _sqcb = " + boxed + "; " + fn + "_t(_sqcb, _sqcn); })"
         return fn + "_t(" + boxed + ", " + num + ")"
     # (round 90) same sequencing for the value-position form.
-    if ((has_call_node of n[2]) == 1) or ((has_call_node of n[3]) == 1):
+    if ((has_call_node of n[2]) == 1) or ((has_call_node of n[3]) == 1) or ((has_checked_num_read of [n[2], nm, bt]) == 1) or ((has_checked_num_read of [n[3], nm, bt]) == 1):
         if rnum == 1:
             return "({ Value* _sqcb = " + boxed + "; double _sqcn = " + num + "; " + fn + "(_sqcb, _sqcn); })"
         return "({ double _sqcn = " + num + "; Value* _sqcb = " + boxed + "; " + fn + "(_sqcb, _sqcn); })"
@@ -3823,8 +3882,10 @@ define emit_bool_c(node, nm, bt) as:
             return ""
         local l is emit_num of [n[2], nm, bt, 0]
         local r is emit_num of [n[3], nm, bt, 0]
-        # (round 89) VM order under a call hazard: hoist both operands.
-        if ((has_call_node of n[2]) == 1) or ((has_call_node of n[3]) == 1):
+        if ((has_checked_num_read of [n[2], nm, bt]) == 1) or ((has_checked_num_read of [n[3], nm, bt]) == 1):
+            return "aot_truthy(({ Value* _sqvl = " + (emit_val of [n[2], nm, bt]) + "; Value* _sqvr = " + (emit_val of [n[3], nm, bt]) + "; " + (binfn of n[1]) + "(_sqvl, _sqvr); }))"
+        # (round 89/#280) VM order under a call or checked-read hazard.
+        if ((has_call_node of n[2]) == 1) or ((has_call_node of n[3]) == 1) or ((has_checked_num_read of [n[2], nm, bt]) == 1) or ((has_checked_num_read of [n[3], nm, bt]) == 1):
             return "({ double _sqbl = " + l + "; double _sqbr = " + r + "; (_sqbl " + n[1] + " _sqbr); })"
         return "(" + l + " " + n[1] + " " + r + ")"
     return ""
@@ -4421,10 +4482,10 @@ define emit_stmt_inner(node, ind, nm, bt, minits, gf) as:
                 if (is_int_expr of node[2]) == 1:
                     # (round 91) index before value, VM order (the boxed
                     # twins got this in round 88; this arm did not).
-                    if ((has_call_node of node[2]) == 1) or ((has_call_node of node[3]) == 1):
+                    if ((has_call_node of node[2]) == 1) or ((has_call_node of node[3]) == 1) or ((has_checked_num_read of [node[3], nm, bt]) == 1):
                         return ind + (seq_buftgt_i of ["aot_buf_set_i", (cn of tgt[1]), (emit_int of node[2]), (emit_num of [node[3], nm, bt, 0])]) + "\n"
                     return ind + "aot_buf_set_i(" + (cn of tgt[1]) + ", " + (emit_int of node[2]) + ", " + (emit_num of [node[3], nm, bt, 0]) + ");\n"
-                if ((has_call_node of node[2]) == 1) or ((has_call_node of node[3]) == 1):
+                if ((has_call_node of node[2]) == 1) or ((has_call_node of node[3]) == 1) or ((has_checked_num_read of [node[2], nm, bt]) == 1) or ((has_checked_num_read of [node[3], nm, bt]) == 1):
                     return ind + (seq_buftgt of ["aot_buf_set", (cn of tgt[1]), (emit_num of [node[2], nm, bt, 0]), (emit_num of [node[3], nm, bt, 0]), "double"]) + "\n"
                 return ind + "aot_buf_set(" + (cn of tgt[1]) + ", " + (emit_num of [node[2], nm, bt, 0]) + ", " + (emit_num of [node[3], nm, bt, 0]) + ");\n"
         # general boxed index-assign (#86): list / dict / buffer target as a
