@@ -5287,11 +5287,10 @@ define emit_stmt_inner(node, ind, nm, bt, minits, gf) as:
         fo is fo + ind + "}\n"
         return fo
     if t == "unobserved":
-        # `unobserved:` block — assignments inside store their value but do NOT
-        # update the observer slot. Bracket the body with the runtime depth
-        # counter (mirrors OP_UNOBSERVED_BEGIN/END); aot_observe_num already
-        # returns early when g_unobserved_depth != 0, so the slot trajectory is
-        # untouched, byte-exact with the VM.
+        # `unobserved:` block — assignments still record the cheap value sample
+        # but skip entropy/dH. Bracket the body with the runtime depth counter
+        # (mirrors OP_UNOBSERVED_BEGIN/END); aot_observe_num/val select the VM's
+        # observer_slot_sample helpers while the counter is nonzero.
         return ind + "g_unobserved_depth += 1;\n" + (emit_stmts of [node[1], ind, nm, bt, minits, gf]) + ind + "g_unobserved_depth -= 1;\n"
     if t == "match":
         # `match subj: case P: ... case Q: ...` — first match wins, a null
