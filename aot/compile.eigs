@@ -12568,6 +12568,22 @@ define field_write_scopes(funcs, rest) as:
 define field_write_census(funcs, rest) as:
     local scopes is field_write_scopes of [funcs, rest]
     local total is 0
+    # (#275) eval and sandbox_run execute a unit whose stores are absent from
+    # this AST.  Its code shares the caller's reachable records, so no field
+    # name can retain a numeric (or buffer) class: the unseen unit can write a
+    # boxed value through that name.  This is the same meet rule as an
+    # unnameable dynamic-key write below, except the key and value are both
+    # absent.  Static load_file targets have already been spliced into `rest`
+    # by the driver; computed load_file is refused before emit_program.
+    local opaque is (mentions_ident of [rest, "eval"]) or (mentions_ident of [rest, "sandbox_run"])
+    for oi in range of (len of funcs):
+        if (mentions_ident of [(funcs[oi])[3], "eval"]) == 1:
+            opaque is 1
+        if (mentions_ident of [(funcs[oi])[3], "sandbox_run"]) == 1:
+            opaque is 1
+    if (opaque == 1) and (G_FIELD_ANY[0] == 0):
+        G_FIELD_ANY[0] is 1
+        total is total + 1
     local more is 1
     loop while more > 0:
         more is field_write_pass of [scopes, null]
