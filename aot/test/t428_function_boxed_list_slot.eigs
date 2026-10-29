@@ -1,0 +1,11 @@
+# ouroboros#292: the element census must include the function's boxed store,
+# not leave C[0] numeric merely because module code also stores a number.
+C is [0]
+define identity(v) as:
+    return v
+define store_string() as:
+    C[0] is "s"
+    print of (identity of C[0])
+store_string of []
+C[0] is 7
+print of (identity of C[0])
