@@ -1,0 +1,4 @@
+# ouroboros#275: interpreted code can replace a statically numeric field.
+d is {"f": 0}
+eval of "d.f is 1 > 0"
+print of (d.f)
