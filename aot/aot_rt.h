@@ -1792,17 +1792,15 @@ static void aot_observe_val(Env *e, const char *name, Value *val) {
     int oidx = -1, odepth = 0;
     Env *oe = env_resolve_chain(e, name, env_hash_name(name), &oidx, &odepth);
     if (g_unobserved_depth != 0) {
+        /* EigenScript#1049: an elided assignment still contributes to the
+         * binding's value window.  `unobserved` suppresses entropy work, the
+         * last-observer alias and trace snapshots, not these O(1) samples. */
         if (oe && oidx >= 0 && val && val->type != VAL_NULL)
             observer_slot_sample_gated(oe, oidx, val);
         val_decref(val);
         return;
     }
     if (oe && oidx >= 0) {
-        if (g_unobserved_depth != 0) {
-            observer_slot_sample(oe, oidx, val);
-            val_decref(val);
-            return;
-        }
         observer_slot_update(oe, oidx, val);
         g_last_obs_slot_env = oe;
         g_last_obs_slot_idx = oidx;
@@ -1874,14 +1872,11 @@ static void aot_observe_num(Env *e, const char *name, double val) {
     int oidx = -1, odepth = 0;
     Env *oe = env_resolve_chain(e, name, env_hash_name(name), &oidx, &odepth);
     if (g_unobserved_depth != 0) {
+        /* Mirror OBSERVE_{ASSIGN_LOCAL,NAME_POST}: see the boxed path. */
         if (oe && oidx >= 0) observer_slot_sample_num_gated(oe, oidx, val);
         return;
     }
     if (oe && oidx >= 0) {
-        if (g_unobserved_depth != 0) {
-            observer_slot_sample_num(oe, oidx, val);
-            return;
-        }
         observer_slot_update_num(oe, oidx, val);
         g_last_obs_slot_env = oe;
         g_last_obs_slot_idx = oidx;
