@@ -12522,7 +12522,7 @@ define field_write_census(funcs, rest) as:
 # make a callee's parameter numeric, which the checked unbox reports.
 g_elem_maps is {}
 
-define em_walk(node, fmap, acc) as:
+define em_walk(node, fmap, modmap, acc) as:
     if (type of node) != "list":
         return 0
     if (len of node) == 0:
@@ -12534,25 +12534,45 @@ define em_walk(node, fmap, acc) as:
         local ix is unwrap of node[2]
         local rh is unwrap of node[3]
         if (tg[0] == "ident") and (g_module_names[(tg[1])] == 1) and (ix[0] == "num"):
+            local cls is null
             if rh[0] == "ident":
                 local m is fmap[(rh[1]) + ".#fields"]
+                if m == null:
+                    m is modmap[(rh[1]) + ".#fields"]
                 if (m != null) and ((len of (keys of m)) > 0):
-                    if acc[(tg[1])] == null:
-                        acc[(tg[1])] is {}
-                    local am is acc[(tg[1])]
-                    am[(str of ix[1])] is m
+                    cls is m
             # (round 170) a NUMERIC element: `X[k] is <number>` marks the
             # slot "num" so `c[k]` reads in the handlers are raw doubles
             # (DMG's `_exec_ctx[2] is op`, read as `ctx[2]` by every handler).
             if (is_num_expr of [node[3], g_em_nm, g_em_bt]) == 1:
+                cls is "num"
+            elif (fw_cheap of node[3]) == 0:
+                # The old census recorded only positive numeric/record
+                # evidence.  Thus a module numeric store followed by a
+                # function-body string store left the slot "num" and the
+                # function's own read used a checked numeric unbox (#292).
+                # A certain boxed write is negative evidence for the slot.
+                cls is "gen"
+            if cls != null:
                 if acc[(tg[1])] == null:
                     acc[(tg[1])] is {}
-                local an is acc[(tg[1])]
-                if an[(str of ix[1])] == null:
-                    an[(str of ix[1])] is "num"
+                local am is acc[(tg[1])]
+                local old is am[(str of ix[1])]
+                if old == null:
+                    am[(str of ix[1])] is cls
+                elif (str of old) != (str of cls):
+                    # The map is a whole-program meet over module and every
+                    # reachable function scope. Mixed stores are boxed. A
+                    # record map is already a boxed class and is more useful
+                    # than bare "gen": retain it beside numeric evidence so
+                    # genuine record fields keep their specialization.
+                    if (cls != "num") and (cls != "gen"):
+                        am[(str of ix[1])] is cls
+                    elif (old == "num") or (old == "gen"):
+                        am[(str of ix[1])] is "gen"
         return 0
     for k in range of (len of node):
-        em_walk of [node[k], fmap, acc]
+        em_walk of [node[k], fmap, modmap, acc]
     return 0
 
 g_em_nm is {}
@@ -12561,7 +12581,8 @@ define elem_maps_census(funcs, rest) as:
     local acc is {}
     g_em_bt is infer_buffers of rest
     g_em_nm is infer_numeric of [rest, g_em_bt]
-    em_walk of [rest, (local_gen_map_for of ["<module>", rest]), acc]
+    local mod_fmap is local_gen_map_for of ["<module>", rest]
+    em_walk of [rest, mod_fmap, mod_fmap, acc]
     for k in range of (len of funcs):
         local efn is funcs[k]
         local elb is infer_buffers of efn[3]
@@ -12576,7 +12597,9 @@ define elem_maps_census(funcs, rest) as:
         local _emf0 is g_cur_fmap
         g_cur_fmap is _emf
         g_em_nm is infer_numeric_seeded of [efn[3], elb, eseed]
-        em_walk of [efn[3], _emf, acc]
+        # fmap_for_fn contains locals/parameters only. mod_fmap is the
+        # fallback for a module record such as `cpu` stored by the function.
+        em_walk of [efn[3], _emf, mod_fmap, acc]
         g_cur_fmap is _emf0
     g_elem_maps is acc
     local _pub_em is keys of g_module_live

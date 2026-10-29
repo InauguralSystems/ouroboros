@@ -364,7 +364,7 @@ def gen_observer_reads(r):
 # issues (each gate below cites its number); empty by default so the lane
 # stays green while the issue is open. Remove a gate when its issue closes.
 KNOWN = set()
-KNOWN_ISSUES = {288, 292}
+KNOWN_ISSUES = {288}
 
 def check_known_issues(offline):
     """Refuse expired generator gates; API failures are failures unless opted out."""
@@ -406,9 +406,7 @@ def gen_container_borrow_args(r):
     if use_dict:
         keys = ["p", "q", "s"]
         decl = 'C is {"p": 0, "q": 0, "s": 0}'
-        # (#292 gate) the dot form misclassifies on its own; index form only
-        # unless --known 292
-        dot = r.random() < 0.4 and 292 in KNOWN
+        dot = r.random() < 0.4
         def slot(i):
             return f"C.{keys[i]}" if dot and r.random() < 0.5 else f'C["{keys[i]}"]'
     else:
@@ -430,17 +428,6 @@ def gen_container_borrow_args(r):
             "define mutr(c, k) as:", '    c[k] is {"a": 9, "d": 9}', "    return 8"]
     kinds = ["num", "num", "num"]
 
-    # ouroboros#292 (OPEN): a slot that receives a number somewhere and a
-    # record/str only inside function bodies is classified numeric, so the
-    # function's read of its record dies "non-numeric value in a numeric
-    # context" where the VM runs. A MODULE-level store of a record in INDEX
-    # form (`C[0] is cpu`, `C["p"] is cpu`; the dot form does not count)
-    # makes the slot record-class, as t412 does. So unless `--known 292`,
-    # every slot gets that module store first, and no strings are stored.
-    if 292 not in KNOWN:
-        for i in range(3):
-            key = keys[i] if use_dict else i
-            lines.append(f"C[{key!r}] is {r.choice(['cpu', 'mem'])}".replace("'", '"'))
     def ops(nv, ind):
         # Every block opens by storing EVERY slot, so the tracked kinds hold
         # on each call of run (a second call starts from the first's end).
@@ -461,8 +448,7 @@ def gen_container_borrow_args(r):
                            "field", "arith", "copy", "local"]
                           + (["m288", "m288"] if 288 in KNOWN else []))
             if op == "store":
-                k = r.choice(["num", "num", "rec", "rec", "str"] if 292 in KNOWN
-                             else ["num", "num", "rec", "rec"])
+                k = r.choice(["num", "num", "rec", "rec", "str"])
                 if k == "num":
                     val = num(i)
                 elif k == "rec":
@@ -955,17 +941,16 @@ def main():
     ap.add_argument("--known", default="",
                     help="comma-separated OPEN ouroboros issue numbers whose shapes the "
                          "generators may emit (288: borrowed element beside a sibling call "
-                         "that mutates the container; 292: module-level numeric store into "
-                         "a function-boxed slot); off by "
+                         "that mutates the container); off by "
                          "default so the lane stays green")
     ap.add_argument("--offline", action="store_true",
                     help="explicitly skip the gated-issue GitHub API check")
     args = ap.parse_args()
     check_known_issues(args.offline)
     requested_known = {int(x) for x in args.known.split(",") if x}
-    # Fixed issue 293 remains accepted as a no-op for the documented repro
-    # command, but is no longer a generator gate or an API-polled known issue.
-    retired_fixed = {293}
+    # Fixed issues remain accepted as no-ops for their documented repro
+    # commands, but are no longer generator gates or API-polled known issues.
+    retired_fixed = {292, 293}
     unknown = requested_known - KNOWN_ISSUES - retired_fixed
     if unknown:
         sys.exit(f"fuzzdiff: no generator gate for issue(s): {sorted(unknown)}")
