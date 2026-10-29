@@ -1,0 +1,1 @@
+- Pinned the AOT's removed-arena allocation model and builtin surface to the EigenScript VM oracle (#283).
