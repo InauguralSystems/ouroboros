@@ -1,0 +1,43 @@
+# ouroboros #351/#267: every VM-supported bare question word, across the five
+# required value shapes.  The differential harness is the byte-exact oracle.
+n is 2
+n is 4
+b is false
+b is true
+s is "a"
+s is "abcd"
+l is [1]
+l is [1, 2, 3]
+d is {"a": 1}
+d is {"a": 1, "b": 2}
+
+print of (what is n)
+print of (who is n)
+print of (when is n)
+print of (where is n)
+print of (why is n)
+print of (how is n)
+print of (what is b)
+print of (who is b)
+print of (when is b)
+print of (where is b)
+print of (why is b)
+print of (how is b)
+print of (what is s)
+print of (who is s)
+print of (when is s)
+print of (where is s)
+print of (why is s)
+print of (how is s)
+print of (what is l)
+print of (who is l)
+print of (when is l)
+print of (where is l)
+print of (why is l)
+print of (how is l)
+print of (what is d)
+print of (who is d)
+print of (when is d)
+print of (where is d)
+print of (why is d)
+print of (how is d)

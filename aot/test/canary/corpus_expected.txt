@@ -30,8 +30,6 @@ test_dispatch_rebind_eval.eigs REFUSE class:eval-unwind-bridge ouroboros#330 #33
 test_dispatch_rebind_fn.eigs REFUSE class:global-builtin-clobber ouroboros#342
 test_dot.eigs DIVERGE class:builtin-shadow-dispatch ouroboros#356
 test_dot_assign.eigs DIVERGE class:harness-exit-status ouroboros#343
-test_entropy_cycles.eigs REFUSE class:temporal-query-envelope ouroboros#351 #267
-test_entropy_query_time.eigs REFUSE class:temporal-query-envelope ouroboros#351 #267
 test_eval.eigs REFUSE class:unsupported-ast ouroboros#354
 test_for_binder_fresh_loop_scoped.eigs REFUSE class:observer-scope ouroboros#347
 test_for_binder_observer_tier.eigs REFUSE class:observer-scope ouroboros#347
@@ -45,13 +43,10 @@ test_gc_trigger.eigs DIVERGE class:runtime-gc-hang ouroboros#348
 test_gfx_argtypes.eigs DIVERGE class:runtime-profile-builtins ouroboros#349
 test_gfx_text.eigs DIVERGE class:runtime-profile-builtins ouroboros#349
 test_gfx_utf8_title.eigs DIVERGE class:runtime-profile-builtins ouroboros#349
-test_halting_descent.eigs REFUSE class:temporal-query-envelope ouroboros#351 #267
-test_halting_stall.eigs REFUSE class:temporal-query-envelope ouroboros#351 #267
 test_http.eigs DIVERGE class:runtime-profile-builtins ouroboros#349
 test_import.eigs REFUSE class:dynamic-import-fixture ouroboros#338
 test_import_errors.eigs REFUSE class:dynamic-import-fixture ouroboros#338
 test_import_toplevel_scope.eigs REFUSE class:dynamic-import-fixture ouroboros#338
-test_interrogative_spec.eigs REFUSE class:temporal-query-envelope ouroboros#351 #267
 test_jit_paths.eigs REFUSE class:closure-environment ouroboros#337
 test_json_merge.eigs DIVERGE class:harness-exit-status ouroboros#343
 test_keyword_reservation.eigs REFUSE class:observer-scope ouroboros#347
@@ -72,13 +67,12 @@ test_not_precedence.eigs REFUSE class:binding-order ouroboros#335
 test_numerical_grad_mutation_1719.eigs REFUSE class:closure-environment ouroboros#337
 test_numerics.eigs DIVERGE class:float-algorithm ouroboros#340
 test_obs_mt_race.eigs REFUSE class:native-task-scheduler ouroboros#345
-test_observer_coherence.eigs REFUSE class:temporal-query-envelope ouroboros#351 #267
-test_observer_interactions.eigs REFUSE class:temporal-query-envelope ouroboros#351 #267
+test_observer_interactions.eigs DIVERGE class:promoted-name-report ouroboros#361
 test_observer_saturation.eigs REFUSE class:observer-scope ouroboros#347
 test_operator_line.eigs DIVERGE class:source-line-reporting ouroboros#350
 test_operator_line_parent.eigs DIVERGE class:source-line-reporting ouroboros#350
 test_optimize.eigs DIVERGE class:float-algorithm ouroboros#340
-test_parameter_when_2016.eigs REFUSE class:temporal-query-envelope ouroboros#351 #267
+test_parameter_when_2016.eigs DIVERGE class:parameter-assignment-count ouroboros#362
 test_sandbox_budget.eigs AOT_GAP class:compile-timeout ouroboros#356
 test_scope_semantics.eigs REFUSE class:observer-scope ouroboros#347
 test_singleton_slot_rc.eigs DIVERGE class:runtime-gc-hang ouroboros#348
@@ -86,7 +80,6 @@ test_soft_keyword_idents.eigs REFUSE class:observer-scope ouroboros#347
 test_sort_stable.eigs REFUSE class:boxed-loop-binder ouroboros#356
 test_spawn_gc.eigs NONDET class:thread-nondeterminism ouroboros#352
 test_spawn_parallel.eigs NONDET class:thread-nondeterminism ouroboros#352
-test_stable_band.eigs REFUSE class:temporal-query-envelope ouroboros#351 #267
 test_stdlib_fixes.eigs REFUSE class:binding-order ouroboros#335
 test_stmt_terminator.eigs DIVERGE class:parse-diagnostic-output ouroboros#356
 test_supervise.eigs DIVERGE class:harness-exit-status ouroboros#343
@@ -94,10 +87,9 @@ test_sync.eigs REFUSE class:native-task-scheduler ouroboros#345
 test_task_osr.eigs REFUSE class:native-task-scheduler ouroboros#345
 test_task_sleep_order.eigs REFUSE class:native-task-scheduler ouroboros#345
 test_tasks.eigs REFUSE class:native-task-scheduler ouroboros#345
-test_temporal.eigs REFUSE class:temporal-query-envelope ouroboros#351 #267
 test_temporal_line_stamps.eigs REFUSE class:observer-scope ouroboros#347
 test_temporal_param.eigs REFUSE class:native-task-scheduler ouroboros#345
-test_temporal_when.eigs REFUSE class:temporal-query-envelope ouroboros#351 #267
+test_temporal_when.eigs REFUSE class:when-qualifier ouroboros#363
 test_tensor_buffer_inputs.eigs REFUSE class:unsupported-ast ouroboros#354
 test_tensor_buffer_ops.eigs REFUSE class:unsupported-ast ouroboros#354
 test_trajectory.eigs DIVERGE class:caught-error-output ouroboros#336
@@ -111,9 +103,9 @@ test_underarity_1661_dispatch_eval.eigs REFUSE class:closure-environment ourobor
 test_underarity_1661_jitcall.eigs REFUSE class:underarity-null-binding ouroboros#353
 test_underarity_1661_repro.eigs REFUSE class:underarity-null-binding ouroboros#353
 test_underarity_1661_trycatch.eigs REFUSE class:underarity-null-binding ouroboros#353
-test_unobserved.eigs REFUSE class:temporal-query-envelope ouroboros#351 #267
+test_unobserved.eigs REFUSE class:when-qualifier ouroboros#363
 test_unobserved_binders.eigs REFUSE class:dynamic-load-state ouroboros#339
-test_unobserved_neutral.eigs REFUSE class:temporal-query-envelope ouroboros#351 #267
+test_unobserved_neutral.eigs DIVERGE class:unobserved-trajectory ouroboros#364
 test_walker_matrix.eigs REFUSE class:closure-environment ouroboros#337
-test_when_store_sites_2016.eigs REFUSE class:temporal-query-envelope ouroboros#351 #267
+test_when_store_sites_2016.eigs REFUSE class:destructure-statement ouroboros#365
 test_worker_intern_escape.eigs DIVERGE class:worker-interning ouroboros#356

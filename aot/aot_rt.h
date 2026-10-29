@@ -1927,6 +1927,59 @@ static int aot_slot_value_opaque(Env *e, int idx) {
     env_dump_unlock(e);
     return r;
 }
+
+/* Bare question-word interrogatives.  This is the native counterpart of
+ * OP_INTERROGATE / OP_INTERROGATE_NAMED: `what` projects the current value,
+ * while the other five named forms query the binding's observer slot.  VAL is
+ * owned, exactly like the VM stack value popped by those opcodes. */
+static Value *aot_interrogate_named(Env *e, const char *name, int kind, Value *val) {
+    Value *result = make_null();
+    if (kind == 0) { /* what */
+        val_decref(result);
+        if (val && val->type == VAL_NUM) result = make_num(aot_num_proven(val));
+        else if (val && val->type == VAL_BOOL) result = make_bool(val->data.boolean);
+        else if (val && val->type == VAL_STR) result = make_num(val_str_len(val));
+        else if (val && val->type == VAL_LIST) result = make_num(val->data.list.count);
+        else if (val && val->type == VAL_BUFFER) result = make_num(val->data.buffer.count);
+        else result = make_num(0);
+    } else if (kind == 1 && name) { /* named who */
+        val_decref(result);
+        result = make_str(name);
+    } else if (kind == 1) { /* value-form who */
+        val_decref(result);
+        result = make_str(!val ? "unknown" :
+                          val->type == VAL_NUM ? "number" :
+                          val->type == VAL_STR ? "string" :
+                          val->type == VAL_LIST ? "list" :
+                          val->type == VAL_DICT ? "dict" :
+                          val->type == VAL_FN ? "function" :
+                          val->type == VAL_BUILTIN ? "builtin" :
+                          val->type == VAL_BUFFER ? "buffer" :
+                          val->type == VAL_BOOL ? "bool" :
+                          val->type == VAL_NULL ? "none" : "unknown");
+    } else if (kind == 2 && name) { /* named when */
+        val_decref(result);
+        result = make_num(env_get_assign_count(e, name, env_hash_name(name)));
+    } else if (kind >= 3 && kind <= 5 && name) {
+        int idx = -1, depth = 0;
+        Env *oe = env_resolve_chain(e, name, env_hash_name(name), &idx, &depth);
+        const ObserverSlot *s = env_obs_slot(oe, idx);
+        val_decref(result);
+        if (s && s->used) {
+            ObserverSlot q = aot_slot_query_view(oe, idx, s);
+            result = make_num(kind == 3 ? q.entropy
+                              : kind == 4 ? q.dH
+                              : observer_settledness(q.dH));
+        } else {
+            result = make_num(kind == 5 ? 1.0 : 0.0);
+        }
+    } else if (kind >= 2 && kind <= 5) {
+        val_decref(result);
+        result = make_num(kind == 5 ? 1.0 : 0.0);
+    }
+    val_decref(val);
+    return result;
+}
 /* Shared resolve for the three RAISING forms (report / report_value /
  * trajectory): NULL + the VM's "undefined variable" for a never-bound name
  * (round 70: the first aot_report conflated that with bound-but-unobserved

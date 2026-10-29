@@ -3191,7 +3191,16 @@ define emit_val(node, nm, bt) as:
                     # `report of q` answered null where the VM dies).
                     return "(aot_env_bound(__eigs_g, \"" + ie[1] + "\") ? aot_prev_val(\"" + ie[1] + "\") : aot_undefined_name(\"" + ie[1] + "\"))"
                 return "aot_prev_val(\"" + ie[1] + "\")"
-            throw of "AOT: temporal interrogative without `at` only supports `prev`"
+            # Bare question words use the VM's live binding/value semantics,
+            # not the temporal tape.  Evaluating the subject through emit_val
+            # preserves its single evaluation and its ordinary bound check.
+            if ie[0] == "ident":
+                return "aot_interrogate_named(__eigs_g, \"" + (c_escape of ie[1]) + "\", " + (str of ik) + ", " + (emit_val of [node[2], nm, bt]) + ")"
+            # The grammar admits expression operands.  Only `what` has a
+            # value projection useful to the AOT; the other kinds receive the
+            # VM's no-binding defaults through the same helper and an empty
+            # (unresolvable) name.
+            return "aot_interrogate_named(__eigs_g, NULL, " + (str of ik) + ", " + (emit_val of [node[2], nm, bt]) + ")"
         # The at-form addresses a NAMED binding; a non-ident operand has no
         # name to query (the C compiler drops to the value form there) —
         # refuse rather than emit a garbage name (#99 item 6 hardening).
