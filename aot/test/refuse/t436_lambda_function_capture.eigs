@@ -1,0 +1,7 @@
+# EXPECT: lambda capturing enclosing function binding 'n' requires the VM's live closure environment (capture by reference)
+# #278 residual: per-invocation function frames cannot be represented by the
+# AOT's named-function singleton without changing capture semantics.
+define make(n) as:
+    return (x) => x + n
+f is make of 40
+print of (f of 2)

@@ -1,0 +1,1 @@
+- Removed the superseded v0.45.x startup-allocation admission document in favor of the measured current-pin leak ledger (#287).
