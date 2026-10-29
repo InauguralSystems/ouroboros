@@ -1,0 +1,3 @@
+# EigenScript v0.46.0 removed the bump arena. The AOT must not retain a
+# private builtin twin after the VM oracle stopped defining this name.
+arena_mark of null

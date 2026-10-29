@@ -1,0 +1,3 @@
+# Each removed arena builtin gets its own raising fixture because evaluation
+# stops at the first undefined name.
+arena_reset of null
