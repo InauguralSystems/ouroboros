@@ -5,6 +5,10 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  # The merge queue (ruleset "Protection", mirroring EigenScript) builds a
+  # temporary merge_group ref and waits for this check on it; without this
+  # trigger a queued PR waits until the queue times out.
+  merge_group:
 
 permissions:
   contents: read
