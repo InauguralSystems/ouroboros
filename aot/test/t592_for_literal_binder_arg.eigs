@@ -1,0 +1,57 @@
+# #377: a `for` binder over a LIST LITERAL, passed into a user function.
+# The binder had no class, so the callee's parameter defaulted to a double
+# and the call site's checked unbox died where the VM runs:
+#   AOT "non-numeric value in a numeric context ... name target (type list)"
+# Covers list, string and buffer elements, at module and function scope.
+xs is [1, 2, 3]
+s is "hi"
+b is buffer of 3
+b[0] is 7
+
+define show(source, selector) as:
+    local table is source
+    local index is selector
+    print of table[index]
+    return 0
+
+define say(v) as:
+    print of v
+    return 0
+
+define width(v) as:
+    return len of v
+
+# the issue's repro: [list, buffer]
+for target in [xs, b]:
+    show of [target, 0]
+
+# list, string and buffer elements together
+for target in [xs, s, b]:
+    show of [target, 1]
+    print of (width of target)
+
+# string literal elements, one-argument callee
+for w in ["ab", "cd"]:
+    say of w
+
+# a nested list literal and a string
+for t in [[4, 5], "xy"]:
+    show of [t, 0]
+
+# a lone buffer element
+for t in [b]:
+    show of [t, 0]
+
+# all-numeric literal elements stay numeric
+for n in [1 + 2, 4]:
+    say of (n * 2)
+
+# the same shapes inside a function body
+define run() as:
+    for target in [xs, s, b]:
+        show of [target, 0]
+    for w in ["p", "q"]:
+        say of w
+    return 0
+
+run of null

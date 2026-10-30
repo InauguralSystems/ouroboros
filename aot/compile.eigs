@@ -8876,6 +8876,24 @@ define for_var_gen_scan(node, out) as:
             local ic is unwrap of it[1]
             if (ic[0] == "ident") and (BOXED_RET_BUILTINS[ic[1]] == 1) and (ic[1] != "range"):
                 boxed is 1
+        if it[0] == "list":
+            # (#377) a LITERAL iterable: the binder takes each element in
+            # turn, so it is boxed unless EVERY element is numeric-or-raise.
+            # This arm was missing, so the binder had no class, and a call
+            # passing it defaulted the callee's parameter to a double:
+            #
+            #   for target in [xs, b]: show of [target, 0]
+            #   VM  1 / 0, rc 0
+            #   AOT "non-numeric value in a numeric context at <module>:
+            #       name target (type list)", rc 1
+            #
+            # An element is not judged by its NAME's class: inside a
+            # function a module list like `xs` is in no local map, and a
+            # buffer global is a Value* the binder holds boxed either way.
+            local lel is it[1]
+            for li in range of (len of lel):
+                if (is_num_expr of [lel[li], {}, {}]) == 0:
+                    boxed is 1
         if (boxed == 1) and ((find_numeric_use_direct of [node[3], node[1]]) == 0):
             out[node[1]] is "gen"
     for k in range of (len of node):
