@@ -1,0 +1,104 @@
+# ouroboros#334 / EigenScript #2150 (v0.48.0, closing #2136): an
+# out-of-range index or slice names the value the program SUPPLIED, spelled
+# the way `print of` spells numbers -- not the clamped C int (2147483647)
+# and not the negative-resolved one. printf %g would have rounded the
+# 8-digit index to 1.23457e+07; %d would have clamped 10000000000.
+#
+# Every read is caught and the message printed, so one fixture pins list,
+# string and buffer on the get paths, list and buffer on the set paths,
+# both slice bounds, the long-index (induction variable) path, and the
+# buf_get and dispatch builtins.
+xs is [1, 2, 3]
+s is "abc"
+b is buffer of 3
+precise is 12345678
+negative_precise is -12345678
+huge is 10000000000
+very_negative is -3000000000
+
+define try_get(source, selector) as:
+    local table is source
+    local index is selector
+    try:
+        print of table[index]
+    catch problem:
+        print of problem
+    return 0
+
+define try_set(source, selector) as:
+    local table is source
+    local index is selector
+    try:
+        table[index] is 7
+        print of "stored"
+    catch problem:
+        print of problem
+    return 0
+
+define try_slice(source, lo, hi) as:
+    local table is source
+    try:
+        print of table[lo : hi]
+    catch problem:
+        print of problem
+    return 0
+
+define try_gets(source) as:
+    try_get of [source, precise]
+    try_get of [source, negative_precise]
+    try_get of [source, huge]
+    try_get of [source, very_negative]
+    try_get of [source, -5]
+    try_get of [source, 3]
+    return 0
+
+define try_sets(source) as:
+    try_set of [source, precise]
+    try_set of [source, negative_precise]
+    try_set of [source, huge]
+    try_set of [source, -5]
+    return 0
+
+try_gets of xs
+try_gets of s
+try_gets of b
+try_sets of xs
+try_sets of b
+
+try_slice of [xs, 0, huge]
+try_slice of [xs, very_negative, 3]
+try_slice of [s, 0, precise]
+try_slice of [b, negative_precise, 2]
+
+# Direct (non-generic) reads on a module-level list and buffer.
+try:
+    print of xs[precise]
+catch problem:
+    print of problem
+try:
+    print of b[negative_precise]
+catch problem:
+    print of problem
+
+# The long-index path: an index built from an integer induction variable.
+i is 0
+total is 0
+loop while i < 2:
+    try:
+        total is total + b[i + 12345676]
+    catch problem:
+        print of problem
+    i is i + 1
+print of total
+
+try:
+    print of (buf_get of [b, very_negative])
+catch problem:
+    print of problem
+
+table is [null]
+try:
+    print of (dispatch of [table, huge, null])
+catch problem:
+    print of problem
+print of "done"

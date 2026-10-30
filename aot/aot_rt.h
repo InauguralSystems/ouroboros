@@ -1375,6 +1375,25 @@ static void aot_buf_expect(Value *b) { aot_buf_expect_at(b, "?"); }
  * "index 5 out of range (list length 3)". Same rc, different text -- and
  * the _err tier compares text. The generic aot_index_get family already
  * keeps the two apart; this one now takes the kind from its caller. */
+/* EigenScript #2150 (v0.48.0, closing #2136): every out-of-range index,
+ * slice and dispatch message names the value the program SUPPLIED, spelled
+ * as `print of` spells numbers (eigs_num_text) -- not the clamped C int and
+ * not the negative-resolved one. vm.c's raise_index_range/raise_slice_range,
+ * mirrored; callers pass the original double. */
+static void aot_raise_index_range(const char *kind, double index,
+                                  const char *length_kind, long length) {
+    char text[32];
+    eigs_num_text(text, sizeof(text), index);
+    rt_error(EK_INDEX, g_trace_current_line, "%s %s out of range (%s %ld)",
+             kind, text, length_kind, length);
+}
+static void aot_raise_slice_range(double start, double end, long length) {
+    char start_text[32], end_text[32];
+    eigs_num_text(start_text, sizeof(start_text), start);
+    eigs_num_text(end_text, sizeof(end_text), end);
+    rt_error(EK_INDEX, g_trace_current_line, "slice %s:%s out of range (length %ld)",
+             start_text, end_text, length);
+}
 /* EigenScript af8f5194 (#2032): integral finite values outside int range are
  * accepted and clamped, so callers produce their normal range diagnostic. */
 static inline int aot_idx_is_int(double d, int *out) {
@@ -1394,8 +1413,8 @@ static long aot_idx_k(double d, int count, int is_list) {
     long i = ii;
     if (i < 0) i += count;
     if (i < 0 || i >= count) {
-        if (is_list) rt_error(EK_INDEX, g_trace_current_line, "index %ld out of range (list length %d)", (long)ii, count);
-        else         rt_error(EK_INDEX, g_trace_current_line, "buffer index %ld out of range (length %d)", (long)ii, count);
+        if (is_list) aot_raise_index_range("index", d, "list length", count);
+        else         aot_raise_index_range("buffer index", d, "length", count);
     }
     return i;
 }
@@ -1436,13 +1455,14 @@ static void   aot_buf_set_at(Value *b, double idx, double v, const char *site) {
    (provably-integer induction vars + dimensions), so skip the float integer
    check. Negative-resolve + bounds-check still mirror the VM. */
 static long aot_idx_ik(long i, int count, int is_list) {
+    long orig = i;
     if (i < INT_MIN) i = INT_MIN;
     else if (i > INT_MAX) i = INT_MAX;
     if (i < 0) i += count;
     if (i < 0 || i >= count) {
         /* (round 97) name the container kind -- see aot_idx_k. */
-        if (is_list) rt_error(EK_INDEX, g_trace_current_line, "index %ld out of range (list length %d)", i, count);
-        else         rt_error(EK_INDEX, g_trace_current_line, "buffer index %ld out of range (length %d)", i, count);
+        if (is_list) aot_raise_index_range("index", (double)orig, "list length", count);
+        else         aot_raise_index_range("buffer index", (double)orig, "length", count);
     }
     return i;
 }
@@ -1645,8 +1665,7 @@ static inline long aot_sbound(double x, long len) {
 static inline void aot_srange(double sa, double ea, long len, long *s_out, long *e_out) {
     long s = aot_sbound(sa, len), e = aot_sbound(ea, len);
     if (s < 0 || s > len || e < 0 || e > len || s > e)
-        rt_error(EK_INDEX, g_trace_current_line, "slice %d:%d out of range (length %d)",
-                 (int)sa, (int)ea, (int)len);
+        aot_raise_slice_range(sa, ea, len);
     *s_out = s; *e_out = e;
 }
 static inline double aot_dot_range(Value *A, double sa, double ea, Value *B, double sb, double eb) {
@@ -1740,8 +1759,7 @@ static Value *aot_slice_any(Value *A, double sa, double ea) {
     if (start < 0) start += len;
     if (end   < 0) end   += len;
     if (start < 0 || start > len || end < 0 || end > len || start > end) {
-        rt_error(EK_INDEX, g_trace_current_line,
-                 "slice %d:%d out of range (length %d)", orig_start, orig_end, len);
+        aot_raise_slice_range(sa, ea, len);
         return make_null();
     }
     int n = end - start;
@@ -2629,8 +2647,8 @@ static inline double aot_tensor_num_at(AotTensor t, double d, const char *site) 
     if (!integral)
         rt_error(EK_VALUE, g_trace_current_line, "index must be an integer, got %g", d);
     if (t.kind == 1)
-        rt_error(EK_INDEX, g_trace_current_line, "buffer index %ld out of range (length %ld)", i, n);
-    rt_error(EK_INDEX, g_trace_current_line, "index %ld out of range (list length %ld)", i, n);
+        aot_raise_index_range("buffer index", d, "length", n);
+    aot_raise_index_range("index", d, "list length", n);
     return 0;
 }
 static Value *aot_tensor_to_value(AotTensor t) {
@@ -2754,7 +2772,7 @@ static void aot_buf_store_val(Value *target, double d, Value *val) {
     if (!aot_idx_is_int(d, &i))
         rt_error(EK_VALUE, g_trace_current_line, "index must be an integer, got %g", d);
     else if (!aot_idx_resolve(&i, target->data.buffer.count))
-        rt_error(EK_INDEX, g_trace_current_line, "buffer index %d out of range (length %d)", i, target->data.buffer.count);
+        aot_raise_index_range("buffer index", d, "length", target->data.buffer.count);
     else if (!aot_num_if(val, &x))
         rt_error(EK_TYPE, g_trace_current_line, "cannot store %s in a buffer (buffers hold numbers)",
                  val ? val_type_name(val->type) : "null");
@@ -2775,21 +2793,21 @@ static __attribute__((noinline)) Value *aot_index_get_ib_slow(Value *target, dou
         else if (aot_idx_resolve(&i, target->data.list.count)) {
             result = list_get_owned(target, i);
         } else
-            rt_error(EK_INDEX, g_trace_current_line, "index %d out of range (list length %d)", i, target->data.list.count);
+            aot_raise_index_range("index", d, "list length", target->data.list.count);
     } else if (target && target->type == VAL_STR) {
         if (!aot_idx_is_int(d, &i))
             rt_error(EK_VALUE, g_trace_current_line, "index must be an integer, got %g", d);
         else if (aot_idx_resolve(&i, (int)strlen(target->data.str))) {
             char b[2] = { target->data.str[i], 0 }; result = make_str(b);
         } else
-            rt_error(EK_INDEX, g_trace_current_line, "string index %d out of range (length %d)", i, (int)strlen(target->data.str));
+            aot_raise_index_range("string index", d, "length", (int)strlen(target->data.str));
     } else if (target && target->type == VAL_BUFFER) {
         if (!aot_idx_is_int(d, &i))
             rt_error(EK_VALUE, g_trace_current_line, "index must be an integer, got %g", d);
         else if (aot_idx_resolve(&i, target->data.buffer.count))
             result = make_num(aot_buffer_read_num(target, i));
         else
-            rt_error(EK_INDEX, g_trace_current_line, "buffer index %d out of range (length %d)", i, target->data.buffer.count);
+            aot_raise_index_range("buffer index", d, "length", target->data.buffer.count);
     } else {
         rt_error(EK_TYPE, g_trace_current_line, "cannot index %s",
                  target ? val_type_name(target->type) : "null");
@@ -2901,7 +2919,7 @@ static inline Value *aot_index_borrow_base_ib(Value *target, long k) {
                          && k >= 0 && k < (long)target->data.list.count, 1))
         return aot_slot_base(list_slot(target, (int)k));
     if (target && target->type == VAL_LIST)
-        rt_error(EK_INDEX, g_trace_current_line, "index %ld out of range (list length %d)", k, target->data.list.count);
+        aot_raise_index_range("index", (double)k, "list length", target->data.list.count);
     else
         rt_error(EK_TYPE, g_trace_current_line, "cannot index %s", target ? val_type_name(target->type) : "null");
     return NULL;
@@ -2911,7 +2929,7 @@ static inline Value *aot_index_borrow_ib(Value *target, long k) {
                          && k >= 0 && k < (long)target->data.list.count, 1))
         return aot_slot_borrow(list_slot(target, (int)k));
     if (target && target->type == VAL_LIST)
-        rt_error(EK_INDEX, g_trace_current_line, "index %ld out of range (list length %d)", k, target->data.list.count);
+        aot_raise_index_range("index", (double)k, "list length", target->data.list.count);
     else
         rt_error(EK_TYPE, g_trace_current_line, "cannot index %s", target ? val_type_name(target->type) : "null");
     return NULL;
@@ -2946,7 +2964,7 @@ static void aot_index_set_ib(Value *target, double d, Value *val) {
             list_set_owned(target, i, val); val = NULL;
             slot_decref(old);
         } else
-            rt_error(EK_INDEX, g_trace_current_line, "index %d out of range (list length %d)", i, target->data.list.count);
+            aot_raise_index_range("index", d, "list length", target->data.list.count);
     } else if (target && target->type == VAL_BUFFER) {
         aot_buf_store_val(target, d, val);
     } else {
@@ -2971,21 +2989,21 @@ static Value *aot_index_get_i(Value *target, double d) {
         else if (aot_idx_resolve(&i, target->data.list.count)) {
             result = list_get_owned(target, i);
         } else
-            rt_error(EK_INDEX, g_trace_current_line, "index %d out of range (list length %d)", i, target->data.list.count);
+            aot_raise_index_range("index", d, "list length", target->data.list.count);
     } else if (target->type == VAL_STR) {
         if (!aot_idx_is_int(d, &i))
             rt_error(EK_VALUE, g_trace_current_line, "index must be an integer, got %g", d);
         else if (aot_idx_resolve(&i, (int)strlen(target->data.str))) {
             char b[2] = { target->data.str[i], 0 }; result = make_str(b);
         } else
-            rt_error(EK_INDEX, g_trace_current_line, "string index %d out of range (length %d)", i, (int)strlen(target->data.str));
+            aot_raise_index_range("string index", d, "length", (int)strlen(target->data.str));
     } else if (target->type == VAL_BUFFER) {
         if (!aot_idx_is_int(d, &i))
             rt_error(EK_VALUE, g_trace_current_line, "index must be an integer, got %g", d);
         else if (aot_idx_resolve(&i, target->data.buffer.count))
             result = make_num(aot_buffer_read_num(target, i));
         else
-            rt_error(EK_INDEX, g_trace_current_line, "buffer index %d out of range (length %d)", i, target->data.buffer.count);
+            aot_raise_index_range("buffer index", d, "length", target->data.buffer.count);
     } else {
         /* A VAL_DICT with a numeric index falls here in the oracle too: its
          * dict arm requires VAL_STR, so the final else raises. */
@@ -3004,7 +3022,7 @@ static Value *aot_index_get(Value *target, Value *idx) {
         else if (aot_idx_resolve(&i, target->data.list.count)) {
             result = list_get_owned(target, i);
         } else
-            rt_error(EK_INDEX, g_trace_current_line, "index %d out of range (list length %d)", i, target->data.list.count);
+            aot_raise_index_range("index", aot_num_proven(idx), "list length", target->data.list.count);
     } else if (target->type == VAL_DICT && idx->type == VAL_STR) {
         int found;
         EigsSlot v = dict_get_slot(target, idx->data.str, &found);
@@ -3016,7 +3034,7 @@ static Value *aot_index_get(Value *target, Value *idx) {
         else if (aot_idx_resolve(&i, (int)strlen(target->data.str))) {
             char b[2] = { target->data.str[i], 0 }; result = make_str(b);
         } else
-            rt_error(EK_INDEX, g_trace_current_line, "string index %d out of range (length %d)", i, (int)strlen(target->data.str));
+            aot_raise_index_range("string index", aot_num_proven(idx), "length", (int)strlen(target->data.str));
     } else if (target->type == VAL_BUFFER && idx->type == VAL_NUM) {
         int i;
         if (!aot_idx_is_int(aot_num_proven(idx), &i))
@@ -3024,7 +3042,7 @@ static Value *aot_index_get(Value *target, Value *idx) {
         else if (aot_idx_resolve(&i, target->data.buffer.count))
             result = make_num(aot_buffer_read_num(target, i));
         else
-            rt_error(EK_INDEX, g_trace_current_line, "buffer index %d out of range (length %d)", i, target->data.buffer.count);
+            aot_raise_index_range("buffer index", aot_num_proven(idx), "length", target->data.buffer.count);
     } else {
         /* The oracle's final else (vm.c ~2018). Missing here, an unindexable
          * target — `null["k"]` above all, the index-side twin of the #898 dot
@@ -3242,7 +3260,7 @@ static void aot_index_set_i(Value *target, double d, Value *val) {
             list_set_owned(target, i, val); val = NULL;
             slot_decref(old);
         } else
-            rt_error(EK_INDEX, g_trace_current_line, "index %d out of range (list length %d)", i, target->data.list.count);
+            aot_raise_index_range("index", d, "list length", target->data.list.count);
     } else if (target && target->type == VAL_BUFFER) {
         aot_buf_store_val(target, d, val);
     } else {
@@ -3266,7 +3284,7 @@ static void aot_index_set(Value *target, Value *idx, Value *val) {
             list_set_owned(target, i, val); val = NULL;
             slot_decref(old);
         } else
-            rt_error(EK_INDEX, g_trace_current_line, "index %d out of range (list length %d)", i, target->data.list.count);
+            aot_raise_index_range("index", aot_num_proven(idx), "list length", target->data.list.count);
     } else if (target && target->type == VAL_DICT && idx && idx->type == VAL_STR) {
         dict_set_owned(target, idx->data.str, val); val = NULL;
     } else if (target && target->type == VAL_BUFFER && idx && idx->type == VAL_NUM) {
