@@ -9,7 +9,11 @@ define raises(src, kind) as:
         print of [src, e.kind]
         return null
     assert of [false, src + " did not raise"]
-raises of ["return 1 / 0", "value"]
+# IEEE floating-point division by zero returns infinity.  Keep this fixture's
+# parity purpose explicit: eigen_run must return the same value as the VM.
+division_by_zero is eigen_run of "return 1 / 0"
+assert of [division_by_zero == 1 / 0, "eigen_run division-by-zero parity"]
+print of ["return 1 / 0", division_by_zero]
 raises of ["return 1 % 0", "value"]
 raises of ["return \"x\" + 1", "type_mismatch"]
 raises of ["return 1 + \"x\"", "type_mismatch"]
