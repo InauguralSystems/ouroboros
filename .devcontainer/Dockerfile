@@ -72,7 +72,7 @@ RUN apt-get update \
 # messages name the SUPPLIED value in `print of` spelling, not the clamped C
 # int -- mirrored in aot_rt.h (aot_raise_index_range/aot_raise_slice_range,
 # ouroboros#334).
-ARG EIGS_REF=v0.48.0
+ARG EIGS_REF=1d3c28ccbb31e3934949a5d12bc89e8eb60f4484
 RUN mkdir -p /opt/eigenscript-src && cd /opt/eigenscript-src && git init -q \
  && git remote add origin https://github.com/InauguralSystems/EigenScript.git \
  && git fetch -q --depth 1 origin "${EIGS_REF}" && git checkout -q FETCH_HEAD \

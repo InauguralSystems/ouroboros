@@ -89,12 +89,12 @@ static void check_number_boundaries(void) {
     g_math_flags = 0;
     {
         /* Zero/INVALID is the soft-mode scalar contract, not the boot default. */
-        int saved_strict = g_strict;
-        g_strict = 0;
+        int saved_strict = g_strict_arithmetic;
+        g_strict_arithmetic = 0;
         index_v(&result, values, make_num(0));
         assert(slot_is_num(result) && aot_slot_num_proven(result) == 0);
         assert(g_math_flags == EIGS_MATH_INVALID);
-        g_strict = saved_strict;
+        g_strict_arithmetic = saved_strict;
     }
     slot_decref(values);
     slot_decref(result);
@@ -159,11 +159,11 @@ static void check_scalar_consumers(void) {
     g_math_flags = 0;
     {
         /* Materializing the NaN index as zero explicitly requires soft mode. */
-        int saved_strict = g_strict;
-        g_strict = 0;
+        int saved_strict = g_strict_arithmetic;
+        g_strict_arithmetic = 0;
         assert(scalar_index_eq_num(numbers, slot_from_num(NAN), 17));
         assert(g_math_flags == EIGS_MATH_INVALID); /* immediate index materializes */
-        g_strict = saved_strict;
+        g_strict_arithmetic = saved_strict;
     }
     assert(scalar_index_eq_num(numbers, slot_from_num(-1), 17));
     slot_decref(numbers);
@@ -182,11 +182,11 @@ static void check_scalar_consumers(void) {
     g_math_flags = 0;
     {
         /* Match the soft-mode buffer-read contract in both helper arms. */
-        int saved_strict = g_strict;
-        g_strict = 0;
+        int saved_strict = g_strict_arithmetic;
+        g_strict_arithmetic = 0;
         assert(scalar_index_eq_num(values, slot_from_num(0), 0));
         assert(g_math_flags == EIGS_MATH_INVALID);
-        g_strict = saved_strict;
+        g_strict_arithmetic = saved_strict;
     }
     slot_decref(values);
 

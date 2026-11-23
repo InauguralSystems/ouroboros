@@ -340,7 +340,7 @@ static inline void aot_depth_leave(int *p) { (void)p; aot_depth--; }
  * is each place this header or the emitter computes a builtin's or an
  * operator's answer ITSELF and substitutes a stand-in on a NaN or a domain
  * error. Each such site keeps its stand-in on the soft path and, on that
- * branch only, reads the runtime's own per-state flag (g_strict ==
+ * branch only, reads the runtime's own per-state flag (g_strict_arithmetic ==
  * eigs_current->state->strict: no second env read, nothing baked into the
  * binary) and raises the VM's error. The raise goes through the exiting
  * rt_error above (the runtime's eigs_strict_nan_raise alone would only leave
@@ -361,7 +361,7 @@ static void __attribute__((noinline, cold, noreturn)) aot_strict_nan_raise(const
     __builtin_unreachable();
 }
 static inline void aot_strict_nan(const char *who) {
-    if (g_strict) aot_strict_nan_raise(who);
+    if (g_strict_arithmetic) aot_strict_nan_raise(who);
 }
 /* (round 184) num_guard is `static inline` in eigenscript.h, but gcc left it
  * out of line at the emitted code's hundreds of call sites (7.2% of DMG's
@@ -392,7 +392,7 @@ static void __attribute__((noinline, cold)) aot_vnan(void) { aot_strict_nan(NULL
  * and, under strict, raises this EK_VALUE text; the old num_guard(sqrt(x))
  * got the soft half right and, under strict, would name "arithmetic". */
 static double __attribute__((noinline, cold)) aot_sqrt_domain(void) {
-    if (g_strict)
+    if (g_strict_arithmetic)
         rt_error(EK_VALUE, g_trace_current_line, "sqrt: argument out of domain (negative)");
     g_math_flags |= EIGS_MATH_INVALID;
     return 0.0;
