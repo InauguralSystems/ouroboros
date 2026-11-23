@@ -34,7 +34,7 @@ if ! EIGS="$EIG" PYTHONDONTWRITEBYTECODE=1 python3 test/slot_scalar_emission.py;
   exit 1
 fi
 # (#1361) The AOT-owned strict sites, DERIVED from aot_rt.h, never listed: each
-# definition whose body reads g_strict, closed over the header definitions that
+# definition whose body reads g_strict_arithmetic, closed over the header definitions that
 # call one (a macro-built function through its macro). Comments are stripped
 # first. A `_strict` fixture's generated C must call at least one of them
 # (these include num_guard and aot_add, so any float arithmetic satisfies it).
@@ -48,10 +48,10 @@ line ~ /^(static |#define [A-Za-z_0-9]+\(|[A-Z_]+\([a-z_0-9]+,)/ {
   if (h ~ /^[A-Z_]+\([a-z_0-9]+,/) { nm = h; sub(/^[A-Z_]+\(/, "", nm); sub(/,.*/, "", nm); m = h; sub(/\(.*/, "", m); body[nm] = body[nm] " " m "("; nm = ""; next }
   sub(/\(.*/, "", h); n = split(h, w, /[^A-Za-z_0-9]+/); nm = w[n] }
 nm != "" { body[nm] = body[nm] " " line }
-END { for (d in body) if (body[d] ~ /[^A-Za-z_0-9]g_strict[^A-Za-z_0-9]/) set[d] = 1
+END { for (d in body) if (body[d] ~ /[^A-Za-z_0-9]g_strict_arithmetic[^A-Za-z_0-9]/) set[d] = 1
   do { grew = 0; for (d in body) if (!(d in set)) for (s in set) if (index(body[d], s "(")) { set[d] = 1; grew = 1; break } } while (grew)
   for (s in set) print s }' | paste -sd'|' -)
-[ -n "$strict_sites" ] || { echo 'FAIL: derived ZERO strict sites from aot_rt.h (no definition reads g_strict)'; exit 1; }
+[ -n "$strict_sites" ] || { echo 'FAIL: derived ZERO strict sites from aot_rt.h (no definition reads g_strict_arithmetic)'; exit 1; }
 # (#1361) No call made from compiled code changes g_trace_current_line
 # (aot_rt.h, above AOT_FOREIGN). Direct compiled calls restore through the
 # AOT_RESTAMP macro compile.eigs emits beside every prototype. Every other
@@ -244,13 +244,17 @@ PY
   # default is; these also pin both halves explicitly, on the SAME binary --
   # the flag is read at run time, never baked in -- and each pair must be
   # byte-equal with rc 0 (the fixtures catch their raises). A fixture whose
-  # VM output does not move between =1 and =0 reaches no strict site: FAIL.
+  # VM output does not move between =1 and unset reaches no strict site: FAIL.
   if [ "$match" -eq 1 ]; then
     case "$name" in *_strict.eigs)
       s_vm1=""
-      for sm in 1 0; do
-        s_ref=$(EIGS_STRICT=$sm timeout "$AOT_TEST_TIMEOUT" "$EIG" "$prog" 2>&1); s_rrc=$?
-        s_got=$(EIGS_STRICT=$sm timeout "$AOT_TEST_TIMEOUT" "$bin" 2>&1); s_grc=$?
+      # EigenScript#2502: the second leg runs with EIGS_STRICT unset, not 0.
+      # Type errors raise in every state, so the flag now means only the
+      # opt-in IEEE trap, and no consumer sets EIGS_STRICT=0.
+      for sm in 1 unset; do
+        if [ "$sm" = unset ]; then s_env="env -u EIGS_STRICT"; else s_env="env EIGS_STRICT=$sm"; fi
+        s_ref=$($s_env timeout "$AOT_TEST_TIMEOUT" "$EIG" "$prog" 2>&1); s_rrc=$?
+        s_got=$($s_env timeout "$AOT_TEST_TIMEOUT" "$bin" 2>&1); s_grc=$?
         if [ "$s_rrc" -ne 0 ] || [ "$s_grc" -ne 0 ] || [ "$s_ref" != "$s_got" ]; then
           match=0; why="EIGS_STRICT=$sm: VM rc $s_rrc, AOT rc $s_grc, outputs $([ "$s_ref" = "$s_got" ] && echo equal || echo differ)"
           ref="$s_ref"; got="$s_got"; break
@@ -258,7 +262,7 @@ PY
         [ "$sm" = 1 ] && s_vm1="$s_ref"
       done
       if [ "$match" -eq 1 ] && [ "$s_vm1" = "$s_ref" ]; then
-        match=0; why="_strict fixture prints the same on the VM under EIGS_STRICT=1 and =0 -- it reaches no strict site"
+        match=0; why="_strict fixture prints the same on the VM under EIGS_STRICT=1 and unset -- it reaches no strict site"
       fi
       # The VM moving proves A strict site ran, not an AOT one: a runtime
       # builtin's own raise moves it too. Tested: the generated C calls an AOT
